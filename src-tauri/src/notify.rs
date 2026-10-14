@@ -469,6 +469,74 @@ mod tests {
     }
 
     #[test]
+    fn long_session_split_does_not_repeat_notification() {
+        let mut db = setup();
+        let s = only("long");
+        let mut clock = NotifyClock::default();
+        let first = session(&db, 1, at("2026-10-14 08:00"), None);
+        let m = clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 13:00"))
+            .unwrap();
+        assert_eq!(keys(&m), [format!("long:{first}").as_str()]);
+        // Podział trwającego pomiaru w 30. minucie: nowy wiersz, ten sam pomiar.
+        db::split_session(
+            &mut db,
+            first,
+            at("2026-10-14 08:30"),
+            None,
+            at("2026-10-14 13:00"),
+        )
+        .unwrap();
+        let second: i64 = db
+            .query_row("SELECT id FROM sessions WHERE ended_at IS NULL", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_ne!(second, first);
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 13:00"))
+            .unwrap()
+            .is_empty());
+        // Kolejny podział także nie powtarza wiadomości.
+        db::split_session(
+            &mut db,
+            second,
+            at("2026-10-14 09:00"),
+            Some(2),
+            at("2026-10-14 13:30"),
+        )
+        .unwrap();
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 13:30"))
+            .unwrap()
+            .is_empty());
+        // Podział zanim przyszło powiadomienie: nowa część liczy się od momentu podziału.
+        db.execute(
+            "UPDATE sessions SET ended_at=?1 WHERE ended_at IS NULL",
+            [at("2026-10-14 14:00")],
+        )
+        .unwrap();
+        let third = session(&db, 3, at("2026-10-14 14:00"), None);
+        db::split_session(
+            &mut db,
+            third,
+            at("2026-10-14 15:00"),
+            None,
+            at("2026-10-14 15:30"),
+        )
+        .unwrap();
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 18:59"))
+            .unwrap()
+            .is_empty());
+        let m = clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 19:00"))
+            .unwrap();
+        assert_eq!(m.len(), 1);
+        assert_eq!(m[0].title, "Długi pomiar bez Stop");
+    }
+
+    #[test]
     fn evening_fires_at_configured_time_only_when_measuring() {
         let db = setup();
         let s = only("evening");

@@ -306,6 +306,17 @@ pub fn split_session(
         params![target, at, ended_at],
     )
     .map_err(|e| e.to_string())?;
+    if ended_at.is_none() {
+        // Pomiar trwa dalej w nowym wierszu: przenosimy klucz „długi pomiar”,
+        // żeby podział nie wywołał drugiego powiadomienia dla tego samego pomiaru.
+        let new_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT OR IGNORE INTO notifications_sent(key,at)
+             SELECT ?1, at FROM notifications_sent WHERE key=?2",
+            params![format!("long:{new_id}"), format!("long:{id}")],
+        )
+        .map_err(|e| e.to_string())?;
+    }
     tx.commit().map_err(|e| e.to_string())?;
     snapshot(db).map_err(|e| e.to_string())
 }
