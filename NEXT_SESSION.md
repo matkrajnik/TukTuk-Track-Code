@@ -1,33 +1,33 @@
-﻿# Todo Track — stan po wykonaniu kontynuacji
+﻿# Todo Track — stan po 1.0
 
-## Stan orchestratora release-1-0 (14 października 2026)
+## Stan po 1.0 (14 października 2026)
 
-Gałąź `release/1.0` (lokalnie, bez pusha). Etapy 0, 1 i 2 są gotowe: zadania 0.1–0.4, A, C, L, K, I, B i J są zakończone. Każde ma commit implementacji, uwagi z przeglądu są wdrożone, a weryfikacja jest zielona. Ostatni commit to `92339b5 J: uwagi z przeglądu` (Playwright 33, Rust 57). Orchestrator został zatrzymany na życzenie przed etapem 3. Zadanie F wystartowało, ale nic nie zmieniło, a drzewo robocze jest czyste.
+Gałąź `release/1.0`, lokalnie, bez pusha. Wszystkie funkcje z PLAN_1.0.md (0.1–0.4 i A–L) mają commity implementacji na tej gałęzi; większość ma też osobny commit „uwagi z przeglądu”. Commit R1 podnosi wersję w `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` i `src-tauri/tauri.conf.json` do 1.0.0 i aktualizuje README (Organizacja pracy 1.0, Ustawienia, Skróty, Mini-widget, Okna/tray/autostart, Powiadomienia, Sprawdzenie).
 
-Zostało: etap 3 (F, E, G), etap 4 (D, H) i etap 5 (R1, R2). Wznowienie od etapu 3:
+Weryfikacja po R1: `npm run build`, 55 testów Playwright i 59 testów Rust (`cargo test --locked`) przechodzi, `cargo fmt` nie wprowadza zmian. To testy podglądu (localStorage) i testy jednostkowe Rust z kontrolowanym czasem. Natywnej aplikacji 1.0.0 nie uruchamiano.
 
-```
-Workflow({ name: "release-1-0", args: { only: ["F","E","G"] } })
-```
+Do zrobienia w etapie 5 (R2 i dalej):
+- Pełna weryfikacja z `cargo fmt --check` i `npm run tauri build -- -- --locked`. Instalator `Todo Track_1.0.0_x64-setup.exe` jeszcze nie istnieje.
+- Natywna instancja `pl.todotrack.validation.v6` z instalacją NSIS (osobny identyfikator; skrypty i zrzuty w `src-tauri/target/verification-v6/`). Nie uruchamiać na bazie `pl.todotrack.desktop`.
+- Tag `v1.0.0`. Workflow `.github/workflows/check.yml` nie był uruchamiany na windows-latest, bo gałąź nie była pushowana.
 
-Albo całość do końca: `args: { from: "F" }`. Uwaga: `only` przyjmuje identyfikatory zadań, nie numery etapów.
+Nie zweryfikowano natywnie (są tylko testy podglądu i Rust):
+- I, autostart: wpis `Run` w rejestrze, start z `--hidden` do traya, odczyt stanu po wyłączeniu wpisu w Menedżerze zadań.
+- B, mini-widget (okno `widget`: `focus: false`, `focusable: false`): Stop/Start, ⇄ i X działają i nie zabierają fokusu aplikacji, w której się pracuje (np. kursor zostaje w Notatniku). Ryzyko z planu: jeśli w oknie `focusable: false` przyciski nie przyjmują kliknięć, zostawić `focus: false` jak w reminder i przywracać fokus poprzedniemu oknu. Także przeciąganie za uchwyt, tryb „tylko w tle” oraz X, a potem odznaczenie i ponowne zaznaczenie „Pokazuj mini-widget”.
+- K: pozycja i rozmiar okien `main` i `widget` po restarcie, po odłączeniu monitora i w stanie zmaksymalizowanym z własnym paskiem.
+- J: powiadomienia Windows na pakiecie NSIS (w `tauri dev` mogą się nie pokazać lub podpisać jako PowerShell): terminy przy starcie i o 09:00, długi pomiar, wieczór, cel, brak powtórek po restarcie, potwierdzenie skrótu Start/Stop przy schowanym widgecie.
+- L: skróty globalne z ustawień wywołane przez Windows (Ctrl+Alt+Space, Ctrl+Shift+Space), zmiana kombinacji, błąd przy zajętym skrócie.
+- C: ikona traya z kropką podczas pomiaru, tooltip odświeżany co 5 s, nieklikalna pozycja z nazwą zadania i „Szybkie przełączanie” w menu.
+- A: podział aktywnego pomiaru w WebView2 z zapisem do SQLite. F i G: przeciąganie myszą w WebView2 (testy używają Alt+↑/↓ i menu „Przenieś na…”).
+- Aktualizacja z 0.3.0 do 1.0.0 przy aktywnym timerze: `--prepare-update`, kopia `before-1.0.0-*.sqlite`, zachowane dane.
 
-Decyzje do podjęcia przez użytkownika:
-- 0.1: `.nvmrc` i CI używają Node 24 zamiast Node 22 z planu, bo lokalny nvm nie ma Node 22 i blokował `node` w projekcie. Do zrobienia: zostać przy 24 albo wykonać `nvm install 22` i przywrócić wersję 22.
-- Po pierwszym pushu sprawdzić, czy workflow `.github/workflows/check.yml` przechodzi na windows-latest.
-- J: gdy pomiar zostanie podzielony przed wysłaniem powiadomienia o długiej sesji, nowa część liczy czas od momentu podziału, więc powiadomienie przychodzi później. Zachowanie jest świadome i pokryte testem.
-- J: Playwright używa teraz stałego portu 1430 (`PLAYWRIGHT_PORT`), bo poprzedni port powodował niestabilne testy.
-- Na etap 3, F i E (uwaga z 0.4): zapis formularza TaskPlanning zapisuje całe Details. Po dodaniu `reorder`/`plan_task` formularz nie może nadpisać kolejności zmienionej przeciąganiem.
+Decyzje nadal otwarte:
+- 0.1: `.nvmrc` i CI używają Node 24 zamiast Node 22 z planu, bo lokalny nvm nie ma Node 22. Zostać przy 24 albo wykonać `nvm install 22`.
+- J: po podziale pomiaru powiadomienie o długiej sesji liczy czas nowej części od momentu podziału, więc przychodzi później. Zachowanie świadome, pokryte testem.
+- Playwright używa stałego portu 1430 (`PLAYWRIGHT_PORT`).
+- Poza zakresem 1.0: worklogi Jiry, autoupdater, eksport CSV, zgłoszenia Jiry w szybkim przełączaniu.
 
-Sprawdzenia natywne z etapów 0–2 (tray, skróty, okno, autostart, widget, powiadomienia) należy wykonać w etapie 5 pkt 4 na `pl.todotrack.validation.v6`. Pełne listy są w dzienniku workflow `wf_f6f277fb-01d`; najważniejsze punkty dla B są poniżej.
-
-## W toku — 1.0 (gałąź release/1.0): sprawdzenia natywne na etap 5
-
-Etapy 1.0 są weryfikowane testami Playwright (podgląd) i `cargo test`. Poniższe wymaga natywnej instancji z osobnym identyfikatorem (`pl.todotrack.validation.v6`, PLAN_1.0.md, etap 5 pkt 4); nie uruchamiać na bazie `pl.todotrack.desktop`.
-
-- B, mini-widget (okno `widget`: `focus: false`, `focusable: false`): klik Stop/Start, ⇄ i X na widgecie działa i nie zabiera fokusu aplikacji, w której się pracuje (np. kursor zostaje w Notatniku). Ryzyko z PLAN_1.0.md: jeśli w oknie `focusable: false` przyciski nie przyjmują kliknięć, zostawić `focus: false` jak w reminder i przywracać fokus poprzedniemu oknu.
-- B: przeciąganie za uchwyt widgetu przesuwa okno; pozycja widgetu wraca po restarcie aplikacji (K, window-state).
-- B: X, potem odznaczenie i ponowne zaznaczenie „Pokazuj mini-widget” w Ustawieniach pokazuje widget (natywnie, nie tylko w podglądzie).
+Baza `%APPDATA%\pl.todotrack.desktop` i instalacja `C:\Programy\Todo Track` nie były zmieniane.
 
 ## Aktualny stan — 0.3.0 (13 października 2026)
 

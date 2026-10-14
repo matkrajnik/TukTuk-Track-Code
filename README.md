@@ -4,10 +4,21 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
-### Organizacja pracy — 0.3.0
+### Organizacja pracy — 1.0
 
+Czas:
+
+- **Podział przedziału**: edytor przedziału ma zakładki „Godziny” i „Podziel”. Wybierasz moment podziału i zadanie dla drugiej części; podgląd pokazuje obie części z czasem trwania. Działa także dla trwającego pomiaru, bez Stop: pierwsza część zostaje zamknięta, druga mierzy dalej pod wybranym zadaniem. Przycisk „Podziel” jest na pasku bieżącego pomiaru w Zadaniach i przy każdym przedziale na osi dnia w Plan i historia.
+- **Cel dzienny i tygodniowy**: cel dnia w minutach (domyślnie 480) i dni robocze (domyślnie Pon–Pt) w Ustawieniach; cel tygodnia to cel dnia razy liczba dni roboczych. Pasek postępu pod czasem „Dzisiaj” w Zadaniach (bursztynowy po przekroczeniu), karty „Dzisiaj” i „Ten tydzień” z linią celu na Dashboardzie, różnica względem celu przy dniach tygodnia i informacja „Do celu brakuje …” / „Cel przekroczony o …” w zamknięciu dnia, bez blokady.
+- **Trafność szacunków** na Dashboardzie: ukończone zadania z szacunkiem i czasem z ostatnich 30 lub 90 dni albo z całej historii, mediana stosunku rzeczywistość/plan, odsetek w widełkach ±20% i przekroczeń, histogram, mediana według projektu i największe rozjazdy z przejściem do raportu. Karta „Zagrożone teraz” wymienia otwarte zadania ponad szacunkiem; ich kafelek pokazuje procent w kolorze ostrzegawczym.
+
+Planowanie:
+
+- **Ręczna kolejność**: uchwyt ⋮⋮ na kafelku. Przeciągnięcie albo Alt+↑ / Alt+↓ na uchwycie zmienia kolejność wewnątrz pasma priorytetu; przeciągnięcie do innego pasma zmienia priorytet. Aktywny timer zawsze jest pierwszy. Ta sama kolejność obowiązuje w liście zadań, szybkim przełączaniu, planie dnia i na Dashboardzie.
+- **Plan kontra rzeczywistość**: zakładka Dzień w Plan i historia ma oś z torem „Plan” (zadania zaplanowane na dzień, w ręcznej kolejności od godziny początku dnia, domyślnie 08:00; długość z szacunku, bez szacunku 30 min kreskowane; zadanie z „Godziną startu w planie” jest przypięte do tej godziny) i torem „Rzeczywistość” (przedziały dnia). Kliknięcie bloku otwiera edycję przedziału albo plan zadania. Tabela pod osią porównuje plan z rzeczywistością i oznacza pracę „nieplanowane” oraz plan „niezaczęte”.
+- **Tablica tygodnia** (Plan i historia → Tydzień → Tablica, domyślnie): kolumna „Do zaplanowania” z wyszukiwaniem i sekcją „Zaległe (n)” oraz siedem dni Pon–Nd z sumą szacunków względem pojemności (cel dnia albo „wolne”) i faktycznym czasem. Pasek pojemności jest zielony poniżej 90%, bursztynowy do 100%, czerwony powyżej. Przeciągnięcie karty zmienia dzień lub kolejność; bez myszy służy menu „Przenieś na…”. Dotychczasowa treść tygodnia jest w zakładce „Podsumowanie”.
 - Priorytet zmienisz bez rozwijania zadania, wybierając go bezpośrednio na kafelku. Zapis i kolejność aktualizują się od razu; aktywny timer pozostaje pierwszy.
-- Szybki wybór zadania: przycisk ⇄ lub Ctrl+K w aplikacji, Ctrl+Shift+Space globalnie. Wyszukaj zadanie, wybierz strzałkami, Enter uruchamia pomiar i zamyka poprzedni. Esc zamyka okno.
+- Szybki wybór zadania: przycisk ⇄ lub Ctrl+K w aplikacji, globalnie skrót szybkiego przełączania (domyślnie Ctrl+Shift+Space). Wyszukaj zadanie, wybierz strzałkami, Enter uruchamia pomiar i zamyka poprzedni. Esc zamyka okno.
 - Plan zadania zawiera szacowany czas w minutach i listę kroków. Kafelek pokazuje wykonanie względem szacunku, plan dnia sumuje szacunki.
 - Cykle według dni tygodnia: osobne zadanie na każdą datę, z osobnym czasem i wyzerowaną checklistą. Codziennie = wszystkie dni, tygodniowo = jeden dzień. Generowanie następuje przy otwarciu i co minutę; po przerwie uzupełnia maksymalnie ostatnie 366 dni. Odznaczenie dni wyłącza cykl, archiwizacja wstrzymuje generowanie. Po przywróceniu następuje uzupełnienie zaległych dat.
 - **Plan i historia → Zamknięcie dnia**: suma pracy, notatki każdego zadania, przerwy między wpisami, raport TS, przekładanie niedokończonego planu na następny dzień i oznaczenie dnia jako sprawdzonego. Oznaczenie nie blokuje późniejszych poprawek.
@@ -16,7 +27,49 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 - Po co najmniej 10 minutach bezczynności Windows, przy powrocie do aktywnego pomiaru, aplikacja pyta o zachowanie czasu lub zakończenie sesji na początku przerwy. Nie skraca czasu automatycznie. Opcję można wyłączyć w ustawieniach.
 - Eksport działa również podczas pomiaru i tworzy spójną kopię SQLite. Przywracanie pokazuje nazwę i liczby wpisów, wymaga potwierdzenia zastąpienia danych i najpierw zapisuje `backups/before-restore-*.sqlite`. Aktywna sesja z kopii jest kończona na moment eksportu (dla starszych kopii: modyfikacji pliku). Bieżąca konfiguracja Jiry pozostaje zachowana, token nie jest przenoszony.
 
-Domyślną zakładką nadal są **Zadania**. Przy konflikcie skrótu globalnego ustawienia pokazują błąd; przycisk ⇄ i Ctrl+K pozostają dostępne.
+Domyślną zakładką nadal są **Zadania**.
+
+### Ustawienia
+
+**Historia i kopie → Ustawienia** ma sekcje:
+
+- **Czas pracy**: pytanie o czas po co najmniej 10 minutach bezczynności, cel dzienny w minutach (0–1440), początek dnia (`HH:MM`, dla osi planu) i dni robocze. Pod polami widać wyliczony cel dnia i tygodnia.
+- **Okna**: „Pokazuj mini-widget zawsze na wierzchu” i „Tylko gdy główne okno jest schowane lub bez fokusu”.
+- **Powiadomienia**: terminy na dziś i przekroczone, długi pomiar bez Stop (minuty, domyślnie 240, 0 wyłącza), wieczorne „pomiar nadal trwa” (godzina, domyślnie 17:30, z osobnym wyłącznikiem) i osiągnięcie celu dnia (domyślnie wyłączone).
+- **Skróty**: dwa pola przechwytujące kombinację klawiszy, z błędem rejestracji przy polu i przyciskiem przywrócenia domyślnego.
+- **Uruchamianie**: „Uruchamiaj z Windows” i „Uruchamiaj schowane do traya”.
+
+Ustawienia są zapisywane w bazie SQLite (w podglądzie w localStorage), a backend sprawdza zakresy. Zapis od razu przerejestrowuje skróty i odświeża widget oraz reguły powiadomień.
+
+### Skróty klawiszowe
+
+- **Ctrl+K** — szybkie przełączanie w aplikacji.
+- **Ctrl+Shift+Space** (domyślnie, konfigurowalny) — szybkie przełączanie z dowolnego okna.
+- **Ctrl+Alt+Space** (domyślnie, konfigurowalny) — Start/Stop z dowolnego okna. Trwający pomiar zostaje zatrzymany. Bez pomiaru startuje ostatnio mierzone zadanie, które nie jest ukończone ani zarchiwizowane; gdy takiego nie ma, otwiera się szybkie przełączanie. Potwierdzenie „Stop: X · 01:23:45” albo „Start: X” pojawia się w dymku ikony traya, w widgecie, a gdy widget jest schowany, także jako powiadomienie Windows.
+- **Alt+↑ / Alt+↓** na uchwycie ⋮⋮ — zmiana kolejności zadania.
+
+Przy konflikcie skrótu globalnego z innym programem pole w Ustawieniach pokazuje błąd; przycisk ⇄ i Ctrl+K pozostają dostępne.
+
+### Mini-widget
+
+Małe okno 320×64 zawsze na wierzchu, domyślnie wyłączone. Pokazuje nazwę bieżącego zadania i zegar, przycisk Stop albo Start (ta sama logika co skrót Start/Stop) oraz ⇄. Bez pomiaru wyświetla „Brak pomiaru”. Kliknięcie nazwy otwiera główne okno, uchwyt pozwala przesunąć widget. Okno nie powinno zabierać fokusu aplikacji, w której pracujesz (`focusable: false`). X chowa widget do końca sesji aplikacji bez zmiany ustawienia; przywraca go przełącznik „Mini-widget” w nagłówku głównego okna. W trybie „tylko w tle” widget pojawia się, gdy główne okno jest schowane lub bez fokusu (sprawdzane co 2 s i przy zmianie fokusu).
+
+### Okna, tray i autostart
+
+- Pozycja i rozmiar głównego okna i widgetu są zapamiętywane (`tauri-plugin-window-state`), a zapis następuje przy schowaniu okna, przy „Zakończ aplikację” z traya i przy `--prepare-update`. Okna przypomnienia i szybkiego przełączania mają stałe położenie.
+- Ikona traya ma wariant z kropką, gdy pomiar trwa. Dymek co 5 s pokazuje `Zadanie · 01:23:45 · dziś 5:10 / 8:00` (do 127 znaków). Menu: nieklikalna pozycja z nazwą bieżącego zadania, „Otwórz Todo Track”, „Szybkie przełączanie”, „Zatrzymaj pomiar”, „Zakończ aplikację”.
+- Autostart (`tauri-plugin-autostart`) tworzy wpis `Run` w rejestrze bieżącego użytkownika. Opcja „schowane do traya” dodaje argument `--hidden`: główne okno się nie pokazuje, widget pojawia się, jeśli jest włączony. Stan „Uruchamiaj z Windows” jest czytany z rejestru, więc wyłączenie wpisu w Menedżerze zadań widać w Ustawieniach.
+
+### Powiadomienia
+
+Powiadomienia Windows (`tauri-plugin-notification`) wysyła backend Rust; reguły są sprawdzane co 30 s:
+
+- **Termin**: przy starcie i o 09:00, gdy są nieukończone zadania z terminem dziś lub wcześniej; treść podaje liczbę i pierwsze trzy tytuły.
+- **Długi pomiar**: aktywny przedział trwa co najmniej ustawioną liczbę minut; jedna wiadomość na przedział. Po podziale pomiaru nowa część liczy czas od momentu podziału.
+- **Wieczór**: o ustawionej godzinie pomiar nadal trwa.
+- **Cel**: suma dnia roboczego osiągnęła cel (domyślnie wyłączone).
+
+Każde powiadomienie pojawia się najwyżej raz: klucz trafia do tabeli `notifications_sent` przed wysłaniem, także po ponownym uruchomieniu. Wpisy starsze niż 7 dni są usuwane przy starcie. Kliknięcie powiadomienia nie wykonuje żadnej akcji. W `tauri dev` powiadomienia mogą nie pojawić się albo podpisywać się inną aplikacją; miarodajny jest pakiet NSIS.
 
 ### Dotychczasowe funkcje
 
@@ -33,7 +86,7 @@ Domyślną zakładką nadal są **Zadania**. Przy konflikcie skrótu globalnego 
 - Przycisk „Raport TS” rozwija tekst do skopiowania: data, zadania, suma przedziałów każdego zadania w godzinach dziesiętnych (np. 1,50) i suma dnia. „Kopiuj raport” kopiuje tekst z tabulatorami między kolumnami. Dwa miejsca po przecinku; suma dnia zaokrąglana niezależnie z pełnego czasu. Trwający pomiar liczony do bieżącej chwili.
 - Raporty dzienne → **Wybrane dni**: kalendarz miesiąca (kropka przy dniach z pracą, czas w podpowiedzi), skróty „Ten tydzień”, „Poprzedni tydzień”, „Ten miesiąc”, „Dni robocze tego miesiąca”, „Wyczyść” i lista zestawu z sumami. Raport TS w układzie „Po dniach” (Dzień, Zadanie, Czas, suma po każdym dniu i łączna) albo „Zbiorczo” (zadania zsumowane, notatki łączone średnikiem). Ostatnie zaznaczenie i układ są pamiętane lokalnie.
 - Minimalizacja pozostawia aplikację na pasku zadań. Krzyżyk i przycisk „Schowaj do traya” chowają okno do zasobnika. Pomiar trwa dalej w obu przypadkach.
-- Kliknięcie ikony traya przywraca okno. Menu: otwarcie, zatrzymanie pomiaru, zakończenie aplikacji.
+- Kliknięcie ikony traya przywraca okno. Menu: otwarcie, szybkie przełączanie, zatrzymanie pomiaru, zakończenie aplikacji.
 - Zakończenie z menu traya zatrzymuje pomiar i zamyka proces.
 - Jedna instancja aplikacji; kolejne uruchomienie przywraca istniejące okno.
 - Własny pasek okna dopasowany do motywu: przeciąganie, minimalizacja, maksymalizacja/przywrócenie i zamknięcie do traya.
@@ -52,7 +105,9 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Najnowszy pakiet: `src-tauri/target/release/bundle/nsis/Todo Track_0.3.0_x64-setup.exe`.
+Wersja w repozytorium: 1.0.0. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.0.0_x64-setup.exe`; instalator 1.0.0 nie został jeszcze zbudowany ani sprawdzony (PLAN_1.0.md, etap 5 pkt 3–5). Ostatni zbudowany pakiet to `Todo Track_0.3.0_x64-setup.exe`.
+
+Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
 Od 0.2.1 minimalizacja pozostawia okno na pasku zadań; krzyżyk chowa do zasobnika. Zweryfikowano natywnie stan minimized/visible, zamknięcie do traya i przywracanie na osobnej bazie testowej.
 
@@ -118,7 +173,7 @@ Od 0.3.0 użyj **Historia i kopie → Kopie → Eksportuj kopię** — aplikacja
 
 Baza znajduje się w katalogu danych aplikacji, na Windows: `%APPDATA%\pl.todotrack.desktop\todo-track.sqlite`. Operacje są transakcyjne. Do kopii zapasowej zamknij aplikację przez menu traya i skopiuj cały katalog danych (SQLite może korzystać z plików WAL).
 
-Rust zapisuje początek i koniec sesji. Frontend tylko wyświetla różnicę znaczników czasu; throttling ukrytego okna nie wpływa na wynik. Pomiar obejmuje czas uśpienia komputera. Po awarii lub wymuszonym zamknięciu aktywna sesja pozostaje otwarta i nalicza czas do kolejnego Stop. Przed dłuższą przerwą zatrzymaj pomiar. Zmiana zegara systemowego może wpłynąć na wynik. Aplikacja nie wykrywa bezczynności i nie uruchamia się automatycznie z systemem.
+Rust zapisuje początek i koniec sesji. Frontend tylko wyświetla różnicę znaczników czasu; throttling ukrytego okna nie wpływa na wynik. Pomiar obejmuje czas uśpienia komputera. Po awarii lub wymuszonym zamknięciu aktywna sesja pozostaje otwarta i nalicza czas do kolejnego Stop. Przed dłuższą przerwą zatrzymaj pomiar. Zmiana zegara systemowego może wpłynąć na wynik. Bezczynność Windows nie skraca pomiaru automatycznie; aplikacja tylko pyta po powrocie (patrz wyżej). Autostart jest wyłączony, dopóki nie włączysz go w Ustawieniach.
 
 Usunięcie zadania usuwa też jego sesje (z potwierdzeniem). Ukończenie zadania zatrzymuje jego bieżący pomiar. Dzisiejszy czas jest liczony od lokalnej północy, również dla sesji rozpoczętych poprzedniego dnia.
 
@@ -126,18 +181,23 @@ Raporty dzielą sesję przez lokalną północ i uwzględniają zmianę czasu (d
 
 ## Sprawdzenie
 
+Weryfikacja 1.0.0 (14 października 2026, gałąź `release/1.0`): `npm run build`, 55 testów Playwright i 59 testów Rust (`cargo test --locked`) przechodzą. Testy Playwright działają na podglądzie z localStorage (`src/store.ts`, `src/settings.ts`), bez backendu Rust; widget renderują pod adresem `#widget`. Testy Rust obejmują m.in. podział przedziału, `stats::day_total_ms` z dobą zmiany czasu, tooltip traya, wybór zadania dla Start/Stop, walidację ustawień, argumenty autostartu, logikę widoczności widgetu, reguły i deduplikację powiadomień z kontrolowanym zegarem oraz `plan_task`/`reorder` bez nadpisywania innych pól.
+
+Nie sprawdzono jeszcze natywnie (etap 5 pkt 4, osobna instancja `pl.todotrack.validation.v6`): autostartu z `--hidden`, braku kradzieży fokusu przez widget i przeciągania widgetu, pozycji okien po restarcie i odłączeniu monitora, powiadomień Windows, rzeczywistych skrótów globalnych z nowej konfiguracji, ikony z kropką i tooltipu traya, podziału aktywnego pomiaru i tablicy tygodnia w WebView2 oraz aktualizacji z 0.3.0 przy aktywnym timerze. Nie wykonano też `npm run tauri build` dla 1.0.0.
+
 Weryfikacja 0.3.0: 18 testów Playwright i 15 testów Rust przechodzi. Osobna natywna instancja `pl.todotrack.validation.v5` potwierdziła zmianę priorytetu bez nadpisania planu, szybkie przełączanie w drugim oknie, rzeczywisty skrót globalny, pojedynczy timer, archiwum/kosz/przywracanie, zamknięcie dnia, ustawienia, minimalizację i X do traya. Eksport i import przez systemowe okna plików przywróciły dokładnie ten sam snapshot zadań/przedziałów; przed przywróceniem utworzono kopię obecnej bazy. Proces testowy zakończono przez `--prepare-update`. Skrypty i dowody: `src-tauri/target/verification-v5/`. Logika progu bezczynności jest sprawdzona testami z kontrolowanym czasem; nie czekano 10 minut na fizyczną bezczynność. Dane właściwej instalacji użytkownika nie były zmieniane. Build produkcyjny Tauri/NSIS 0.3.0 z `--locked` zakończony sukcesem. Poniżej pozostawiono opis wcześniejszych weryfikacji.
 
 ```powershell
 npm run build
 npx playwright install chromium
 npm test
-cargo test --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml --locked
+cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
 `npm test` zawsze uruchamia własny serwer Vite na porcie 1430 (nie używa serwera z `npm run dev` na 1420). Przy kilku równoległych przebiegach ustaw inny port przez zmienną `PLAYWRIGHT_PORT`.
 
-14 testów Playwright sprawdza zadania, priorytety i planowanie, notatki, ręczny czas, motywy, przedziały, raporty i TS, zmianę czasu, szerokość 760 px oraz UI Jiry, własny pasek i akcje przypomnienia. Testy UI Jiry używają zastąpionego interfejsu IPC, bez prawdziwego konta. 11 testów Rust sprawdza SQLite, edycję, nowe pola i ręczny czas, kopię bazy WAL, import/wznawianie z Jiry bez duplikatów, stronicowanie HTTP na lokalnym serwerze testowym, walidację adresów oraz próg 300 sekund, reset i odroczenie przypomnienia.
+Stan z 0.2.0 (historyczny): 14 testów Playwright sprawdza zadania, priorytety i planowanie, notatki, ręczny czas, motywy, przedziały, raporty i TS, zmianę czasu, szerokość 760 px oraz UI Jiry, własny pasek i akcje przypomnienia. Testy UI Jiry używają zastąpionego interfejsu IPC, bez prawdziwego konta. 11 testów Rust sprawdza SQLite, edycję, nowe pola i ręczny czas, kopię bazy WAL, import/wznawianie z Jiry bez duplikatów, stronicowanie HTTP na lokalnym serwerze testowym, walidację adresów oraz próg 300 sekund, reset i odroczenie przypomnienia.
 
 Weryfikacja 0.2.0 (13 października 2026): wszystkie powyższe testy oraz build Vue/TS i Tauri/NSIS przeszły. Na osobnej instalacji `Todo Track Validation v4` sprawdzono rzeczywisty zapis danych przez WebView2 → Rust → SQLite, schowek TS, instalację oraz aktualizację testowych wersji 0.2.0 → 0.2.1 przy aktywnym timerze w tle. Timer został zamknięty, wszystkie zadania, notatki i przedziały zachowane, aplikacja wystartowała na Zadaniach, powstała kopia `before-0.2.1-…sqlite`. Testową aplikację zakończono i odinstalowano; właściwa instalacja użytkownika nie była zmieniana. Dowody i skrypty: `src-tauri/target/verification-v4/`. Numery 0.2.1 dotyczą wyłącznie testowej kompilacji; wydanie użytkownika ma wersję 0.2.0.
 
