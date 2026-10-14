@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { change, desktop, duration, type Snapshot } from "./store";
 import { dayKey, inDay } from "./time";
+import SettingsPanel from "./components/SettingsPanel.vue";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -15,7 +16,6 @@ const tab = ref("history"),
   busy = ref(false),
   message = ref(""),
   error = ref("");
-const settings = ref({ idleEnabled: true, shortcutError: "", version: "" });
 const preview = ref<{
     name: string;
     tasks: number;
@@ -91,17 +91,10 @@ async function restore() {
     emit("updated", await invoke("restore_backup"));
     preview.value = null;
     confirmed.value = false;
-    settings.value = await invoke("app_settings");
     message.value =
       "Przywrócono kopię. Poprzednia baza została zachowana w automatycznej kopii bezpieczeństwa.";
   });
 }
-onMounted(async () => {
-  if (desktop)
-    await run(async () => {
-      settings.value = await invoke("app_settings");
-    });
-});
 </script>
 <template>
   <div class="page-heading"><h1>Historia i kopie</h1></div>
@@ -111,7 +104,8 @@ onMounted(async () => {
         { id: 'history', name: 'Szukaj w historii' },
         { id: 'archive', name: 'Archiwum' },
         { id: 'trash', name: 'Kosz' },
-        { id: 'backup', name: 'Kopie i ustawienia' },
+        { id: 'backup', name: 'Kopie' },
+        { id: 'settings', name: 'Ustawienia' },
       ]"
       :key="item.id"
       :class="{ selected: tab === item.id }"
@@ -188,6 +182,7 @@ onMounted(async () => {
       Tutaj jest pusto.
     </p>
   </section>
+  <SettingsPanel v-else-if="tab === 'settings'" />
   <section v-else class="dashboard-card">
     <h2>Kopie zapasowe</h2>
     <p class="hint">
@@ -238,33 +233,5 @@ onMounted(async () => {
         Przywróć wybraną kopię</button
       ><button class="today-button" @click="preview = null">Anuluj</button>
     </div>
-    <h2>Przerwy i skróty</h2>
-    <label class="inline-check"
-      ><input
-        :checked="settings.idleEnabled"
-        type="checkbox"
-        :disabled="busy || !desktop"
-        @change="
-          run(async () => {
-            const value = ($event.target as HTMLInputElement).checked;
-            await invoke('set_idle_enabled', { enabled: value });
-            settings.idleEnabled = value;
-          })
-        "
-      />Zapytaj o czas po co najmniej 10 minutach bezczynności</label
-    >
-    <p class="hint">
-      Decydujesz, czy zachować czas, czy zakończyć pomiar na początku przerwy.
-      Nic nie jest obcinane automatycznie.
-    </p>
-    <p>
-      Ctrl+K — szybkie przełączanie w aplikacji.<br />Ctrl+Shift+Space — szybkie
-      przełączanie z dowolnego okna.
-    </p>
-    <p v-if="settings.shortcutError" class="error">
-      Nie udało się zarejestrować globalnego skrótu:
-      {{ settings.shortcutError }}
-    </p>
-    <small v-if="settings.version">Todo Track {{ settings.version }}</small>
   </section>
 </template>

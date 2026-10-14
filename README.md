@@ -113,7 +113,7 @@ Otwórz http://127.0.0.1:1420. Podgląd używa osobnego magazynu localStorage; j
 
 ## Zapis i pomiar czasu
 
-Od 0.3.0 użyj **Historia i kopie → Kopie i ustawienia → Eksportuj kopię** — aplikacja tworzy spójny plik również podczas pracy. Ręczne kopiowanie katalogu opisane poniżej pozostaje alternatywą po zamknięciu programu.
+Od 0.3.0 użyj **Historia i kopie → Kopie → Eksportuj kopię** — aplikacja tworzy spójny plik również podczas pracy. Ręczne kopiowanie katalogu opisane poniżej pozostaje alternatywą po zamknięciu programu.
 
 Baza znajduje się w katalogu danych aplikacji, na Windows: `%APPDATA%\pl.todotrack.desktop\todo-track.sqlite`. Operacje są transakcyjne. Do kopii zapasowej zamknij aplikację przez menu traya i skopiuj cały katalog danych (SQLite może korzystać z plików WAL).
 

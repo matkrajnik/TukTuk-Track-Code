@@ -7,6 +7,7 @@ mod maintenance;
 mod planner;
 mod recurrence;
 mod reminder;
+mod settings;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
@@ -71,29 +72,10 @@ fn quick_open(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 struct ShortcutStatus(String);
+/// Informacje spoza ustawień: wersja i błąd rejestracji skrótu globalnego.
 #[tauri::command]
-fn app_settings(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let state = app.state::<Database>();
-    let db = state.0.lock().map_err(|e| e.to_string())?;
-    let idle_enabled = db
-        .query_row(
-            "SELECT value FROM settings WHERE key='idle_enabled'",
-            [],
-            |r| r.get::<_, String>(0),
-        )
-        .unwrap_or_else(|_| "true".into())
-        != "false";
-    Ok(
-        serde_json::json!({"idleEnabled":idle_enabled,"shortcutError":app.state::<ShortcutStatus>().0,"version":app.config().version}),
-    )
-}
-#[tauri::command]
-fn set_idle_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
-    app.state::<Database>().0.lock().map_err(|e|e.to_string())?.execute("INSERT INTO settings(key,value) VALUES('idle_enabled',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[enabled.to_string()]).map_err(|e|e.to_string())?;
-    if !enabled {
-        idle::clear(&app);
-    }
-    Ok(())
+fn app_info(app: tauri::AppHandle) -> serde_json::Value {
+    serde_json::json!({"version":app.config().version,"shortcutError":app.state::<ShortcutStatus>().0})
 }
 #[tauri::command]
 fn close_day(app: tauri::AppHandle, day: String, closed: bool) -> Result<db::Snapshot, String> {
@@ -214,9 +196,10 @@ fn main() {
             app.manage(Database(Mutex::new(connection)));
             app.manage(backup::Pending::default());
             use tauri_plugin_global_shortcut::GlobalShortcutExt;
+            let quick_shortcut = settings::current(app.handle()).shortcut_quick;
             let shortcut_error = app
                 .global_shortcut()
-                .register("Control+Shift+Space")
+                .register(quick_shortcut.as_str())
                 .err()
                 .map(|e| e.to_string())
                 .unwrap_or_default();
@@ -307,8 +290,9 @@ fn main() {
             save_details,
             add_session,
             quick_open,
-            app_settings,
-            set_idle_enabled,
+            app_info,
+            settings::get_settings,
+            settings::set_settings,
             close_day,
             set_priority,
             idle::idle_notice,

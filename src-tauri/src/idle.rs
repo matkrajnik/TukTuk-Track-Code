@@ -86,15 +86,7 @@ pub fn start(app: &tauri::AppHandle) {
             .0
             .lock()
             .ok()
-            .map(|db| {
-                db.query_row(
-                    "SELECT value FROM settings WHERE key='idle_enabled'",
-                    [],
-                    |r| r.get::<_, String>(0),
-                )
-                .unwrap_or_else(|_| "true".into())
-                    != "false"
-            })
+            .map(|db| crate::settings::load(&db).idle_enabled)
             .unwrap_or(false);
         if !enabled {
             if let Ok(mut state) = app.state::<State>().0.lock() {

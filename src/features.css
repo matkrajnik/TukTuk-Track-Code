@@ -545,3 +545,37 @@
     flex-direction: column;
   }
 }
+/* Ustawienia */
+.settings-panel h2 {
+  margin: 26px 0 10px;
+}
+.settings-panel h2:first-of-type {
+  margin-top: 0;
+}
+.settings-panel > .inline-check {
+  margin: 8px 0;
+}
+.settings-fields {
+  margin-top: 14px;
+}
+.settings-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.settings-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.settings-days legend {
+  width: 100%;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
