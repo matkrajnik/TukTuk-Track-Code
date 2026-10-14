@@ -10,7 +10,7 @@ import {
   type Session,
 } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
-import { compareTasks } from "./order";
+import { plannedTasks } from "./dayplan";
 import {
   dayTarget,
   hhmm,
@@ -55,11 +55,8 @@ const projects = computed(() => [
   ),
 ]);
 const taskMap = computed(() => new Map(props.data.tasks.map((t) => [t.id, t])));
-const planned = computed(() =>
-  props.data.tasks
-    .filter((t) => !t.archived && t.details?.plannedDay === day.value)
-    .sort((a, b) => Number(a.done) - Number(b.done) || compareTasks()(a, b)),
-);
+/** Ta sama kolejność co bloki toru „Plan” na osi dnia. */
+const planned = computed(() => plannedTasks(props.data.tasks, day.value));
 /**
  * Zakończone zadania stoją zawsze pod niezakończonymi, więc przesuwanie
  * działa tylko w obrębie jednej z tych części (jak grupy na liście zadań).

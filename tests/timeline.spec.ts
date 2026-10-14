@@ -80,12 +80,12 @@ test("day timeline compares plan blocks with work and lists differences", async 
     "Wdrożenie | 1:30 | niezaczęte | −1:30",
     "Razem | 2:30 | 1:15 | −1:15",
   ]);
-  await expect(table.locator("tbody tr").first().locator("td").last()).toHaveClass(
-    /dtl-over/,
-  );
-  await expect(table.locator("tbody tr").nth(1).locator("td").last()).not.toHaveClass(
-    /dtl-over/,
-  );
+  await expect(
+    table.locator("tbody tr").first().locator("td").last(),
+  ).toHaveClass(/dtl-over/);
+  await expect(
+    table.locator("tbody tr").nth(1).locator("td").last(),
+  ).not.toHaveClass(/dtl-over/);
   // Kolory z palety tokenów, ten sam dla bloku planu i pracy zadania.
   const fill = (name: string) =>
     card
@@ -213,8 +213,10 @@ test("pinned start, missing estimate, unplanned and running work", async ({
     "Stand-up | bez szacunku | niezaczęte | —",
     "Raport | 0:30 | niezaczęte | −0:30",
     "Telefon | nieplanowane | 0:45 | —",
-    "Razem | 1:15 | 1:45 | +0:30",
+    // Różnica „Razem” tylko z wierszy z szacunkiem; cała praca osobno.
+    "Razem | 1:15 | 1:00 · łącznie 1:45 | −0:15",
   ]);
+  await expect(card.locator("tfoot td").last()).not.toHaveClass(/dtl-over/);
   await page.setViewportSize({ width: 760, height: 900 });
   await page.evaluate(() => (document.documentElement.dataset.theme = "light"));
   await card.screenshot({ path: "test-results/day-timeline-light.png" });
@@ -225,6 +227,65 @@ test("pinned start, missing estimate, unplanned and running work", async ({
   await expect(
     page.getByRole("dialog", { name: "Edytuj przedział" }),
   ).toBeVisible();
+});
+
+test("plan blocks follow the plan list order with done tasks last", async ({
+  page,
+}) => {
+  const card = await seed(
+    page,
+    [
+      {
+        id: 1,
+        title: "Analiza",
+        done: true,
+        createdAt: 0,
+        details: planned({ estimateMinutes: 60, order: 1 }),
+      },
+      {
+        id: 2,
+        title: "Wdrożenie",
+        done: false,
+        createdAt: 0,
+        details: planned({ estimateMinutes: 30, order: 2 }),
+      },
+      {
+        id: 3,
+        title: "Raport",
+        done: false,
+        createdAt: 0,
+        details: planned({ estimateMinutes: 30, order: 3 }),
+      },
+    ],
+    [
+      { id: 1, taskId: 1, startedAt: at("08:00"), endedAt: at("08:30") },
+      { id: 2, taskId: 2, startedAt: at("09:00"), endedAt: at("11:00") },
+    ],
+  );
+  // Zakończona Analiza stoi na liście planu pod niezakończonymi — tak samo na osi.
+  await expect(
+    card.getByRole("button", { name: "Plan: Wdrożenie · 08:00–08:30" }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Plan: Raport · 08:30–09:00" }),
+  ).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Plan: Analiza · 09:00–10:00" }),
+  ).toHaveClass(/done/);
+  const blocks = await card
+    .locator(".dtl-plan")
+    .evaluateAll((els) => els.map((e) => e.getAttribute("aria-label")));
+  expect(blocks.map((l) => l!.split(" · ")[0])).toEqual([
+    "Plan: Wdrożenie",
+    "Plan: Raport",
+    "Plan: Analiza",
+  ]);
+  const listOrder = await page
+    .locator("[id^='plan-task-']")
+    .evaluateAll((els) =>
+      els.map((e) => Number(e.id.slice("plan-task-".length))),
+    );
+  expect(listOrder).toEqual([2, 3, 1]);
 });
 
 test("day timeline helpers: palette and DST hours", async ({ page }) => {

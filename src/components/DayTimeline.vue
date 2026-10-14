@@ -28,9 +28,7 @@ const emit = defineEmits<{
 
 const titles = computed(() => new Map(props.tasks.map((t) => [t.id, t.title])));
 const title = (id: number) => titles.value.get(id) ?? "Zadanie";
-const plan = computed(() =>
-  planBlocks(props.tasks, props.day, props.dayStart),
-);
+const plan = computed(() => planBlocks(props.tasks, props.day, props.dayStart));
 const work = computed(() => workBlocks(props.sessions, props.day, props.now));
 const range = computed(() =>
   axisRange(props.day, props.dayStart, plan.value, work.value),
@@ -60,10 +58,17 @@ const showNow = computed(
 const rows = computed(() =>
   comparison(props.tasks, props.sessions, props.day, props.now, plan.value),
 );
+/** Wiersz z szacunkiem: tylko taki ma różnicę i wchodzi do różnicy „Razem”. */
+const comparable = (r: (typeof rows.value)[number]) =>
+  r.status !== "unplanned" && !r.noEstimate;
 const totals = computed(() => {
   const planTotal = rows.value.reduce((sum, r) => sum + r.plan, 0);
-  const actual = rows.value.reduce((sum, r) => sum + r.actual, 0);
-  return { plan: planTotal, actual };
+  const actual = rows.value
+    .filter(comparable)
+    .reduce((sum, r) => sum + r.actual, 0);
+  // Cała praca dnia (także spoza planu i bez szacunku) pokazywana osobno.
+  const all = rows.value.reduce((sum, r) => sum + r.actual, 0);
+  return { plan: planTotal, actual, all };
 });
 const over = (actual: number, planned: number) =>
   targetDiffMinutes(actual, planned) > 0;
@@ -196,7 +201,11 @@ const workText = (b: (typeof work.value)[number]) =>
       </li>
     </ul>
     <p v-else class="report-note">Brak planu i pracy w tym dniu.</p>
-    <table v-if="rows.length" class="dtl-table" aria-label="Plan i rzeczywistość">
+    <table
+      v-if="rows.length"
+      class="dtl-table"
+      aria-label="Plan i rzeczywistość"
+    >
       <thead>
         <tr>
           <th scope="col">Zadanie</th>
@@ -228,17 +237,10 @@ const workText = (b: (typeof work.value)[number]) =>
           <td
             class="mono"
             :class="{
-              'dtl-over':
-                row.status !== 'unplanned' &&
-                !row.noEstimate &&
-                over(row.actual, row.plan),
+              'dtl-over': comparable(row) && over(row.actual, row.plan),
             }"
           >
-            {{
-              row.status === "unplanned" || row.noEstimate
-                ? "—"
-                : signedDiff(row.actual, row.plan)
-            }}
+            {{ comparable(row) ? signedDiff(row.actual, row.plan) : "—" }}
           </td>
         </tr>
       </tbody>
@@ -246,7 +248,16 @@ const workText = (b: (typeof work.value)[number]) =>
         <tr>
           <th scope="row">Razem</th>
           <td class="mono">{{ hm(totals.plan) }}</td>
-          <td class="mono">{{ hm(totals.actual) }}</td>
+          <td class="mono">
+            {{ hm(totals.actual)
+            }}<span
+              v-if="totals.all !== totals.actual"
+              class="dtl-status dtl-all"
+              title="Cała praca dnia, także spoza planu i bez szacunku"
+            >
+              · łącznie {{ hm(totals.all) }}</span
+            >
+          </td>
           <td
             class="mono"
             :class="{ 'dtl-over': over(totals.actual, totals.plan) }"

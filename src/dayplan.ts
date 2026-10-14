@@ -41,11 +41,16 @@ export interface PlanBlock {
   pinned: boolean;
 }
 
-/** Zadania planu dnia w ręcznej kolejności (priorytet, `order`, id). */
+/**
+ * Zadania planu dnia w kolejności listy „Plan dnia”: zakończone pod
+ * niezakończonymi, w obu częściach ręczna kolejność (priorytet, `order`, id).
+ * Ta sama kolejność wyznacza bloki toru „Plan”.
+ */
 export function plannedTasks(tasks: Task[], day: string): Task[] {
+  const byOrder = compareTasks();
   return tasks
     .filter((t) => !t.archived && t.details?.plannedDay === day)
-    .sort(compareTasks());
+    .sort((a, b) => Number(a.done) - Number(b.done) || byOrder(a, b));
 }
 
 /**
