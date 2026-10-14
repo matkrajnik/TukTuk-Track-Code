@@ -266,3 +266,6 @@ main {
     padding: 10px 8px;
   }
 }
+.widget-switch.on {
+  color: var(--accent);
+}

@@ -193,7 +193,11 @@ onUnmounted(() => {
         @change="save({ widgetBackgroundOnly: checked($event) })"
       />Tylko gdy główne okno jest schowane lub bez fokusu</label
     >
-    <p class="hint">Mini-widget pojawi się w jednej z kolejnych wersji.</p>
+    <p class="hint">
+      Mini-widget pokazuje bieżący pomiar z przyciskami Start/Stop i ⇄. X na
+      widgecie chowa go do końca sesji; przywrócisz go przełącznikiem w
+      nagłówku.
+    </p>
 
     <h2>Powiadomienia</h2>
     <label class="inline-check"

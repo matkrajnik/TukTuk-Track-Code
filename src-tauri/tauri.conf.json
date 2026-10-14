@@ -35,6 +35,21 @@
         "visible": false
       },
       {
+        "label": "widget",
+        "title": "Todo Track — mini-widget",
+        "url": "index.html#widget",
+        "width": 320,
+        "height": 64,
+        "resizable": false,
+        "maximizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "focusable": false,
+        "visible": false
+      },
+      {
         "label": "reminder",
         "title": "Todo Track — przypomnienie",
         "url": "index.html#reminder",

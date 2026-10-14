@@ -1,0 +1,179 @@
+import { test, expect, type Page } from "@playwright/test";
+
+test.use({ timezoneId: "Europe/Warsaw" });
+const dataKey = "todo-track-preview-v1";
+const settingsKey = "todo-track-preview-settings-v1";
+
+async function seed(page: Page) {
+  await page.clock.install({ time: new Date("2026-10-14T09:59:50+02:00") });
+  await page.goto("/#widget");
+  await page.evaluate((key) => {
+    const at = (s: string) => new Date(s).getTime();
+    localStorage.setItem(
+      key,
+      JSON.stringify({
+        tasks: [
+          {
+            id: 1,
+            title: "Przegląd kodu",
+            done: false,
+            createdAt: at("2026-10-14T07:00:00+02:00"),
+          },
+          {
+            id: 2,
+            title: "Raport miesięczny dla działu sprzedaży i marketingu",
+            done: false,
+            createdAt: at("2026-10-14T07:00:00+02:00"),
+            details: { project: "Biuro" },
+          },
+        ],
+        sessions: [
+          {
+            id: 1,
+            taskId: 1,
+            startedAt: at("2026-10-14T08:00:00+02:00"),
+            endedAt: at("2026-10-14T09:00:00+02:00"),
+          },
+          {
+            id: 2,
+            taskId: 2,
+            startedAt: at("2026-10-14T09:00:00+02:00"),
+            endedAt: null,
+          },
+        ],
+      }),
+    );
+  }, dataKey);
+  await page.reload();
+  await page.clock.pauseAt(new Date("2026-10-14T10:00:00+02:00"));
+}
+const active = (page: Page) =>
+  page.evaluate(
+    (key) =>
+      JSON.parse(localStorage.getItem(key) ?? "{}").sessions.filter(
+        (s: { endedAt: number | null }) => s.endedAt === null,
+      ),
+    dataKey,
+  );
+
+test("widget shows the running measurement and toggles Stop and Start", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 64 });
+  await seed(page);
+  const widget = page.locator("#widget");
+  await expect(widget).toBeVisible();
+  await expect(widget).toHaveAttribute("aria-label", "Mini-widget");
+  const name = widget.getByRole("button", { name: "Pokaż główne okno" });
+  await expect(name).toContainText(
+    "Raport miesięczny dla działu sprzedaży i marketingu",
+  );
+  await expect(name).toContainText("Biuro");
+  await expect(widget.getByLabel("Czas bieżącego pomiaru")).toHaveText(
+    "01:00:00",
+  );
+  await page.clock.runFor(2000);
+  await expect(widget.getByLabel("Czas bieżącego pomiaru")).toHaveText(
+    "01:00:02",
+  );
+  // Nazwa mieści się w oknie 320 px (wielokropek), nic nie wystaje poza widget.
+  const scroll = await page.evaluate(() => ({
+    width: document.documentElement.scrollWidth,
+    height: document.documentElement.scrollHeight,
+  }));
+  expect(scroll).toEqual({ width: 320, height: 64 });
+  await page.screenshot({ path: "test-results/widget-running.png" });
+
+  // Stop: pomiar zakończony, potwierdzenie z czasem, przycisk zmienia się na Start.
+  await widget.getByRole("button", { name: "Zatrzymaj pomiar" }).click();
+  await expect(name).toContainText("Brak pomiaru");
+  await expect(widget.getByRole("status")).toHaveText(
+    "Stop: Raport miesięczny dla działu sprzedaży i marketingu · 01:00:02",
+  );
+  await expect(widget.getByLabel("Czas bieżącego pomiaru")).toHaveCount(0);
+  expect(await active(page)).toEqual([]);
+  await page.clock.runFor(5000);
+  await expect(widget.getByRole("status")).toHaveText(
+    "Ostatnio: Raport miesięczny dla działu sprzedaży i marketingu",
+  );
+  await page.screenshot({ path: "test-results/widget-idle.png" });
+
+  // Start: wznawia ostatnio mierzone zadanie (ta sama logika co skrót Start/Stop).
+  await widget.getByRole("button", { name: "Wznów ostatnie zadanie" }).click();
+  await expect(widget.getByRole("status")).toHaveText(
+    "Start: Raport miesięczny dla działu sprzedaży i marketingu",
+  );
+  await expect(
+    widget.getByRole("button", { name: "Zatrzymaj pomiar" }),
+  ).toBeVisible();
+  await expect(widget.getByLabel("Czas bieżącego pomiaru")).toHaveText(
+    "00:00:00",
+  );
+  expect((await active(page)).map((s: { taskId: number }) => s.taskId)).toEqual(
+    [2],
+  );
+
+  // Stan przetrwał przeładowanie, bo pochodzi z magazynu.
+  await page.reload();
+  await expect(
+    page.locator("#widget").getByRole("button", { name: "Zatrzymaj pomiar" }),
+  ).toBeVisible();
+});
+
+test("widget without anything to resume opens quick switch, and X hides it", async ({
+  page,
+}) => {
+  await page.goto("/#widget");
+  const widget = page.locator("#widget");
+  await expect(widget.getByRole("button", { name: "Pokaż główne okno" })).toContainText(
+    "Brak pomiaru",
+  );
+  await widget.getByRole("button", { name: "Wznów ostatnie zadanie" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "Szybkie przełączanie" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await widget.getByRole("button", { name: "Schowaj widget" }).click();
+  await expect(page.locator("#widget")).toHaveCount(0);
+  await expect(page.getByText("Mini-widget schowany do końca sesji.")).toBeVisible();
+  // X nie zmienia ustawienia.
+  expect(
+    await page.evaluate((k) => localStorage.getItem(k), settingsKey),
+  ).toBeNull();
+  await page.getByRole("button", { name: "Pokaż widget" }).click();
+  await expect(page.locator("#widget")).toBeVisible();
+});
+
+test("header switch enables the widget and hides it for the session only", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const toggle = page.getByRole("button", { name: "Mini-widget", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  const settings = () =>
+    page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "{}"), settingsKey);
+  expect(await settings()).toEqual({ widgetEnabled: true });
+
+  // Ponowne kliknięcie chowa widget do końca sesji, ustawienie zostaje włączone.
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  expect(await settings()).toEqual({ widgetEnabled: true });
+
+  // Ustawienia pokazują włączony widget; przełącznik go przywraca.
+  await page.getByRole("button", { name: "Historia i kopie", exact: true }).click();
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await expect(
+    page.getByLabel("Pokazuj mini-widget zawsze na wierzchu"),
+  ).toBeChecked();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+  // Wyłączenie w ustawieniach gasi przełącznik.
+  await page.getByLabel("Pokazuj mini-widget zawsze na wierzchu").uncheck();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  expect(await settings()).toEqual({ widgetEnabled: false });
+});

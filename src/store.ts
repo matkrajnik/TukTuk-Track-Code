@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 export interface Task {
   id: number;
   title: string;
@@ -488,4 +489,65 @@ export async function writeAutostart(
   const settings = { ...previewJson(previewSettingsKey), autostartHidden: hidden };
   localStorage.setItem(previewSettingsKey, JSON.stringify(settings));
   return readAutostart();
+}
+
+/** Stan mini-widgetu (`widget::Status` w Rust). */
+export interface WidgetStatus {
+  enabled: boolean;
+  backgroundOnly: boolean;
+  /** Schowany przyciskiem X do końca sesji aplikacji; ustawienie się nie zmienia. */
+  dismissed: boolean;
+}
+const widgetDismissedKey = "todo-track-preview-widget-dismissed";
+const widgetEvent = "widget-state";
+function previewWidgetDismissed(): boolean {
+  try {
+    return sessionStorage.getItem(widgetDismissedKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** `widget_status`: ustawienia widgetu i schowanie do końca sesji. */
+export async function readWidgetStatus(): Promise<WidgetStatus> {
+  if (desktop) return invoke("widget_status");
+  const settings = previewJson(previewSettingsKey);
+  return {
+    enabled: settings.widgetEnabled === true,
+    backgroundOnly: settings.widgetBackgroundOnly === true,
+    dismissed: previewWidgetDismissed(),
+  };
+}
+
+/**
+ * `widget_dismiss`: X na widgecie chowa go do końca sesji aplikacji (w podglądzie
+ * do końca sesji karty), przełącznik w nagłówku przywraca. Ustawienie bez zmian.
+ */
+export async function dismissWidget(dismissed: boolean): Promise<WidgetStatus> {
+  if (desktop) return invoke("widget_dismiss", { dismissed });
+  try {
+    if (dismissed) sessionStorage.setItem(widgetDismissedKey, "1");
+    else sessionStorage.removeItem(widgetDismissedKey);
+  } catch {}
+  const status = await readWidgetStatus();
+  window.dispatchEvent(new CustomEvent(widgetEvent, { detail: status }));
+  return status;
+}
+
+/** Nasłuch zmian stanu widgetu (zdarzenie Tauri albo zdarzenie okna w podglądzie). */
+export async function onWidgetStatus(
+  handler: (status: WidgetStatus) => void,
+): Promise<() => void> {
+  if (desktop) {
+    return listen<WidgetStatus>(widgetEvent, (e) => handler(e.payload));
+  }
+  const listener = (e: Event) =>
+    handler((e as CustomEvent<WidgetStatus>).detail);
+  window.addEventListener(widgetEvent, listener);
+  return () => window.removeEventListener(widgetEvent, listener);
+}
+
+/** `widget_open_main`: klik w nazwę zadania na widgecie. W podglądzie nic nie robi. */
+export async function openMainWindow(): Promise<void> {
+  if (desktop) await invoke("widget_open_main");
 }

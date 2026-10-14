@@ -81,6 +81,7 @@ pub fn start(app: &tauri::AppHandle) {
             };
             let background =
                 !main.is_visible().unwrap_or(true) || !main.is_focused().unwrap_or(true);
+            crate::widget::apply(&app, background || main.is_minimized().unwrap_or(false));
             let state = app.state::<ReminderState>();
             let due = state
                 .clock

@@ -12,6 +12,7 @@ mod settings;
 mod shortcuts;
 mod stats;
 mod tray;
+mod widget;
 mod window_state;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -215,6 +216,7 @@ fn main() {
             shortcuts::setup(app);
             jira::setup(app.handle())?;
             tray::setup(app)?;
+            widget::setup(app);
             reminder::start(app.handle());
             idle::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
@@ -251,6 +253,16 @@ fn main() {
                 if window.label() == "reminder" {
                     let _ = reminder::reminder_action(window.app_handle().clone(), "snooze".into());
                 }
+                if window.label() == widget::LABEL {
+                    widget::widget_dismiss(window.app_handle().clone(), true);
+                }
+                if window.label() == "main" {
+                    widget::wake(window.app_handle());
+                }
+            }
+            // Tryb widgetu „tylko w tle” reaguje od razu, nie dopiero w pętli co 2 s.
+            tauri::WindowEvent::Focused(_) if window.label() == "main" => {
+                widget::wake(window.app_handle());
             }
             _ => {}
         })
@@ -276,6 +288,9 @@ fn main() {
             backup::inspect_backup,
             backup::restore_backup,
             reminder::reminder_action,
+            widget::widget_status,
+            widget::widget_dismiss,
+            widget::widget_open_main,
             jira::jira_settings,
             jira::jira_connect,
             jira::jira_disconnect,

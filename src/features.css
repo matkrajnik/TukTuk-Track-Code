@@ -662,3 +662,77 @@
 .shortcut-error {
   margin: 0;
 }
+/* Mini-widget: okno 320×64 zawsze na wierzchu. */
+html.widget-root,
+html.widget-root body {
+  overflow: hidden;
+}
+.widget-card {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100vh;
+  min-height: 56px;
+  box-sizing: border-box;
+  padding: 0 4px 0 2px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  user-select: none;
+}
+.widget-card.running {
+  border-color: var(--accent);
+}
+.widget-grip {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 2px;
+  color: var(--muted);
+  cursor: grab;
+}
+.widget-grip svg {
+  pointer-events: none;
+}
+.widget-task {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 4px 6px;
+  text-align: left;
+}
+.widget-task strong,
+.widget-task small {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.widget-task strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.widget-task small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.widget-task small.widget-error {
+  color: var(--danger);
+}
+.widget-clock {
+  font-size: 13px;
+  padding: 0 4px;
+}
+.widget-card .icon-button {
+  width: 28px;
+  height: 28px;
+}
+.widget-toggle {
+  color: var(--accent);
+}
+.widget-hidden-note {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
