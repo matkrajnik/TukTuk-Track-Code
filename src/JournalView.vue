@@ -48,11 +48,18 @@ const taskMap = computed(() => new Map(props.data.tasks.map((t) => [t.id, t])));
 const planned = computed(() =>
   props.data.tasks
     .filter((t) => !t.archived && t.details?.plannedDay === day.value)
-    .sort(
-      (a, b) =>
-        Number(a.done) - Number(b.done) || compareTasks()(a, b),
-    ),
+    .sort((a, b) => Number(a.done) - Number(b.done) || compareTasks()(a, b)),
 );
+/**
+ * Zakończone zadania stoją zawsze pod niezakończonymi, więc przesuwanie
+ * działa tylko w obrębie jednej z tych części (jak grupy na liście zadań).
+ */
+function planPart(task: Task) {
+  return planned.value.filter((t) => t.done === task.done);
+}
+function planList(task: Task) {
+  return task.done ? "plan-done" : "plan-open";
+}
 const overduePlan = computed(() =>
   props.data.tasks.filter(
     (t) =>
@@ -301,7 +308,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         v-for="task in planned"
         :key="task.id"
         class="journal-task"
-        v-bind="reorder.dropProps(planned, task, 'plan')"
+        v-bind="reorder.dropProps(planPart(task), task, planList(task))"
       >
         <div class="journal-task-row">
           <ReorderHandle
@@ -309,8 +316,8 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             :task-id="task.id"
             scope="plan"
             :disabled="busy"
-            @move="reorder.move(planned, task.id, $event)"
-            @dragstart="reorder.start($event, task.id, 'plan')"
+            @move="reorder.move(planPart(task), task.id, $event)"
+            @dragstart="reorder.start($event, task.id, planList(task))"
             @dragend="reorder.end()"
           />
           <button
@@ -480,7 +487,9 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             class="mono target-diff"
             :class="{ over: targetDiffMinutes(d.total, d.target) > 0 }"
             :title="
-              d.target ? 'Różnica względem celu ' + hhmm(d.target) : 'Dzień wolny'
+              d.target
+                ? 'Różnica względem celu ' + hhmm(d.target)
+                : 'Dzień wolny'
             "
             >{{
               d.target || d.total >= 60000

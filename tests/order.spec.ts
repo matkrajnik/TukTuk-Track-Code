@@ -147,3 +147,114 @@ test("the day plan list has the same handles and order", async ({ page }) => {
   await page.getByRole("button", { name: "Zadania", exact: true }).click();
   await expect(titles(page)).toHaveText(["Plan A", "Plan B"]);
 });
+
+test("the day plan never moves tasks between undone and done parts", async ({
+  page,
+}) => {
+  await seed(page, [
+    {
+      id: 2,
+      title: "Plan pilny",
+      done: false,
+      createdAt: 0,
+      details: { plannedDay: "2026-10-14", priority: 1 },
+    },
+    {
+      id: 1,
+      title: "Plan zrobiony",
+      done: true,
+      createdAt: 0,
+      details: { plannedDay: "2026-10-14" },
+    },
+  ]);
+  await page
+    .getByRole("button", { name: "Plan i historia", exact: true })
+    .click();
+  const plan = page.getByRole("region", { name: "Plan dnia" });
+  const names = plan.locator(".journal-name");
+  await expect(names.first()).toContainText("Plan pilny");
+  await plan
+    .getByRole("button", { name: "Przesuń: Plan pilny", exact: true })
+    .focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await plan
+    .getByRole("button", { name: "Przesuń: Plan zrobiony", exact: true })
+    .focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  await plan
+    .getByRole("button", { name: "Przesuń: Plan pilny", exact: true })
+    .dragTo(plan.locator(".journal-task").filter({ hasText: "Plan zrobiony" }));
+  await expect(names.first()).toContainText("Plan pilny");
+  await expect(names.nth(1)).toContainText("Plan zrobiony");
+  const tasks = (await stored(page)).tasks;
+  const pilny = tasks.find((t: any) => t.id === 2).details;
+  expect(pilny.priority).toBe(1);
+  expect(pilny.order).toBeUndefined();
+  expect(tasks.find((t: any) => t.id === 1).details.order).toBeUndefined();
+});
+
+test("the task with a running timer is neither moved nor a move target", async ({
+  page,
+}) => {
+  await page.clock.setFixedTime(new Date("2026-10-14T17:00:00+02:00"));
+  await page.goto("/");
+  const start = new Date("2026-10-14T16:00:00+02:00").getTime();
+  await page.evaluate(
+    ([k, value]) => localStorage.setItem(k, value),
+    [
+      key,
+      JSON.stringify({
+        tasks: [
+          {
+            id: 3,
+            title: "Ważne",
+            done: false,
+            createdAt: 0,
+            details: { priority: 1 },
+          },
+          { id: 2, title: "Zwykłe", done: false, createdAt: 0 },
+          {
+            id: 1,
+            title: "Mierzone",
+            done: false,
+            createdAt: 0,
+            details: { priority: -1 },
+          },
+        ],
+        sessions: [
+          {
+            id: 1,
+            taskId: 3,
+            startedAt: start - 7200000,
+            endedAt: start - 3600000,
+          },
+          { id: 2, taskId: 2, startedAt: start - 3600000, endedAt: start },
+          { id: 3, taskId: 1, startedAt: start, endedAt: null },
+        ],
+      }),
+    ],
+  );
+  await page.reload();
+  await expect(titles(page)).toHaveText(["Mierzone", "Ważne", "Zwykłe"]);
+  await page
+    .getByRole("button", { name: "Przesuń: Ważne", exact: true })
+    .dragTo(page.locator(".task-card").filter({ hasText: "Mierzone" }));
+  await page
+    .getByRole("button", { name: "Przesuń: Mierzone", exact: true })
+    .focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await page
+    .getByRole("button", { name: "Przesuń: Ważne", exact: true })
+    .focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(titles(page)).toHaveText(["Mierzone", "Ważne", "Zwykłe"]);
+  const tasks = (await stored(page)).tasks;
+  expect(tasks.find((t: any) => t.id === 3).details).toEqual({ priority: 1 });
+  expect(tasks.find((t: any) => t.id === 1).details).toEqual({ priority: -1 });
+  // Zwykłe zadania obok mierzonego nadal można przesuwać.
+  await page
+    .getByRole("button", { name: "Przesuń: Zwykłe", exact: true })
+    .focus();
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(titles(page)).toHaveText(["Mierzone", "Zwykłe", "Ważne"]);
+});

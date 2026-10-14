@@ -18,7 +18,18 @@ export function useReorder(options: {
   const dragging = ref<{ id: number; list: string } | null>(null);
   const over = ref(0);
 
+  /**
+   * Zadanie z trwającym pomiarem stoi przypięte na początku grupy, więc nie
+   * przesuwa się go ani nie używa jako celu (jego prawdziwe miejsce w paśmie
+   * nie odpowiada temu, co widać na ekranie).
+   */
+  function isActive(id: number) {
+    const active = options.activeTaskId();
+    return active != null && active === id;
+  }
+
   async function apply(visible: Task[], id: number, targetId: number) {
+    if (isActive(id) || isActive(targetId)) return;
     const entries = planMove(options.all(), visible, id, targetId);
     if (!entries || options.busy.value) return;
     options.busy.value = true;
@@ -33,6 +44,7 @@ export function useReorder(options: {
   }
 
   async function move(visible: Task[], id: number, delta: -1 | 1) {
+    if (isActive(id)) return;
     const target = neighbour(visible, id, delta, options.activeTaskId());
     if (!target) return;
     await apply(visible, id, target.id);
@@ -45,6 +57,10 @@ export function useReorder(options: {
   }
 
   function start(event: DragEvent, id: number, list: string) {
+    if (isActive(id)) {
+      event.preventDefault();
+      return;
+    }
     dragging.value = { id, list };
     if (event.dataTransfer) {
       event.dataTransfer.effectAllowed = "move";
@@ -63,7 +79,10 @@ export function useReorder(options: {
   /** Atrybuty i nasłuch dla elementu listy, na który można upuścić zadanie. */
   function dropProps(visible: Task[], task: Task, list: string) {
     const accepts = () =>
-      dragging.value?.list === list && dragging.value.id !== task.id;
+      dragging.value?.list === list &&
+      dragging.value.id !== task.id &&
+      !isActive(dragging.value.id) &&
+      !isActive(task.id);
     return {
       "data-reorder-item": task.id,
       class: { "drop-target": over.value === task.id },
