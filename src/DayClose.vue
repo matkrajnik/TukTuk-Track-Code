@@ -10,7 +10,12 @@ import {
 } from "./store";
 import { dayBounds, dayKey, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
-import { dayTarget, targetDiffMinutes, targetMessage, useSettings } from "./target";
+import {
+  dayTarget,
+  targetDiffMinutes,
+  targetMessage,
+  useSettings,
+} from "./target";
 const clipboard = navigator.clipboard;
 const props = defineProps<{ data: Snapshot; day: string; now: number }>();
 const emit = defineEmits<{
@@ -74,7 +79,12 @@ const gaps = computed(() => {
   return result;
 });
 const report = computed(() =>
-  tsText(props.day, rows.value, { hoursHeader: "Godziny", trim: false }),
+  tsText([props.day], props.data, props.now, {
+    hoursHeader: "Godziny",
+    trim: false,
+    skipEmpty: true,
+    order: "snapshot",
+  }),
 );
 async function run(fn: () => Promise<void>) {
   busy.value = true;

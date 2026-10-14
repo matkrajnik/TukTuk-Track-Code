@@ -90,3 +90,142 @@
     flex-wrap: wrap;
   }
 }
+
+/* Raport TS z wybranych dni: kalendarz miesiąca i lista zestawu. */
+.report-modes {
+  margin-right: auto;
+}
+.multi-report {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 18px;
+  margin-bottom: 22px;
+}
+.month-calendar,
+.multi-side {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  min-width: 0;
+}
+.month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.month-label {
+  font-weight: 500;
+  text-transform: capitalize;
+}
+.month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+.month-weekday {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding-bottom: 4px;
+}
+.month-day {
+  position: relative;
+  min-height: 36px;
+  padding: 6px 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.month-day:hover {
+  background: var(--raised);
+}
+.month-day.today {
+  border-color: var(--line);
+}
+.month-day.selected {
+  background: var(--accent);
+  color: var(--accent-text);
+  border-color: var(--accent);
+}
+.work-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.month-day.selected .work-dot {
+  background: var(--accent-text);
+}
+.month-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 14px;
+}
+.selected-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.selected-heading strong {
+  color: var(--accent);
+  font-weight: 500;
+}
+.selected-days {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.selected-days li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+.selected-days li:last-child {
+  border-bottom: 0;
+}
+.selected-open {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  text-align: left;
+  color: var(--text);
+}
+.selected-open .muted {
+  color: var(--muted);
+}
+.ts-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  margin-top: 10px;
+}
+.ts-report button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+@media (max-width: 850px) {
+  .multi-report {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

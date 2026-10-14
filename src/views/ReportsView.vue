@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { ChevronDown, ChevronLeft, ChevronRight, Pencil } from "lucide-vue-next";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+} from "lucide-vue-next";
 import ManualTime from "../ManualTime.vue";
 import { duration, type Session, type Snapshot } from "../store";
 import { dayBounds, dayKey, inDay, stamp } from "../time";
 import { byTotal, dayRows, rowsTotal, tsText } from "../report";
+import { copyReport } from "../clipboard";
+import MultiDayReport from "../components/MultiDayReport.vue";
 
 const props = defineProps<{ data: Snapshot; now: number; busy: boolean }>();
 const day = defineModel<string>("day", { required: true });
@@ -18,6 +25,8 @@ const tsVisible = ref(false);
 const tsTextArea = ref<HTMLTextAreaElement | null>(null);
 const tsCopyStatus = ref("");
 const tsIncludeNotes = ref(true);
+/** Tryb: raport jednego dnia albo TS z dowolnie wybranych dni. */
+const mode = ref<"single" | "multi">("single");
 
 const todayKey = computed(() => dayKey(props.now));
 const report = computed(() =>
@@ -25,7 +34,9 @@ const report = computed(() =>
 );
 const reportTotal = computed(() => rowsTotal(report.value));
 const tsReport = computed(() =>
-  tsText(day.value, report.value, { includeNotes: tsIncludeNotes.value }),
+  tsText([day.value], props.data, props.now, {
+    includeNotes: tsIncludeNotes.value,
+  }),
 );
 const reportLabel = computed(() =>
   new Intl.DateTimeFormat("pl-PL", {
@@ -38,24 +49,18 @@ const reportLabel = computed(() =>
 watch([day, tsVisible], () => {
   tsCopyStatus.value = "";
 });
+// Przejście do konkretnego dnia (np. z Dashboardu) pokazuje raport dnia.
+watch(day, () => {
+  mode.value = "single";
+});
+function openDay(value: string) {
+  day.value = value;
+  mode.value = "single";
+}
 
 async function copyTsReport() {
-  const text = tsReport.value;
   tsCopyStatus.value = "";
-  try {
-    await navigator.clipboard.writeText(text);
-    tsCopyStatus.value = "Skopiowano raport.";
-  } catch {
-    tsTextArea.value?.focus();
-    tsTextArea.value?.select();
-    try {
-      if (document.execCommand("copy")) {
-        tsCopyStatus.value = "Skopiowano raport.";
-        return;
-      }
-    } catch {}
-    tsCopyStatus.value = "Zaznaczono raport. Naciśnij Ctrl+C, aby skopiować.";
-  }
+  tsCopyStatus.value = await copyReport(tsReport.value, tsTextArea.value);
 }
 function shiftDay(offset: number) {
   const d = new Date(dayBounds(day.value)[0]);
@@ -77,7 +82,22 @@ function toggle(id: number) {
 <template>
   <div class="page-heading">
     <h1>Raporty dzienne</h1>
-    <div class="date-picker">
+    <div class="tabs report-modes" role="group" aria-label="Tryb raportu">
+      <button
+        :class="{ selected: mode === 'single' }"
+        :aria-pressed="mode === 'single'"
+        @click="mode = 'single'"
+      >
+        Jeden dzień</button
+      ><button
+        :class="{ selected: mode === 'multi' }"
+        :aria-pressed="mode === 'multi'"
+        @click="mode = 'multi'"
+      >
+        Wybrane dni
+      </button>
+    </div>
+    <div v-if="mode === 'single'" class="date-picker">
       <button
         class="icon-button"
         aria-label="Poprzedni dzień"
@@ -95,9 +115,7 @@ function toggle(id: number) {
         @click="shiftDay(1)"
       >
         <ChevronRight :size="18" /></button
-      ><button class="today-button" @click="day = todayKey">
-        Dzisiaj
-      </button>
+      ><button class="today-button" @click="day = todayKey">Dzisiaj</button>
       <button
         class="today-button"
         :aria-expanded="tsVisible"
@@ -108,119 +126,127 @@ function toggle(id: number) {
       </button>
     </div>
   </div>
-  <section class="report-summary" aria-label="Podsumowanie dnia">
-    <div>
-      <p>{{ reportLabel }}</p>
-      <h2>Przepracowany czas</h2>
-    </div>
-    <strong class="mono report-total">{{ duration(reportTotal) }}</strong>
-  </section>
-  <ManualTime
-    :tasks="data.tasks"
-    :day="day"
-    @updated="emit('updated', $event)"
+  <MultiDayReport
+    v-if="mode === 'multi'"
+    :data="data"
+    :now="now"
+    @open="openDay"
   />
-  <p class="report-note">
-    Czas przypisany do wybranego dnia. Przedziały przez północ są dzielone
-    między dni.
-  </p>
-  <section
-    v-if="tsVisible"
-    id="ts-report"
-    class="ts-report"
-    aria-label="Raport TS"
-  >
-    <div class="ts-heading">
-      <h2>Raport TS</h2>
-      <button class="today-button" @click="copyTsReport">
-        Kopiuj raport
-      </button>
-    </div>
-    <label class="inline-check"
-      ><input v-model="tsIncludeNotes" type="checkbox" />Dołącz notatki z tego
-      dnia</label
-    >
-    <p class="report-note">
-      Godziny dziesiętne, np. 1 godz. 30 min = 1,50 h. Zaokrąglenie do dwóch
-      miejsc; suma liczona z pełnego czasu.
-    </p>
-    <p
-      v-if="
-        report.some((row) =>
-          row.sessions.some((session) => session.endedAt === null),
-        )
-      "
-      class="report-note"
-    >
-      Trwający pomiar jest uwzględniony do bieżącej chwili.
-    </p>
-    <textarea
-      ref="tsTextArea"
-      aria-label="Treść raportu TS"
-      :value="tsReport"
-      readonly
-      spellcheck="false"
-      @focus="($event.target as HTMLTextAreaElement).select()"
-    />
-    <p class="ts-copy-status" role="status">{{ tsCopyStatus }}</p>
-  </section>
-  <div class="report-list">
-    <article v-for="row in report" :key="row.task.id" class="report-card">
-      <button
-        class="report-expand"
-        :aria-expanded="reportExpanded.has(row.task.id)"
-        :aria-label="'Przedziały raportu: ' + row.task.title"
-        :aria-controls="'report-' + row.task.id"
-        @click="toggle(row.task.id)"
-      >
-        <span class="task-title">{{ row.task.title }}</span
-        ><strong class="mono">{{ duration(row.total) }}</strong
-        ><ChevronDown
-          :size="16"
-          :class="{ rotated: reportExpanded.has(row.task.id) }"
-        />
-      </button>
-      <div
-        v-if="reportExpanded.has(row.task.id)"
-        :id="'report-' + row.task.id"
-        class="task-details"
-      >
-        <div class="details-heading">
-          <span>Pełny przedział</span><span>Czas w tym dniu</span>
-        </div>
-        <div
-          v-for="session in row.sessions"
-          :key="session.id"
-          class="session-row"
-        >
-          <div class="interval">
-            <span>{{ stamp(session.startedAt) }}</span
-            ><span class="interval-arrow">→</span
-            ><span>{{
-              session.endedAt === null ? "W trakcie" : stamp(session.endedAt)
-            }}</span>
-          </div>
-          <span class="mono session-duration">{{
-            duration(inDay(session, day, now))
-          }}</span
-          ><button
-            class="icon-button"
-            :aria-label="'Edytuj przedział ' + session.id"
-            :disabled="busy || session.endedAt === null"
-            :title="
-              session.endedAt === null
-                ? 'Zatrzymaj pomiar przed edycją'
-                : 'Edytuj przedział'
-            "
-            @click="emit('session', session)"
-          >
-            <Pencil :size="14" />
-          </button>
-        </div>
+  <template v-else>
+    <section class="report-summary" aria-label="Podsumowanie dnia">
+      <div>
+        <p>{{ reportLabel }}</p>
+        <h2>Przepracowany czas</h2>
       </div>
-    </article>
-    <p v-if="!report.length" class="empty-state">
-      Brak zarejestrowanej pracy w tym dniu.
+      <strong class="mono report-total">{{ duration(reportTotal) }}</strong>
+    </section>
+    <ManualTime
+      :tasks="data.tasks"
+      :day="day"
+      @updated="emit('updated', $event)"
+    />
+    <p class="report-note">
+      Czas przypisany do wybranego dnia. Przedziały przez północ są dzielone
+      między dni.
     </p>
-  </div>
+    <section
+      v-if="tsVisible"
+      id="ts-report"
+      class="ts-report"
+      aria-label="Raport TS"
+    >
+      <div class="ts-heading">
+        <h2>Raport TS</h2>
+        <button class="today-button" @click="copyTsReport">
+          Kopiuj raport
+        </button>
+      </div>
+      <label class="inline-check"
+        ><input v-model="tsIncludeNotes" type="checkbox" />Dołącz notatki z tego
+        dnia</label
+      >
+      <p class="report-note">
+        Godziny dziesiętne, np. 1 godz. 30 min = 1,50 h. Zaokrąglenie do dwóch
+        miejsc; suma liczona z pełnego czasu.
+      </p>
+      <p
+        v-if="
+          report.some((row) =>
+            row.sessions.some((session) => session.endedAt === null),
+          )
+        "
+        class="report-note"
+      >
+        Trwający pomiar jest uwzględniony do bieżącej chwili.
+      </p>
+      <textarea
+        ref="tsTextArea"
+        aria-label="Treść raportu TS"
+        :value="tsReport"
+        readonly
+        spellcheck="false"
+        @focus="($event.target as HTMLTextAreaElement).select()"
+      />
+      <p class="ts-copy-status" role="status">{{ tsCopyStatus }}</p>
+    </section>
+    <div class="report-list">
+      <article v-for="row in report" :key="row.task.id" class="report-card">
+        <button
+          class="report-expand"
+          :aria-expanded="reportExpanded.has(row.task.id)"
+          :aria-label="'Przedziały raportu: ' + row.task.title"
+          :aria-controls="'report-' + row.task.id"
+          @click="toggle(row.task.id)"
+        >
+          <span class="task-title">{{ row.task.title }}</span
+          ><strong class="mono">{{ duration(row.total) }}</strong
+          ><ChevronDown
+            :size="16"
+            :class="{ rotated: reportExpanded.has(row.task.id) }"
+          />
+        </button>
+        <div
+          v-if="reportExpanded.has(row.task.id)"
+          :id="'report-' + row.task.id"
+          class="task-details"
+        >
+          <div class="details-heading">
+            <span>Pełny przedział</span><span>Czas w tym dniu</span>
+          </div>
+          <div
+            v-for="session in row.sessions"
+            :key="session.id"
+            class="session-row"
+          >
+            <div class="interval">
+              <span>{{ stamp(session.startedAt) }}</span
+              ><span class="interval-arrow">→</span
+              ><span>{{
+                session.endedAt === null ? "W trakcie" : stamp(session.endedAt)
+              }}</span>
+            </div>
+            <span class="mono session-duration">{{
+              duration(inDay(session, day, now))
+            }}</span
+            ><button
+              class="icon-button"
+              :aria-label="'Edytuj przedział ' + session.id"
+              :disabled="busy || session.endedAt === null"
+              :title="
+                session.endedAt === null
+                  ? 'Zatrzymaj pomiar przed edycją'
+                  : 'Edytuj przedział'
+              "
+              @click="emit('session', session)"
+            >
+              <Pencil :size="14" />
+            </button>
+          </div>
+        </div>
+      </article>
+      <p v-if="!report.length" class="empty-state">
+        Brak zarejestrowanej pracy w tym dniu.
+      </p>
+    </div>
+  </template>
 </template>
