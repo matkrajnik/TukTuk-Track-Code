@@ -18,6 +18,8 @@ pub struct AppSettings {
     pub notify_due: bool,
     pub notify_long_minutes: u32,
     pub notify_evening: String,
+    pub notify_evening_enabled: bool,
+    pub notify_target: bool,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
 }
@@ -35,6 +37,8 @@ impl Default for AppSettings {
             notify_due: true,
             notify_long_minutes: 240,
             notify_evening: "17:30".into(),
+            notify_evening_enabled: true,
+            notify_target: false,
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
         }

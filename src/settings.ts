@@ -14,6 +14,8 @@ export interface AppSettings {
   notifyDue: boolean;
   notifyLongMinutes: number;
   notifyEvening: string;
+  notifyEveningEnabled: boolean;
+  notifyTarget: boolean;
   shortcutQuick: string;
   shortcutToggle: string;
 }
@@ -37,6 +39,8 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyDue: true,
   notifyLongMinutes: 240,
   notifyEvening: "17:30",
+  notifyEveningEnabled: true,
+  notifyTarget: false,
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
 });

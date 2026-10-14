@@ -132,6 +132,7 @@ pub fn run_toggle(app: &tauri::AppHandle) -> Result<Toggle, String> {
     };
     if let Some(text) = feedback(&result) {
         crate::tray::show_feedback(app, &text);
+        crate::notify::toggle_feedback(app, &text);
         reminder::reset(app);
         let _ = app.emit("data-changed", ());
         let _ = app.emit("toggle-feedback", text);

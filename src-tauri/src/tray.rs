@@ -158,7 +158,7 @@ pub fn feedback_tooltip(text: &str) -> String {
 
 /// Pokazuje potwierdzenie Start/Stop w dymku ikony przez `FEEDBACK_HOLD`; razem ze
 /// zmianą ikony (kropka przy pomiarze) to ślad akcji przy schowanym oknie, gdy widget
-/// (który słucha `toggle-feedback`) jest wyłączony, a powiadomień (J) jeszcze nie ma.
+/// (który słucha `toggle-feedback`) jest wyłączony; obok idzie powiadomienie Windows (J).
 pub fn show_feedback(app: &tauri::AppHandle, text: &str) {
     let text = feedback_tooltip(text);
     if let Some(state) = app.try_state::<TrayState>() {

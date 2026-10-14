@@ -5,6 +5,7 @@ mod db;
 mod idle;
 mod jira;
 mod maintenance;
+mod notify;
 mod planner;
 mod recurrence;
 mod reminder;
@@ -157,6 +158,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(window_state::plugin())
         .plugin(autostart::plugin())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
@@ -219,6 +221,7 @@ fn main() {
             widget::setup(app);
             reminder::start(app.handle());
             idle::start(app.handle());
+            notify::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
             if !autostart::started_hidden(std::env::args()) {

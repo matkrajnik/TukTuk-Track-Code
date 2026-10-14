@@ -175,3 +175,41 @@ test("failed autostart save reverts the clicked checkbox and shows the error", a
   await expect(withWindows).not.toBeChecked();
   await expect(hidden).toBeDisabled();
 });
+test("notification switches save to localStorage in preview and survive reload", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  const due = page.getByLabel("Przypominaj o terminach na dziś i przekroczonych");
+  const evening = page.getByLabel(
+    "Przypominaj wieczorem, że pomiar nadal trwa",
+  );
+  const target = page.getByLabel("Powiadom o osiągnięciu celu dnia");
+  const eveningTime = page.getByLabel("Wieczorne „pomiar nadal trwa”");
+  await expect(due).toBeChecked();
+  await expect(evening).toBeChecked();
+  await expect(target).not.toBeChecked();
+  await evening.uncheck();
+  await expect(eveningTime).toBeDisabled();
+  await target.check();
+  await due.uncheck();
+  const long = page.getByLabel("Długi pomiar bez Stop (minuty, 0 wyłącza)");
+  await long.fill("0");
+  await long.press("Tab");
+  expect(
+    await page.evaluate((k) => JSON.parse(localStorage.getItem(k)!), key),
+  ).toEqual({
+    notifyEveningEnabled: false,
+    notifyTarget: true,
+    notifyDue: false,
+    notifyLongMinutes: 0,
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Historia i kopie", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await expect(evening).not.toBeChecked();
+  await expect(target).toBeChecked();
+  await expect(due).not.toBeChecked();
+  await expect(long).toHaveValue("0");
+});

@@ -223,11 +223,32 @@ onUnmounted(() => {
         >Wieczorne „pomiar nadal trwa”<input
           :value="settings.notifyEvening"
           type="time"
-          :disabled="busy"
+          :disabled="busy || !settings.notifyEveningEnabled"
           @change="save({ notifyEvening: text($event) })"
       /></label>
     </div>
-    <p class="hint">Powiadomienia Windows pojawią się w jednej z kolejnych wersji.</p>
+    <label class="inline-check"
+      ><input
+        :checked="settings.notifyEveningEnabled"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ notifyEveningEnabled: checked($event) })"
+      />Przypominaj wieczorem, że pomiar nadal trwa</label
+    >
+    <label class="inline-check"
+      ><input
+        :checked="settings.notifyTarget"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ notifyTarget: checked($event) })"
+      />Powiadom o osiągnięciu celu dnia</label
+    >
+    <p class="hint">
+      Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz na
+      przedział, wieczór o wybranej godzinie, cel raz dziennie. Każde pojawia się
+      najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
+      Start/Stop pokazuje się, gdy widget jest schowany.
+    </p>
 
     <h2>Skróty</h2>
     <p>
