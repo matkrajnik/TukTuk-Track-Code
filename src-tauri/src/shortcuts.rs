@@ -120,20 +120,21 @@ fn parse(value: &str) -> Result<Shortcut, String> {
     Shortcut::from_str(value).map_err(|e| e.to_string())
 }
 
-/// Wykonuje Start/Stop i powiadamia resztę aplikacji. Przy braku zadania otwiera
-/// szybkie przełączanie.
+/// Wykonuje Start/Stop i powiadamia resztę aplikacji: `data-changed`, potwierdzenie
+/// w dymku traya i zdarzenie `toggle-feedback` (tekst „Stop: X · 01:23:45” / „Start: X”)
+/// dla widgetu (B) i powiadomień (J). Przy `Toggle::Quick` niczego nie otwiera:
+/// szybkie przełączanie otwiera wywołujący (skrót w `handle`, frontend po komendzie).
 pub fn run_toggle(app: &tauri::AppHandle) -> Result<Toggle, String> {
     let result = {
         let state = app.state::<Database>();
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
         toggle(&mut db, db::now())?
     };
-    if result == Toggle::Quick {
-        crate::quick_open(app.clone())?;
-    } else {
+    if let Some(text) = feedback(&result) {
+        crate::tray::show_feedback(app, &text);
         reminder::reset(app);
         let _ = app.emit("data-changed", ());
-        let _ = app.emit("toggle-feedback", feedback(&result));
+        let _ = app.emit("toggle-feedback", text);
     }
     Ok(result)
 }
@@ -158,7 +159,10 @@ pub fn handle(app: &tauri::AppHandle, shortcut: &Shortcut, event: ShortcutEvent)
     let result = if is_quick {
         crate::quick_open(app.clone())
     } else if is_toggle {
-        run_toggle(app).map(|_| ())
+        match run_toggle(app) {
+            Ok(Toggle::Quick) => crate::quick_open(app.clone()),
+            other => other.map(|_| ()),
+        }
     } else {
         Ok(())
     };
@@ -249,6 +253,8 @@ pub fn setup(app: &tauri::App) {
     });
 }
 
+/// Start/Stop dla przycisków (widget). Przy `{action: "quick"}` wywołujący sam otwiera
+/// szybkie przełączanie (`quick_open`); komenda go nie otwiera.
 #[tauri::command]
 pub fn toggle_measurement(app: tauri::AppHandle) -> Result<Toggle, String> {
     run_toggle(&app)

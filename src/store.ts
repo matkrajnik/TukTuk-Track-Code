@@ -423,7 +423,9 @@ export function resumeCandidate(data: Snapshot): Task | undefined {
 
 /**
  * Start/Stop jak globalny skrót: trwający pomiar → Stop, brak pomiaru → Start
- * ostatniego zadania, brak takiego → „quick” (wywołujący otwiera szybkie przełączanie).
+ * ostatniego zadania, brak takiego → „quick”. Ani komenda `toggle_measurement`, ani
+ * podgląd nie otwierają wtedy szybkiego przełączania: robi to wywołujący (`quick_open`).
+ * Potwierdzenie w aplikacji przychodzi zdarzeniem `toggle-feedback` (tekst).
  */
 export async function toggleMeasurement(): Promise<ToggleResult> {
   if (desktop) return invoke("toggle_measurement");

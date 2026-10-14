@@ -178,6 +178,7 @@ Backend `src-tauri/src/widget.rs`:
 
 - `apply(app)`: czyta `widget_enabled` i `widget_background_only`, pokazuje lub chowa okno. Wołany w `setup`, po `settings-changed` i co 2 s z istniejącej pętli w `reminder.rs`, która już sprawdza widoczność i fokus głównego okna (tryb „tylko w tle”).
 - Przycisk X na widgecie chowa go do końca sesji aplikacji, nie zmienia ustawienia; główne okno ma w nagłówku przełącznik widgetu, żeby go przywrócić.
+- Po L: przycisk Start/Stop woła komendę `toggle_measurement` / `toggleMeasurement()` z `store.ts`. Przy wyniku `{action: "quick"}` widget sam wywołuje `quick_open` (komenda tego nie robi). Potwierdzenie Start/Stop (także ze skrótu) słuchać ze zdarzenia `toggle-feedback`; payload to gotowy tekst „Stop: X · 01:23:45” lub „Start: X”. Do tego czasu jedynym potwierdzeniem jest dymek ikony w trayu (`tray::show_feedback`, 10 s) i zmiana ikony.
 
 Testy: Playwright renderuje `WidgetWindow` w podglądzie (route `#widget`) i sprawdza Stop/Start; natywnie: brak kradzieży fokusu, przeciąganie, pamiętanie pozycji po restarcie (K).
 
@@ -195,6 +196,7 @@ Testy: Playwright renderuje `WidgetWindow` w podglądzie (route `#widget`) i spr
 
 - Logika w strukturze `NotifyClock` z kontrolowanym czasem, jak `idle::Clock` i `ReminderClock`, z testami Rust. Wpisy starsze niż 7 dni usuwane przy starcie.
 - Ryzyko: w `tauri dev` powiadomienia Windows mogą podpisywać się jako PowerShell lub nie pojawić bez zarejestrowanego AUMID; weryfikacja na instalacji NSIS z osobnym identyfikatorem. Klik w powiadomienie nie jest obsługiwany, nie opieramy na nim żadnej funkcji.
+- Po L: potwierdzenie globalnego skrótu Start/Stop. Gdy widget jest wyłączony lub schowany, pokazać krótkie powiadomienie z payloadu zdarzenia `toggle-feedback` (gotowy tekst „Stop: X · 01:23:45” / „Start: X”, emitowany w `shortcuts::run_toggle`). Najprościej wywołać wysyłkę bezpośrednio w `run_toggle` obok `tray::show_feedback`.
 
 ## Etap 3 — planowanie
 

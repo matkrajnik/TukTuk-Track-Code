@@ -123,6 +123,17 @@ export function parseShortcut(value: string): string | null {
   return key && [...[...mods].sort(), key].join("+");
 }
 
+export const altGrMessage =
+  "Ta kombinacja to polska litera (AltGr) – wybierz inną.";
+/**
+ * Ctrl+Alt (z Shift lub bez, bez Win) z A, C, E, L, N, O, S, X, Z to w Windows AltGr,
+ * czyli ą ć ę ł ń ó ś ź ż (altgr_letter w Rust).
+ */
+export function altGrLetter(value: string): boolean {
+  const parsed = parseShortcut(value);
+  return !!parsed && /^Alt\+Control\+(Shift\+)?KEY[ACELNOSXZ]$/.test(parsed);
+}
+
 const fresh = (): AppSettings => ({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
@@ -163,11 +174,11 @@ function applyFields(
       "Godzina wieczornego przypomnienia musi mieć format GG:MM.",
     );
   if (
-    [s.shortcutQuick, s.shortcutToggle].some(
-      (v) => parseShortcut(v) === null,
-    )
+    [s.shortcutQuick, s.shortcutToggle].some((v) => parseShortcut(v) === null)
   )
     throw new Error("Niepoprawny skrót klawiszowy.");
+  if ([s.shortcutQuick, s.shortcutToggle].some(altGrLetter))
+    throw new Error(altGrMessage);
   return s;
 }
 
@@ -241,8 +252,7 @@ export async function writeSettings(
 export async function onSettingsChanged(
   handler: (settings: AppSettings) => void,
 ): Promise<() => void> {
-  if (desktop)
-    return listen<AppSettings>(eventName, (e) => handler(e.payload));
+  if (desktop) return listen<AppSettings>(eventName, (e) => handler(e.payload));
   const listener = (e: Event) =>
     handler((e as CustomEvent<AppSettings>).detail);
   window.addEventListener(eventName, listener);
@@ -272,7 +282,10 @@ const modifierCodes =
  * null: sam modyfikator, czekamy dalej. { message }: kombinacja nie nadaje się na skrót.
  */
 export function shortcutFromEvent(
-  e: Pick<KeyboardEvent, "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">,
+  e: Pick<
+    KeyboardEvent,
+    "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey"
+  >,
 ): { value: string } | { message: string } | null {
   if (!e.code || modifierCodes.test(e.code)) return null;
   const mods = [
@@ -291,5 +304,6 @@ export function shortcutFromEvent(
     return { message: "Tego klawisza nie można użyć w skrócie." };
   if (!mods.length)
     return { message: "Dodaj Ctrl, Alt, Shift lub Win do klawisza." };
+  if (altGrLetter(value)) return { message: altGrMessage };
   return { value };
 }

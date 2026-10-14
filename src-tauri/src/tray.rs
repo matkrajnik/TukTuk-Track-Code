@@ -3,7 +3,10 @@
 use crate::{db, reminder, settings, stats, Database};
 use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
-use std::{sync::mpsc, time::Duration};
+use std::{
+    sync::{mpsc, Mutex},
+    time::{Duration, Instant},
+};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -16,6 +19,8 @@ pub const TOOLTIP_LIMIT: usize = 127;
 /// Długość nazwy zadania w nieklikalnej pozycji menu.
 const MENU_TITLE_LIMIT: usize = 60;
 const REFRESH: Duration = Duration::from_secs(5);
+/// Jak długo dymek pokazuje potwierdzenie Start/Stop zamiast stanu.
+const FEEDBACK_HOLD: Duration = Duration::from_secs(10);
 
 /// Stan pokazywany w trayu.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -142,6 +147,28 @@ pub fn read_status(
 struct TrayState {
     current: MenuItem<Wry>,
     idle_icon: Option<Image<'static>>,
+    /// Potwierdzenie Start/Stop ze skrótu i chwila jego pokazania.
+    feedback: Mutex<Option<(String, Instant)>>,
+}
+
+/// Dymek z potwierdzeniem Start/Stop: jedna linia, w limicie Windows.
+pub fn feedback_tooltip(text: &str) -> String {
+    truncate(&one_line(text), TOOLTIP_LIMIT)
+}
+
+/// Pokazuje potwierdzenie Start/Stop w dymku ikony przez `FEEDBACK_HOLD`; razem ze
+/// zmianą ikony (kropka przy pomiarze) to jedyny ślad akcji przy schowanym oknie,
+/// dopóki widget (B) i powiadomienia (J) nie słuchają `toggle-feedback`.
+pub fn show_feedback(app: &tauri::AppHandle, text: &str) {
+    let text = feedback_tooltip(text);
+    if let Some(state) = app.try_state::<TrayState>() {
+        if let Ok(mut f) = state.feedback.lock() {
+            *f = Some((text.clone(), Instant::now()));
+        }
+    }
+    if let Some(tray) = app.tray_by_id("main") {
+        let _ = tray.set_tooltip(Some(text));
+    }
 }
 
 fn active_icon() -> Image<'static> {
@@ -224,7 +251,11 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
     builder.build(app)?;
 
     let (wake, signal) = mpsc::channel();
-    app.manage(TrayState { current, idle_icon });
+    app.manage(TrayState {
+        current,
+        idle_icon,
+        feedback: Mutex::new(None),
+    });
     for event in ["data-changed", "settings-changed"] {
         let wake = wake.clone();
         // Zdarzenie bywa emitowane pod blokadą bazy, więc tylko budzimy wątek.
@@ -263,10 +294,16 @@ fn refresh(app: &tauri::AppHandle, last: &mut Option<(bool, String)>) {
     let Some(tray): Option<TrayIcon> = app.tray_by_id("main") else {
         return;
     };
-    let _ = tray.set_tooltip(Some(tooltip(&status)));
+    let state = app.state::<TrayState>();
+    let held = state.feedback.lock().ok().and_then(|f| {
+        f.as_ref()
+            .filter(|(_, at)| at.elapsed() < FEEDBACK_HOLD)
+            .cloned()
+    });
+    let text = held.map_or_else(|| tooltip(&status), |(text, _)| text);
+    let _ = tray.set_tooltip(Some(text));
     let active = status.active.is_some();
     let label = menu_label(status.active.as_ref().map(|(t, _)| t.as_str()));
-    let state = app.state::<TrayState>();
     if last.as_ref().map(|(a, _)| *a) != Some(active) {
         let icon = if active {
             Some(active_icon())
@@ -340,6 +377,14 @@ mod tests {
         let text = tooltip(&status(Some(&fits), 0, 0, 0));
         assert_eq!(text.encode_utf16().count(), TOOLTIP_LIMIT);
         assert!(!text.contains('…'));
+    }
+
+    #[test]
+    fn feedback_tooltip_is_one_line_within_limit() {
+        assert_eq!(feedback_tooltip("Start: Raport\n TS"), "Start: Raport TS");
+        let long = feedback_tooltip(&format!("Stop: {} · 01:23:45", "x".repeat(300)));
+        assert_eq!(long.encode_utf16().count(), TOOLTIP_LIMIT);
+        assert!(long.ends_with('…'));
     }
 
     #[test]

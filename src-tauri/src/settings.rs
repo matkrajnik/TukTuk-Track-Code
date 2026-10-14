@@ -79,6 +79,31 @@ fn parse_shortcut(value: &str) -> Option<tauri_plugin_global_shortcut::Shortcut>
     tauri_plugin_global_shortcut::Shortcut::from_str(value).ok()
 }
 
+/// Komunikat dla skrótu, który na polskim układzie klawiatury jest literą z AltGr.
+pub const ALTGR_LETTER: &str = "Ta kombinacja to polska litera (AltGr) – wybierz inną.";
+
+/// Ctrl+Alt (z Shift lub bez, bez Win) z A, C, E, L, N, O, S, X, Z to w Windows AltGr,
+/// czyli ą ć ę ł ń ó ś ź ż. Globalny skrót zabrałby tę literę wszystkim programom.
+pub fn altgr_letter(value: &str) -> bool {
+    use tauri_plugin_global_shortcut::{Code, Modifiers};
+    let Some(s) = parse_shortcut(value) else {
+        return false;
+    };
+    s.mods & !Modifiers::SHIFT == Modifiers::CONTROL | Modifiers::ALT
+        && matches!(
+            s.key,
+            Code::KeyA
+                | Code::KeyC
+                | Code::KeyE
+                | Code::KeyL
+                | Code::KeyN
+                | Code::KeyO
+                | Code::KeyS
+                | Code::KeyX
+                | Code::KeyZ
+        )
+}
+
 /// Porównuje skróty po sparsowaniu, więc „Ctrl+Shift+Space” i „Shift+Control+Space” są tym samym.
 fn same_shortcut(a: &str, b: &str) -> bool {
     match (parse_shortcut(a), parse_shortcut(b)) {
@@ -117,6 +142,9 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     if parse_shortcut(&s.shortcut_quick).is_none() || parse_shortcut(&s.shortcut_toggle).is_none() {
         return Err("Niepoprawny skrót klawiszowy.".into());
+    }
+    if altgr_letter(&s.shortcut_quick) || altgr_letter(&s.shortcut_toggle) {
+        return Err(ALTGR_LETTER.into());
     }
     Ok(s)
 }
@@ -369,5 +397,39 @@ mod tests {
         assert_eq!(s.shortcut_quick, d.shortcut_quick);
         assert_eq!(s.shortcut_toggle, d.shortcut_toggle);
         assert_eq!(s.day_start, "09:00");
+    }
+
+    #[test]
+    fn altgr_letters_are_rejected() {
+        let base = AppSettings::default();
+        for letter in ["A", "C", "E", "L", "N", "O", "S", "X", "Z"] {
+            for value in [
+                format!("Control+Alt+{letter}"),
+                format!("Alt+Ctrl+Shift+{letter}"),
+            ] {
+                assert!(altgr_letter(&value), "{value}");
+                assert_eq!(
+                    apply(&base, &json!({"shortcutToggle": value})).unwrap_err(),
+                    ALTGR_LETTER
+                );
+            }
+        }
+        for value in [
+            "Control+Alt+Space",
+            "Control+Alt+K",
+            "Control+Shift+S",
+            "Control+Alt+Super+S",
+            "Alt+S",
+        ] {
+            assert!(!altgr_letter(value), "{value}");
+        }
+        // Zapisany wcześniej skrót-litera wraca do domyślnego przy odczycie.
+        let db = db();
+        db.execute(
+            "INSERT INTO settings(key,value) VALUES('shortcut_toggle','Control+Alt+S')",
+            [],
+        )
+        .unwrap();
+        assert_eq!(load(&db).shortcut_toggle, base.shortcut_toggle);
     }
 }

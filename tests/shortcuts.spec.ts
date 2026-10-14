@@ -86,3 +86,38 @@ test("shortcut input captures a combination, saves it in preview and survives re
   await expect(resetToggle).toBeDisabled();
   expect((await stored(page)).shortcutToggle).toBe("Control+Alt+Space");
 });
+
+test("shortcut input rejects AltGr letters of the Polish layout", async ({
+  page,
+}) => {
+  const altGr = "Ta kombinacja to polska litera (AltGr) – wybierz inną.";
+  await page.goto("/");
+  await openSettings(page);
+  const toggle = page.getByLabel("Start/Stop (globalnie)", { exact: true });
+  await toggle.click();
+  await toggle.press("Control+Alt+s");
+  await expect(page.getByText(altGr)).toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-invalid", "true");
+  await toggle.press("Control+Alt+Shift+z");
+  await expect(page.getByText(altGr)).toBeVisible();
+  expect(await stored(page)).toEqual({});
+  // Ctrl+Alt z literą spoza ą ć ę ł ń ó ś ź ż jest dozwolone.
+  await toggle.press("Control+Alt+j");
+  await expect(toggle).toHaveValue("Control+Alt+J");
+  expect(await stored(page)).toEqual({ shortcutToggle: "Control+Alt+J" });
+
+  // Zapisany wcześniej skrót-litera wraca do domyślnego przy odczycie.
+  await page.evaluate(
+    (k) =>
+      localStorage.setItem(
+        k,
+        JSON.stringify({ shortcutQuick: "Control+Alt+L" }),
+      ),
+    key,
+  );
+  await page.reload();
+  await openSettings(page);
+  await expect(
+    page.getByLabel("Szybkie przełączanie (globalnie)", { exact: true }),
+  ).toHaveValue("Control+Shift+Space");
+});
