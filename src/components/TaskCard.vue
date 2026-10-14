@@ -11,6 +11,7 @@ import {
 } from "lucide-vue-next";
 import { invoke } from "@tauri-apps/api/core";
 import TaskPlanning from "../TaskPlanning.vue";
+import ReorderHandle from "./ReorderHandle.vue";
 import {
   desktop,
   duration,
@@ -41,6 +42,9 @@ const emit = defineEmits<{
   session: [session: Session];
   updated: [data: Snapshot];
   error: [message: string];
+  move: [delta: -1 | 1];
+  dragstart: [event: DragEvent];
+  dragend: [];
 }>();
 
 const elapsed = (s: Session) =>
@@ -66,6 +70,15 @@ async function openJira(url: string) {
     }"
   >
     <div class="task-row">
+      <ReorderHandle
+        :title="task.title"
+        :task-id="task.id"
+        scope="tasks"
+        :disabled="busy"
+        @move="emit('move', $event)"
+        @dragstart="emit('dragstart', $event)"
+        @dragend="emit('dragend')"
+      />
       <button
         class="checkbox"
         :class="{ checked: task.done }"

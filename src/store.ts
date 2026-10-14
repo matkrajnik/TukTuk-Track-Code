@@ -331,6 +331,35 @@ export async function setPriority(
   localStorage.setItem(key, JSON.stringify(data));
   return data;
 }
+/**
+ * Odpowiednik `reorder_tasks` (`planner::reorder`): zmienia wyłącznie `order`
+ * i `priority` podanych zadań, reszta szczegółów zostaje bez zmian.
+ */
+export async function reorderTasks(
+  entries: { id: number; order: number; priority: number }[],
+): Promise<Snapshot> {
+  if (desktop) return invoke("reorder_tasks", { entries });
+  const data = await read();
+  if (
+    entries.length > 10000 ||
+    entries.some(
+      (e) =>
+        !Number.isSafeInteger(e.order) ||
+        e.order < 0 ||
+        e.order > 1_000_000 ||
+        ![-1, 0, 1].includes(e.priority),
+    )
+  )
+    throw new Error("Niepoprawna kolejność zadań.");
+  const tasks = entries.map((e) => data.tasks.find((t) => t.id === e.id));
+  if (tasks.some((t) => !t)) throw new Error("Nie znaleziono zadania.");
+  entries.forEach((e, i) => {
+    const task = tasks[i]!;
+    task.details = { ...detailsOf(task), order: e.order, priority: e.priority };
+  });
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
 export async function closeDay(
   day: string,
   closed: boolean,

@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { duration, type Snapshot } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
+import { compareTasks } from "./order";
 import TargetBar from "./components/TargetBar.vue";
 import {
   dayTarget,
@@ -104,7 +105,7 @@ const topTasks = computed(() =>
         .reduce((sum, s) => sum + inDay(s, today.value, props.now), 0),
     }))
     .filter((row) => row.total > 0)
-    .sort((a, b) => b.total - a.total)
+    .sort((a, b) => b.total - a.total || compareTasks()(a.task, b.task))
     .slice(0, 5),
 );
 </script>

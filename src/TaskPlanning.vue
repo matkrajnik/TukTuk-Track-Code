@@ -24,6 +24,14 @@ watch(
     draft.value.priority = value ?? 0;
   },
 );
+// Kolejność zmienia się przeciąganiem (reorder_tasks); zapis formularza nie może
+// przywrócić starej wartości, więc szkic zawsze ją przejmuje.
+watch(
+  () => props.task.details?.order,
+  (value) => {
+    draft.value.order = value ?? 0;
+  },
+);
 watch(
   () => props.task.details,
   () => {

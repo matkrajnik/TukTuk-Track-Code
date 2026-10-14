@@ -22,6 +22,8 @@ import {
 import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
+import ReorderHandle from "./components/ReorderHandle.vue";
+import { useReorder } from "./composables/useReorder";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -65,6 +67,14 @@ const unplanned = computed(() =>
     (t) => !t.archived && !t.done && t.details?.plannedDay !== day.value,
   ),
 );
+const reorder = useReorder({
+  scope: "plan",
+  all: () => props.data.tasks,
+  activeTaskId: () => null,
+  busy,
+  updated: (data) => emit("updated", data),
+  error: (message) => (error.value = message),
+});
 const selectedTask = ref(0);
 async function plan(task: Task, target: string) {
   await run(() =>
@@ -287,8 +297,22 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       <p v-if="!planned.length" class="report-note">
         Brak zaplanowanych zadań na ten dzień.
       </p>
-      <article v-for="task in planned" :key="task.id" class="journal-task">
+      <article
+        v-for="task in planned"
+        :key="task.id"
+        class="journal-task"
+        v-bind="reorder.dropProps(planned, task, 'plan')"
+      >
         <div class="journal-task-row">
+          <ReorderHandle
+            :title="task.title"
+            :task-id="task.id"
+            scope="plan"
+            :disabled="busy"
+            @move="reorder.move(planned, task.id, $event)"
+            @dragstart="reorder.start($event, task.id, 'plan')"
+            @dragend="reorder.end()"
+          />
           <button
             class="journal-name"
             @click="expanded = expanded === task.id ? 0 : task.id"

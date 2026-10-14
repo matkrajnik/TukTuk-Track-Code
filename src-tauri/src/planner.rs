@@ -117,6 +117,47 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Entry of `reorder_tasks`: new manual position and priority band of a task.
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct ReorderEntry {
+    pub id: i64,
+    pub order: i64,
+    pub priority: i32,
+}
+
+/// Sets only `$.order` and `$.priority` of each task in one transaction, like
+/// `set_priority`; the rest of the details JSON (an unsaved planning form included)
+/// stays untouched.
+pub fn reorder(db: &mut Connection, entries: &[ReorderEntry]) -> Result<Snapshot, String> {
+    if entries.len() > 10_000
+        || entries
+            .iter()
+            .any(|e| !(-1..=1).contains(&e.priority) || !(0..=1_000_000).contains(&e.order))
+    {
+        return Err("Niepoprawna kolejność zadań.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    for entry in entries {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND id NOT IN (SELECT task_id FROM task_lifecycle WHERE deleted_at IS NOT NULL))",
+                [entry.id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("Nie znaleziono zadania.".into());
+        }
+        tx.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2,'order',?3)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?2,'$.order',?3)",
+            params![entry.id, entry.priority, entry.order],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 pub fn clear_waiting(db: &Connection, id: i64) -> rusqlite::Result<()> {
     db.execute(
         "UPDATE task_details SET json=json_set(json,'$.waiting','') WHERE task_id=?1",
@@ -235,5 +276,69 @@ mod tests {
             d.planned_start = bad.into();
             assert!(save(&mut db, 2, d.clone()).is_err(), "{bad}");
         }
+    }
+    #[test]
+    fn reorder_sets_only_order_and_priority() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["A", "B", "C"] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        let mut d = Details {
+            planned_day: "2026-10-14".into(),
+            project: "WMS".into(),
+            waiting: "Klient".into(),
+            estimate_minutes: 90,
+            order: 7,
+            planned_start: "09:30".into(),
+            ..Details::default()
+        };
+        d.notes.insert("2026-10-14".into(), "Notatka".into());
+        d.checklist.push(CheckItem {
+            text: "Krok".into(),
+            done: true,
+        });
+        save(&mut db, 1, d).unwrap();
+        // Keys unknown to this version must survive as well.
+        db.execute(
+            "UPDATE task_details SET json=json_set(json,'$.future','x') WHERE task_id=1",
+            [],
+        )
+        .unwrap();
+        let entry = |id, order, priority| ReorderEntry {
+            id,
+            order,
+            priority,
+        };
+        let snap = reorder(&mut db, &[entry(1, 2, 1), entry(3, 1, 1)]).unwrap();
+        let one = snap.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!((one.details.order, one.details.priority), (2, 1));
+        assert_eq!(one.details.planned_day, "2026-10-14");
+        assert_eq!(one.details.project, "WMS");
+        assert_eq!(one.details.waiting, "Klient");
+        assert_eq!(one.details.estimate_minutes, 90);
+        assert_eq!(one.details.planned_start, "09:30");
+        assert_eq!(one.details.notes["2026-10-14"], "Notatka");
+        assert!(one.details.checklist[0].done);
+        let json: String = db
+            .query_row("SELECT json FROM task_details WHERE task_id=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(json.contains(r#""future":"x""#));
+        // A task without a details row gets one with just the two fields.
+        let three = snap.tasks.iter().find(|t| t.id == 3).unwrap();
+        assert_eq!((three.details.order, three.details.priority), (1, 1));
+        let two = snap.tasks.iter().find(|t| t.id == 2).unwrap();
+        assert_eq!((two.details.order, two.details.priority), (0, 0));
+        // Invalid input and tasks in the trash are rejected without partial writes.
+        assert!(reorder(&mut db, &[entry(2, 1, 2)]).is_err());
+        assert!(reorder(&mut db, &[entry(2, -1, 0)]).is_err());
+        assert!(reorder(&mut db, &[entry(99, 1, 0)]).is_err());
+        db::change(&mut db, "delete", Some(2), None, 0).unwrap();
+        assert!(reorder(&mut db, &[entry(1, 5, 0), entry(2, 1, 0)]).is_err());
+        let snap = db::snapshot(&db).unwrap();
+        let one = snap.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!((one.details.order, one.details.priority), (2, 1));
     }
 }

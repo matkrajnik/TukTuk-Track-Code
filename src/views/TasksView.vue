@@ -15,6 +15,7 @@ import { taskSessions } from "../report";
 import { sortTasks } from "../order";
 import TargetBar from "../components/TargetBar.vue";
 import { dayTarget, hhmm, useSettings } from "../target";
+import { useReorder } from "../composables/useReorder";
 
 const props = defineProps<{
   data: Snapshot;
@@ -116,6 +117,15 @@ const taskGroups = computed(() =>
       tasks: sortTasks(group.tasks, active.value?.taskId),
     })),
 );
+
+const reorder = useReorder({
+  scope: "tasks",
+  all: () => props.data.tasks,
+  activeTaskId: () => active.value?.taskId,
+  busy: working,
+  updated: (data) => emit("updated", data),
+  error: (message) => emit("error", message),
+});
 
 function toggle(id: number) {
   if (expanded.value.has(id)) expanded.value.delete(id);
@@ -265,6 +275,10 @@ async function priority(task: Task, e: Event) {
         :now="now"
         :today-key="todayKey"
         :projects="projects"
+        v-bind="reorder.dropProps(group.tasks, task, group.name)"
+        @move="!busy && reorder.move(group.tasks, task.id, $event)"
+        @dragstart="reorder.start($event, task.id, group.name)"
+        @dragend="reorder.end()"
         @toggle="toggle(task.id)"
         @act="act($event, task.id)"
         @priority="priority(task, $event)"
