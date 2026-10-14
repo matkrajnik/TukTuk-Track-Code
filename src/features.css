@@ -767,3 +767,173 @@ html.widget-root body {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
+/* E: plan kontra rzeczywistość (DayTimeline). */
+.day-timeline {
+  margin-top: 14px;
+}
+.dtl-chart {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+}
+.dtl-labels {
+  display: grid;
+  grid-template-rows: 22px 28px 10px 28px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dtl-labels span {
+  align-self: center;
+}
+.dtl-labels span:first-child {
+  grid-row: 2;
+}
+.dtl-labels span:last-child {
+  grid-row: 4;
+}
+.dtl-plot {
+  position: relative;
+  min-width: 0;
+}
+.dtl-svg {
+  display: block;
+  overflow: visible;
+}
+.dtl-grid line {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.dtl-grid text {
+  fill: var(--muted);
+  font-size: 11px;
+  font-family: "Cascadia Code", Consolas, monospace;
+}
+.dtl-track {
+  fill: var(--raised);
+  opacity: 0.5;
+}
+.dtl-block {
+  cursor: pointer;
+  outline: none;
+}
+.dtl-block:focus-visible {
+  stroke: var(--text) !important;
+  stroke-width: 2;
+}
+.dtl-plan {
+  fill-opacity: 0.32;
+  stroke-width: 1.5;
+}
+.dtl-plan.dashed {
+  fill-opacity: 0.12;
+  stroke-dasharray: 5 3;
+}
+.dtl-plan.done {
+  fill-opacity: 0.55;
+}
+.dtl-work:hover,
+.dtl-plan:hover {
+  filter: brightness(1.12);
+}
+.dtl-live {
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-linecap: round;
+  animation: dtl-pulse 1.4s ease-in-out infinite;
+}
+@keyframes dtl-pulse {
+  50% {
+    opacity: 0.2;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dtl-live {
+    animation: none;
+  }
+}
+.dtl-now {
+  stroke: var(--danger);
+  stroke-width: 1.5;
+  stroke-dasharray: 2 2;
+}
+.dtl-tip {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 2;
+  transform: translateX(-50%);
+  max-width: 90%;
+  padding: 5px 9px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.25);
+}
+.dtl-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dtl-legend li {
+  display: inline-flex;
+  align-items: center;
+  overflow-wrap: anywhere;
+}
+.dtl-swatch {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  margin-right: 7px;
+  border-radius: 3px;
+}
+.dtl-table {
+  width: 100%;
+  margin-top: 16px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dtl-table th,
+.dtl-table td {
+  padding: 9px 6px;
+  border-top: 1px solid var(--line);
+  text-align: right;
+}
+.dtl-table th:first-child {
+  text-align: left;
+  font-weight: 400;
+  overflow-wrap: anywhere;
+}
+.dtl-table thead th {
+  color: var(--muted);
+  font-weight: 500;
+  border-top: 0;
+}
+.dtl-table tfoot th,
+.dtl-table tfoot td {
+  font-weight: 600;
+}
+.dtl-status {
+  color: var(--muted);
+  font-family: "Segoe UI", sans-serif;
+  font-style: italic;
+}
+.dtl-over {
+  color: var(--warning);
+  font-weight: 600;
+}
+@media (max-width: 900px) {
+  .dtl-chart {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+}

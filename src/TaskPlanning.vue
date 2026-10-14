@@ -103,6 +103,13 @@ async function save() {
           step="1"
       /></label>
       <label
+        >Godzina startu w planie<input
+          v-model="draft.plannedStart"
+          type="time"
+          step="60"
+          title="Opcjonalnie. Bez godziny blok planu układa się za poprzednim."
+      /></label>
+      <label
         >Początek cyklu<input v-model="draft.repeatFrom" type="date"
       /></label>
     </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   change,
   detailsOf,
@@ -23,6 +23,7 @@ import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
 import ReorderHandle from "./components/ReorderHandle.vue";
+import DayTimeline from "./components/DayTimeline.vue";
 import { useReorder } from "./composables/useReorder";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
@@ -37,6 +38,15 @@ const weekly = ref(false),
   busy = ref(false),
   error = ref("");
 const expanded = ref(0);
+const settings = useSettings();
+/** Klik w blok planu na osi: rozwinięcie planu zadania na liście planu dnia. */
+async function openPlan(taskId: number) {
+  expanded.value = taskId;
+  await nextTick();
+  const card = document.getElementById("plan-task-" + taskId);
+  card?.scrollIntoView({ block: "nearest" });
+  card?.querySelector<HTMLElement>(".journal-name")?.focus();
+}
 const projects = computed(() => [
   ...new Set(
     props.data.tasks
@@ -157,7 +167,6 @@ const clock = (at: number) =>
     minute: "2-digit",
     second: "2-digit",
   }).format(at);
-const settings = useSettings();
 const week = computed(() => {
   const d = new Date(dayBounds(day.value)[0]);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -307,6 +316,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       <article
         v-for="task in planned"
         :key="task.id"
+        :id="'plan-task-' + task.id"
         class="journal-task"
         v-bind="reorder.dropProps(planPart(task), task, planList(task))"
       >
@@ -397,6 +407,21 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           </button>
         </div>
       </details>
+    </section>
+    <section
+      class="dashboard-card dashboard-top"
+      aria-label="Plan kontra rzeczywistość"
+    >
+      <h2>Plan kontra rzeczywistość</h2>
+      <DayTimeline
+        :tasks="data.tasks"
+        :sessions="data.sessions"
+        :day="day"
+        :now="now"
+        :day-start="settings.dayStart"
+        @edit="emit('edit', $event)"
+        @plan="openPlan"
+      />
     </section>
     <section class="dashboard-card dashboard-top" aria-label="Oś dnia">
       <div class="ts-heading">

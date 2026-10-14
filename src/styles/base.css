@@ -14,6 +14,15 @@
   --danger: #ffb4a9;
   --danger-bg: #462c2b;
   --warning: #f2c46d;
+  /* Paleta osi dnia (DayTimeline): 8 odcieni przypisywanych zadaniom. */
+  --tl-0: #7cc4a0;
+  --tl-1: #7fb2e5;
+  --tl-2: #e6a86b;
+  --tl-3: #c79be0;
+  --tl-4: #e58f9b;
+  --tl-5: #d9c65f;
+  --tl-6: #6cc7c9;
+  --tl-7: #b3bb84;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -35,6 +44,14 @@
   --danger: #a8352d;
   --danger-bg: #ffebe8;
   --warning: #9a6400;
+  --tl-0: #2f8a5f;
+  --tl-1: #2f6fb0;
+  --tl-2: #b86a22;
+  --tl-3: #8a55b0;
+  --tl-4: #b9465a;
+  --tl-5: #8c7a12;
+  --tl-6: #1f8385;
+  --tl-7: #69712f;
 }
 * {
   box-sizing: border-box;
