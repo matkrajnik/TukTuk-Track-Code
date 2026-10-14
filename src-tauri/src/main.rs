@@ -8,15 +8,10 @@ mod planner;
 mod recurrence;
 mod reminder;
 mod settings;
-// Used by the tray and notifications from stage 1 on.
-#[allow(dead_code)]
 mod stats;
+mod tray;
 use std::sync::Mutex;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager,
-};
+use tauri::{Emitter, Manager};
 struct Database(Mutex<rusqlite::Connection>);
 #[tauri::command]
 fn get_snapshot(state: tauri::State<Database>) -> Result<db::Snapshot, String> {
@@ -222,53 +217,7 @@ fn main() {
                 .unwrap_or_default();
             app.manage(ShortcutStatus(shortcut_error));
             jira::setup(app.handle())?;
-            let open = MenuItem::with_id(app, "open", "Otwórz Todo Track", true, None::<&str>)?;
-            let stop = MenuItem::with_id(app, "stop", "Zatrzymaj pomiar", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Zakończ aplikację", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &stop, &quit])?;
-            TrayIconBuilder::new()
-                .icon(app.default_window_icon().expect("application icon").clone())
-                .tooltip("Todo Track • zadania i czas pracy")
-                .menu(&menu)
-                .show_menu_on_left_click(false)
-                .on_tray_icon_event(|tray, event| {
-                    if matches!(
-                        event,
-                        TrayIconEvent::Click {
-                            button: MouseButton::Left,
-                            button_state: MouseButtonState::Up,
-                            ..
-                        }
-                    ) {
-                        show(tray.app_handle());
-                    }
-                })
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open" => show(app),
-                    "stop" | "quit" => {
-                        let state = app.state::<Database>();
-                        let result = state
-                            .0
-                            .lock()
-                            .map_err(|e| e.to_string())
-                            .and_then(|db| db::stop(&db, db::now()).map_err(|e| e.to_string()));
-                        match result {
-                            Ok(()) => {
-                                reminder::reset(app);
-                                let _ = app.emit("data-changed", ());
-                                if event.id.as_ref() == "quit" {
-                                    app.exit(0);
-                                }
-                            }
-                            Err(e) => {
-                                show(app);
-                                let _ = app.emit("storage-error", e);
-                            }
-                        }
-                    }
-                    _ => {}
-                })
-                .build(app)?;
+            tray::setup(app)?;
             reminder::start(app.handle());
             idle::start(app.handle());
             let handle = app.handle().clone();

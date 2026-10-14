@@ -335,3 +335,19 @@
     flex-basis: 60%;
   }
 }
+.daily-summary:has(.daily-target) {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.daily-summary > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.daily-summary .daily-target {
+  font-size: 12px;
+}
+.daily-target .target-bar {
+  width: 120px;
+}

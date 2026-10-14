@@ -13,6 +13,7 @@
   --accent-text: #12281d;
   --danger: #ffb4a9;
   --danger-bg: #462c2b;
+  --warning: #f2c46d;
   background: var(--bg);
   color: var(--text);
   font-size: 14px;
@@ -33,6 +34,7 @@
   --accent-text: #ffffff;
   --danger: #a8352d;
   --danger-bg: #ffebe8;
+  --warning: #9a6400;
 }
 * {
   box-sizing: border-box;

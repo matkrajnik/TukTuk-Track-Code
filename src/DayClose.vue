@@ -10,6 +10,7 @@ import {
 } from "./store";
 import { dayBounds, dayKey, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
+import { dayTarget, targetDiffMinutes, targetMessage, useSettings } from "./target";
 const clipboard = navigator.clipboard;
 const props = defineProps<{ data: Snapshot; day: string; now: number }>();
 const emit = defineEmits<{
@@ -41,6 +42,10 @@ const rows = computed(() =>
   dayRows(props.data, props.day, props.now).filter((r) => r.total > 0),
 );
 const total = computed(() => rowsTotal(rows.value));
+const settings = useSettings();
+const target = computed(() => dayTarget(settings.value, props.day));
+/** Informacja o celu dnia; nie blokuje zamknięcia. */
+const targetText = computed(() => targetMessage(total.value, target.value));
 const unfinished = computed(() =>
   props.data.tasks.filter(
     (t) => !t.done && !t.archived && t.details?.plannedDay === props.day,
@@ -119,6 +124,13 @@ async function move() {
     </div>
     <p v-if="data.closedDays?.includes(day)" role="status">
       Dzień oznaczony jako sprawdzony. Historię nadal możesz edytować.
+    </p>
+    <p
+      v-if="targetText"
+      class="close-target"
+      :class="{ over: targetDiffMinutes(total, target) > 0 }"
+    >
+      {{ targetText }}
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="message" role="status">{{ message }}</p>

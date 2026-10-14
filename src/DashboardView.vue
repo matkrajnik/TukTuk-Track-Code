@@ -2,10 +2,36 @@
 import { computed } from "vue";
 import { duration, type Snapshot } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
+import TargetBar from "./components/TargetBar.vue";
+import {
+  dayTarget,
+  hhmm,
+  isoWeekday,
+  useSettings,
+  weekTarget,
+} from "./target";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
 defineEmits<{ report: [day: string] }>();
+const settings = useSettings();
 const today = computed(() => dayKey(props.now));
+const dayTotal = (key: string) =>
+  props.data.sessions.reduce((sum, s) => sum + inDay(s, key, props.now), 0);
+const todayTarget = computed(() => dayTarget(settings.value, today.value));
+/** Bieżący tydzień kalendarzowy, poniedziałek–niedziela. */
+const thisWeek = computed(() => {
+  const monday = new Date(dayBounds(today.value)[0]);
+  monday.setDate(monday.getDate() - isoWeekday(today.value) + 1);
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = new Date(monday);
+    date.setDate(monday.getDate() + i);
+    return dayKey(+date);
+  });
+});
+const thisWeekTotal = computed(() =>
+  thisWeek.value.reduce((sum, key) => sum + dayTotal(key), 0),
+);
+const thisWeekTarget = computed(() => weekTarget(settings.value));
 const days = computed(() =>
   Array.from({ length: 7 }, (_, index) => {
     const date = new Date(dayBounds(today.value)[0]);
@@ -18,10 +44,8 @@ const days = computed(() =>
         day: "numeric",
         month: "short",
       }).format(date),
-      total: props.data.sessions.reduce(
-        (sum, s) => sum + inDay(s, key, props.now),
-        0,
-      ),
+      total: dayTotal(key),
+      target: dayTarget(settings.value, key),
     };
   }),
 );
@@ -29,7 +53,7 @@ const weekTotal = computed(() =>
   days.value.reduce((sum, day) => sum + day.total, 0),
 );
 const maxDay = computed(() =>
-  Math.max(1, ...days.value.map((day) => day.total)),
+  Math.max(1, ...days.value.map((day) => Math.max(day.total, day.target))),
 );
 const monthTotal = computed(() => {
   const date = new Date(props.now);
@@ -96,6 +120,29 @@ const topTasks = computed(() =>
     <section class="dashboard-card">
       <h2>Dzisiaj</h2>
       <strong class="mono">{{ duration(days[6].total) }}</strong>
+      <template v-if="todayTarget">
+        <TargetBar
+          :total="days[6].total"
+          :target="todayTarget"
+          label="Dzisiaj względem celu"
+        /><span class="target-note mono"
+          >{{ hhmm(days[6].total) }} / {{ hhmm(todayTarget) }}</span
+        >
+      </template>
+      <span v-else class="target-note">Dzień wolny</span>
+    </section>
+    <section class="dashboard-card">
+      <h2>Ten tydzień</h2>
+      <span class="mono stat-value">{{ duration(thisWeekTotal) }}</span>
+      <template v-if="thisWeekTarget">
+        <TargetBar
+          :total="thisWeekTotal"
+          :target="thisWeekTarget"
+          label="Ten tydzień względem celu"
+        /><span class="target-note mono"
+          >{{ hhmm(thisWeekTotal) }} / {{ hhmm(thisWeekTarget) }}</span
+        >
+      </template>
     </section>
     <section class="dashboard-card">
       <h2>Ostatnie 7 dni</h2>
@@ -122,7 +169,11 @@ const topTasks = computed(() =>
       >
         <span>{{ day.label }}</span
         ><span class="dashboard-bar"
-          ><span :style="{ width: `${(day.total / maxDay) * 100}%` }" /></span
+          ><span :style="{ width: `${(day.total / maxDay) * 100}%` }" /><span
+            v-if="day.target"
+            class="target-line"
+            :style="{ left: `${(day.target / maxDay) * 100}%` }"
+        /></span
         ><span class="mono">{{ duration(day.total) }}</span>
       </button>
     </section>

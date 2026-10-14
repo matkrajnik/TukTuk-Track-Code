@@ -13,6 +13,8 @@ import {
 import { dayKey, inDay } from "../time";
 import { taskSessions } from "../report";
 import { sortTasks } from "../order";
+import TargetBar from "../components/TargetBar.vue";
+import { dayTarget, hhmm, useSettings } from "../target";
 
 const props = defineProps<{
   data: Snapshot;
@@ -63,6 +65,8 @@ const today = computed(() =>
     0,
   ),
 );
+const settings = useSettings();
+const todayTarget = computed(() => dayTarget(settings.value, todayKey.value));
 const visible = computed(() =>
   props.data.tasks.filter(
     (t) =>
@@ -158,7 +162,16 @@ async function priority(task: Task, e: Event) {
   <div class="page-heading">
     <h1>Zadania</h1>
     <div class="daily-summary">
-      Dzisiaj <strong class="mono">{{ duration(today) }}</strong>
+      <div>Dzisiaj <strong class="mono">{{ duration(today) }}</strong></div>
+      <div v-if="todayTarget" class="daily-target">
+        <TargetBar
+          :total="today"
+          :target="todayTarget"
+          label="Postęp do celu dnia"
+        /><span class="mono target-text"
+          >{{ hhmm(today) }} / {{ hhmm(todayTarget) }}</span
+        >
+      </div>
     </div>
   </div>
   <div v-if="active" class="active-bar" aria-label="Bieżący pomiar">

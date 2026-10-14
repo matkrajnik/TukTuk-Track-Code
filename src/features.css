@@ -1,7 +1,7 @@
 /* Dashboard, Plan i historia, Jira, przypomnienie oraz pozostałe widoki. */
 .dashboard-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 20px;
 }
@@ -15,7 +15,8 @@
 .dashboard-card h2 {
   font-size: 14px;
 }
-.dashboard-stats strong {
+.dashboard-stats strong,
+.dashboard-stats .stat-value {
   display: block;
   margin-top: 15px;
   font-size: 26px;
@@ -183,6 +184,9 @@
 @media (max-width: 900px) {
   .dashboard-columns {
     grid-template-columns: 1fr;
+  }
+  .dashboard-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .timeline-row {
     grid-template-columns: 155px minmax(80px, 1fr) auto;
@@ -578,4 +582,55 @@
   margin-bottom: 8px;
   color: var(--muted);
   font-size: 12px;
+}
+/* Postęp do celu dziennego lub tygodniowego. */
+.target-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--raised);
+  overflow: hidden;
+}
+.target-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.target-bar.over > span {
+  background: var(--warning);
+}
+.dashboard-stats .target-bar {
+  margin-top: 12px;
+}
+.dashboard-stats .target-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dashboard-bar {
+  position: relative;
+}
+.dashboard-bar > .target-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--warning);
+  border-radius: 0;
+}
+.weekly-day .target-diff {
+  margin-left: auto;
+  margin-right: 12px;
+  color: var(--muted);
+}
+.weekly-day .target-diff.over {
+  color: var(--warning);
+}
+.close-target {
+  color: var(--muted);
+}
+.close-target.over {
+  color: var(--warning);
 }

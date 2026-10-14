@@ -11,6 +11,14 @@ import {
 } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
 import { compareTasks } from "./order";
+import {
+  dayTarget,
+  hhmm,
+  signedDiff,
+  targetDiffMinutes,
+  useSettings,
+  weekTarget,
+} from "./target";
 import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
@@ -132,6 +140,7 @@ const clock = (at: number) =>
     minute: "2-digit",
     second: "2-digit",
   }).format(at);
+const settings = useSettings();
 const week = computed(() => {
   const d = new Date(dayBounds(day.value)[0]);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -145,9 +154,11 @@ const week = computed(() => {
         (sum, s) => sum + inDay(s, key, props.now),
         0,
       ),
+      target: dayTarget(settings.value, key),
     };
   });
 });
+const weekGoal = computed(() => weekTarget(settings.value));
 const weekTasks = computed(() =>
   props.data.tasks
     .map((task) => ({
@@ -423,7 +434,13 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         <p>{{ week[0].key }} — {{ week[6].key }}</p>
         <h2>Podsumowanie tygodnia</h2>
       </div>
-      <strong class="mono report-total">{{ duration(weekTotal) }}</strong>
+      <div>
+        <strong class="mono report-total">{{ duration(weekTotal) }}</strong>
+        <p v-if="weekGoal" class="hint">
+          Cel tygodnia {{ hhmm(weekGoal) }} ·
+          {{ signedDiff(weekTotal, weekGoal) }}
+        </p>
+      </div>
     </section>
     <div class="dashboard-columns dashboard-top">
       <section class="dashboard-card">
@@ -435,6 +452,17 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           @click="emit('report', d.key)"
         >
           <span>{{ d.key }}</span
+          ><span
+            class="mono target-diff"
+            :class="{ over: targetDiffMinutes(d.total, d.target) > 0 }"
+            :title="
+              d.target ? 'Różnica względem celu ' + hhmm(d.target) : 'Dzień wolny'
+            "
+            >{{
+              d.target || d.total >= 60000
+                ? signedDiff(d.total, d.target)
+                : "wolne"
+            }}</span
           ><strong class="mono">{{ duration(d.total) }}</strong>
         </button>
       </section>
