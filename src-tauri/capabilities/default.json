@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Main application window",
+  "windows": ["main", "reminder", "quick"],
+  "permissions": ["core:default", "core:window:allow-hide", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-close", "core:window:allow-start-dragging"]
+}

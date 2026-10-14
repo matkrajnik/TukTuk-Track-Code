@@ -1,0 +1,75 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Todo Track",
+  "version": "0.3.0",
+  "identifier": "pl.todotrack.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "quick",
+        "title": "Todo Track — szybkie przełączanie",
+        "url": "index.html#quick",
+        "width": 560,
+        "height": 440,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
+      },
+      {
+        "label": "main",
+        "title": "Todo Track",
+        "decorations": false,
+        "width": 1180,
+        "height": 800,
+        "minWidth": 760,
+        "minHeight": 600
+      },
+      {
+        "label": "reminder",
+        "title": "Todo Track — przypomnienie",
+        "url": "index.html#reminder",
+        "width": 370,
+        "height": 210,
+        "resizable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "publisher": "todotrack",
+    "shortDescription": "Zadania, plan dnia i czas pracy",
+    "copyright": "Todo Track · Twój dzień pracy",
+    "windows": {
+      "allowDowngrades": false,
+      "nsis": {
+        "template": "installer/template.nsi",
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "languages": ["Polish"],
+        "customLanguageFiles": { "Polish": "installer/Polish.nsh" },
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      }
+    }
+  }
+}
