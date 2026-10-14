@@ -244,6 +244,7 @@ onUnmounted(() => {
       v-if="editingSession"
       v-model:busy="busy"
       :session="editingSession"
+      :sessions="data.sessions"
       :tasks="data.tasks"
       :now="now"
       :tab="sessionTab"

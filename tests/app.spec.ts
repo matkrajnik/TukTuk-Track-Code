@@ -419,6 +419,42 @@ for (const [day, expected] of [
   });
 }
 
+test("splitting onto an archived task takes it out of the archive", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(() => {
+    const data = JSON.parse(localStorage.getItem("todo-track-preview-v1")!);
+    data.tasks.push({
+      id: 3,
+      title: "Stary projekt",
+      done: false,
+      archived: true,
+      createdAt: new Date("2026-10-01T08:00:00").getTime(),
+    });
+    localStorage.setItem("todo-track-preview-v1", JSON.stringify(data));
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Podziel bieżący pomiar" }).click();
+  await page.getByLabel("Moment podziału").fill("2026-10-12T11:50");
+  await page.getByLabel("Zadanie drugiej części").selectOption({
+    label: "Stary projekt (archiwum)",
+  });
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Podziel przedział" })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".active-title")).toHaveText("Stary projekt");
+  const archived = await page.evaluate(
+    () =>
+      JSON.parse(localStorage.getItem("todo-track-preview-v1")!).tasks.find(
+        (t: { id: number }) => t.id === 3,
+      ).archived,
+  );
+  expect(archived).toBe(false);
+});
+
 test("splitting the active measurement from the bar keeps the timer on the new task", async ({
   page,
 }) => {

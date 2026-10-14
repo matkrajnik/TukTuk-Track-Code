@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   duration,
@@ -15,6 +15,9 @@ export type SessionTab = "hours" | "split";
 const props = withDefaults(
   defineProps<{
     session: Session;
+    // Bieżące przedziały z migawki: pozwalają zauważyć zatrzymanie pomiaru
+    // (tray, skrót) przy otwartym oknie, bo `session` jest kopią z chwili otwarcia.
+    sessions?: Session[];
     tasks: Task[];
     now: number;
     tab?: SessionTab;
@@ -26,10 +29,24 @@ const emit = defineEmits<{ updated: [data: Snapshot]; close: [] }>();
 // actions wait for edit_session, as before the component split.
 const busy = defineModel<boolean>("busy", { default: false });
 const error = ref("");
-const running = props.session.endedAt === null;
+// Stan przedziału bierzemy z aktualnej migawki; kopia z otwarcia jest tylko zapasem.
+const current = computed(
+  () =>
+    props.sessions?.find((s) => s.id === props.session.id) ?? props.session,
+);
+const openedRunning = props.session.endedAt === null;
+const running = computed(() => current.value.endedAt === null);
+// Pomiar zatrzymano z zewnątrz (tray, skrót), gdy okno było otwarte.
+const stoppedMeanwhile = computed(() => openedRunning && !running.value);
 const tab = ref<SessionTab>(props.tab);
 const editStart = ref(localInput(props.session.startedAt));
-const editEnd = ref(running ? "" : localInput(props.session.endedAt!));
+const editEnd = ref(openedRunning ? "" : localInput(props.session.endedAt!));
+watch(
+  () => current.value.endedAt,
+  (ended, previous) => {
+    if (ended !== null && previous === null) editEnd.value = localInput(ended);
+  },
+);
 
 // Domyślny moment podziału: środek przedziału (dla aktywnego do chwili otwarcia),
 // zaokrąglony do pełnej sekundy, bo pole datetime-local ma krok 1 s.
@@ -40,23 +57,28 @@ const splitAt = ref(localInput(defaultSplit));
 const target = ref(props.session.taskId);
 const taskTitle = (id: number) =>
   props.tasks.find((t) => t.id === id)?.title ?? "Zadanie";
-// Aktywna druga część podlega regułom Startu: bez ukończonych zadań.
+// Zarchiwizowane zadanie też może być celem: podział zdejmie mu archiwum
+// (dla aktywnej części tak jak Start). Aktywna druga część podlega regułom
+// Startu, więc ukończone zadania odpadają tylko wtedy.
 const targets = computed(() =>
   props.tasks.filter(
-    (t) =>
-      t.id === props.session.taskId || (!t.archived && !(running && t.done)),
+    (t) => t.id === props.session.taskId || !(running.value && t.done),
   ),
 );
+watch(targets, (list) => {
+  if (!list.some((t) => t.id === target.value))
+    target.value = props.session.taskId;
+});
 const splitTime = computed(() =>
   splitAt.value === localInput(defaultSplit)
     ? defaultSplit
     : new Date(splitAt.value).getTime(),
 );
-const end = computed(() => props.session.endedAt ?? props.now);
+const end = computed(() => current.value.endedAt ?? props.now);
 const splitValid = computed(
   () =>
     Number.isFinite(splitTime.value) &&
-    props.session.startedAt < splitTime.value &&
+    current.value.startedAt < splitTime.value &&
     splitTime.value < end.value,
 );
 
@@ -72,7 +94,7 @@ async function save() {
   busy.value = true;
   error.value = "";
   try {
-    const s = props.session;
+    const s = current.value;
     // Preserve milliseconds and the exact offset of unchanged timestamps (including DST folds).
     const start =
       editStart.value === localInput(s.startedAt)
@@ -211,17 +233,17 @@ async function split() {
         :disabled="busy"
       >
         <option v-for="task in targets" :key="task.id" :value="task.id">
-          {{ task.title }}
+          {{ task.archived ? `${task.title} (archiwum)` : task.title }}
         </option>
       </select>
       <ol class="split-preview" aria-label="Podgląd podziału">
         <li>
           <strong>{{ taskTitle(session.taskId) }}</strong>
           <span
-            >{{ stamp(session.startedAt) }} →
+            >{{ stamp(current.startedAt) }} →
             {{ splitValid ? stamp(splitTime) : "…" }}</span
           ><span class="mono">{{
-            splitValid ? duration(splitTime - session.startedAt) : "—"
+            splitValid ? duration(splitTime - current.startedAt) : "—"
           }}</span>
         </li>
         <li>
@@ -234,6 +256,10 @@ async function split() {
           }}</span>
         </li>
       </ol>
+      <p v-if="stoppedMeanwhile" class="hint">
+        Pomiar został już zatrzymany o {{ stamp(end) }}. Druga część nie będzie
+        trwała dalej, a moment podziału musi być wcześniejszy.
+      </p>
       <p v-if="!splitValid" class="hint">
         Moment podziału musi leżeć wewnątrz przedziału.
       </p>
