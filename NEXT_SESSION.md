@@ -29,7 +29,9 @@ Decyzje nadal otwarte:
 
 Baza `%APPDATA%\pl.todotrack.desktop` i instalacja `C:\Programy\Todo Track` nie były zmieniane.
 
-## Aktualny stan — 0.3.0 (13 października 2026)
+## Stan 0.3.0 (historyczny, 13 października 2026)
+
+Wpis historyczny. Aktualny stan opisuje sekcja „Stan po 1.0” powyżej.
 
 Zaimplementowano zaakceptowane dziewięć rozszerzeń oraz późniejszą prośbę o priorytet bez rozwijania:
 
@@ -45,7 +47,7 @@ Zaimplementowano zaakceptowane dziewięć rozszerzeń oraz późniejszą prośb�
 
 Walidacja: 18 Playwright + 15 Rust przeszło, Vue/TS build przeszedł. Natywna debug instancja `pl.todotrack.validation.v5`: zmiana priorytetu i zachowanie innych pól, timer i quick window, globalny skrót wywołany przez Windows, archiwum/kosz/restore, ustawienia, zamknięcie dnia, minimalizacja na pasek/X do traya. Eksport oraz wybór pliku przez systemowe dialogi; restore po dopisaniu dodatkowego zadania przywrócił snapshot identyczny z eksportem, kopia bezpieczeństwa istnieje. Testową aplikację zakończono przez --prepare-update. Skrypty/zrzuty/pliki testowe w ignorowanym src-tauri/target/verification-v5. Próg 10 minut bezczynności sprawdzono z kontrolowanym czasem w Rust, nie przez realne 10 minut czekania. Prawdziwe konto Jiry nadal nieprzetestowane bez tokenu.
 
-Wszystkie wersje pakietów ustawione na 0.3.0. Docelowy instalator: `src-tauri/target/release/bundle/nsis/Todo Track_0.3.0_x64-setup.exe`. Własny NSIS i mechanizm aktualizacji pozostają z poprzedniej wersji; 0.3.0 dodaje migracje tabel przy uruchomieniu i korzysta z dotychczasowej kopii przed zmianą wersji. Baza i działająca instalacja użytkownika nie były zmieniane. W repo nadal brak commitów; wszystkie istniejące pliki nieśledzone, nie resetować. Poniższe wpisy są historią poprzednich etapów.
+Wydanie 0.3.0 miało instalator `src-tauri/target/release/bundle/nsis/Todo Track_0.3.0_x64-setup.exe` (obecnie wersje pakietów to 1.0.0). Własny NSIS i mechanizm aktualizacji pozostają z poprzedniej wersji; 0.3.0 dodało migracje tabel przy uruchomieniu i korzysta z dotychczasowej kopii przed zmianą wersji. Baza i działająca instalacja użytkownika nie były zmieniane. Poniższe wpisy są historią poprzednich etapów.
 
 ## Historia wcześniejszych etapów
 
