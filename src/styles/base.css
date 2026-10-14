@@ -1,0 +1,187 @@
+/* Tokeny, motywy, typografia i wspólne kontrolki. */
+:root {
+  font-family: "Segoe UI", sans-serif;
+  color-scheme: dark;
+  --bg: #141719;
+  --surface: #1d2225;
+  --raised: #252c30;
+  --line: #343c40;
+  --text: #e7edeb;
+  --muted: #a0adaa;
+  --accent: #99d5b4;
+  --accent-bg: #263f34;
+  --accent-text: #12281d;
+  --danger: #ffb4a9;
+  --danger-bg: #462c2b;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f7f6;
+  --surface: #ffffff;
+  --raised: #eaf0ed;
+  --line: #d7e0dc;
+  --text: #21332b;
+  --muted: #596e62;
+  --accent: #2f7450;
+  --accent-bg: #e7f2e9;
+  --accent-text: #ffffff;
+  --danger: #a8352d;
+  --danger-bg: #ffebe8;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+button {
+  cursor: pointer;
+  border: 0;
+  background: none;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 6px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+button:hover:not(:disabled) {
+  background: var(--raised);
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+input,
+select,
+textarea {
+  min-width: 0;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+}
+input::placeholder {
+  color: var(--muted);
+}
+svg {
+  flex-shrink: 0;
+}
+h1,
+h2,
+p {
+  margin: 0;
+}
+h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.5px;
+}
+h2 {
+  font-size: 17px;
+  font-weight: 600;
+}
+.mono {
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.icon-button {
+  width: 32px;
+  height: 32px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.primary-button {
+  background: var(--accent);
+  color: var(--accent-text);
+  padding: 10px 16px;
+  font-weight: 600;
+}
+.primary-button:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+.inline-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.inline-check input {
+  accent-color: var(--accent);
+}
+.rotated {
+  transform: rotate(180deg);
+}
+.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.empty-state {
+  padding: 44px 20px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
+}
+.empty-detail,
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 8px 0 0;
+}
+.today-button {
+  padding: 8px 10px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.error {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-radius: 7px;
+  padding: 12px;
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.secondary-button {
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 12px;
+}
+.text-link {
+  color: var(--accent);
+  padding: 4px 2px;
+  font-size: 12px;
+  text-align: left;
+}
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}

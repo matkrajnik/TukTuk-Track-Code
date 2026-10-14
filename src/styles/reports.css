@@ -1,0 +1,92 @@
+/* Raporty dzienne i raport TS. */
+.date-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+.date-picker input {
+  font-size: 13px;
+  padding: 7px;
+}
+.report-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 25px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.report-summary p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 9px;
+}
+.report-total {
+  font-size: 32px;
+  color: var(--accent);
+  font-weight: 500;
+}
+.report-note {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 22px;
+  line-height: 1.6;
+}
+.report-expand {
+  width: 100%;
+  padding: 18px;
+}
+.ts-report {
+  margin-bottom: 22px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.ts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ts-report textarea {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    14px/1.7 Consolas,
+    monospace;
+  tab-size: 4;
+}
+.ts-copy-status {
+  min-height: 18px;
+  margin-top: 8px;
+  color: var(--accent);
+  font-size: 12px;
+}
+.report-expand strong {
+  font-weight: 500;
+}
+@media (max-width: 850px) {
+  .date-picker {
+    gap: 2px;
+  }
+  .date-picker input {
+    max-width: 150px;
+  }
+}
+@media (max-width: 600px) {
+  .report-summary {
+    padding: 18px;
+    flex-wrap: wrap;
+  }
+}

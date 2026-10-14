@@ -25,3 +25,18 @@ export function localInput(time: number): string {
   const d = new Date(time);
   return `${dayKey(time)}T${[d.getHours(), d.getMinutes(), d.getSeconds()].map((v) => String(v).padStart(2, "0")).join(":")}`;
 }
+
+const timeLabel = (time: number) =>
+  new Intl.DateTimeFormat("pl-PL", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(time);
+const dayLabel = (time: number) =>
+  new Intl.DateTimeFormat("pl-PL", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(time);
+/** Data i godzina przedziału, np. „14 paź 2026, 09:00:00”. */
+export const stamp = (time: number) => `${dayLabel(time)}, ${timeLabel(time)}`;

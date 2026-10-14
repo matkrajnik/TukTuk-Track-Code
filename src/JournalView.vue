@@ -10,6 +10,7 @@ import {
   type Session,
 } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
+import { compareTasks } from "./order";
 import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
@@ -38,8 +39,7 @@ const planned = computed(() =>
     .filter((t) => !t.archived && t.details?.plannedDay === day.value)
     .sort(
       (a, b) =>
-        Number(a.done) - Number(b.done) ||
-        (b.details?.priority ?? 0) - (a.details?.priority ?? 0),
+        Number(a.done) - Number(b.done) || compareTasks()(a, b),
     ),
 );
 const overduePlan = computed(() =>

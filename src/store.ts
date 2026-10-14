@@ -20,6 +20,8 @@ export interface TaskDetails {
   checklist: { text: string; done: boolean }[];
   repeatDays: number[];
   repeatFrom: string;
+  /** Ręczna kolejność w paśmie priorytetu (etap 3); brak = 0. */
+  order?: number;
 }
 export const detailsOf = (task: Task): TaskDetails => ({
   priority: 0,

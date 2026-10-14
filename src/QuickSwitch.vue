@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { change, read, desktop, type Snapshot } from "./store";
+import { compareTasks } from "./order";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   query = ref(""),
@@ -21,7 +22,7 @@ const matches = computed(() =>
           .toLocaleLowerCase("pl")
           .includes(query.value.toLocaleLowerCase("pl")),
     )
-    .sort((a, b) => (b.details?.priority ?? 0) - (a.details?.priority ?? 0))
+    .sort(compareTasks())
     .slice(0, 30),
 );
 async function refresh() {

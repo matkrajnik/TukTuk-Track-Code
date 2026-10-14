@@ -9,6 +9,7 @@ import {
   type Snapshot,
 } from "./store";
 import { dayBounds, dayKey, inDay } from "./time";
+import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 const clipboard = navigator.clipboard;
 const props = defineProps<{ data: Snapshot; day: string; now: number }>();
 const emit = defineEmits<{
@@ -37,16 +38,9 @@ watch(
   },
 );
 const rows = computed(() =>
-  props.data.tasks
-    .map((task) => ({
-      task,
-      total: props.data.sessions
-        .filter((s) => s.taskId === task.id)
-        .reduce((v, s) => v + inDay(s, props.day, props.now), 0),
-    }))
-    .filter((r) => r.total > 0),
+  dayRows(props.data, props.day, props.now).filter((r) => r.total > 0),
 );
-const total = computed(() => rows.value.reduce((v, r) => v + r.total, 0));
+const total = computed(() => rowsTotal(rows.value));
 const unfinished = computed(() =>
   props.data.tasks.filter(
     (t) => !t.done && !t.archived && t.details?.plannedDay === props.day,
@@ -74,17 +68,8 @@ const gaps = computed(() => {
   }
   return result;
 });
-const decimal = (ms: number) => (ms / 3600000).toFixed(2).replace(".", ",");
 const report = computed(() =>
-  [
-    `Raport TS — ${props.day}`,
-    "Zadanie\tGodziny",
-    ...rows.value.map(
-      (r) =>
-        `${[r.task.title, r.task.details?.notes?.[props.day]].filter(Boolean).join(" — ").replace(/\s+/g, " ")}\t${decimal(r.total)}`,
-    ),
-    `Razem\t${decimal(total.value)}`,
-  ].join("\n"),
+  tsText(props.day, rows.value, { hoursHeader: "Godziny", trim: false }),
 );
 async function run(fn: () => Promise<void>) {
   busy.value = true;
