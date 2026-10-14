@@ -134,6 +134,8 @@ npm test
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+`npm test` zawsze uruchamia własny serwer Vite na porcie 1430 (nie używa serwera z `npm run dev` na 1420). Przy kilku równoległych przebiegach ustaw inny port przez zmienną `PLAYWRIGHT_PORT`.
+
 14 testów Playwright sprawdza zadania, priorytety i planowanie, notatki, ręczny czas, motywy, przedziały, raporty i TS, zmianę czasu, szerokość 760 px oraz UI Jiry, własny pasek i akcje przypomnienia. Testy UI Jiry używają zastąpionego interfejsu IPC, bez prawdziwego konta. 11 testów Rust sprawdza SQLite, edycję, nowe pola i ręczny czas, kopię bazy WAL, import/wznawianie z Jiry bez duplikatów, stronicowanie HTTP na lokalnym serwerze testowym, walidację adresów oraz próg 300 sekund, reset i odroczenie przypomnienia.
 
 Weryfikacja 0.2.0 (13 października 2026): wszystkie powyższe testy oraz build Vue/TS i Tauri/NSIS przeszły. Na osobnej instalacji `Todo Track Validation v4` sprawdzono rzeczywisty zapis danych przez WebView2 → Rust → SQLite, schowek TS, instalację oraz aktualizację testowych wersji 0.2.0 → 0.2.1 przy aktywnym timerze w tle. Timer został zamknięty, wszystkie zadania, notatki i przedziały zachowane, aplikacja wystartowała na Zadaniach, powstała kopia `before-0.2.1-…sqlite`. Testową aplikację zakończono i odinstalowano; właściwa instalacja użytkownika nie była zmieniana. Dowody i skrypty: `src-tauri/target/verification-v4/`. Numery 0.2.1 dotyczą wyłącznie testowej kompilacji; wydanie użytkownika ma wersję 0.2.0.
