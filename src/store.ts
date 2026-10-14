@@ -447,3 +447,45 @@ export async function toggleMeasurement(): Promise<ToggleResult> {
   await change("start", task.id);
   return { action: "started", taskId: task.id, title: task.title };
 }
+
+/** Uruchamianie z Windows: stan wpisu w rejestrze i opcja „schowane do traya”. */
+export interface Autostart {
+  enabled: boolean;
+  hidden: boolean;
+}
+const autostartKey = "todo-track-preview-autostart-v1";
+const previewSettingsKey = "todo-track-preview-settings-v1";
+function previewJson(name: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(localStorage.getItem(name) ?? "{}");
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * `autostart_get`: „włączone” pochodzi z rejestru (w podglądzie z osobnego klucza
+ * localStorage), „schowane” z ustawienia `autostartHidden`.
+ */
+export async function readAutostart(): Promise<Autostart> {
+  if (desktop) return invoke("autostart_get");
+  return {
+    enabled: previewJson(autostartKey).enabled === true,
+    hidden: previewJson(previewSettingsKey).autostartHidden === true,
+  };
+}
+
+/** `autostart_set`: zapisuje wpis Run (z `--hidden`, gdy `hidden`) i ustawienie. */
+export async function writeAutostart(
+  enabled: boolean,
+  hidden: boolean,
+): Promise<Autostart> {
+  if (desktop) return invoke("autostart_set", { enabled, hidden });
+  localStorage.setItem(autostartKey, JSON.stringify({ enabled }));
+  const settings = { ...previewJson(previewSettingsKey), autostartHidden: hidden };
+  localStorage.setItem(previewSettingsKey, JSON.stringify(settings));
+  return readAutostart();
+}

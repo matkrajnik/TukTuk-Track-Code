@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod autostart;
 mod backup;
 mod db;
 mod idle;
@@ -156,6 +157,7 @@ fn main() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(window_state::plugin())
+        .plugin(autostart::plugin())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if args.iter().any(|arg| arg == "--prepare-update") {
                 let state = app.state::<Database>();
@@ -174,7 +176,9 @@ fn main() {
                         let _ = app.emit("storage-error", e);
                     }
                 }
-            } else {
+            } else if !autostart::started_hidden(&args) {
+                // Wpis autostartu odpalony przy już działającej aplikacji nie
+                // wyciąga okna na wierzch.
                 show(app);
             }
         }))
@@ -213,6 +217,11 @@ fn main() {
             tray::setup(app)?;
             reminder::start(app.handle());
             idle::start(app.handle());
+            // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
+            // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
+            if !autostart::started_hidden(std::env::args()) {
+                show(app.handle());
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(60));
@@ -257,6 +266,8 @@ fn main() {
             app_info,
             settings::get_settings,
             settings::set_settings,
+            autostart::autostart_get,
+            autostart::autostart_set,
             close_day,
             set_priority,
             idle::idle_notice,

@@ -11,6 +11,7 @@ import {
   type AppInfo,
   type AppSettings,
 } from "../settings";
+import { readAutostart, writeAutostart, type Autostart } from "../store";
 const settings = ref<AppSettings>({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
@@ -21,6 +22,7 @@ const info = ref<AppInfo>({
 });
 /** Błąd zapisu skrótu (walidacja) pokazywany przy polu, nie w ogólnym alercie. */
 const shortcutSaveError = ref({ quick: "", toggle: "" });
+const autostart = ref<Autostart>({ enabled: false, hidden: false });
 const busy = ref(false),
   error = ref("");
 const weekDays = [
@@ -76,6 +78,20 @@ function toggleDay(day: number, on: boolean) {
   const days = settings.value.workDays.filter((d) => d !== day);
   void save({ workDays: on ? [...days, day] : days });
 }
+/** Autostart: stan z rejestru, „schowane” jako ustawienie autostartHidden. */
+async function saveAutostart(enabled: boolean, hidden: boolean) {
+  busy.value = true;
+  error.value = "";
+  try {
+    autostart.value = await writeAutostart(enabled, hidden);
+    settings.value = { ...settings.value, autostartHidden: autostart.value.hidden };
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+    autostart.value = await readAutostart().catch(() => autostart.value);
+  } finally {
+    busy.value = false;
+  }
+}
 let unlisten: (() => void) | undefined;
 let unlistenShortcuts: (() => void) | undefined;
 let alive = true;
@@ -92,6 +108,7 @@ onMounted(async () => {
     unlistenShortcuts = stopShortcuts;
     settings.value = await readSettings();
     info.value = await readAppInfo();
+    autostart.value = await readAutostart();
   } catch (e) {
     if (alive) error.value = String(e);
   }
@@ -238,13 +255,24 @@ onUnmounted(() => {
     <h2>Uruchamianie</h2>
     <label class="inline-check"
       ><input
-        :checked="settings.autostartHidden"
+        :checked="autostart.enabled"
         type="checkbox"
         :disabled="busy"
-        @change="save({ autostartHidden: checked($event) })"
-      />Przy autostarcie uruchamiaj schowane do traya</label
+        @change="saveAutostart(checked($event), autostart.hidden)"
+      />Uruchamiaj z Windows</label
     >
-    <p class="hint">Uruchamianie z Windows pojawi się w jednej z kolejnych wersji.</p>
+    <label class="inline-check"
+      ><input
+        :checked="autostart.hidden"
+        type="checkbox"
+        :disabled="busy || !autostart.enabled"
+        @change="saveAutostart(autostart.enabled, checked($event))"
+      />Uruchamiaj schowane do traya</label
+    >
+    <p class="hint">
+      Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
+      trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
+    </p>
     <small v-if="info.version">Todo Track {{ info.version }}</small>
   </section>
 </template>

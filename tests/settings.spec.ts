@@ -110,3 +110,45 @@ test("preview reads a swapped shortcut pair together and resets a colliding pair
     ),
   ).toBeVisible();
 });
+test("startup toggles save autostart state to localStorage in preview", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  const withWindows = page.getByLabel("Uruchamiaj z Windows", { exact: true });
+  const hidden = page.getByLabel("Uruchamiaj schowane do traya", {
+    exact: true,
+  });
+  await expect(withWindows).not.toBeChecked();
+  await expect(hidden).toBeDisabled();
+  await withWindows.check();
+  await expect(hidden).toBeEnabled();
+  await hidden.check();
+  const read = () =>
+    page.evaluate(() => ({
+      autostart: JSON.parse(
+        localStorage.getItem("todo-track-preview-autostart-v1")!,
+      ),
+      settings: JSON.parse(
+        localStorage.getItem("todo-track-preview-settings-v1")!,
+      ),
+    }));
+  expect(await read()).toEqual({
+    autostart: { enabled: true },
+    settings: { autostartHidden: true },
+  });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Historia i kopie", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await expect(withWindows).toBeChecked();
+  await expect(hidden).toBeChecked();
+  // Wyłączenie autostartu zachowuje wybór „schowane” na następne włączenie.
+  await withWindows.uncheck();
+  await expect(hidden).toBeDisabled();
+  await expect(hidden).toBeChecked();
+  expect(await read()).toEqual({
+    autostart: { enabled: false },
+    settings: { autostartHidden: true },
+  });
+});
