@@ -62,7 +62,7 @@ fn fields() -> Map<String, Value> {
     }
 }
 
-fn valid_time(value: &str) -> bool {
+pub fn valid_time(value: &str) -> bool {
     let b = value.as_bytes();
     b.len() == 5
         && b[2] == b':'

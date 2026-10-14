@@ -48,7 +48,10 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS recurrence_state (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, last_day TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS recurrence_occurrences (source_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, day TEXT NOT NULL, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, PRIMARY KEY(source_id,day));
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS jira_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_key TEXT NOT NULL, UNIQUE(site,issue_key));")
+        CREATE TABLE IF NOT EXISTS jira_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_key TEXT NOT NULL, UNIQUE(site,issue_key));
+        CREATE INDEX IF NOT EXISTS sessions_task ON sessions(task_id);
+        CREATE INDEX IF NOT EXISTS sessions_started ON sessions(started_at);
+        CREATE TABLE IF NOT EXISTS notifications_sent (key TEXT PRIMARY KEY, at INTEGER);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db
@@ -269,6 +272,36 @@ mod tests {
         assert!(edit_session(&mut db, 2, 3000, 6000, 5000).is_err());
         assert!(edit_session(&mut db, 2, 2000, 4000, 5000).is_err());
         edit_session(&mut db, 2, 3000, 4500, 5000).unwrap();
+    }
+    #[test]
+    fn init_is_idempotent_and_creates_indexes_and_notifications_table() {
+        let db = Connection::open_in_memory().unwrap();
+        init(&db).unwrap();
+        db.execute(
+            "INSERT INTO notifications_sent(key,at) VALUES('due:1:2026-10-14',1)",
+            [],
+        )
+        .unwrap();
+        init(&db).unwrap();
+        let names: Vec<String> = db
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='sessions' ORDER BY name")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(names.contains(&"sessions_task".to_owned()));
+        assert!(names.contains(&"sessions_started".to_owned()));
+        let kept: i64 = db
+            .query_row("SELECT COUNT(*) FROM notifications_sent", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(kept, 1);
+        assert!(db
+            .execute(
+                "INSERT INTO notifications_sent(key,at) VALUES('due:1:2026-10-14',2)",
+                [],
+            )
+            .is_err());
     }
     #[test]
     fn switching_is_atomic_and_start_is_idempotent() {

@@ -20,9 +20,12 @@ export interface TaskDetails {
   checklist: { text: string; done: boolean }[];
   repeatDays: number[];
   repeatFrom: string;
-  /** Ręczna kolejność w paśmie priorytetu (etap 3); brak = 0. */
-  order?: number;
+  /** Ręczna kolejność w paśmie priorytetu (etap 3); brak w starych danych = 0. */
+  order: number;
+  /** Własna godzina startu bloku planu: pusta albo „HH:MM”. */
+  plannedStart: string;
 }
+const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 export const detailsOf = (task: Task): TaskDetails => ({
   priority: 0,
   plannedDay: "",
@@ -31,6 +34,8 @@ export const detailsOf = (task: Task): TaskDetails => ({
   waiting: "",
   estimateMinutes: 0,
   repeatFrom: "",
+  order: 0,
+  plannedStart: "",
   ...task.details,
   notes: { ...task.details?.notes },
   checklist: (task.details?.checklist ?? []).map((item) => ({ ...item })),
@@ -206,6 +211,8 @@ export async function saveDetails(
   const data = await read();
   const task = data.tasks.find((t) => t.id === id);
   if (!task) throw new Error("Nie znaleziono zadania.");
+  if (details.plannedStart && !validTime(details.plannedStart))
+    throw new Error("Niepoprawne daty lub zbyt długa treść planu/notatki.");
   const saved: TaskDetails = JSON.parse(JSON.stringify(details));
   saved.project = details.project.trim();
   saved.waiting = details.waiting.trim();

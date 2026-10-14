@@ -16,6 +16,10 @@ pub struct Details {
     pub checklist: Vec<CheckItem>,
     pub repeat_days: Vec<u32>,
     pub repeat_from: String,
+    /// Manual order within a priority band (stage 3); 0 for older records.
+    pub order: i64,
+    /// Optional fixed start of the plan block: empty or `HH:MM`.
+    pub planned_start: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CheckItem {
@@ -71,6 +75,8 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
         || [&details.planned_day, &details.due_day]
             .iter()
             .any(|d| !d.is_empty() && !date_valid(d))
+        || (!details.planned_start.is_empty()
+            && !crate::settings::valid_time(&details.planned_start))
         || details.project.chars().count() > 80
         || details.waiting.chars().count() > 300
         || details
@@ -191,5 +197,43 @@ mod tests {
             .details
             .waiting
             .is_empty());
+    }
+    #[test]
+    fn old_details_json_reads_and_new_fields_round_trip() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("Old".into()), 0).unwrap();
+        db::change(&mut db, "add", None, Some("New".into()), 0).unwrap();
+        // A 0.3 record: no `order` and no `plannedStart`.
+        db.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(1,?1)",
+            [r#"{"priority":1,"plannedDay":"2026-10-14","dueDay":"","project":"WMS","waiting":"","notes":{},"estimateMinutes":30,"checklist":[],"repeatDays":[],"repeatFrom":""}"#],
+        )
+        .unwrap();
+        let snap = db::snapshot(&db).unwrap();
+        let old = snap.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(old.details.priority, 1);
+        assert_eq!(old.details.order, 0);
+        assert_eq!(old.details.planned_start, "");
+        let mut d = Details {
+            order: 3,
+            planned_start: "09:30".into(),
+            ..Details::default()
+        };
+        save(&mut db, 2, d.clone()).unwrap();
+        let snap = db::snapshot(&db).unwrap();
+        let new = snap.tasks.iter().find(|t| t.id == 2).unwrap();
+        assert_eq!(new.details.order, 3);
+        assert_eq!(new.details.planned_start, "09:30");
+        let json: String = db
+            .query_row("SELECT json FROM task_details WHERE task_id=2", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(json.contains(r#""order":3"#) && json.contains(r#""plannedStart":"09:30""#));
+        for bad in ["9:30", "24:00", "12:60", "ab:cd"] {
+            d.planned_start = bad.into();
+            assert!(save(&mut db, 2, d.clone()).is_err(), "{bad}");
+        }
     }
 }

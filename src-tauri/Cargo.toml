@@ -19,3 +19,6 @@ tauri-plugin-global-shortcut = "2"
 tauri-plugin-dialog = "2"
 chrono = "0.4"
 
+[dev-dependencies]
+chrono-tz = "=0.10.4"
+

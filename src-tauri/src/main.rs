@@ -8,6 +8,9 @@ mod planner;
 mod recurrence;
 mod reminder;
 mod settings;
+// Used by the tray and notifications from stage 1 on.
+#[allow(dead_code)]
+mod stats;
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
