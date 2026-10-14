@@ -306,3 +306,123 @@ test("TS report from selected days rounds rows separately and sums full time", a
     ].join("\n"),
   );
 });
+
+test("selected days: month shortcuts use the current month, midnight keeps the mode, live totals", async ({
+  page,
+}) => {
+  await seed(
+    page,
+    "2026-10-31T23:59:50+01:00",
+    [{ id: 1, title: "Wdrożenie" }],
+    [
+      [1, "2026-10-30T09:00:00", "2026-10-30T10:00:00"],
+      [1, "2026-10-31T22:00:00", null],
+    ],
+  );
+  await openMultiDay(page);
+  const list = page.getByRole("list", { name: "Wybrane dni" });
+  const content = page.getByRole("textbox", {
+    name: "Treść raportu TS z wybranych dni",
+  });
+
+  // „Ten miesiąc” liczy się od dzisiaj, nie od miesiąca w kalendarzu.
+  await page.getByRole("button", { name: "Poprzedni miesiąc" }).click();
+  await expect(page.locator(".month-label")).toHaveText("wrzesień 2026");
+  await page.getByRole("button", { name: "Ten miesiąc", exact: true }).click();
+  await expect(page.locator(".month-label")).toHaveText("październik 2026");
+  await expect(
+    page.getByRole("heading", { name: "Wybrane dni (31)" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Poprzedni miesiąc" }).click();
+  await page
+    .getByRole("button", { name: "Dni robocze tego miesiąca", exact: true })
+    .click();
+  await expect(page.locator(".month-label")).toHaveText("październik 2026");
+  await expect(
+    page.getByRole("heading", { name: "Wybrane dni (22)" }),
+  ).toBeVisible();
+
+  // Sumy dni w kalendarzu uwzględniają trwający pomiar.
+  await page.getByRole("button", { name: "Wyczyść", exact: true }).click();
+  await day(page, "30 października 2026").click();
+  await day(page, "31 października 2026").click();
+  await expect(day(page, "30 października 2026")).toHaveAttribute(
+    "title",
+    "Praca: 01:00:00",
+  );
+  await expect(day(page, "31 października 2026")).toHaveAttribute(
+    "title",
+    "Praca: 01:59:50",
+  );
+  await expect(
+    page.getByText("Trwający pomiar jest uwzględniony"),
+  ).toBeVisible();
+
+  // Północ nie przełącza trybu „Wybrane dni”.
+  await page.clock.setFixedTime(new Date("2026-11-01T00:00:10+01:00"));
+  await expect(day(page, "31 października 2026")).toHaveAttribute(
+    "title",
+    "Praca: 02:00:00",
+  );
+  await expect(
+    page.getByRole("button", { name: "Wybrane dni", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(list.getByRole("listitem")).toHaveCount(2);
+  await expect(content).toHaveValue(
+    "Raport TS — 2026-10-30 – 2026-10-31 (2 dni)\nDzień\tZadanie\tCzas (h)\n2026-10-30\tWdrożenie\t1,00\nRazem 2026-10-30\t\t1,00\n2026-10-31\tWdrożenie\t2,00\nRazem 2026-10-31\t\t2,00\nRazem\t\t3,00",
+  );
+
+  // Jawne przejście z Dashboardu pokazuje raport jednego dnia.
+  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Raport dzisiejszy", exact: true })
+    .click();
+  await expect(page.getByLabel("Dzień raportu")).toHaveValue("2026-11-01");
+  await expect(
+    page.getByRole("button", { name: "Jeden dzień", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+});
+
+test("day close copies the TS report with the selection fallback", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await seed(
+    page,
+    "2026-10-27T18:00:00+01:00",
+    [{ id: 1, title: "Import" }],
+    [[1, "2026-10-27T09:00:00", "2026-10-27T10:30:00"]],
+  );
+  await page
+    .getByRole("button", { name: "Plan i historia", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "Zamknięcie dnia", exact: true })
+    .click();
+  const area = page.getByLabel("Raport TS zamknięcia dnia");
+  const expected = await area.inputValue();
+  expect(expected).toContain("Import\t1,50");
+  const copy = page.getByRole("button", { name: "Kopiuj raport TS" });
+  await copy.click();
+  await expect(page.getByRole("status")).toHaveText("Skopiowano raport.");
+  expect(
+    (await page.evaluate(() => navigator.clipboard.readText())).replace(
+      /\r\n/g,
+      "\n",
+    ),
+  ).toBe(expected);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator.clipboard, "writeText", {
+      value: () => Promise.reject(new Error("unavailable")),
+    });
+    document.execCommand = () => false;
+  });
+  await copy.click();
+  await expect(page.getByRole("status")).toContainText("Ctrl+C");
+  expect(
+    await area.evaluate((element: HTMLTextAreaElement) =>
+      element.value.slice(element.selectionStart, element.selectionEnd),
+    ),
+  ).toBe(expected);
+});

@@ -3,7 +3,13 @@ import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, X } from "lucide-vue-next";
 import { duration, type Snapshot } from "../store";
 import { dayKey, inDay } from "../time";
-import { dayTotal, sortedDays, tsText, type TsLayout } from "../report";
+import {
+  addToDays,
+  closedDayTotals,
+  sortedDays,
+  tsText,
+  type TsLayout,
+} from "../report";
 import { isWorkDay, useSettings } from "../target";
 import { copyReport } from "../clipboard";
 
@@ -89,6 +95,38 @@ function monthDays(y: number, m: number) {
     dayKey(new Date(y, m - 1, i + 1).getTime()),
   );
 }
+/**
+ * Sumy dni liczone jednym przejściem po sesjach. Zakończone przedziały
+ * zależą tylko od danych; co sekundę przelicza się wyłącznie trwający
+ * pomiar (zwykle jeden dzień).
+ */
+const closedTotals = computed(() => closedDayTotals(props.data));
+const activeSession = computed(() => {
+  const ids = new Set(props.data.tasks.map((t) => t.id));
+  return props.data.sessions.find(
+    (s) => s.endedAt === null && ids.has(s.taskId),
+  );
+});
+const activeTotals = computed(() => {
+  const totals = new Map<string, number>();
+  const active = activeSession.value;
+  if (active) addToDays(totals, active.startedAt, props.now);
+  return totals;
+});
+const totalOf = (day: string) =>
+  (closedTotals.value.get(day) ?? 0) + (activeTotals.value.get(day) ?? 0);
+/**
+ * Chwila dla treści raportu: bieżąca tylko wtedy, gdy trwający pomiar
+ * dotyczy zaznaczonych dni. W przeciwnym razie stała, żeby tekst raportu
+ * nie przeliczał się co sekundę (wynik jest wtedy identyczny).
+ */
+const reportNow = computed(() => {
+  const active = activeSession.value;
+  if (!active) return 0;
+  const start = dayKey(active.startedAt);
+  return selected.value.some((d) => d >= start) ? props.now : 0;
+});
+
 const weekdays = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"];
 const cells = computed(() => {
   const [y, m] = monthParts.value;
@@ -98,7 +136,7 @@ const cells = computed(() => {
     ...monthDays(y, m).map((day) => ({
       day,
       date: Number(day.slice(8)),
-      total: dayTotal(props.data, day, props.now),
+      total: totalOf(day),
     })),
   ];
 });
@@ -128,37 +166,33 @@ function weekOf(offset: number) {
     ),
   );
 }
-function shownMonth(workOnly: boolean) {
-  const current = month.value;
-  const [y, m] = monthParts.value;
+/** Bieżący miesiąc (od dzisiaj, jak skróty tygodnia); kalendarz wraca na niego. */
+function currentMonth(workOnly: boolean) {
+  const [y, m] = todayKey.value.split("-").map(Number);
   choose(
     monthDays(y, m).filter((d) => !workOnly || isWorkDay(settings.value, d)),
   );
-  month.value = current;
+  month.value = monthOf(todayKey.value);
 }
 
 const summaries = computed(() =>
-  selected.value.map((day) => ({
-    day,
-    total: dayTotal(props.data, day, props.now),
-  })),
+  selected.value.map((day) => ({ day, total: totalOf(day) })),
 );
 const total = computed(() =>
   summaries.value.reduce((sum, d) => sum + d.total, 0),
 );
 const text = computed(() =>
-  tsText(selected.value, props.data, props.now, {
+  tsText(selected.value, props.data, reportNow.value, {
     layout: layout.value,
     includeNotes: includeNotes.value,
   }),
 );
-const running = computed(() =>
-  props.data.sessions.some(
-    (s) =>
-      s.endedAt === null &&
-      selected.value.some((d) => inDay(s, d, props.now) > 0),
-  ),
-);
+const running = computed(() => {
+  const active = activeSession.value;
+  return Boolean(
+    active && selected.value.some((d) => inDay(active, d, props.now) > 0),
+  );
+});
 async function copy() {
   copyStatus.value = "";
   copyStatus.value = await copyReport(text.value, area.value);
@@ -224,10 +258,10 @@ async function copy() {
         <button class="today-button" @click="choose(weekOf(-1))">
           Poprzedni tydzień
         </button>
-        <button class="today-button" @click="shownMonth(false)">
+        <button class="today-button" @click="currentMonth(false)">
           Ten miesiąc
         </button>
-        <button class="today-button" @click="shownMonth(true)">
+        <button class="today-button" @click="currentMonth(true)">
           Dni robocze tego miesiąca
         </button>
         <button class="today-button" @click="selected = []">Wyczyść</button>

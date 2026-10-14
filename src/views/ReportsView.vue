@@ -13,7 +13,13 @@ import { byTotal, dayRows, rowsTotal, tsText } from "../report";
 import { copyReport } from "../clipboard";
 import MultiDayReport from "../components/MultiDayReport.vue";
 
-const props = defineProps<{ data: Snapshot; now: number; busy: boolean }>();
+const props = defineProps<{
+  data: Snapshot;
+  now: number;
+  busy: boolean;
+  /** Licznik przejść „pokaż raport dnia” z innych widoków (App.vue). */
+  openRequest?: number;
+}>();
 const day = defineModel<string>("day", { required: true });
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -49,10 +55,15 @@ const reportLabel = computed(() =>
 watch([day, tsVisible], () => {
   tsCopyStatus.value = "";
 });
-// Przejście do konkretnego dnia (np. z Dashboardu) pokazuje raport dnia.
-watch(day, () => {
-  mode.value = "single";
-});
+// Jawne przejście do raportu dnia z innego widoku (np. z Dashboardu)
+// pokazuje raport jednego dnia. Zwykła zmiana dnia (np. po północy) nie
+// zmienia trybu.
+watch(
+  () => props.openRequest,
+  () => {
+    mode.value = "single";
+  },
+);
 function openDay(value: string) {
   day.value = value;
   mode.value = "single";

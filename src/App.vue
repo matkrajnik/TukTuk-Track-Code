@@ -54,8 +54,11 @@ function updated(next: Snapshot) {
   data.value = next;
   now.value = Date.now();
 }
+/** Licznik jawnych przejść do raportu dnia; ReportsView przełącza wtedy tryb. */
+const reportRequest = ref(0);
 function showReport(day: string) {
   selectedDay.value = day;
+  reportRequest.value++;
   view.value = "reports";
 }
 function closeModal() {
@@ -226,6 +229,7 @@ onUnmounted(() => {
         <ReportsView
           v-else-if="view === 'reports'"
           v-model:day="selectedDay"
+          :open-request="reportRequest"
           :data="data"
           :now="now"
           :busy="busy"

@@ -10,13 +10,14 @@ import {
 } from "./store";
 import { dayBounds, dayKey, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
+import { copyReport } from "./clipboard";
 import {
   dayTarget,
   targetDiffMinutes,
   targetMessage,
   useSettings,
 } from "./target";
-const clipboard = navigator.clipboard;
+const reportArea = ref<HTMLTextAreaElement | null>(null);
 const props = defineProps<{ data: Snapshot; day: string; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -203,6 +204,7 @@ async function move() {
     </button>
     <h3>Raport TS</h3>
     <textarea
+      ref="reportArea"
       class="ts-output"
       aria-label="Raport TS zamknięcia dnia"
       readonly
@@ -213,8 +215,7 @@ async function move() {
         class="today-button"
         @click="
           run(async () => {
-            await clipboard.writeText(report);
-            message = 'Skopiowano raport TS.';
+            message = await copyReport(report, reportArea);
           })
         "
       >

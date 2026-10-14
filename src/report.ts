@@ -1,5 +1,5 @@
 import type { Session, Snapshot, Task } from "./store";
-import { dayKey, inDay } from "./time";
+import { dayBounds, dayKey, inDay } from "./time";
 
 export interface DayRow {
   task: Task;
@@ -48,6 +48,39 @@ export const rowsTotal = (rows: DayRow[]) =>
 /** Suma pracy dnia (wszystkie zadania, podział przez lokalną północ). */
 export const dayTotal = (data: Snapshot, day: string, now: number) =>
   rowsTotal(dayRows(data, day, now));
+
+/**
+ * Dodaje przedział `[start, end)` do sum dni, dzieląc go przez lokalne
+ * północe (doba zmiany czasu ma 23 albo 25 godzin).
+ */
+export function addToDays(
+  totals: Map<string, number>,
+  start: number,
+  end: number,
+) {
+  let cursor = start;
+  while (cursor < end) {
+    const day = dayKey(cursor);
+    const next = Math.min(end, dayBounds(day)[1]);
+    totals.set(day, (totals.get(day) ?? 0) + next - cursor);
+    cursor = next;
+  }
+}
+
+/**
+ * Sumy dni z zakończonych przedziałów zadań ze snapshotu, jednym przejściem
+ * po sesjach. Nie zależy od bieżącej chwili; trwający pomiar dolicza się
+ * osobno przez `addToDays(totals, start, now)`. Dla każdego dnia wynik jest
+ * równy `dayTotal` bez trwającego pomiaru.
+ */
+export function closedDayTotals(data: Snapshot): Map<string, number> {
+  const ids = new Set(data.tasks.map((t) => t.id));
+  const totals = new Map<string, number>();
+  for (const s of data.sessions)
+    if (s.endedAt !== null && ids.has(s.taskId))
+      addToDays(totals, s.startedAt, s.endedAt);
+  return totals;
+}
 
 /**
  * Układ raportu TS:
