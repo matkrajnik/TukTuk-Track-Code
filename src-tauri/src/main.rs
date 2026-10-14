@@ -11,6 +11,7 @@ mod settings;
 mod shortcuts;
 mod stats;
 mod tray;
+mod window_state;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 struct Database(Mutex<rusqlite::Connection>);
@@ -154,6 +155,7 @@ fn main() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
+        .plugin(window_state::plugin())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
             if args.iter().any(|arg| arg == "--prepare-update") {
                 let state = app.state::<Database>();
@@ -163,7 +165,10 @@ fn main() {
                     .map_err(|e| e.to_string())
                     .and_then(|db| db::stop(&db, db::now()).map_err(|e| e.to_string()));
                 match result {
-                    Ok(()) => app.exit(0),
+                    Ok(()) => {
+                        window_state::save(app);
+                        app.exit(0);
+                    }
                     Err(e) => {
                         show(app);
                         let _ = app.emit("storage-error", e);
@@ -230,6 +235,9 @@ fn main() {
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
+                if window_state::tracked(window.label()) {
+                    window_state::save(window.app_handle());
+                }
                 let _ = window.hide();
                 if window.label() == "reminder" {
                     let _ = reminder::reminder_action(window.app_handle().clone(), "snooze".into());

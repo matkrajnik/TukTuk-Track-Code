@@ -187,6 +187,7 @@ fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
             reminder::reset(app);
             let _ = app.emit("data-changed", ());
             if quit {
+                crate::window_state::save(app);
                 app.exit(0);
             }
         }
