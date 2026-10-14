@@ -79,15 +79,20 @@ function toggleDay(day: number, on: boolean) {
   void save({ workDays: on ? [...days, day] : days });
 }
 /** Autostart: stan z rejestru, „schowane” jako ustawienie autostartHidden. */
-async function saveAutostart(enabled: boolean, hidden: boolean) {
+async function saveAutostart(field: keyof Autostart, e: Event) {
+  const input = e.target as HTMLInputElement;
+  const next = { ...autostart.value, [field]: input.checked };
   busy.value = true;
   error.value = "";
   try {
-    autostart.value = await writeAutostart(enabled, hidden);
+    autostart.value = await writeAutostart(next.enabled, next.hidden);
     settings.value = { ...settings.value, autostartHidden: autostart.value.hidden };
-  } catch (e) {
-    error.value = String(e instanceof Error ? e.message : e);
+  } catch (err) {
+    error.value = String(err instanceof Error ? err.message : err);
     autostart.value = await readAutostart().catch(() => autostart.value);
+    // Odczytana wartość bywa taka sama jak przed kliknięciem, więc Vue nie
+    // poprawi pola samo; cofamy je ręcznie do stanu z rejestru i ustawień.
+    input.checked = autostart.value[field];
   } finally {
     busy.value = false;
   }
@@ -258,7 +263,7 @@ onUnmounted(() => {
         :checked="autostart.enabled"
         type="checkbox"
         :disabled="busy"
-        @change="saveAutostart(checked($event), autostart.hidden)"
+        @change="saveAutostart('enabled', $event)"
       />Uruchamiaj z Windows</label
     >
     <label class="inline-check"
@@ -266,7 +271,7 @@ onUnmounted(() => {
         :checked="autostart.hidden"
         type="checkbox"
         :disabled="busy || !autostart.enabled"
-        @change="saveAutostart(autostart.enabled, checked($event))"
+        @change="saveAutostart('hidden', $event)"
       />Uruchamiaj schowane do traya</label
     >
     <p class="hint">

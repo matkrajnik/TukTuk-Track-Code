@@ -152,3 +152,26 @@ test("startup toggles save autostart state to localStorage in preview", async ({
     settings: { autostartHidden: true },
   });
 });
+test("failed autostart save reverts the clicked checkbox and shows the error", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  const withWindows = page.getByLabel("Uruchamiaj z Windows", { exact: true });
+  const hidden = page.getByLabel("Uruchamiaj schowane do traya", {
+    exact: true,
+  });
+  await expect(withWindows).not.toBeChecked();
+  // Symulacja błędu zapisu (w aplikacji: brak dostępu do rejestru).
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (name: string, value: string) {
+      if (name === "todo-track-preview-autostart-v1")
+        throw new Error("Odmowa dostępu");
+      return original.call(this, name, value);
+    };
+  });
+  await withWindows.click();
+  await expect(page.getByRole("alert")).toContainText("Odmowa dostępu");
+  await expect(withWindows).not.toBeChecked();
+  await expect(hidden).toBeDisabled();
+});

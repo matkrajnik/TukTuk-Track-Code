@@ -69,6 +69,26 @@ fn is_enabled<R: Runtime>(app: &tauri::AppHandle<R>) -> Result<bool, String> {
         .map_err(|e| format!("Nie udało się odczytać uruchamiania z Windows: {e}"))
 }
 
+/// Włącza wpis `Run` z argumentami dla `hidden` albo go usuwa.
+fn apply_run_entry<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    enabled: bool,
+    hidden: bool,
+) -> Result<(), String> {
+    if enabled {
+        return enable(app, hidden);
+    }
+    if let Err(e) = app.autolaunch().disable() {
+        // Brak wpisu to też „wyłączone”; błąd tylko, gdy wpis nadal działa.
+        if is_enabled(app)? {
+            return Err(format!(
+                "Nie udało się wyłączyć uruchamiania z Windows: {e}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn autostart_get(app: tauri::AppHandle) -> Result<Autostart, String> {
     Ok(Autostart {
@@ -83,20 +103,26 @@ pub fn autostart_set(
     enabled: bool,
     hidden: bool,
 ) -> Result<Autostart, String> {
-    if enabled {
-        enable(&app, hidden)?;
-    } else if let Err(e) = app.autolaunch().disable() {
-        // Brak wpisu to też „wyłączone”; błąd tylko, gdy wpis nadal działa.
-        if is_enabled(&app)? {
-            return Err(format!(
-                "Nie udało się wyłączyć uruchamiania z Windows: {e}"
-            ));
-        }
-    }
+    // Najpierw ustawienie, potem rejestr: gdy zapis do bazy się nie uda, wpis
+    // `Run` zostaje bez zmian. Gdy nie uda się zmiana w rejestrze, ustawienie
+    // wraca do poprzedniej wartości, żeby UI widział stan zgodny z wpisem.
+    // Blokada bazy trwa do końca, więc nikt nie zmieni ustawienia w trakcie.
     let saved = {
         let state = tauri::Manager::state::<crate::Database>(&app);
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
-        settings::save(&mut db, &serde_json::json!({ "autostartHidden": hidden }))?
+        let previous = settings::load(&db).autostart_hidden;
+        let saved = settings::save(&mut db, &serde_json::json!({ "autostartHidden": hidden }))?;
+        if let Err(e) = apply_run_entry(&app, enabled, hidden) {
+            if let Err(rollback) =
+                settings::save(&mut db, &serde_json::json!({ "autostartHidden": previous }))
+            {
+                return Err(format!(
+                    "{e} (nie udało się też przywrócić ustawienia: {rollback})"
+                ));
+            }
+            return Err(e);
+        }
+        saved
     };
     let _ = app.emit("settings-changed", saved.clone());
     Ok(Autostart {
