@@ -70,6 +70,19 @@ fn split_session(
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+/// Okna z `tauri.conf.json` mają `"create": false` i powstają dopiero tutaj, po
+/// zarejestrowaniu stanu (`manage`). Tauri tworzy okna z konfiguracji przed hookiem `setup`,
+/// a WebView2 pompuje komunikaty podczas tworzenia kolejnego okna; wcześniejsze
+/// okno zdążało wtedy wywołać np. `get_settings` i proces kończył się paniką
+/// „state() called before manage()”.
+fn create_windows(app: &tauri::App) -> tauri::Result<()> {
+    for config in app.config().app.windows.clone() {
+        if app.get_webview_window(&config.label).is_none() {
+            tauri::WebviewWindowBuilder::from_config(app, &config)?.build()?;
+        }
+    }
+    Ok(())
+}
 fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -245,6 +258,15 @@ fn main() {
             widget::setup(app);
             reminder::start(app.handle());
             idle::start(app.handle());
+            // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
+            // korzystają komendy; pętle reminder i idle czekają 2 s, zanim
+            // sprawdzą okno main. Pętla powiadomień sprawdza je od razu, więc
+            // startuje po utworzeniu okien, a widget dostaje ponowne sprawdzenie
+            // widoczności, bo jego pierwsze apply mogło nie zastać okna.
+            let saved_sizes = window_state::saved_sizes(app.handle());
+            create_windows(app)?;
+            window_state::reapply_saved_sizes(app.handle(), &saved_sizes);
+            widget::wake(app.handle());
             notify::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
@@ -331,4 +353,33 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("Nie udało się uruchomić Todo Track");
+}
+
+#[cfg(test)]
+mod tests {
+    /// Okna z konfiguracji mają powstawać w `create_windows`, po `manage(Database)`.
+    /// Okno utworzone przez Tauri przed `setup` może wywołać komendę czytającą
+    /// bazę, zanim stan istnieje, a to kończy proces paniką.
+    #[test]
+    fn config_windows_are_created_after_database() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = config["app"]["windows"].as_array().unwrap();
+        assert!(!windows.is_empty());
+        for window in windows {
+            assert_eq!(
+                window["create"],
+                serde_json::Value::Bool(false),
+                "okno {} musi mieć \"create\": false",
+                window["label"]
+            );
+        }
+        let labels: Vec<&str> = windows
+            .iter()
+            .map(|w| w["label"].as_str().unwrap())
+            .collect();
+        for label in ["main", "quick", "reminder", "widget"] {
+            assert!(labels.contains(&label), "brak okna {label}");
+        }
+    }
 }

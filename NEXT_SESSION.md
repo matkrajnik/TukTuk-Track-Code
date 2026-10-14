@@ -4,22 +4,24 @@
 
 Gałąź `release/1.0`, lokalnie, bez pusha. Wszystkie funkcje z PLAN_1.0.md (0.1–0.4 i A–L) mają commity implementacji na tej gałęzi; większość ma też osobny commit „uwagi z przeglądu”. Commit R1 podnosi wersję w `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` i `src-tauri/tauri.conf.json` do 1.0.0 i aktualizuje README (Organizacja pracy 1.0, Ustawienia, Skróty, Mini-widget, Okna/tray/autostart, Powiadomienia, Sprawdzenie).
 
-Weryfikacja po R1: `npm run build`, 55 testów Playwright i 59 testów Rust (`cargo test --locked`) przechodzi, `cargo fmt` nie wprowadza zmian. To testy podglądu (localStorage) i testy jednostkowe Rust z kontrolowanym czasem. Natywnej aplikacji 1.0.0 nie uruchamiano.
+Weryfikacja po R1: `npm run build`, 55 testów Playwright i 59 testów Rust (`cargo test --locked`) przechodzi, `cargo fmt` nie wprowadza zmian.
 
-Do zrobienia w etapie 5 (R2 i dalej):
-- Pełna weryfikacja z `cargo fmt --check` i `npm run tauri build -- -- --locked`. Instalator `Todo Track_1.0.0_x64-setup.exe` jeszcze nie istnieje.
-- Natywna instancja `pl.todotrack.validation.v6` z instalacją NSIS (osobny identyfikator; skrypty i zrzuty w `src-tauri/target/verification-v6/`). Nie uruchamiać na bazie `pl.todotrack.desktop`.
+R2 (build produkcyjny i walidacja natywna): `npm run build`, 55 testów Playwright, 62 testy Rust, `cargo fmt --check` i `npm run tauri build -- -- --locked` przechodzą. Instalator: `src-tauri/target/release/bundle/nsis/Todo Track_1.0.0_x64-setup.exe` (nie instalowany). Walidacja natywna na osobnej kompilacji debug `pl.todotrack.validation.v6` (bez NSIS); raport ze sprawdzonymi i niesprawdzonymi punktami, skrypty i zrzuty: `src-tauri/target/verification-v6/RAPORT.md`.
+
+Walidacja znalazła i R2 poprawił:
+- Awaria przy każdym starcie: Tauri tworzył okna z konfiguracji przed `setup`, a okno wywoływało `get_settings` przed `manage(Database)` (panika „state() called before manage()”). Okna mają teraz `"create": false` i powstają w `create_windows` (`main.rs`) po zarejestrowaniu stanu; pętla powiadomień startuje po oknach.
+- Okna `main` i `widget` rosły o wysokość paska tytułu (37 px przy 125%) przy każdym restarcie: pierwszy `set_size` pluginu window-state w świeżym oknie bez ramki. `window_state::reapply_saved_sizes` ustawia zapisany rozmiar drugi raz zaraz po utworzeniu okien.
+
+Sprawdzone natywnie: skróty globalne (zmiana kombinacji, Start/Stop i szybkie przełączanie przez SendInput, błąd zajętego skrótu), podział aktywnego pomiaru w WebView2 z zapisem do SQLite, widget (klik myszą bez kradzieży fokusu, przeciąganie, tylko w tle, X i przywrócenie), pozycja, rozmiar i maksymalizacja okien po restarcie i po starcie z `--hidden`, wpis `Run` z `--hidden` i start tą komendą, reguły powiadomień w `notifications_sent` (długi pomiar, termin przy starcie, bez powtórek), `--prepare-update`, otwarcie kopii bazy 0.3.0 z aktywnym timerem (`before-1.0.0-*.sqlite`, timer trwa).
+
+Do zrobienia (etap 5, ręcznie):
+- Wygląd toastów Windows (termin o 09:00, wieczór, cel, potwierdzenie skrótu przy schowanym widgecie) i instalacja NSIS z aktualizacją z działającego 0.3.0 przy aktywnym timerze. Szablon NSIS sprawdza działający `todo-track.exe` po nazwie procesu, więc instalację testową robić, gdy właściwa aplikacja jest zamknięta, albo od razu na właściwej instalacji.
+- Uruchomienie z Windows po zalogowaniu i odczyt stanu po wyłączeniu wpisu w Menedżerze zadań.
+- C: ikona traya z kropką, tooltip co 5 s, menu z nazwą zadania i „Szybkie przełączanie”.
+- K: odłączenie monitora. F i G: przeciąganie myszą w WebView2, tablica tygodnia natywnie.
+- Domyślny `Ctrl+Alt+Space` jest na tym komputerze zajęty przez inny program; ustalić, który, i ewentualnie zmienić domyślny skrót.
 - Tag `v1.0.0`. Workflow `.github/workflows/check.yml` nie był uruchamiany na windows-latest, bo gałąź nie była pushowana.
-
-Nie zweryfikowano natywnie (są tylko testy podglądu i Rust):
-- I, autostart: wpis `Run` w rejestrze, start z `--hidden` do traya, odczyt stanu po wyłączeniu wpisu w Menedżerze zadań.
-- B, mini-widget (okno `widget`: `focus: false`, `focusable: false`): Stop/Start, ⇄ i X działają i nie zabierają fokusu aplikacji, w której się pracuje (np. kursor zostaje w Notatniku). Ryzyko z planu: jeśli w oknie `focusable: false` przyciski nie przyjmują kliknięć, zostawić `focus: false` jak w reminder i przywracać fokus poprzedniemu oknu. Także przeciąganie za uchwyt, tryb „tylko w tle” oraz X, a potem odznaczenie i ponowne zaznaczenie „Pokazuj mini-widget”.
-- K: pozycja i rozmiar okien `main` i `widget` po restarcie, po odłączeniu monitora i w stanie zmaksymalizowanym z własnym paskiem.
-- J: powiadomienia Windows na pakiecie NSIS (w `tauri dev` mogą się nie pokazać lub podpisać jako PowerShell): terminy przy starcie i o 09:00, długi pomiar, wieczór, cel, brak powtórek po restarcie, potwierdzenie skrótu Start/Stop przy schowanym widgecie.
-- L: skróty globalne z ustawień wywołane przez Windows (Ctrl+Alt+Space, Ctrl+Shift+Space), zmiana kombinacji, błąd przy zajętym skrócie.
-- C: ikona traya z kropką podczas pomiaru, tooltip odświeżany co 5 s, nieklikalna pozycja z nazwą zadania i „Szybkie przełączanie” w menu.
-- A: podział aktywnego pomiaru w WebView2 z zapisem do SQLite. F i G: przeciąganie myszą w WebView2 (testy używają Alt+↑/↓ i menu „Przenieś na…”).
-- Aktualizacja z 0.3.0 do 1.0.0 przy aktywnym timerze: `--prepare-update`, kopia `before-1.0.0-*.sqlite`, zachowane dane.
+- Proces instalacji użytkownika (`C:ProgramyTodo Track`, PID 39824) działał podczas walidacji, a około 21:16 już go nie było; brak wpisu o awarii, przyczyna nieustalona. Uruchomić aplikację ponownie.
 
 Decyzje nadal otwarte:
 - 0.1: `.nvmrc` i CI używają Node 24 zamiast Node 22 z planu, bo lokalny nvm nie ma Node 22. Zostać przy 24 albo wykonać `nvm install 22`.

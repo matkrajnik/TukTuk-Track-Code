@@ -13,6 +13,7 @@
     "windows": [
       {
         "label": "quick",
+        "create": false,
         "title": "Todo Track — szybkie przełączanie",
         "url": "index.html#quick",
         "width": 560,
@@ -26,6 +27,7 @@
       },
       {
         "label": "main",
+        "create": false,
         "title": "Todo Track",
         "decorations": false,
         "width": 1180,
@@ -36,6 +38,7 @@
       },
       {
         "label": "widget",
+        "create": false,
         "title": "Todo Track — mini-widget",
         "url": "index.html#widget",
         "width": 320,
@@ -51,6 +54,7 @@
       },
       {
         "label": "reminder",
+        "create": false,
         "title": "Todo Track — przypomnienie",
         "url": "index.html#reminder",
         "width": 370,
