@@ -20,6 +20,7 @@ import {
   type Task,
 } from "../store";
 import { stamp } from "../time";
+import { estimateMs, overEstimate, percent } from "../estimates";
 
 const props = defineProps<{
   task: Task;
@@ -52,6 +53,7 @@ const elapsed = (s: Session) =>
 const taskTime = computed(() =>
   props.sessions.reduce((sum, s) => sum + elapsed(s), 0),
 );
+const estimate = computed(() => estimateMs(props.task));
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
@@ -117,12 +119,10 @@ async function openJira(url: string) {
             >
           </span>
           <span v-if="task.details?.estimateMinutes" class="task-status"
-            >Plan {{ duration(task.details.estimateMinutes * 60000) }} ·
-            {{
-              Math.round(
-                (taskTime / (task.details.estimateMinutes * 60000)) * 100,
-              )
-            }}%</span
+            >Plan {{ duration(estimate) }} ·
+            <span :class="{ 'estimate-over': overEstimate(taskTime, estimate) }"
+              >{{ percent(taskTime, estimate) }}%</span
+            ></span
           >
           <span
             v-if="task.details?.dueDay && !task.done"

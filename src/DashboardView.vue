@@ -4,6 +4,7 @@ import { duration, type Snapshot } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
 import { compareTasks } from "./order";
 import TargetBar from "./components/TargetBar.vue";
+import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import {
   dayTarget,
   hhmm,
@@ -199,4 +200,9 @@ const topTasks = computed(() =>
       Brak zarejestrowanej pracy dzisiaj.
     </p>
   </section>
+  <EstimateAccuracy
+    :data="data"
+    :now="now"
+    @report="$emit('report', $event)"
+  />
 </template>
