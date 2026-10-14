@@ -1,5 +1,26 @@
 ﻿# Todo Track — stan po wykonaniu kontynuacji
 
+## Stan orchestratora release-1-0 (14 października 2026)
+
+Gałąź `release/1.0` (lokalnie, bez pusha). Etapy 0, 1 i 2 są gotowe: zadania 0.1–0.4, A, C, L, K, I, B i J są zakończone. Każde ma commit implementacji, uwagi z przeglądu są wdrożone, a weryfikacja jest zielona. Ostatni commit to `92339b5 J: uwagi z przeglądu` (Playwright 33, Rust 57). Orchestrator został zatrzymany na życzenie przed etapem 3. Zadanie F wystartowało, ale nic nie zmieniło, a drzewo robocze jest czyste.
+
+Zostało: etap 3 (F, E, G), etap 4 (D, H) i etap 5 (R1, R2). Wznowienie od etapu 3:
+
+```
+Workflow({ name: "release-1-0", args: { only: ["F","E","G"] } })
+```
+
+Albo całość do końca: `args: { from: "F" }`. Uwaga: `only` przyjmuje identyfikatory zadań, nie numery etapów.
+
+Decyzje do podjęcia przez użytkownika:
+- 0.1: `.nvmrc` i CI używają Node 24 zamiast Node 22 z planu, bo lokalny nvm nie ma Node 22 i blokował `node` w projekcie. Do zrobienia: zostać przy 24 albo wykonać `nvm install 22` i przywrócić wersję 22.
+- Po pierwszym pushu sprawdzić, czy workflow `.github/workflows/check.yml` przechodzi na windows-latest.
+- J: gdy pomiar zostanie podzielony przed wysłaniem powiadomienia o długiej sesji, nowa część liczy czas od momentu podziału, więc powiadomienie przychodzi później. Zachowanie jest świadome i pokryte testem.
+- J: Playwright używa teraz stałego portu 1430 (`PLAYWRIGHT_PORT`), bo poprzedni port powodował niestabilne testy.
+- Na etap 3, F i E (uwaga z 0.4): zapis formularza TaskPlanning zapisuje całe Details. Po dodaniu `reorder`/`plan_task` formularz nie może nadpisać kolejności zmienionej przeciąganiem.
+
+Sprawdzenia natywne z etapów 0–2 (tray, skróty, okno, autostart, widget, powiadomienia) należy wykonać w etapie 5 pkt 4 na `pl.todotrack.validation.v6`. Pełne listy są w dzienniku workflow `wf_f6f277fb-01d`; najważniejsze punkty dla B są poniżej.
+
 ## W toku — 1.0 (gałąź release/1.0): sprawdzenia natywne na etap 5
 
 Etapy 1.0 są weryfikowane testami Playwright (podgląd) i `cargo test`. Poniższe wymaga natywnej instancji z osobnym identyfikatorem (`pl.todotrack.validation.v6`, PLAN_1.0.md, etap 5 pkt 4); nie uruchamiać na bazie `pl.todotrack.desktop`.
