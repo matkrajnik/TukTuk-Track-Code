@@ -8,6 +8,7 @@ mod planner;
 mod recurrence;
 mod reminder;
 mod settings;
+mod shortcuts;
 mod stats;
 mod tray;
 use std::sync::Mutex;
@@ -83,11 +84,10 @@ fn quick_open(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit_to("quick", "quick-open", ());
     Ok(())
 }
-struct ShortcutStatus(String);
-/// Informacje spoza ustawień: wersja i błąd rejestracji skrótu globalnego.
+/// Informacje spoza ustawień: wersja i błędy rejestracji skrótów globalnych.
 #[tauri::command]
 fn app_info(app: tauri::AppHandle) -> serde_json::Value {
-    serde_json::json!({"version":app.config().version,"shortcutError":app.state::<ShortcutStatus>().0})
+    serde_json::json!({"version":app.config().version,"shortcutErrors":shortcuts::errors(&app)})
 }
 #[tauri::command]
 fn close_day(app: tauri::AppHandle, day: String, closed: bool) -> Result<db::Snapshot, String> {
@@ -150,11 +150,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _, event| {
-                    if event.state == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        let _ = quick_open(app.clone());
-                    }
-                })
+                .with_handler(shortcuts::handle)
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
@@ -207,15 +203,7 @@ fn main() {
             }
             app.manage(Database(Mutex::new(connection)));
             app.manage(backup::Pending::default());
-            use tauri_plugin_global_shortcut::GlobalShortcutExt;
-            let quick_shortcut = settings::current(app.handle()).shortcut_quick;
-            let shortcut_error = app
-                .global_shortcut()
-                .register(quick_shortcut.as_str())
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_default();
-            app.manage(ShortcutStatus(shortcut_error));
+            shortcuts::setup(app);
             jira::setup(app.handle())?;
             tray::setup(app)?;
             reminder::start(app.handle());
@@ -257,6 +245,7 @@ fn main() {
             save_details,
             add_session,
             quick_open,
+            shortcuts::toggle_measurement,
             app_info,
             settings::get_settings,
             settings::set_settings,

@@ -634,3 +634,31 @@
 .close-target.over {
   color: var(--warning);
 }
+/* Pole przechwytujące skrót klawiszowy. */
+.shortcut-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 14px;
+}
+.shortcut-field > label {
+  color: var(--muted);
+  font-size: 12px;
+}
+.shortcut-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shortcut-input {
+  flex: 1 1 200px;
+  min-width: 0;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  cursor: pointer;
+}
+.shortcut-input.recording {
+  border-color: var(--accent);
+}
+.shortcut-error {
+  margin: 0;
+}

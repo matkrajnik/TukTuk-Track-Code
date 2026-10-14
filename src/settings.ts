@@ -17,9 +17,14 @@ export interface AppSettings {
   shortcutQuick: string;
   shortcutToggle: string;
 }
+/** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
+export interface ShortcutErrors {
+  quick: string;
+  toggle: string;
+}
 export interface AppInfo {
   version: string;
-  shortcutError: string;
+  shortcutErrors: ShortcutErrors;
 }
 export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   idleEnabled: true,
@@ -246,5 +251,45 @@ export async function onSettingsChanged(
 
 export async function readAppInfo(): Promise<AppInfo> {
   if (desktop) return invoke("app_info");
-  return { version: "", shortcutError: "" };
+  return { version: "", shortcutErrors: { quick: "", toggle: "" } };
+}
+
+/** Nasłuch wyniku ponownej rejestracji skrótów po zmianie ustawień (tylko aplikacja). */
+export async function onShortcutsChanged(
+  handler: (errors: ShortcutErrors) => void,
+): Promise<() => void> {
+  if (desktop)
+    return listen<ShortcutErrors>("shortcuts-changed", (e) =>
+      handler(e.payload),
+    );
+  return () => {};
+}
+
+const modifierCodes =
+  /^(Control|Shift|Alt|Meta|OS)(Left|Right)?$|^(ContextMenu|Fn|FnLock|CapsLock|NumLock|ScrollLock)$/;
+/**
+ * Zamienia naciśnięcie klawiszy na skrót w formacie pluginu („Control+Alt+Space”).
+ * null: sam modyfikator, czekamy dalej. { message }: kombinacja nie nadaje się na skrót.
+ */
+export function shortcutFromEvent(
+  e: Pick<KeyboardEvent, "code" | "ctrlKey" | "altKey" | "shiftKey" | "metaKey">,
+): { value: string } | { message: string } | null {
+  if (!e.code || modifierCodes.test(e.code)) return null;
+  const mods = [
+    e.ctrlKey && "Control",
+    e.altKey && "Alt",
+    e.shiftKey && "Shift",
+    e.metaKey && "Super",
+  ].filter((m): m is string => !!m);
+  const key = /^Key[A-Z]$/.test(e.code)
+    ? e.code.slice(3)
+    : /^Digit[0-9]$/.test(e.code)
+      ? e.code.slice(5)
+      : e.code;
+  const value = [...mods, key].join("+");
+  if (!parseShortcut(value))
+    return { message: "Tego klawisza nie można użyć w skrócie." };
+  if (!mods.length)
+    return { message: "Dodaj Ctrl, Alt, Shift lub Win do klawisza." };
+  return { value };
 }

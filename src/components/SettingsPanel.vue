@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import ShortcutInput from "./ShortcutInput.vue";
 import {
   defaultSettings,
   onSettingsChanged,
+  onShortcutsChanged,
   readAppInfo,
   readSettings,
   writeSettings,
@@ -13,7 +15,12 @@ const settings = ref<AppSettings>({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
 });
-const info = ref<AppInfo>({ version: "", shortcutError: "" });
+const info = ref<AppInfo>({
+  version: "",
+  shortcutErrors: { quick: "", toggle: "" },
+});
+/** Błąd zapisu skrótu (walidacja) pokazywany przy polu, nie w ogólnym alercie. */
+const shortcutSaveError = ref({ quick: "", toggle: "" });
 const busy = ref(false),
   error = ref("");
 const weekDays = [
@@ -50,11 +57,27 @@ const number = (e: Event) => {
   const value = (e.target as HTMLInputElement).value;
   return value === "" ? NaN : Number(value);
 };
+async function saveShortcut(field: "quick" | "toggle", value: string) {
+  busy.value = true;
+  shortcutSaveError.value = { quick: "", toggle: "" };
+  try {
+    settings.value = await writeSettings(
+      field === "quick" ? { shortcutQuick: value } : { shortcutToggle: value },
+    );
+  } catch (e) {
+    shortcutSaveError.value[field] = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
+const shortcutError = (field: "quick" | "toggle") =>
+  shortcutSaveError.value[field] || info.value.shortcutErrors[field];
 function toggleDay(day: number, on: boolean) {
   const days = settings.value.workDays.filter((d) => d !== day);
   void save({ workDays: on ? [...days, day] : days });
 }
 let unlisten: (() => void) | undefined;
+let unlistenShortcuts: (() => void) | undefined;
 let alive = true;
 onMounted(async () => {
   try {
@@ -62,6 +85,11 @@ onMounted(async () => {
     // Panel mógł zostać odmontowany w trakcie rejestracji nasłuchu.
     if (!alive) return stop();
     unlisten = stop;
+    const stopShortcuts = await onShortcutsChanged(
+      (errors) => (info.value = { ...info.value, shortcutErrors: errors }),
+    );
+    if (!alive) return stopShortcuts();
+    unlistenShortcuts = stopShortcuts;
     settings.value = await readSettings();
     info.value = await readAppInfo();
   } catch (e) {
@@ -71,6 +99,7 @@ onMounted(async () => {
 onUnmounted(() => {
   alive = false;
   unlisten?.();
+  unlistenShortcuts?.();
 });
 </script>
 <template>
@@ -182,12 +211,29 @@ onUnmounted(() => {
       — szybkie przełączanie z dowolnego okna.<br />{{
         settings.shortcutToggle
       }}
-      — Start/Stop z dowolnego okna (w przygotowaniu).
+      — Start/Stop z dowolnego okna: zatrzymuje pomiar albo wznawia ostatnio
+      mierzone zadanie.
     </p>
-    <p v-if="info.shortcutError" class="error">
-      Nie udało się zarejestrować globalnego skrótu:
-      {{ info.shortcutError }}
+    <p class="hint">
+      Kliknij pole i naciśnij nową kombinację z Ctrl, Alt, Shift lub Win. Esc
+      anuluje.
     </p>
+    <ShortcutInput
+      :model-value="settings.shortcutQuick"
+      label="Szybkie przełączanie (globalnie)"
+      :default-value="defaultSettings.shortcutQuick"
+      :error="shortcutError('quick')"
+      :disabled="busy"
+      @update:model-value="saveShortcut('quick', $event)"
+    />
+    <ShortcutInput
+      :model-value="settings.shortcutToggle"
+      label="Start/Stop (globalnie)"
+      :default-value="defaultSettings.shortcutToggle"
+      :error="shortcutError('toggle')"
+      :disabled="busy"
+      @update:model-value="saveShortcut('toggle', $event)"
+    />
 
     <h2>Uruchamianie</h2>
     <label class="inline-check"

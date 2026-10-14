@@ -398,3 +398,50 @@ function generateRecurring(data: Snapshot): boolean {
   }
   return changed;
 }
+
+/** Wynik Start/Stop, odpowiednik `shortcuts::Toggle` w Rust. */
+export type ToggleResult =
+  | { action: "stopped"; taskId: number; title: string; elapsedMs: number }
+  | { action: "started"; taskId: number; title: string }
+  | { action: "quick" };
+
+/** Zadanie do wznowienia: ostatnio mierzone, nieukończone, niezarchiwizowane, nie w koszu. */
+export function resumeCandidate(data: Snapshot): Task | undefined {
+  const open = new Map(
+    data.tasks.filter((t) => !t.done && !t.archived).map((t) => [t.id, t]),
+  );
+  const last = data.sessions
+    .filter((s) => open.has(s.taskId))
+    .sort(
+      (a, b) =>
+        (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt) ||
+        b.startedAt - a.startedAt ||
+        b.id - a.id,
+    )[0];
+  return last && open.get(last.taskId);
+}
+
+/**
+ * Start/Stop jak globalny skrót: trwający pomiar → Stop, brak pomiaru → Start
+ * ostatniego zadania, brak takiego → „quick” (wywołujący otwiera szybkie przełączanie).
+ */
+export async function toggleMeasurement(): Promise<ToggleResult> {
+  if (desktop) return invoke("toggle_measurement");
+  const data = await read();
+  const active = data.sessions.find((s) => s.endedAt === null);
+  if (active) {
+    const task = data.tasks.find((t) => t.id === active.taskId);
+    const now = Date.now();
+    await change("stop");
+    return {
+      action: "stopped",
+      taskId: active.taskId,
+      title: task?.title ?? "",
+      elapsedMs: Math.max(0, now - active.startedAt),
+    };
+  }
+  const task = resumeCandidate(data);
+  if (!task) return { action: "quick" };
+  await change("start", task.id);
+  return { action: "started", taskId: task.id, title: task.title };
+}

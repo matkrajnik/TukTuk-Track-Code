@@ -35,7 +35,7 @@ fn hm(ms: i64) -> String {
 }
 
 /// „01:23:45”, jak zegar w aplikacji.
-fn hms(ms: i64) -> String {
+pub(crate) fn hms(ms: i64) -> String {
     let seconds = ms.max(0) / 1000;
     format!(
         "{:02}:{:02}:{:02}",
