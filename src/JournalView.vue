@@ -24,6 +24,7 @@ import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
 import ReorderHandle from "./components/ReorderHandle.vue";
 import DayTimeline from "./components/DayTimeline.vue";
+import WeekBoard from "./components/WeekBoard.vue";
 import { useReorder } from "./composables/useReorder";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
@@ -38,6 +39,8 @@ const weekly = ref(false),
   busy = ref(false),
   error = ref("");
 const expanded = ref(0);
+/** Zakładka Tydzień: tablica (domyślnie) albo dotychczasowe podsumowanie. */
+const weekView = ref<"board" | "summary">("board");
 const settings = useSettings();
 /** Klik w blok planu na osi: rozwinięcie planu zadania na liście planu dnia. */
 async function openPlan(taskId: number) {
@@ -482,6 +485,30 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
     </section>
   </template>
   <template v-else>
+    <div class="tabs week-tabs" role="group" aria-label="Widok tygodnia">
+      <button
+        :class="{ selected: weekView === 'board' }"
+        :aria-pressed="weekView === 'board'"
+        @click="weekView = 'board'"
+      >
+        Tablica</button
+      ><button
+        :class="{ selected: weekView === 'summary' }"
+        :aria-pressed="weekView === 'summary'"
+        @click="weekView = 'summary'"
+      >
+        Podsumowanie
+      </button>
+    </div>
+    <WeekBoard
+      v-if="weekView === 'board'"
+      :data="data"
+      :now="now"
+      :day="day"
+      @updated="emit('updated', $event)"
+    />
+  </template>
+  <template v-if="weekly && !closing && weekView === 'summary'">
     <section class="report-summary">
       <div>
         <p>{{ week[0].key }} — {{ week[6].key }}</p>
@@ -557,17 +584,16 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
     <section class="dashboard-card dashboard-top">
       <h2>Sprawy do kontynuacji ({{ carry.length }})</h2>
       <p class="report-note">
-        Zadania z tego tygodnia, które obecnie nie są ukończone.
+        Zadania z tego tygodnia, które obecnie nie są ukończone. Na następny
+        poniedziałek przeniesiesz je na tablicy: „Przenieś na…”.
       </p>
       <div v-for="row in carry" :key="row.task.id" class="journal-task-row">
         <span>{{ row.task.title }}</span
-        ><button
-          class="today-button"
-          :disabled="busy"
-          @click="plan(row.task, dayKey(dayBounds(week[6].key)[1]))"
-        >
-          Zaplanuj na następny poniedziałek
-        </button>
+        ><span class="hint">{{
+          row.task.details?.plannedDay
+            ? "Plan " + row.task.details.plannedDay
+            : "Bez planu"
+        }}</span>
       </div>
     </section>
   </template>

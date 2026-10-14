@@ -32,6 +32,13 @@ watch(
     draft.value.order = value ?? 0;
   },
 );
+// Tak samo dzień planu przeniesiony na tablicy tygodnia (plan_task).
+watch(
+  () => props.task.details?.plannedDay,
+  (value) => {
+    draft.value.plannedDay = value ?? "";
+  },
+);
 watch(
   () => props.task.details,
   () => {

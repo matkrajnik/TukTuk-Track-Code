@@ -360,6 +360,32 @@ export async function reorderTasks(
   localStorage.setItem(key, JSON.stringify(data));
   return data;
 }
+/**
+ * Odpowiednik `plan_task` (`planner::plan_task`): przeniesienie na tablicy
+ * tygodnia zmienia wyłącznie `plannedDay` (pusty = „Do zaplanowania”) i `order`.
+ */
+export async function planTask(
+  id: number,
+  day: string,
+  order: number,
+): Promise<Snapshot> {
+  if (desktop) return invoke("plan_task", { id, day, order });
+  if (
+    (day !== "" &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+        localDay(+new Date(day + "T12:00:00")) !== day)) ||
+    !Number.isSafeInteger(order) ||
+    order < 0 ||
+    order > 1_000_000
+  )
+    throw new Error("Niepoprawny dzień planu.");
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task) throw new Error("Nie znaleziono zadania.");
+  task.details = { ...detailsOf(task), plannedDay: day, order };
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
 export async function closeDay(
   day: string,
   closed: boolean,

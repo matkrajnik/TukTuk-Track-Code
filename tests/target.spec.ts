@@ -69,6 +69,7 @@ test("tasks show progress to the daily target and turn amber after exceeding it"
     .getByRole("button", { name: "Plan i historia", exact: true })
     .click();
   await page.getByRole("button", { name: "Tydzień", exact: true }).click();
+  await page.getByRole("button", { name: "Podsumowanie", exact: true }).click();
   const diffs = page.locator(".weekly-day .target-diff");
   await expect(diffs).toHaveText([
     "−8:00",

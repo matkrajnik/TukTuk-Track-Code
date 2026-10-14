@@ -78,6 +78,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
     "Brak zaplanowanych",
   );
   await page.getByRole("button", { name: "Tydzień", exact: true }).click();
+  await page.getByRole("button", { name: "Podsumowanie", exact: true }).click();
   await expect(page.locator(".report-total")).toHaveText("01:30:00");
   await expect(page.getByText("WMS", { exact: true })).toBeVisible();
   await page.screenshot({

@@ -158,6 +158,33 @@ pub fn reorder(db: &mut Connection, entries: &[ReorderEntry]) -> Result<Snapshot
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Moves a task on the week board: sets only `$.plannedDay` (empty = back to
+/// "Do zaplanowania") and `$.order`, like `reorder`; the rest of the details
+/// JSON (an unsaved planning form included) stays untouched.
+pub fn plan_task(db: &mut Connection, id: i64, day: &str, order: i64) -> Result<Snapshot, String> {
+    if (!day.is_empty() && !date_valid(day)) || !(0..=1_000_000).contains(&order) {
+        return Err("Niepoprawny dzień planu.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND id NOT IN (SELECT task_id FROM task_lifecycle WHERE deleted_at IS NOT NULL))",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Err("Nie znaleziono zadania.".into());
+    }
+    tx.execute(
+        "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('plannedDay',?2,'order',?3)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.plannedDay',?2,'$.order',?3)",
+        params![id, day, order],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 pub fn clear_waiting(db: &Connection, id: i64) -> rusqlite::Result<()> {
     db.execute(
         "UPDATE task_details SET json=json_set(json,'$.waiting','') WHERE task_id=?1",
@@ -340,5 +367,84 @@ mod tests {
         let snap = db::snapshot(&db).unwrap();
         let one = snap.tasks.iter().find(|t| t.id == 1).unwrap();
         assert_eq!((one.details.order, one.details.priority), (2, 1));
+    }
+    #[test]
+    fn plan_task_sets_only_planned_day_and_order() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["A", "B"] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        let mut d = Details {
+            priority: 1,
+            planned_day: "2026-10-12".into(),
+            due_day: "2026-10-20".into(),
+            project: "WMS".into(),
+            waiting: "Klient".into(),
+            estimate_minutes: 90,
+            order: 7,
+            planned_start: "09:30".into(),
+            repeat_days: vec![3],
+            repeat_from: "2026-10-01".into(),
+            ..Details::default()
+        };
+        d.notes.insert("2026-10-12".into(), "Notatka".into());
+        d.checklist.push(CheckItem {
+            text: "Krok".into(),
+            done: true,
+        });
+        save(&mut db, 1, d).unwrap();
+        // Keys unknown to this version must survive as well.
+        db.execute(
+            "UPDATE task_details SET json=json_set(json,'$.future','x') WHERE task_id=1",
+            [],
+        )
+        .unwrap();
+        let snap = plan_task(&mut db, 1, "2026-10-14", 3).unwrap();
+        let one = &snap.tasks.iter().find(|t| t.id == 1).unwrap().details;
+        assert_eq!((one.planned_day.as_str(), one.order), ("2026-10-14", 3));
+        assert_eq!(one.priority, 1);
+        assert_eq!(one.due_day, "2026-10-20");
+        assert_eq!(one.project, "WMS");
+        assert_eq!(one.waiting, "Klient");
+        assert_eq!(one.estimate_minutes, 90);
+        assert_eq!(one.planned_start, "09:30");
+        assert_eq!(one.repeat_days, vec![3]);
+        assert_eq!(one.repeat_from, "2026-10-01");
+        assert_eq!(one.notes["2026-10-12"], "Notatka");
+        assert!(one.checklist[0].done);
+        let json: String = db
+            .query_row("SELECT json FROM task_details WHERE task_id=1", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(json.contains(r#""future":"x""#));
+        // Back to "Do zaplanowania": an empty day.
+        let snap = plan_task(&mut db, 1, "", 3).unwrap();
+        let one = &snap.tasks.iter().find(|t| t.id == 1).unwrap().details;
+        assert_eq!(one.planned_day, "");
+        assert_eq!(one.project, "WMS");
+        // A task without a details row gets one with just the two fields.
+        let snap = plan_task(&mut db, 2, "2026-10-15", 1).unwrap();
+        let two = &snap.tasks.iter().find(|t| t.id == 2).unwrap().details;
+        assert_eq!(
+            (two.planned_day.as_str(), two.order, two.priority),
+            ("2026-10-15", 1, 0)
+        );
+        // Invalid input and tasks in the trash are rejected without writes.
+        assert!(plan_task(&mut db, 2, "2026-02-30", 1).is_err());
+        assert!(plan_task(&mut db, 2, "14.10.2026", 1).is_err());
+        assert!(plan_task(&mut db, 2, "2026-10-16", -1).is_err());
+        assert!(plan_task(&mut db, 99, "2026-10-16", 1).is_err());
+        db::change(&mut db, "delete", Some(2), None, 0).unwrap();
+        assert!(plan_task(&mut db, 2, "2026-10-16", 1).is_err());
+        let day: String = db
+            .query_row(
+                "SELECT json_extract(json,'$.plannedDay') FROM task_details WHERE task_id=2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(day, "2026-10-15");
     }
 }

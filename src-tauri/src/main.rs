@@ -135,6 +135,19 @@ fn reorder_tasks(
     Ok(result)
 }
 #[tauri::command]
+fn plan_task(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    id: i64,
+    day: String,
+    order: i64,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = planner::plan_task(&mut connection, id, &day, order)?;
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
+#[tauri::command]
 fn save_details(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
@@ -297,6 +310,7 @@ fn main() {
             close_day,
             set_priority,
             reorder_tasks,
+            plan_task,
             idle::idle_notice,
             idle::idle_resolve,
             backup::export_backup,
