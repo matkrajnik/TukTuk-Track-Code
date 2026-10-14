@@ -81,7 +81,7 @@ Przypomnienie jest własnym oknem aplikacji, więc działa także bez instalowan
 
 ## Uruchomienie na Windows
 
-Wymagania: Node.js 22 LTS i npm, Rust stable MSVC, Microsoft C++ Build Tools z pakietem **Desktop development with C++** oraz Windows SDK, WebView2 Runtime.
+Wymagania: Node.js 24 LTS (wersja z `.nvmrc`) i npm, Rust stable MSVC, Microsoft C++ Build Tools z pakietem **Desktop development with C++** oraz Windows SDK, WebView2 Runtime.
 Oficjalna instrukcja: https://v2.tauri.app/start/prerequisites/
 
 ```powershell
