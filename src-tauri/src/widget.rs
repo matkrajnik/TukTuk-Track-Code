@@ -3,7 +3,7 @@
 //! O widoczności decyduje `apply`: ustawienia `widget_enabled` i
 //! `widget_background_only`, schowanie przyciskiem X (do końca sesji aplikacji,
 //! bez zmiany ustawienia) oraz stan głównego okna (tryb „tylko w tle”).
-//! `apply` jest wołane w `setup`, po `settings-changed`, po zmianie fokusu
+//! `apply` jest wołane przy starcie wątku (`start`), po `settings-changed`, po zmianie fokusu
 //! głównego okna i co 2 s z pętli w `reminder.rs`.
 use crate::settings::{self, AppSettings};
 use serde::Serialize;
@@ -115,8 +115,12 @@ fn update(app: &tauri::AppHandle, change: impl FnOnce(&mut Status)) {
     wake(app);
 }
 
-/// Stan początkowy z ustawień, nasłuch `settings-changed` i wątek odświeżający.
-pub fn setup(app: &tauri::App) {
+/// Sygnały `wake` zebrane od `setup` do `start`.
+pub struct Waker(mpsc::Receiver<()>);
+
+/// Stan początkowy z ustawień i nasłuch `settings-changed`. Wątek
+/// odświeżający uruchamia dopiero `start`, po utworzeniu okien.
+pub fn setup(app: &tauri::App) -> Waker {
     let (wake, signal) = mpsc::channel::<()>();
     app.manage(WidgetState {
         status: Mutex::new(Status::from_settings(
@@ -133,7 +137,15 @@ pub fn setup(app: &tauri::App) {
             });
         }
     });
-    let handle = app.handle().clone();
+    Waker(signal)
+}
+
+/// Wątek odświeżający: pierwsze `apply` od razu, potem po każdym `wake`.
+/// Kończy się, gdy okno main zniknie, więc wołać po `create_windows`;
+/// sygnały wysłane wcześniej czekają w kanale.
+pub fn start(app: &tauri::AppHandle, waker: Waker) {
+    let Waker(signal) = waker;
+    let handle = app.clone();
     std::thread::spawn(move || {
         apply(&handle, main_background(&handle));
         while signal.recv().is_ok() {

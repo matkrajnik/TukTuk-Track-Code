@@ -198,8 +198,12 @@ fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
     }
 }
 
-/// Buduje ikonę traya i uruchamia wątek odświeżający.
-pub fn setup(app: &tauri::App) -> tauri::Result<()> {
+/// Sygnały odświeżenia zebrane od `setup` do `start`.
+pub struct Refresher(mpsc::Receiver<()>);
+
+/// Buduje ikonę traya, rejestruje `TrayState` i nasłuch zdarzeń. Wątek
+/// odświeżający uruchamia dopiero `start`, po utworzeniu okien.
+pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let current = MenuItem::with_id(app, "current", "Brak pomiaru", false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Otwórz Todo Track", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "Szybkie przełączanie", true, None::<&str>)?;
@@ -264,7 +268,15 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
             let _ = wake.send(());
         });
     }
-    let handle = app.handle().clone();
+    Ok(Refresher(signal))
+}
+
+/// Wątek odświeżający tooltip, ikonę i menu co 5 s i po zdarzeniach. Kończy
+/// się, gdy okno main zniknie (zamykanie aplikacji), więc wołać po
+/// `create_windows`: wcześniej wątek zakończyłby się od razu.
+pub fn start(app: &tauri::AppHandle, refresher: Refresher) {
+    let Refresher(signal) = refresher;
+    let handle = app.clone();
     std::thread::spawn(move || {
         let mut last: Option<(bool, String)> = None;
         loop {
@@ -278,7 +290,6 @@ pub fn setup(app: &tauri::App) -> tauri::Result<()> {
             }
         }
     });
-    Ok(())
 }
 
 fn refresh(app: &tauri::AppHandle, last: &mut Option<(bool, String)>) {

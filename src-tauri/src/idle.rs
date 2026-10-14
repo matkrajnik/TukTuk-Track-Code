@@ -73,8 +73,14 @@ fn idle_ms() -> Option<u32> {
     None
 }
 
-pub fn start(app: &tauri::AppHandle) {
+/// Rejestruje stan bezczynności; wołać przed utworzeniem okien.
+pub fn setup(app: &tauri::AppHandle) {
     app.manage(State::default());
+}
+
+/// Pętla co 2 s sprawdzająca bezczynność. Kończy się, gdy okno main zniknie,
+/// więc wołać po `create_windows`.
+pub fn start(app: &tauri::AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(2));

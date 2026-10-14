@@ -254,19 +254,22 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
-            tray::setup(app)?;
-            widget::setup(app);
-            reminder::start(app.handle());
-            idle::start(app.handle());
+            let tray_refresher = tray::setup(app)?;
+            let widget_waker = widget::setup(app);
+            reminder::setup(app.handle());
+            idle::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
-            // korzystają komendy; pętle reminder i idle czekają 2 s, zanim
-            // sprawdzą okno main. Pętla powiadomień sprawdza je od razu, więc
-            // startuje po utworzeniu okien, a widget dostaje ponowne sprawdzenie
-            // widoczności, bo jego pierwsze apply mogło nie zastać okna.
+            // korzystają komendy. Wątki tray, widget, reminder, idle i notify
+            // kończą się, gdy nie ma okna main (zamykanie aplikacji), więc
+            // startują dopiero po create_windows; inaczej przy wolnym starcie
+            // (np. autostart zaraz po zalogowaniu) kończyłyby się od razu.
             let saved_sizes = window_state::saved_sizes(app.handle());
             create_windows(app)?;
             window_state::reapply_saved_sizes(app.handle(), &saved_sizes);
-            widget::wake(app.handle());
+            tray::start(app.handle(), tray_refresher);
+            widget::start(app.handle(), widget_waker);
+            reminder::start(app.handle());
+            idle::start(app.handle());
             notify::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
@@ -380,6 +383,37 @@ mod tests {
             .collect();
         for label in ["main", "quick", "reminder", "widget"] {
             assert!(labels.contains(&label), "brak okna {label}");
+        }
+    }
+    /// Wątki tray, widget, reminder, idle i notify kończą się, gdy nie ma okna
+    /// main, więc muszą startować po `create_windows` w `setup`; inaczej tray
+    /// nie odświeżałby tooltipu i ikony przez całą sesję.
+    #[test]
+    fn background_threads_start_after_windows() {
+        let source = include_str!("main.rs");
+        let setup = &source[source.find(".setup(|app| {").unwrap()..];
+        let windows = setup.find("create_windows(app)?;").unwrap();
+        for call in [
+            "tray::start(",
+            "widget::start(",
+            "reminder::start(",
+            "idle::start(",
+            "notify::start(",
+        ] {
+            let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
+            assert!(at > windows, "{call} musi być po create_windows");
+        }
+        for call in [
+            "tray::setup(",
+            "widget::setup(",
+            "reminder::setup(",
+            "idle::setup(",
+        ] {
+            let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
+            assert!(
+                at < windows,
+                "{call} (manage) musi być przed create_windows"
+            );
         }
     }
 }

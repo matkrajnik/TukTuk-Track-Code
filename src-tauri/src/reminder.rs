@@ -50,11 +50,17 @@ fn display(app: &tauri::AppHandle) {
         let _ = window.show();
     }
 }
-pub fn start(app: &tauri::AppHandle) {
+/// Rejestruje stan przypomnienia; wołać przed utworzeniem okien.
+pub fn setup(app: &tauri::AppHandle) {
     app.manage(ReminderState {
         clock: Mutex::new(ReminderClock::default()),
         origin: Instant::now(),
     });
+}
+
+/// Pętla co 2 s (przypomnienie, widget w trybie „tylko w tle”). Kończy się,
+/// gdy okno main zniknie, więc wołać po `create_windows`.
+pub fn start(app: &tauri::AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let delay = 300;
