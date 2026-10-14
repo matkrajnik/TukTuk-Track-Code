@@ -246,9 +246,161 @@ pub fn edit_session(
     snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Dzieli przedział w chwili `at`. Pierwsza część zostaje przy dotychczasowym
+/// zadaniu i kończy się na `at`, druga należy do `target_task` (domyślnie to
+/// samo zadanie). Przedział aktywny pozostaje aktywny w drugiej części, więc
+/// obowiązują dla niej reguły Startu.
+pub fn split_session(
+    db: &mut Connection,
+    id: i64,
+    at: i64,
+    target_task: Option<i64>,
+    now: i64,
+) -> Result<Snapshot, String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let (task_id, started_at, ended_at, deleted): (i64, i64, Option<i64>, bool) = tx
+        .query_row(
+            "SELECT s.task_id,s.started_at,s.ended_at,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=s.task_id AND l.deleted_at IS NOT NULL) FROM sessions s WHERE s.id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if deleted {
+        return Err("Przedział należy do zadania w koszu.".into());
+    }
+    let end = ended_at.unwrap_or(now);
+    if !(started_at < at && at < end) {
+        return Err("Moment podziału musi leżeć wewnątrz przedziału.".into());
+    }
+    let target = target_task.unwrap_or(task_id);
+    let (done, target_deleted): (bool, bool) = tx
+        .query_row(
+            "SELECT t.done,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=t.id AND l.deleted_at IS NOT NULL) FROM tasks t WHERE t.id=?1",
+            [target],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| "Nie znaleziono zadania docelowego.".to_owned())?;
+    if target_deleted {
+        return Err("Zadanie docelowe jest w koszu. Najpierw je przywróć.".into());
+    }
+    if ended_at.is_none() {
+        if done {
+            return Err("Najpierw przywróć zadanie docelowe do zrobienia.".into());
+        }
+        tx.execute(
+            "UPDATE task_lifecycle SET archived=0 WHERE task_id=?1",
+            [target],
+        )
+        .map_err(|e| e.to_string())?;
+        crate::planner::clear_waiting(&tx, target).map_err(|e| e.to_string())?;
+    }
+    // Najpierw zamknięcie, potem wstawienie: indeks one_active_session
+    // dopuszcza tylko jeden otwarty przedział.
+    tx.execute(
+        "UPDATE sessions SET ended_at=?1 WHERE id=?2",
+        params![at, id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO sessions(task_id,started_at,ended_at) VALUES(?1,?2,?3)",
+        params![target, at, ended_at],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    snapshot(db).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn split_fixture() -> Connection {
+        let mut db = Connection::open_in_memory().unwrap();
+        init(&db).unwrap();
+        change(&mut db, "add", None, Some("A".into()), 0).unwrap();
+        change(&mut db, "add", None, Some("B".into()), 0).unwrap();
+        db
+    }
+    #[test]
+    fn split_finished_session_keeps_total_range() {
+        let mut db = split_fixture();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        change(&mut db, "stop", None, None, 5000).unwrap();
+        change(&mut db, "toggle", Some(2), None, 6000).unwrap();
+        // Zakończony przedział można przypisać także ukończonemu zadaniu.
+        let s = split_session(&mut db, 1, 3000, Some(2), 9000).unwrap();
+        assert_eq!(s.sessions.len(), 2);
+        let first = s.sessions.iter().find(|x| x.id == 1).unwrap();
+        assert_eq!(
+            (first.task_id, first.started_at, first.ended_at),
+            (1, 1000, Some(3000))
+        );
+        let second = s.sessions.iter().find(|x| x.id != 1).unwrap();
+        assert_eq!(
+            (second.task_id, second.started_at, second.ended_at),
+            (2, 3000, Some(5000))
+        );
+        // Bez celu druga część zostaje przy tym samym zadaniu.
+        let s = split_session(&mut db, 1, 2000, None, 9000).unwrap();
+        assert_eq!(s.sessions.iter().filter(|x| x.task_id == 1).count(), 2);
+    }
+    #[test]
+    fn split_active_session_moves_timer_to_target() {
+        let mut db = split_fixture();
+        db.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(2,'{\"waiting\":\"klient\"}')",
+            [],
+        )
+        .unwrap();
+        change(&mut db, "archive", Some(2), None, 500).unwrap();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        let s = split_session(&mut db, 1, 4000, Some(2), 6000).unwrap();
+        let first = s.sessions.iter().find(|x| x.id == 1).unwrap();
+        assert_eq!(first.ended_at, Some(4000));
+        let active: Vec<_> = s.sessions.iter().filter(|x| x.ended_at.is_none()).collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!((active[0].task_id, active[0].started_at), (2, 4000));
+        let b = s.tasks.iter().find(|t| t.id == 2).unwrap();
+        assert!(!b.archived);
+        assert_eq!(b.details.waiting, "");
+    }
+    #[test]
+    fn split_rejects_moment_outside_range() {
+        let mut db = split_fixture();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        assert!(split_session(&mut db, 1, 1000, None, 5000).is_err());
+        assert!(split_session(&mut db, 1, 5000, None, 5000).is_err());
+        assert!(split_session(&mut db, 1, 7000, None, 5000).is_err());
+        assert!(split_session(&mut db, 99, 2000, None, 5000).is_err());
+        change(&mut db, "stop", None, None, 3000).unwrap();
+        assert!(split_session(&mut db, 1, 4000, None, 5000).is_err());
+        let s = snapshot(&db).unwrap();
+        assert_eq!(s.sessions.len(), 1);
+        assert_eq!(s.sessions[0].ended_at, Some(3000));
+    }
+    #[test]
+    fn split_active_rejects_done_target() {
+        let mut db = split_fixture();
+        change(&mut db, "toggle", Some(2), None, 500).unwrap();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        assert!(split_session(&mut db, 1, 2000, Some(2), 5000).is_err());
+        let s = snapshot(&db).unwrap();
+        assert_eq!(s.sessions.len(), 1);
+        assert_eq!(s.sessions[0].ended_at, None);
+        assert_eq!(s.sessions[0].task_id, 1);
+    }
+    #[test]
+    fn split_rejects_trashed_target_and_session() {
+        let mut db = split_fixture();
+        change(&mut db, "delete", Some(2), None, 500).unwrap();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        assert!(split_session(&mut db, 1, 2000, Some(2), 5000).is_err());
+        assert!(split_session(&mut db, 1, 2000, Some(99), 5000).is_err());
+        change(&mut db, "delete", Some(1), None, 3000).unwrap();
+        assert!(split_session(&mut db, 1, 2000, None, 5000).is_err());
+        let s = snapshot(&db).unwrap();
+        assert!(s.sessions.is_empty());
+        assert_eq!(s.trash_sessions.len(), 1);
+    }
     #[test]
     fn session_edits_validate_and_preserve_other_measurements() {
         let mut db = Connection::open_in_memory().unwrap();

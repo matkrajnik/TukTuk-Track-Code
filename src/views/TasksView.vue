@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { Plus, Search, Square } from "lucide-vue-next";
+import { Plus, Scissors, Search, Square } from "lucide-vue-next";
 import TaskCard from "../components/TaskCard.vue";
 import {
   change,
@@ -26,6 +26,7 @@ const emit = defineEmits<{
   edit: [task: Task];
   remove: [task: Task];
   session: [session: Session];
+  split: [session: Session];
 }>();
 
 const working = ref(false);
@@ -165,6 +166,14 @@ async function priority(task: Task, e: Event) {
       activeTask?.title
     }}</span
     ><span class="mono focus-clock">{{ duration(elapsed(active)) }}</span
+    ><button
+      class="stop-button"
+      aria-label="Podziel bieżący pomiar"
+      title="Podziel pomiar w wybranym momencie"
+      :disabled="busy"
+      @click="emit('split', active)"
+    >
+      <Scissors :size="12" />Podziel</button
     ><button class="stop-button" :disabled="busy" @click="act('stop')">
       <Square :size="12" />Stop
     </button>
@@ -208,8 +217,7 @@ async function priority(task: Task, e: Event) {
   </div>
   <div class="organization-filters">
     <label class="inline-check"
-      ><input v-model="todayOnly" type="checkbox" />Dzisiaj: plan i
-      praca</label
+      ><input v-model="todayOnly" type="checkbox" />Dzisiaj: plan i praca</label
     >
     <label
       >Projekt

@@ -56,6 +56,20 @@ fn edit_session(
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+#[tauri::command]
+fn split_session(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    id: i64,
+    at: i64,
+    target_task: Option<i64>,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = db::split_session(&mut connection, id, at, target_task, db::now())?;
+    reminder::reset(&app);
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
 fn show(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
@@ -290,6 +304,7 @@ fn main() {
             get_snapshot,
             mutate,
             edit_session,
+            split_session,
             save_details,
             add_session,
             quick_open,

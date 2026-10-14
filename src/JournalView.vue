@@ -18,6 +18,7 @@ const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
   edit: [session: Session];
+  split: [session: Session];
   report: [day: string];
 }>();
 const day = ref(dayKey(props.now));
@@ -396,7 +397,14 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           :disabled="item.session.endedAt === null"
           @click="emit('edit', item.session)"
         >
-          Edytuj
+          Edytuj</button
+        ><button
+          v-if="item.session"
+          class="today-button"
+          :aria-label="'Podziel przedział ' + item.session.id"
+          @click="emit('split', item.session)"
+        >
+          Podziel
         </button>
       </div>
       <div

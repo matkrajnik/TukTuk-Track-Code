@@ -418,3 +418,54 @@ for (const [day, expected] of [
     await expect(page.locator(".report-total")).toHaveText("00:00:00");
   });
 }
+
+test("splitting the active measurement from the bar keeps the timer on the new task", async ({
+  page,
+}) => {
+  await seed(page);
+  await add(page, "Przegląd kodu");
+  await page.getByRole("button", { name: "Podziel bieżący pomiar" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("tab", { name: "Podziel" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByLabel("Moment podziału")).toHaveValue(
+    "2026-10-12T11:52:30",
+  );
+  await page.getByLabel("Moment podziału").fill("2026-10-12T12:30");
+  await expect(
+    dialog.getByRole("button", { name: "Podziel przedział" }),
+  ).toBeDisabled();
+  await page.getByLabel("Moment podziału").fill("2026-10-12T11:50");
+  await page.getByLabel("Zadanie drugiej części").selectOption({
+    label: "Przegląd kodu",
+  });
+  await expect(page.getByLabel("Zadanie drugiej części")).not.toContainText(
+    "Spotkanie zespołu",
+  );
+  const preview = page.getByLabel("Podgląd podziału").locator("li");
+  await expect(preview.nth(0)).toContainText("Projekt strony");
+  await expect(preview.nth(0)).toContainText("00:05:00");
+  await expect(preview.nth(1)).toContainText("Przegląd kodu");
+  await expect(preview.nth(1)).toContainText("00:10:00");
+  await dialog.getByRole("button", { name: "Podziel przedział" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.locator(".active-title")).toHaveText("Przegląd kodu");
+  await expect(page.locator(".focus-clock")).toHaveText("00:10:00");
+  await expect(
+    page.getByLabel("Stop: Przegląd kodu", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.locator(".active-title")).toHaveText("Przegląd kodu");
+  await page
+    .getByRole("button", { name: "Raporty dzienne", exact: true })
+    .click();
+  await expect(page.locator(".report-total")).toHaveText("00:15:00");
+  await expect(
+    page.locator(".report-card").filter({ hasText: "Projekt strony" }),
+  ).toContainText("00:05:00");
+  await expect(
+    page.locator(".report-card").filter({ hasText: "Przegląd kodu" }),
+  ).toContainText("00:10:00");
+});

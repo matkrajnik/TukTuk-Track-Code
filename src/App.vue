@@ -4,7 +4,7 @@ import { X } from "lucide-vue-next";
 import TitleBar from "./components/TitleBar.vue";
 import AppNav, { type View } from "./components/AppNav.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
-import SessionEditor from "./components/SessionEditor.vue";
+import SessionEditor, { type SessionTab } from "./components/SessionEditor.vue";
 import IdleBanner from "./components/IdleBanner.vue";
 import TasksView from "./views/TasksView.vue";
 import ReportsView from "./views/ReportsView.vue";
@@ -36,6 +36,7 @@ const editing = ref<Task | null>(null);
 const editTitle = ref("");
 const deleting = ref<Task | null>(null);
 const editingSession = ref<Session | null>(null);
+const sessionTab = ref<SessionTab>("hours");
 const quickPreview = ref(false);
 const modalOpen = computed(() =>
   Boolean(editing.value || deleting.value || editingSession.value),
@@ -64,9 +65,13 @@ function closeModal() {
   editingSession.value = null;
   error.value = "";
 }
-function openSession(session: Session) {
+function openSession(session: Session, tab: SessionTab = "hours") {
   error.value = "";
+  sessionTab.value = tab;
   editingSession.value = { ...session };
+}
+function openSplit(session: Session) {
+  openSession(session, "split");
 }
 function openEdit(task: Task) {
   error.value = "";
@@ -194,6 +199,7 @@ onUnmounted(() => {
           @edit="openEdit"
           @remove="openDelete"
           @session="openSession"
+          @split="openSplit"
         />
         <LibraryView
           v-else-if="view === 'library'"
@@ -214,6 +220,7 @@ onUnmounted(() => {
           :now="now"
           @updated="updated"
           @edit="openSession"
+          @split="openSplit"
           @report="showReport"
         />
         <ReportsView
@@ -237,6 +244,9 @@ onUnmounted(() => {
       v-if="editingSession"
       v-model:busy="busy"
       :session="editingSession"
+      :tasks="data.tasks"
+      :now="now"
+      :tab="sessionTab"
       @updated="
         updated($event);
         editingSession = null;

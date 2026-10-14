@@ -192,6 +192,49 @@ export async function editSession(
   localStorage.setItem(key, JSON.stringify(data));
   return data;
 }
+/** Odpowiednik db::split_session dla trybu podglądu. */
+export async function splitSession(
+  id: number,
+  at: number,
+  targetTask: number | null = null,
+): Promise<Snapshot> {
+  if (desktop) return invoke("split_session", { id, at, targetTask });
+  const data = await read();
+  const now = Date.now();
+  if (data.trashSessions?.some((s) => s.id === id))
+    throw new Error("Przedział należy do zadania w koszu.");
+  const session = data.sessions.find((s) => s.id === id);
+  if (!session) throw new Error("Nie znaleziono przedziału.");
+  const end = session.endedAt ?? now;
+  if (!Number.isSafeInteger(at) || !(session.startedAt < at && at < end))
+    throw new Error("Moment podziału musi leżeć wewnątrz przedziału.");
+  const targetId = targetTask ?? session.taskId;
+  if (data.trash?.some((t) => t.id === targetId))
+    throw new Error("Zadanie docelowe jest w koszu. Najpierw je przywróć.");
+  const target = data.tasks.find((t) => t.id === targetId);
+  if (!target) throw new Error("Nie znaleziono zadania docelowego.");
+  if (session.endedAt === null) {
+    if (target.done)
+      throw new Error("Najpierw przywróć zadanie docelowe do zrobienia.");
+    target.archived = false;
+    target.details = { ...detailsOf(target), waiting: "" };
+  }
+  const second: Session = {
+    id:
+      Math.max(
+        0,
+        ...data.sessions.map((s) => s.id),
+        ...(data.trashSessions ?? []).map((s) => s.id),
+      ) + 1,
+    taskId: targetId,
+    startedAt: at,
+    endedAt: session.endedAt,
+  };
+  session.endedAt = at;
+  data.sessions.unshift(second);
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
 export function duration(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   return [
