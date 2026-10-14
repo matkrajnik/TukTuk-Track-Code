@@ -32,6 +32,13 @@ impl Status {
             dismissed,
         }
     }
+
+    /// Stan po `settings-changed`. Schowanie X trwa do końca sesji, ale ponowne
+    /// włączenie widgetu w ustawieniach (false -> true) je kasuje: zaznaczony
+    /// checkbox zawsze pokazuje widget.
+    fn after_settings_change(self, s: &AppSettings) -> Self {
+        Self::from_settings(s, self.dismissed && self.enabled)
+    }
 }
 
 /// Czy okno widgetu ma być widoczne. `main_background`: główne okno jest
@@ -122,7 +129,7 @@ pub fn setup(app: &tauri::App) {
     app.listen_any("settings-changed", move |event| {
         if let Ok(s) = serde_json::from_str::<AppSettings>(event.payload()) {
             update(&handle, |status| {
-                *status = Status::from_settings(&s, status.dismissed);
+                *status = status.after_settings_change(&s);
             });
         }
     });
@@ -204,6 +211,32 @@ mod tests {
         assert_eq!(
             Status::from_settings(&AppSettings::default(), false),
             status(false, false, false)
+        );
+    }
+
+    #[test]
+    fn reenabling_in_settings_clears_dismissal() {
+        let on = AppSettings {
+            widget_enabled: true,
+            ..AppSettings::default()
+        };
+        let off = AppSettings::default();
+        // X, potem odznaczenie i ponowne zaznaczenie „Pokazuj mini-widget”.
+        let dismissed = status(true, false, true);
+        let disabled = dismissed.after_settings_change(&off);
+        assert!(!should_show(disabled, true));
+        let reenabled = disabled.after_settings_change(&on);
+        assert_eq!(reenabled, status(true, false, false));
+        assert!(should_show(reenabled, false));
+        // Inna zmiana ustawień przy włączonym widgecie zachowuje schowanie.
+        let background = AppSettings {
+            widget_enabled: true,
+            widget_background_only: true,
+            ..AppSettings::default()
+        };
+        assert_eq!(
+            dismissed.after_settings_change(&background),
+            status(true, true, true)
         );
     }
 

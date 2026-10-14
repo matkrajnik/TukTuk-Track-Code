@@ -1,5 +1,13 @@
 ﻿# Todo Track — stan po wykonaniu kontynuacji
 
+## W toku — 1.0 (gałąź release/1.0): sprawdzenia natywne na etap 5
+
+Etapy 1.0 są weryfikowane testami Playwright (podgląd) i `cargo test`. Poniższe wymaga natywnej instancji z osobnym identyfikatorem (`pl.todotrack.validation.v6`, PLAN_1.0.md, etap 5 pkt 4); nie uruchamiać na bazie `pl.todotrack.desktop`.
+
+- B, mini-widget (okno `widget`: `focus: false`, `focusable: false`): klik Stop/Start, ⇄ i X na widgecie działa i nie zabiera fokusu aplikacji, w której się pracuje (np. kursor zostaje w Notatniku). Ryzyko z PLAN_1.0.md: jeśli w oknie `focusable: false` przyciski nie przyjmują kliknięć, zostawić `focus: false` jak w reminder i przywracać fokus poprzedniemu oknu.
+- B: przeciąganie za uchwyt widgetu przesuwa okno; pozycja widgetu wraca po restarcie aplikacji (K, window-state).
+- B: X, potem odznaczenie i ponowne zaznaczenie „Pokazuj mini-widget” w Ustawieniach pokazuje widget (natywnie, nie tylko w podglądzie).
+
 ## Aktualny stan — 0.3.0 (13 października 2026)
 
 Zaimplementowano zaakceptowane dziewięć rozszerzeń oraz późniejszą prośbę o priorytet bez rozwijania:

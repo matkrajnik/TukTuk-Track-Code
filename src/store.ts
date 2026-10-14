@@ -508,6 +508,18 @@ function previewWidgetDismissed(): boolean {
   }
 }
 
+/**
+ * Podgląd `Status::after_settings_change`: schowanie X kasujemy już przy
+ * wyłączeniu widgetu (wyłączony i tak jest niewidoczny), więc ponowne włączenie
+ * w ustawieniach go pokazuje.
+ */
+export function previewWidgetSettingsChanged(widgetEnabled: boolean) {
+  if (widgetEnabled) return;
+  try {
+    sessionStorage.removeItem(widgetDismissedKey);
+  } catch {}
+}
+
 /** `widget_status`: ustawienia widgetu i schowanie do końca sesji. */
 export async function readWidgetStatus(): Promise<WidgetStatus> {
   if (desktop) return invoke("widget_status");

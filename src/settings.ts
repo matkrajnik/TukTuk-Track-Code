@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { desktop } from "./store";
+import { desktop, previewWidgetSettingsChanged } from "./store";
 
 /** Odpowiednik `AppSettings` z src-tauri/src/settings.rs (klucze camelCase). */
 export interface AppSettings {
@@ -244,6 +244,7 @@ export async function writeSettings(
   for (const name of Object.keys(patch))
     stored[name] = next[name as keyof AppSettings];
   localStorage.setItem(key, JSON.stringify(stored));
+  previewWidgetSettingsChanged(next.widgetEnabled);
   window.dispatchEvent(new CustomEvent(eventName, { detail: next }));
   return next;
 }

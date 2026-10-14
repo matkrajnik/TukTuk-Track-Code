@@ -177,3 +177,30 @@ test("header switch enables the widget and hides it for the session only", async
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   expect(await settings()).toEqual({ widgetEnabled: false });
 });
+
+test("re-enabling the widget in settings clears the session dismissal", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const toggle = page.getByRole("button", { name: "Mini-widget", exact: true });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  // Schowanie do końca sesji (jak X na widgecie).
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+  await page.getByRole("button", { name: "Historia i kopie", exact: true }).click();
+  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  const checkbox = page.getByLabel("Pokazuj mini-widget zawsze na wierzchu");
+  await expect(checkbox).toBeChecked();
+  await checkbox.uncheck();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await checkbox.check();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+  // Po przeładowaniu (ta sama sesja karty) widget nadal nie jest schowany.
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Mini-widget", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+});

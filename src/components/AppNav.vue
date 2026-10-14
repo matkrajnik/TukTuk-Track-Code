@@ -86,8 +86,11 @@ onMounted(async () => {
     const subscriptions = [
       await onWidgetStatus((status) => (widget.value = status)),
       await onSettingsChanged((s) => {
+        // Jak `Status::after_settings_change` w Rust: ponowne włączenie
+        // w ustawieniach (false -> true) kasuje schowanie X.
         widget.value = {
           ...widget.value,
+          dismissed: widget.value.dismissed && widget.value.enabled,
           enabled: s.widgetEnabled,
           backgroundOnly: s.widgetBackgroundOnly,
         };
