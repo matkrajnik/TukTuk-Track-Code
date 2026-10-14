@@ -104,6 +104,7 @@ function arrows(event: KeyboardEvent) {
         ref="toggle"
         class="today-button"
         type="button"
+        :data-week-move="task.id"
         aria-haspopup="menu"
         :aria-expanded="open"
         :aria-label="'Przenieś na…: ' + task.title"

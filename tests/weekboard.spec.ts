@@ -234,6 +234,54 @@ test("moving a task to Wednesday through the menu updates the sum and flags over
   });
 });
 
+test("after a move from the menu focus lands on the moved card", async ({
+  page,
+}) => {
+  await seed(page, tasks);
+  await page
+    .getByRole("button", { name: "Przenieś na…: Analiza importu", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Czwartek 2026-10-15", exact: true })
+    .click();
+  await expect(cards(page, "Czwartek 2026-10-15")).toHaveText([
+    "Analiza importu",
+    "Przegląd",
+  ]);
+  await expect(
+    column(page, "Czwartek 2026-10-15").getByRole("button", {
+      name: "Przenieś na…: Analiza importu",
+      exact: true,
+    }),
+  ).toBeFocused();
+});
+
+test("dropping an overdue card inside Zaległe keeps its plan", async ({
+  page,
+}) => {
+  await seed(page, tasks);
+  const handle = page.getByRole("button", {
+    name: "Przesuń: Stary plan",
+    exact: true,
+  });
+  await handle.dragTo(column(page, "Do zaplanowania").getByText("Zaległe (1)"));
+  await handle.dragTo(column(page, "Do zaplanowania").locator(".week-overdue"));
+  await expect(
+    column(page, "Do zaplanowania").getByText("Zaległe (1)"),
+  ).toBeVisible();
+  const kept = (await stored(page)).tasks.find((t: any) => t.id === 5);
+  expect(kept.details.plannedDay).toBe("2026-10-05");
+  // Upuszczenie na resztę kolumny zdejmuje plan.
+  await handle.dragTo(page.getByLabel("Szukaj w Do zaplanowania"));
+  await expect(
+    column(page, "Do zaplanowania").getByText(/Zaległe/),
+  ).toHaveCount(0);
+  await expect(cards(page, "Do zaplanowania")).toHaveText([
+    "Analiza importu",
+    "Stary plan",
+  ]);
+});
+
 test("dragging a card by its handle moves it to another day", async ({
   page,
 }) => {

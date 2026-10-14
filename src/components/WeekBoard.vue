@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import { planTask, type Snapshot, type Task } from "../store";
 import { dayBounds, dayKey, inDay } from "../time";
 import { compareTasks } from "../order";
@@ -167,7 +167,11 @@ function appendOrder(task: Task, day: string): number {
   return Math.min(1_000_000, Math.max(0, order));
 }
 
-async function moveTo(task: Task, day: string) {
+/**
+ * `focus`: po przeniesieniu z menu karta trafia do innej kolumny (nowa
+ * instancja komponentu), więc fokus wraca na jej przycisk „Przenieś na…”.
+ */
+async function moveTo(task: Task, day: string, focus = false) {
   if ((task.details?.plannedDay ?? "") === day || busy.value) return;
   busy.value = true;
   error.value = "";
@@ -178,6 +182,11 @@ async function moveTo(task: Task, day: string) {
   } finally {
     busy.value = false;
   }
+  if (!focus) return;
+  await nextTick();
+  document
+    .querySelector<HTMLElement>(`[data-week-move="${task.id}"]`)
+    ?.focus();
 }
 
 // Przeciąganie między kolumnami. Upuszczenie na kartę tej samej listy
@@ -193,16 +202,27 @@ function dragEnd() {
   dragging.value = null;
   overColumn.value = "";
 }
-/** `lists`: listy należące do kolumny (Do zaplanowania obejmuje Zaległe). */
+/**
+ * `lists`: listy należące do kolumny. Zaległe stoją w kolumnie Do
+ * zaplanowania, ale to osobna lista: upuszczenie zaległej karty na resztę
+ * kolumny zdejmuje plan, a w obrębie sekcji „Zaległe” nic nie zmienia.
+ */
 function columnProps(id: string, lists: string[], day: string) {
-  const accepts = () =>
+  const accepts = (event: DragEvent) =>
     !!dragging.value &&
     !lists.includes(dragging.value.list) &&
-    (dragging.value.task.details?.plannedDay ?? "") !== day;
+    (dragging.value.task.details?.plannedDay ?? "") !== day &&
+    !(
+      dragging.value.list === OVERDUE &&
+      (event.target as Element | null)?.closest?.(".week-overdue")
+    );
   return {
     class: { "drop-column": overColumn.value === id },
     onDragover: (event: DragEvent) => {
-      if (!accepts()) return;
+      if (!accepts(event)) {
+        if (overColumn.value === id) overColumn.value = "";
+        return;
+      }
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
       overColumn.value = id;
@@ -216,7 +236,7 @@ function columnProps(id: string, lists: string[], day: string) {
         overColumn.value = "";
     },
     onDrop: (event: DragEvent) => {
-      if (!accepts()) return;
+      if (!accepts(event)) return;
       event.preventDefault();
       const task = dragging.value!.task;
       dragEnd();
@@ -262,7 +282,7 @@ function columnProps(id: string, lists: string[], day: string) {
               :next-monday="nextMonday"
               :percent="percent(task)"
               :busy="busy"
-              @move="moveTo(task, $event)"
+              @move="moveTo(task, $event, true)"
               @reorder="reorder.move(backlog, task.id, $event)"
               @dragstart="dragStart($event, task, BACKLOG)"
               @dragend="dragEnd"
@@ -280,7 +300,7 @@ function columnProps(id: string, lists: string[], day: string) {
                 :percent="percent(task)"
                 :busy="busy"
                 show-planned-day
-                @move="moveTo(task, $event)"
+                @move="moveTo(task, $event, true)"
                 @dragstart="dragStart($event, task, OVERDUE)"
                 @dragend="dragEnd"
               />
@@ -336,7 +356,7 @@ function columnProps(id: string, lists: string[], day: string) {
               :next-monday="nextMonday"
               :percent="percent(task)"
               :busy="busy"
-              @move="moveTo(task, $event)"
+              @move="moveTo(task, $event, true)"
               @reorder="reorder.move(part(d.tasks, task), task.id, $event)"
               @dragstart="dragStart($event, task, d.key)"
               @dragend="dragEnd"
