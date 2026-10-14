@@ -55,16 +55,23 @@ function toggleDay(day: number, on: boolean) {
   void save({ workDays: on ? [...days, day] : days });
 }
 let unlisten: (() => void) | undefined;
+let alive = true;
 onMounted(async () => {
   try {
+    const stop = await onSettingsChanged((s) => (settings.value = s));
+    // Panel mógł zostać odmontowany w trakcie rejestracji nasłuchu.
+    if (!alive) return stop();
+    unlisten = stop;
     settings.value = await readSettings();
     info.value = await readAppInfo();
-    unlisten = await onSettingsChanged((s) => (settings.value = s));
   } catch (e) {
-    error.value = String(e);
+    if (alive) error.value = String(e);
   }
 });
-onUnmounted(() => unlisten?.());
+onUnmounted(() => {
+  alive = false;
+  unlisten?.();
+});
 </script>
 <template>
   <section class="dashboard-card settings-panel">

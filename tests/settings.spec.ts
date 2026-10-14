@@ -65,3 +65,48 @@ test("settings tab saves through the preview store, validates ranges and survive
   ).not.toBeChecked();
   await expect(page.getByText("Control+Shift+Space")).toBeVisible();
 });
+test("preview reads a swapped shortcut pair together and resets a colliding pair", async ({
+  page,
+}) => {
+  const open = async () => {
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Historia i kopie", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  };
+  await page.evaluate(
+    (k) =>
+      localStorage.setItem(
+        k,
+        JSON.stringify({
+          shortcutQuick: "Control+Alt+Space",
+          shortcutToggle: "Control+Shift+Space",
+        }),
+      ),
+    key,
+  );
+  await open();
+  await expect(
+    page.getByText("Control+Alt+Space — szybkie przełączanie z dowolnego okna."),
+  ).toBeVisible();
+  await page.evaluate(
+    (k) =>
+      localStorage.setItem(
+        k,
+        JSON.stringify({
+          shortcutQuick: "Ctrl+Alt+J",
+          shortcutToggle: "Alt+Control+J",
+          dayStart: "09:00",
+        }),
+      ),
+    key,
+  );
+  await open();
+  await expect(page.getByLabel("Początek dnia")).toHaveValue("09:00");
+  await expect(
+    page.getByText(
+      "Control+Shift+Space — szybkie przełączanie z dowolnego okna.",
+    ),
+  ).toBeVisible();
+});

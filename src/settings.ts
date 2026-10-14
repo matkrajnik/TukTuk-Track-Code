@@ -38,7 +38,85 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
-const shortcut = /^(?:[A-Za-z]+\+)*[A-Za-z0-9]+$/;
+
+// Odpowiednik parsera z global-hotkey 0.8 (Shortcut::from_str w Rust): modyfikatory
+// z aliasami i dokładnie jeden klawisz na końcu.
+const modifiers: Record<string, string> = {
+  OPTION: "Alt",
+  ALT: "Alt",
+  CONTROL: "Control",
+  CTRL: "Control",
+  COMMAND: "Super",
+  CMD: "Super",
+  SUPER: "Super",
+  SHIFT: "Shift",
+  COMMANDORCONTROL: "Control",
+  COMMANDORCTRL: "Control",
+  CMDORCTRL: "Control",
+  CMDORCONTROL: "Control",
+};
+const keyAliases: Record<string, string> = {
+  "`": "BACKQUOTE",
+  "\\": "BACKSLASH",
+  "[": "BRACKETLEFT",
+  "]": "BRACKETRIGHT",
+  PAUSEBREAK: "PAUSE",
+  ",": "COMMA",
+  "=": "EQUAL",
+  "-": "MINUS",
+  ".": "PERIOD",
+  "'": "QUOTE",
+  ";": "SEMICOLON",
+  "/": "SLASH",
+  DOWN: "ARROWDOWN",
+  LEFT: "ARROWLEFT",
+  RIGHT: "ARROWRIGHT",
+  UP: "ARROWUP",
+  NUMPLUS: "NUMPADADD",
+  NUMPADPLUS: "NUMPADADD",
+  ESC: "ESCAPE",
+  VOLUMEDOWN: "AUDIOVOLUMEDOWN",
+  VOLUMEUP: "AUDIOVOLUMEUP",
+  VOLUMEMUTE: "AUDIOVOLUMEMUTE",
+  MEDIATRACKPREV: "MEDIATRACKPREVIOUS",
+};
+const namedKeys = new Set(
+  (
+    "BACKQUOTE BACKSLASH BRACKETLEFT BRACKETRIGHT PAUSE COMMA EQUAL MINUS PERIOD " +
+    "QUOTE SEMICOLON SLASH BACKSPACE CAPSLOCK ENTER SPACE TAB DELETE END HOME " +
+    "INSERT PAGEDOWN PAGEUP PRINTSCREEN SCROLLLOCK ARROWDOWN ARROWLEFT ARROWRIGHT " +
+    "ARROWUP NUMLOCK ESCAPE AUDIOVOLUMEDOWN AUDIOVOLUMEUP AUDIOVOLUMEMUTE " +
+    "MEDIAPLAY MEDIAPAUSE MEDIAPLAYPAUSE MEDIASTOP MEDIATRACKNEXT MEDIATRACKPREVIOUS"
+  ).split(" "),
+);
+const numpad =
+  /^NUM(?:PAD)?([0-9]|ADD|DECIMAL|DIVIDE|ENTER|EQUAL|MULTIPLY|SUBTRACT)$/;
+function parseKey(raw: string): string | null {
+  const upper = raw.toUpperCase();
+  const k = keyAliases[upper] ?? upper;
+  if (/^[A-Z]$/.test(k)) return "KEY" + k;
+  if (/^[0-9]$/.test(k)) return "DIGIT" + k;
+  if (/^(KEY[A-Z]|DIGIT[0-9]|F([1-9]|1[0-9]|2[0-4]))$/.test(k)) return k;
+  const num = numpad.exec(k);
+  if (num) return "NUMPAD" + num[1];
+  return namedKeys.has(k) ? k : null;
+}
+/** Postać kanoniczna skrótu (np. „Alt+Control+KEYK”) albo null, gdy Rust by go odrzucił. */
+export function parseShortcut(value: string): string | null {
+  if (!value || value.length > 64) return null;
+  const tokens = value.split("+");
+  if (tokens.length === 1) return parseKey(tokens[0]);
+  const mods = new Set<string>();
+  let key: string | null = null;
+  for (const raw of tokens) {
+    const token = raw.trim();
+    if (!token || key) return null;
+    const mod = modifiers[token.toUpperCase()];
+    if (mod) mods.add(mod);
+    else if (!(key = parseKey(token))) return null;
+  }
+  return key && [...[...mods].sort(), key].join("+");
+}
 
 const fresh = (): AppSettings => ({
   ...defaultSettings,
@@ -47,8 +125,8 @@ const fresh = (): AppSettings => ({
 const minutes = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1440;
 
-/** Ta sama walidacja co w Rust; zwraca nowe ustawienia albo rzuca błąd po polsku. */
-export function applySettings(
+/** Walidacja pól osobno, bez reguł łączących pola (validate_fields w Rust). */
+function applyFields(
   current: AppSettings,
   patch: Partial<AppSettings>,
 ): AppSettings {
@@ -81,11 +159,20 @@ export function applySettings(
     );
   if (
     [s.shortcutQuick, s.shortcutToggle].some(
-      (v) => !v || v.length > 64 || !shortcut.test(v),
+      (v) => parseShortcut(v) === null,
     )
   )
     throw new Error("Niepoprawny skrót klawiszowy.");
-  if (s.shortcutQuick.toLowerCase() === s.shortcutToggle.toLowerCase())
+  return s;
+}
+
+/** Ta sama walidacja co w Rust; zwraca nowe ustawienia albo rzuca błąd po polsku. */
+export function applySettings(
+  current: AppSettings,
+  patch: Partial<AppSettings>,
+): AppSettings {
+  const s = applyFields(current, patch);
+  if (parseShortcut(s.shortcutQuick) === parseShortcut(s.shortcutToggle))
     throw new Error(
       "Skróty szybkiego przełączania i Start/Stop muszą być różne.",
     );
@@ -99,14 +186,25 @@ function previewLoad(): AppSettings {
   } catch {
     stored = {};
   }
-  let settings = fresh();
-  // Jak w Rust: każda zapisana wartość osobno, uszkodzona zostaje pominięta.
+  // Jak w Rust: najpierw każde pole osobno na tle domyślnych (uszkodzone zostaje
+  // domyślne), potem raz reguły łączące pola; kolidujące skróty wracają do domyślnych.
+  const settings = fresh();
   for (const [name, value] of Object.entries(stored)) {
+    if (!(name in defaultSettings)) continue;
     try {
-      settings = applySettings(settings, { [name]: value });
+      const alone = applyFields(fresh(), { [name]: value });
+      const field = name as keyof AppSettings;
+      (settings as unknown as Record<string, unknown>)[field] = alone[field];
     } catch {
       /* wartość domyślna */
     }
+  }
+  if (
+    parseShortcut(settings.shortcutQuick) ===
+    parseShortcut(settings.shortcutToggle)
+  ) {
+    settings.shortcutQuick = defaultSettings.shortcutQuick;
+    settings.shortcutToggle = defaultSettings.shortcutToggle;
   }
   return settings;
 }

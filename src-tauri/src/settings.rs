@@ -71,15 +71,33 @@ fn valid_time(value: &str) -> bool {
         && (b[3] - b'0') * 10 + (b[4] - b'0') < 60
 }
 
-fn valid_shortcut(value: &str) -> bool {
+fn parse_shortcut(value: &str) -> Option<tauri_plugin_global_shortcut::Shortcut> {
     use std::str::FromStr;
-    !value.is_empty()
-        && value.len() <= 64
-        && tauri_plugin_global_shortcut::Shortcut::from_str(value).is_ok()
+    if value.is_empty() || value.len() > 64 {
+        return None;
+    }
+    tauri_plugin_global_shortcut::Shortcut::from_str(value).ok()
 }
 
-/// Sprawdza zakresy i porządkuje dni robocze (rosnąco, bez powtórzeń).
-pub fn validate(mut s: AppSettings) -> Result<AppSettings, String> {
+/// Porównuje skróty po sparsowaniu, więc „Ctrl+Shift+Space” i „Shift+Control+Space” są tym samym.
+fn same_shortcut(a: &str, b: &str) -> bool {
+    match (parse_shortcut(a), parse_shortcut(b)) {
+        (Some(a), Some(b)) => a.id() == b.id(),
+        _ => a.eq_ignore_ascii_case(b),
+    }
+}
+
+/// Pełna walidacja: pola osobno i reguły łączące pola.
+pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
+    let s = validate_fields(s)?;
+    if same_shortcut(&s.shortcut_quick, &s.shortcut_toggle) {
+        return Err("Skróty szybkiego przełączania i Start/Stop muszą być różne.".into());
+    }
+    Ok(s)
+}
+
+/// Sprawdza zakresy każdego pola osobno i porządkuje dni robocze (rosnąco, bez powtórzeń).
+fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     if s.target_day_minutes > 1440 {
         return Err("Cel dzienny musi mieć od 0 do 1440 minut.".into());
     }
@@ -97,11 +115,8 @@ pub fn validate(mut s: AppSettings) -> Result<AppSettings, String> {
     if !valid_time(&s.notify_evening) {
         return Err("Godzina wieczornego przypomnienia musi mieć format GG:MM.".into());
     }
-    if !valid_shortcut(&s.shortcut_quick) || !valid_shortcut(&s.shortcut_toggle) {
+    if parse_shortcut(&s.shortcut_quick).is_none() || parse_shortcut(&s.shortcut_toggle).is_none() {
         return Err("Niepoprawny skrót klawiszowy.".into());
-    }
-    if s.shortcut_quick.eq_ignore_ascii_case(&s.shortcut_toggle) {
-        return Err("Skróty szybkiego przełączania i Start/Stop muszą być różne.".into());
     }
     Ok(s)
 }
@@ -126,9 +141,12 @@ pub fn apply(current: &AppSettings, patch: &Value) -> Result<AppSettings, String
     validate(next)
 }
 
-/// Odczyt z bazy. Brakujące lub uszkodzone wartości dostają wartość domyślną.
+/// Odczyt z bazy. Najpierw zbiera wszystkie zapisane wartości (brakujące lub uszkodzone
+/// pole dostaje wartość domyślną), potem raz sprawdza reguły łączące pola. Gdy skróty
+/// kolidują, oba wracają do domyślnych.
 pub fn load(db: &Connection) -> AppSettings {
-    let mut settings = AppSettings::default();
+    let defaults = AppSettings::default();
+    let mut merged = fields();
     for (field, default) in fields() {
         let Ok(raw) = db.query_row(
             "SELECT value FROM settings WHERE key=?1",
@@ -145,11 +163,24 @@ pub fn load(db: &Connection) -> AppSettings {
                 Err(_) => continue,
             }
         };
-        let mut patch = Map::new();
-        patch.insert(field, value);
-        if let Ok(next) = apply(&settings, &Value::Object(patch)) {
-            settings = next;
+        // Pole sprawdzane samo, na tle wartości domyślnych.
+        let mut alone = fields();
+        alone.insert(field.clone(), value.clone());
+        let checked = serde_json::from_value::<AppSettings>(Value::Object(alone))
+            .map_err(|e| e.to_string())
+            .and_then(validate_fields);
+        if checked.is_ok() {
+            merged.insert(field, value);
         }
+    }
+    let Ok(Ok(mut settings)) =
+        serde_json::from_value::<AppSettings>(Value::Object(merged)).map(validate_fields)
+    else {
+        return defaults;
+    };
+    if same_shortcut(&settings.shortcut_quick, &settings.shortcut_toggle) {
+        settings.shortcut_quick = defaults.shortcut_quick;
+        settings.shortcut_toggle = defaults.shortcut_toggle;
     }
     settings
 }
@@ -245,6 +276,10 @@ mod tests {
             json!({"notifyEvening": "17:60"}),
             json!({"shortcutQuick": ""}),
             json!({"shortcutToggle": "Control+Shift+Space"}),
+            json!({"shortcutToggle": "Shift+Ctrl+Space"}),
+            json!({"shortcutToggle": "CmdOrCtrl+Shift+Space"}),
+            json!({"shortcutQuick": "Control+Shift+Spac"}),
+            json!({"shortcutQuick": "Foo+Space"}),
             json!({"idleEnabled": "tak"}),
             json!({"unknown": true}),
             json!([1, 2]),
@@ -294,5 +329,45 @@ mod tests {
         assert_eq!(s.work_days, vec![1, 2, 3, 4, 5]);
         assert_eq!(s.notify_evening, "17:30");
         assert_eq!(s.notify_long_minutes, 60);
+    }
+
+    #[test]
+    fn shortcuts_saved_together_survive_reload() {
+        let mut db = db();
+        // quick = domyślny toggle: poprawne tylko razem z nowym toggle.
+        let saved = save(
+            &mut db,
+            &json!({"shortcutQuick": "Control+Alt+Space", "shortcutToggle": "Control+Alt+K"}),
+        )
+        .unwrap();
+        assert_eq!(load(&db), saved);
+        let swapped = save(
+            &mut db,
+            &json!({"shortcutQuick": "Control+Alt+K", "shortcutToggle": "Control+Alt+Space"}),
+        )
+        .unwrap();
+        assert_eq!(load(&db), swapped);
+        // Zamiana domyślnych skrótów miejscami.
+        let swapped = save(
+            &mut db,
+            &json!({"shortcutQuick": "Control+Alt+Space", "shortcutToggle": "Control+Shift+Space"}),
+        )
+        .unwrap();
+        assert_eq!(swapped.shortcut_quick, "Control+Alt+Space");
+        assert_eq!(load(&db), swapped);
+    }
+
+    #[test]
+    fn colliding_stored_shortcuts_fall_back_to_defaults() {
+        let db = db();
+        db.execute_batch(
+            "INSERT INTO settings(key,value) VALUES('shortcut_quick','Ctrl+Alt+J'),('shortcut_toggle','Alt+Control+J'),('day_start','09:00')",
+        )
+        .unwrap();
+        let s = load(&db);
+        let d = AppSettings::default();
+        assert_eq!(s.shortcut_quick, d.shortcut_quick);
+        assert_eq!(s.shortcut_toggle, d.shortcut_toggle);
+        assert_eq!(s.day_start, "09:00");
     }
 }
