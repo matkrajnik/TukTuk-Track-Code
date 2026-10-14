@@ -144,7 +144,7 @@ Do ręcznego sprawdzenia w Windows: uruchom pomiar, zminimalizuj okno, przywró�
 
 Weryfikacja na Windows, 12 października 2026:
 
-- `npm ci`, `npm run build` i 9 testów Playwright — sukces. Testy uruchomiono tymczasowo na Node 22; systemowy Node nadal ma wersję 18.17.0.
+- `npm ci`, `npm run build` i 9 testów Playwright — sukces. Testy uruchomiono tymczasowo na Node 22; systemowy Node nadal ma wersję 18.17.0 (wpis historyczny; obecnie projekt używa Node 24 LTS z `.nvmrc`).
 - `cargo check --locked`, `cargo test --locked` (9 testów) i `cargo fmt --check`, z manifestem `src-tauri/Cargo.toml` — sukces. MSVC Build Tools i WebView2 są dostępne.
 - `npm run tauri dev` — aplikacja uruchamia się z natywnym backendem SQLite.
 - Testy natywne na osobnej bazie `pl.todotrack.validation`: dodawanie, edycja, anulowanie i potwierdzenie usunięcia wraz z historią, przełączanie pomiaru, ukończenie aktywnego zadania i przywracanie — sukces.

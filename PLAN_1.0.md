@@ -43,8 +43,8 @@ Cel: bezpieczny kod, miejsce na rozbudowę, wspólne mechanizmy, z których korz
 ### 0.1 Git i CI
 
 - `git add -A`, commit „0.3.0 baseline”, push na `main`. Sprawdzić, że `.gitignore` wyklucza `src-tauri/target`, `dist`, `node_modules`, `test-results`.
-- Uruchomić istniejący workflow `.github/workflows` i doprowadzić do zieleni (Node 22, Rust stable, `npm test`, `cargo test --locked`, `tauri build --no-bundle`).
-- Dodać `.nvmrc` z `22`, bo systemowy Node to 18.
+- Uruchomić istniejący workflow `.github/workflows` i doprowadzić do zieleni (Node 24 LTS z `.nvmrc`, Rust stable, `npm test`, `cargo test --locked`, `tauri build --no-bundle`).
+- Dodać `.nvmrc` z `24`, bo systemowy Node to 18. Pierwotnie plan zakładał 22; zmieniono na 24 LTS, bo lokalny nvm ma tylko 18 i 24, a `.nvmrc` z 22 blokował node i npm w katalogu projektu (commit 2288e56).
 
 ### 0.2 Podział `App.vue`
 
