@@ -6,7 +6,9 @@ import { localInput } from "../time";
 
 const props = defineProps<{ session: Session }>();
 const emit = defineEmits<{ updated: [data: Snapshot]; close: [] }>();
-const busy = ref(false);
+// Busy is owned by App so closeModal() (e.g. on "prompt-task") and other
+// actions wait for edit_session, as before the component split.
+const busy = defineModel<boolean>("busy", { default: false });
 const error = ref("");
 const editStart = ref(localInput(props.session.startedAt));
 const editEnd = ref(localInput(props.session.endedAt!));

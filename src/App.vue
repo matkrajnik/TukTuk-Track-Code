@@ -235,6 +235,7 @@ onUnmounted(() => {
     </main>
     <SessionEditor
       v-if="editingSession"
+      v-model:busy="busy"
       :session="editingSession"
       @updated="
         updated($event);
