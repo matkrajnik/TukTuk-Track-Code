@@ -41,9 +41,11 @@ watch(
   { immediate: true },
 );
 
+// Zamknięcie zamiast hide(): przechodzi przez CloseRequested w Ruście, który
+// chowa okno do traya i zapisuje jego pozycję i rozmiar na dysk.
 async function hide() {
   try {
-    await getCurrentWindow().hide();
+    await getCurrentWindow().close();
   } catch (e) {
     emit("error", String(e));
   }

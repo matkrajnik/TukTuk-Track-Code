@@ -5,7 +5,8 @@
 //!
 //! Nasze okna są chowane zamiast zamykane, a proces żyje w trayu, więc plugin
 //! sam zapisałby stan na dysk dopiero przy wyjściu z aplikacji. Dlatego stan
-//! zapisujemy jawnie przy `CloseRequested`, przy „Zakończ aplikację” z traya
+//! zapisujemy jawnie przy `CloseRequested` (X na pasku tytułu i „Schowaj do
+//! traya” wołają `close()`, nie `hide()`), przy „Zakończ aplikację” z traya
 //! i przy `--prepare-update`.
 use tauri::{AppHandle, Runtime};
 use tauri_plugin_window_state::{AppHandleExt, StateFlags};
