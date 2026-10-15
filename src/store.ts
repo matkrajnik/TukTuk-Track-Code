@@ -1233,8 +1233,11 @@ export async function calendarEvents(
 ): Promise<CalendarEvent[]> {
   if (desktop) return invoke("calendar_events", { from, to });
   if (to < from) throw new Error("Niepoprawny zakres dat.");
-  return previewCalendar()
-    .events.filter(
+  const c = previewCalendar();
+  // Jak `calendar_events`: bez połączonego konta żadne spotkania nie obowiązują.
+  if (!c.email) return [];
+  return c.events
+    .filter(
       (e) => e.start < to && (e.end > from || (e.end === e.start && e.start >= from)),
     )
     .sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id));

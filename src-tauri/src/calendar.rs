@@ -19,7 +19,7 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Mutex,
     },
     time::{Duration, Instant},
@@ -95,7 +95,21 @@ pub struct CalendarState {
     connecting: AtomicBool,
     cancel: AtomicBool,
     syncing: AtomicBool,
+    /// Zwiększane przy rozłączeniu: pobieranie i logowanie rozpoczęte wcześniej
+    /// nie zapisują już tokenów ani stanu.
+    generation: AtomicU64,
 }
+
+fn generation(app: &tauri::AppHandle) -> u64 {
+    app.state::<CalendarState>()
+        .generation
+        .load(Ordering::SeqCst)
+}
+/// Czy od `since` konto nie zostało rozłączone (sprawdzać pod blokadą bazy).
+fn still_connected(app: &tauri::AppHandle, db: &Connection, since: u64) -> bool {
+    generation(app) == since && !load(db).email.is_empty()
+}
+const DISCONNECTED: &str = "Konto Microsoft zostało rozłączone.";
 
 pub fn setup(app: &tauri::AppHandle) {
     app.manage(CalendarState::default());
@@ -291,15 +305,6 @@ fn config(app: &tauri::AppHandle) -> Result<Config, String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
     Ok(load(&db))
 }
-/// Zmienia zapisaną konfigurację (czyta świeżą wersję pod blokadą bazy).
-fn update(app: &tauri::AppHandle, change: impl FnOnce(&mut Config)) -> Result<Config, String> {
-    let state = app.state::<Database>();
-    let db = state.0.lock().map_err(|e| e.to_string())?;
-    let mut c = load(&db);
-    change(&mut c);
-    store(&db, &c)?;
-    Ok(c)
-}
 
 /// GUID w postaci 8-4-4-4-12 znaków szesnastkowych.
 fn guid(value: &str) -> bool {
@@ -437,7 +442,7 @@ fn forget(app: &tauri::AppHandle) {
 }
 
 /// Ważny access token: z pamięci albo odświeżony z refresh tokenu.
-async fn access_token(app: &tauri::AppHandle, c: &Config) -> Result<String, String> {
+async fn access_token(app: &tauri::AppHandle, c: &Config, since: u64) -> Result<String, String> {
     if let Some((token, until)) = app
         .state::<CalendarState>()
         .access
@@ -460,6 +465,13 @@ async fn access_token(app: &tauri::AppHandle, c: &Config) -> Result<String, Stri
     .await
     {
         Ok(tokens) => {
+            // Pod blokadą bazy, bo rozłączenie usuwa token też pod nią: nowy
+            // refresh token nie wróci do magazynu po kliknięciu „Rozłącz”.
+            let state = app.state::<Database>();
+            let db = state.0.lock().map_err(|e| e.to_string())?;
+            if !still_connected(app, &db, since) {
+                return Err(DISCONNECTED.into());
+            }
             if let Some(next) = tokens.refresh.as_deref().filter(|r| *r != refresh) {
                 let _ = entry.set_password(next);
             }
@@ -717,8 +729,10 @@ async fn fetch(
 }
 
 /// Pobiera spotkania i zapisuje wynik (czas albo błąd) w konfiguracji.
-/// `None`, gdy kalendarz nie jest połączony albo pobieranie już trwa.
+/// `None`, gdy kalendarz nie jest połączony, pobieranie już trwa albo konto
+/// rozłączono w trakcie (wtedy nic nie zapisuje).
 async fn sync(app: &tauri::AppHandle) -> Option<Result<(), String>> {
+    let since = generation(app);
     let c = config(app).ok()?;
     if !has_token(app, &c) {
         return None;
@@ -727,32 +741,46 @@ async fn sync(app: &tauri::AppHandle) -> Option<Result<(), String>> {
     if state.syncing.swap(true, Ordering::SeqCst) {
         return None;
     }
-    let result = sync_inner(app, &c).await;
+    let result = sync_inner(app, &c, since).await;
     state.syncing.store(false, Ordering::SeqCst);
-    let now = db::now();
-    let _ = update(app, |c| match &result {
-        Ok(()) => {
-            c.last_sync = Some(now);
-            c.last_error.clear();
-        }
-        Err(e) => c.last_error = e.clone(),
-    });
+    let saved = save_result(app, since, &result);
     let _ = app.emit(EVENT, ());
-    Some(result)
+    saved.then_some(result)
 }
-async fn sync_inner(app: &tauri::AppHandle, c: &Config) -> Result<(), String> {
+/// Zapisuje czas albo błąd pobierania; `false`, gdy konto rozłączono w trakcie
+/// (błąd nie jest wtedy winą użytkownika i nie trafia do statusu).
+fn save_result(app: &tauri::AppHandle, since: u64, result: &Result<(), String>) -> bool {
+    let state = app.state::<Database>();
+    let Ok(db) = state.0.lock() else {
+        return false;
+    };
+    if !still_connected(app, &db, since) {
+        return false;
+    }
+    let mut saved = load(&db);
+    match result {
+        Ok(()) => {
+            saved.last_sync = Some(db::now());
+            saved.last_error.clear();
+        }
+        Err(e) => saved.last_error = e.clone(),
+    }
+    let _ = store(&db, &saved);
+    true
+}
+async fn sync_inner(app: &tauri::AppHandle, c: &Config, since: u64) -> Result<(), String> {
     let (first, last) = sync_range(Local::now().date_naive());
     let (from, to) = (
         stats::day_bounds(&Local, first).0,
         stats::day_bounds(&Local, last).0,
     );
     let client = client()?;
-    let mut token = access_token(app, c).await?;
+    let mut token = access_token(app, c, since).await?;
     let events = match fetch(&client, &token, from, to).await {
         Err((StatusCode::UNAUTHORIZED, _)) => {
             // Token mógł zostać unieważniony: jedna próba z odświeżonym.
             forget(app);
-            token = access_token(app, c).await?;
+            token = access_token(app, c, since).await?;
             fetch(&client, &token, from, to).await.map_err(|(_, e)| e)?
         }
         other => other.map_err(|(_, e)| e)?,
@@ -760,8 +788,8 @@ async fn sync_inner(app: &tauri::AppHandle, c: &Config) -> Result<(), String> {
     let state = app.state::<Database>();
     let mut db = state.0.lock().map_err(|e| e.to_string())?;
     // Konto mogło zostać rozłączone w trakcie pobierania.
-    if load(&db).email.is_empty() {
-        return Err("Konto Microsoft zostało rozłączone.".into());
+    if !still_connected(app, &db, since) {
+        return Err(DISCONNECTED.into());
     }
     replace_range(&mut db, from, to, &events, db::now())
 }
@@ -810,6 +838,7 @@ pub async fn calendar_connect(
 }
 
 async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> Result<(), String> {
+    let since = generation(app);
     let old = config(app)?;
     let mut c = Config {
         client_id,
@@ -823,10 +852,25 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
             let _ = e.delete_credential();
         }
     }
-    update(app, |saved| {
+    {
+        // Spotkania i konto starej aplikacji znikają od razu, nie dopiero po
+        // udanym logowaniu: przerwane logowanie nie zostawia ich w planie.
+        let db_state = app.state::<Database>();
+        let db = db_state.0.lock().map_err(|e| e.to_string())?;
+        if changed {
+            db.execute("DELETE FROM calendar_events", [])
+                .map_err(|e| e.to_string())?;
+        }
+        let mut saved = load(&db);
         saved.client_id = c.client_id.clone();
         saved.tenant = c.tenant.clone();
-    })?;
+        if changed {
+            saved.email.clear();
+            saved.last_sync = None;
+            saved.last_error.clear();
+        }
+        store(&db, &saved)?;
+    }
     let verifier = pkce_verifier()?;
     let state = random_text(16)?;
     let (listeners, port) = bind()?;
@@ -885,25 +929,20 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
         .chars()
         .take(254)
         .collect();
-    if app.state::<CalendarState>().cancel.load(Ordering::SeqCst) {
+    // Pod blokadą bazy, tak jak rozłączenie: „Rozłącz” w trakcie logowania
+    // nie zostawi tokenu w magazynie.
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    if app.state::<CalendarState>().cancel.load(Ordering::SeqCst) || generation(app) != since {
         return Err("Logowanie przerwane.".into());
     }
     entry(app, &c)?
         .set_password(&refresh)
         .map_err(|_| "Nie udało się zapisać tokenu w magazynie poświadczeń Windows.".to_owned())?;
     remember(app, &tokens);
-    let state = app.state::<Database>();
-    let db = state.0.lock().map_err(|e| e.to_string())?;
-    if changed {
-        db.execute("DELETE FROM calendar_events", [])
-            .map_err(|e| e.to_string())?;
-    }
     let mut saved = load(&db);
     saved.email = c.email;
     saved.last_error.clear();
-    if changed {
-        saved.last_sync = None;
-    }
     store(&db, &saved)
 }
 
@@ -913,19 +952,24 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
 pub fn calendar_disconnect(app: tauri::AppHandle) -> Result<Status, String> {
     let state = app.state::<CalendarState>();
     state.cancel.store(true, Ordering::SeqCst);
-    forget(&app);
-    let c = config(&app)?;
-    if !c.client_id.is_empty() {
-        match entry(&app, &c)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => {}
-            Err(_) => {
-                return Err("Nie udało się usunąć tokenu z magazynu poświadczeń Windows.".into())
-            }
-        }
-    }
+    state.generation.fetch_add(1, Ordering::SeqCst);
     {
+        // Token usuwany pod blokadą bazy: trwające pobieranie albo logowanie
+        // zapisuje token pod nią i po zmianie `generation` już tego nie zrobi.
         let db_state = app.state::<Database>();
         let db = db_state.0.lock().map_err(|e| e.to_string())?;
+        forget(&app);
+        let c = load(&db);
+        if !c.client_id.is_empty() {
+            match entry(&app, &c)?.delete_credential() {
+                Ok(()) | Err(keyring::Error::NoEntry) => {}
+                Err(_) => {
+                    return Err(
+                        "Nie udało się usunąć tokenu z magazynu poświadczeń Windows.".into(),
+                    )
+                }
+            }
+        }
         db.execute("DELETE FROM calendar_events", [])
             .map_err(|e| e.to_string())?;
         let mut saved = load(&db);
@@ -966,6 +1010,10 @@ pub fn calendar_events(
     }
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
+    // Bez połączonego konta żadne spotkania nie obowiązują.
+    if load(&db).email.is_empty() {
+        return Ok(Vec::new());
+    }
     events_between(&db, from, to)
 }
 
