@@ -66,11 +66,13 @@ pub fn off_day(events: &[CalendarEvent], (from, to): (i64, i64)) -> bool {
 }
 
 /// Zajęte przedziały spotkań w dniu `[from, to)`: przycięte do doby i złączone.
+/// Wydarzenia całodniowe nie są spotkaniami (np. „Praca zdalna”, konferencja);
+/// całodniowe „poza biurem” obsługuje `off_day`.
 pub fn meeting_spans(events: &[CalendarEvent], (from, to): (i64, i64)) -> Vec<(i64, i64)> {
     merge(
         events
             .iter()
-            .filter(|e| calendar::occupies(e))
+            .filter(|e| !e.all_day && calendar::occupies(e))
             .map(|e| (e.start.max(from), e.end.min(to)))
             .collect(),
     )
@@ -273,6 +275,32 @@ mod tests {
         let c = day_capacity(480 * MIN, &events, day("2026-10-15"));
         assert_eq!(c.meetings_ms, 60 * MIN);
         assert_eq!(c.capacity_ms, 420 * MIN);
+    }
+
+    #[test]
+    fn all_day_event_other_than_oof_is_not_a_meeting() {
+        let (from, to) = day("2026-10-16");
+        for show_as in ["busy", "workingElsewhere", "tentative"] {
+            let all_day = CalendarEvent {
+                start: from,
+                end: to,
+                all_day: true,
+                ..event("z", "2026-10-16 00:00", "2026-10-16 00:00", show_as)
+            };
+            let events = [
+                all_day,
+                event("a", "2026-10-16 09:00", "2026-10-16 10:00", "busy"),
+            ];
+            let c = day_capacity(480 * MIN, &events, day("2026-10-16"));
+            assert!(!c.off, "{show_as}");
+            assert_eq!(c.meetings_ms, 60 * MIN, "{show_as}");
+            assert_eq!(c.capacity_ms, 420 * MIN, "{show_as}");
+            assert_eq!(
+                day_goal_ms(480 * MIN, &events, &[], day("2026-10-16")),
+                420 * MIN,
+                "{show_as}"
+            );
+        }
     }
 
     #[test]

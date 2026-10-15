@@ -125,6 +125,65 @@ test("pojemność dnia: nakładanie, przez północ, całodniowy urlop, tentativ
   expect(result.goalOof).toBe(0);
 });
 
+test("całodniowe wydarzenie inne niż urlop nie zmniejsza pojemności ani celu", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const result = await page.evaluate(async () => {
+    const m = await import("/src/capacity.ts");
+    const t = (s: string) => new Date(s).getTime();
+    const H = 3_600_000;
+    const meeting = {
+      id: "a",
+      start: t("2026-10-16T09:00:00+02:00"),
+      end: t("2026-10-16T10:00:00+02:00"),
+      subject: "Daily",
+      showAs: "busy",
+      allDay: false,
+      cancelled: false,
+      response: "accepted",
+    };
+    return ["busy", "workingElsewhere", "tentative"].map((showAs) => {
+      const allDay = {
+        ...meeting,
+        id: "z",
+        subject: "Praca zdalna",
+        showAs,
+        allDay: true,
+        start: t("2026-10-16T00:00:00+02:00"),
+        end: t("2026-10-17T00:00:00+02:00"),
+      };
+      const events = [allDay, meeting];
+      const c = m.dayCapacity(8 * H, events, "2026-10-16");
+      return {
+        showAs,
+        off: c.off,
+        meetings: c.meetings / H,
+        capacity: c.capacity / H,
+        goal:
+          m.dayGoal(
+            8 * H,
+            events,
+            [],
+            "2026-10-16",
+            t("2026-10-16T18:00:00+02:00"),
+          ) / H,
+        spans: m.meetingSpans(events, "2026-10-16").length,
+      };
+    });
+  });
+  for (const r of result) {
+    expect(r, r.showAs).toEqual({
+      showAs: r.showAs,
+      off: null,
+      meetings: 1,
+      capacity: 7,
+      goal: 7,
+      spans: 1,
+    });
+  }
+});
+
 test("bloki planu omijają spotkania: przesunięcie i podział", async ({
   page,
 }) => {

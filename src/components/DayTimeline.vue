@@ -42,13 +42,8 @@ const meetings = computed(() => {
       end: Math.min(to, e.end),
     }));
 });
-/** Przedziały spotkań, które omijają bloki planu (bez całodniowych). */
-const busy = computed(() =>
-  meetingSpans(
-    calendar.events.value.filter((e) => !e.allDay),
-    props.day,
-  ),
-);
+/** Przedziały spotkań, które omijają bloki planu (`meetingSpans` pomija całodniowe). */
+const busy = computed(() => meetingSpans(calendar.events.value, props.day));
 const titles = computed(() => new Map(props.tasks.map((t) => [t.id, t.title])));
 const title = (id: number) => titles.value.get(id) ?? "Zadanie";
 const plan = computed(() =>

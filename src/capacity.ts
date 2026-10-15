@@ -59,7 +59,11 @@ export const offDayEvent = (events: readonly CalendarEvent[], day: string) =>
       e.allDay && e.showAs === "oof" && meetingOccupies(e) && meetingInDay(e, day),
   ) ?? null;
 
-/** Zajęte przedziały spotkań dnia: przycięte do doby i złączone. */
+/**
+ * Zajęte przedziały spotkań dnia: przycięte do doby i złączone. Wydarzenia
+ * całodniowe nie są spotkaniami (np. „Praca zdalna”, konferencja); całodniowe
+ * „poza biurem” obsługuje `offDayEvent`.
+ */
 export function meetingSpans(
   events: readonly CalendarEvent[],
   day: string,
@@ -67,7 +71,7 @@ export function meetingSpans(
   const [from, to] = dayBounds(day);
   return mergeSpans(
     events
-      .filter(meetingOccupies)
+      .filter((e) => !e.allDay && meetingOccupies(e))
       .map((e): Span => [Math.max(from, e.start), Math.min(to, e.end)]),
   );
 }
