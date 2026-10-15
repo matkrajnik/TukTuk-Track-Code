@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { nextTick, ref } from "vue";
 import type { Task } from "../store";
-import { hm } from "../target";
+import { hhmm } from "../target";
+import { dayMonth, dayText } from "../time";
 import ReorderHandle from "./ReorderHandle.vue";
 
 /**
@@ -82,7 +83,7 @@ function arrows(event: KeyboardEvent) {
     </div>
     <div class="week-card-meta">
       <span v-if="showPlannedDay" class="task-status"
-        >Plan {{ task.details?.plannedDay }}</span
+        >Plan {{ dayText(task.details!.plannedDay) }}</span
       >
       <span v-if="task.details?.project">{{ task.details.project }}</span>
       <span v-if="task.jiraKey" class="task-jira-key mono">{{
@@ -98,7 +99,7 @@ function arrows(event: KeyboardEvent) {
         v-if="task.details?.estimateMinutes"
         class="mono"
         :class="{ 'week-over-estimate': (percent ?? 0) > 100 }"
-        >{{ hm(task.details.estimateMinutes * 60_000) }} · {{ percent }}%</span
+        >{{ hhmm(task.details.estimateMinutes * 60_000) }} · {{ percent }}%</span
       >
       <span v-if="task.done" class="task-status">Ukończone</span>
       <span v-else-if="task.details?.waiting" class="task-status"
@@ -137,7 +138,7 @@ function arrows(event: KeyboardEvent) {
           :disabled="d.key === current()"
           @click="choose(d.key)"
         >
-          {{ d.long }} {{ d.key }}
+          {{ d.long }}, {{ dayMonth(d.key) }}
         </button>
         <button
           role="menuitem"
@@ -145,7 +146,7 @@ function arrows(event: KeyboardEvent) {
           :disabled="nextMonday === current()"
           @click="choose(nextMonday)"
         >
-          Następny poniedziałek {{ nextMonday }}
+          Następny poniedziałek, {{ dayMonth(nextMonday) }}
         </button>
         <button
           v-if="current()"

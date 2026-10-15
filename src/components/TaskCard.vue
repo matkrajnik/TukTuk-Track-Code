@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import {
+  Archive,
   Check,
   ChevronDown,
   ExternalLink,
@@ -19,7 +20,8 @@ import {
   type Snapshot,
   type Task,
 } from "../store";
-import { stamp } from "../time";
+import { dayText, stamp } from "../time";
+import { hhmm } from "../target";
 import { estimateMs, overEstimate, percent } from "../estimates";
 
 const props = defineProps<{
@@ -54,6 +56,14 @@ const taskTime = computed(() =>
   props.sessions.reduce((sum, s) => sum + elapsed(s), 0),
 );
 const estimate = computed(() => estimateMs(props.task));
+/** „Dziś 14:00”, „pt., 16 paź” – kiedy zadanie jest zaplanowane. */
+const plannedLabel = computed(() => {
+  const d = props.task.details;
+  if (!d?.plannedDay || props.task.done) return "";
+  const day =
+    d.plannedDay === props.todayKey ? "Dziś" : dayText(d.plannedDay);
+  return d.plannedStart ? `${day} ${d.plannedStart}` : day;
+});
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
@@ -92,6 +102,7 @@ async function openJira(url: string) {
       </button>
       <button
         class="task-expand"
+        title="Szczegóły: przedziały pracy, plan, notatki i akcje"
         :aria-label="'Przedziały: ' + task.title"
         :aria-expanded="expanded"
         :aria-controls="'sessions-' + task.id"
@@ -102,10 +113,23 @@ async function openJira(url: string) {
           <span
             v-if="
               task.jiraKey ||
-              (!task.done && (task.details?.waiting || started))
+              task.details?.project ||
+              plannedLabel ||
+              (!task.done && (task.details?.waiting || running))
             "
             class="task-meta"
           >
+            <span v-if="running" class="task-status task-live">W trakcie</span>
+            <span v-if="task.details?.project" class="task-chip">{{
+              task.details.project
+            }}</span>
+            <span
+              v-if="plannedLabel"
+              class="task-chip task-planned"
+              :class="{ today: task.details?.plannedDay === todayKey }"
+              :title="'Zaplanowane: ' + task.details?.plannedDay"
+              >{{ plannedLabel }}</span
+            >
             <span v-if="task.jiraKey" class="task-jira-key mono">{{
               task.jiraKey
             }}</span>
@@ -115,17 +139,12 @@ async function openJira(url: string) {
               :title="'Status w Jirze: ' + task.jiraStatus"
               >{{ task.jiraStatus }}</span
             >
-            <span
-              v-if="!task.done && !task.details?.waiting && started"
-              class="task-status"
-              >W trakcie</span
-            >
             <span v-if="task.details?.waiting && !task.done" class="task-status"
               >Czekam na: {{ task.details.waiting }}</span
             >
           </span>
           <span v-if="task.details?.estimateMinutes" class="task-status"
-            >Plan {{ duration(estimate) }} ·
+            >Plan {{ hhmm(estimate) }} ·
             <span :class="{ 'estimate-over': overEstimate(taskTime, estimate) }"
               >{{ percent(taskTime, estimate) }}%</span
             ></span
@@ -134,13 +153,19 @@ async function openJira(url: string) {
             v-if="task.details?.dueDay && !task.done"
             class="task-deadline"
             :class="{ overdue: task.details.dueDay < todayKey }"
-            >Termin: {{ task.details.dueDay }}</span
+            >Termin: {{ dayText(task.details.dueDay) }}</span
           > </span
-        ><span class="task-duration mono">{{ duration(taskTime) }}</span
+        ><span class="task-duration mono" :class="{ zero: !taskTime }">{{
+          duration(taskTime)
+        }}</span
         ><ChevronDown :size="16" :class="{ rotated: expanded }" />
       </button>
       <select
         class="inline-priority"
+        :class="{
+          high: (task.details?.priority ?? 0) > 0,
+          low: (task.details?.priority ?? 0) < 0,
+        }"
         :value="task.details?.priority ?? 0"
         :aria-label="'Priorytet: ' + task.title"
         :disabled="busy"
@@ -165,43 +190,42 @@ async function openJira(url: string) {
       <span v-else class="done-label">Gotowe</span>
     </div>
     <div v-if="expanded" :id="'sessions-' + task.id" class="task-details">
-      <div class="details-heading">
-        <span>Przedziały pracy</span>
-        <div>
-          <button
-            class="today-button"
-            :disabled="busy"
-            @click="emit('act', 'archive')"
-          >
-            Archiwizuj
-          </button>
-          <button
-            v-if="task.jiraUrl"
-            class="text-link"
-            :aria-label="'Otwórz w Jirze: ' + task.jiraKey"
-            @click="openJira(task.jiraUrl)"
-          >
-            {{ task.jiraKey }}<ExternalLink :size="13" />
-          </button>
-          <button
-            class="icon-button"
+      <div class="details-actions" role="group" aria-label="Akcje zadania">
+        <button
+          v-if="task.jiraUrl"
+          class="action-button"
+          :aria-label="'Otwórz w Jirze: ' + task.jiraKey"
+          @click="openJira(task.jiraUrl)"
+        >
+          <ExternalLink :size="14" />{{ task.jiraKey }}
+        </button>
+        <span class="details-actions-spacer" />
+        <button
+          class="action-button"
+          :disabled="busy"
+          @click="emit('act', 'archive')"
+        >
+          <Archive :size="14" />Archiwizuj
+        </button>
+        <button
+            class="action-button"
             :disabled="busy"
             :aria-label="'Edytuj: ' + task.title"
             title="Edytuj zadanie"
             @click="emit('edit')"
           >
-            <Pencil :size="15" /></button
+            <Pencil :size="14" />Zmień nazwę</button
           ><button
-            class="icon-button danger"
+            class="action-button danger"
             :disabled="busy"
             :aria-label="'Usuń: ' + task.title"
             title="Usuń zadanie"
             @click="emit('remove')"
           >
-            <Trash2 :size="15" />
+            <Trash2 :size="14" />Usuń
           </button>
-        </div>
       </div>
+      <h3 class="details-heading">Przedziały pracy</h3>
       <div v-for="session in sessions" :key="session.id" class="session-row">
         <div class="interval">
           <time :datetime="new Date(session.startedAt).toISOString()">{{
@@ -240,6 +264,7 @@ async function openJira(url: string) {
       <TaskPlanning
         :task="task"
         :projects="projects"
+        :show-priority="false"
         @updated="emit('updated', $event)"
       />
     </div>

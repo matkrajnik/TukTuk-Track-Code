@@ -93,21 +93,6 @@ function toggle(id: number) {
 <template>
   <div class="page-heading">
     <h1>Raporty dzienne</h1>
-    <div class="tabs report-modes" role="group" aria-label="Tryb raportu">
-      <button
-        :class="{ selected: mode === 'single' }"
-        :aria-pressed="mode === 'single'"
-        @click="mode = 'single'"
-      >
-        Jeden dzień</button
-      ><button
-        :class="{ selected: mode === 'multi' }"
-        :aria-pressed="mode === 'multi'"
-        @click="mode = 'multi'"
-      >
-        Wybrane dni
-      </button>
-    </div>
     <div v-if="mode === 'single'" class="date-picker">
       <button
         class="icon-button"
@@ -136,6 +121,21 @@ function toggle(id: number) {
         Raport TS
       </button>
     </div>
+  </div>
+  <div class="tabs journal-tabs" role="group" aria-label="Tryb raportu">
+    <button
+      :class="{ selected: mode === 'single' }"
+      :aria-pressed="mode === 'single'"
+      @click="mode = 'single'"
+    >
+      Jeden dzień</button
+    ><button
+      :class="{ selected: mode === 'multi' }"
+      :aria-pressed="mode === 'multi'"
+      @click="mode = 'multi'"
+    >
+      Wybrane dni
+    </button>
   </div>
   <MultiDayReport
     v-if="mode === 'multi'"

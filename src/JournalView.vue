@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
+import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import {
   change,
   detailsOf,
@@ -9,7 +10,7 @@ import {
   type Task,
   type Session,
 } from "./store";
-import { dayKey, dayBounds, inDay } from "./time";
+import { dayKey, dayBounds, dayText, inDay } from "./time";
 import { plannedTasks } from "./dayplan";
 import {
   dayTarget,
@@ -222,11 +223,11 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
     <h1>Plan i historia</h1>
     <div class="date-picker">
       <button
-        class="today-button"
+        class="icon-button"
         aria-label="Poprzedni okres"
         @click="shift(weekly ? -7 : -1)"
       >
-        ←</button
+        <ChevronLeft :size="18" /></button
       ><input
         :value="day"
         type="date"
@@ -234,15 +235,15 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         required
         @change="chooseDay"
       /><button
-        class="today-button"
+        class="icon-button"
         aria-label="Następny okres"
         @click="shift(weekly ? 7 : 1)"
       >
-        →</button
+        <ChevronRight :size="18" /></button
       ><button class="today-button" @click="day = dayKey(now)">Dzisiaj</button>
     </div>
   </div>
-  <div class="tabs journal-tabs">
+  <div class="tabs journal-tabs" role="group" aria-label="Widok planu">
     <button
       :class="{ selected: !weekly && !closing }"
       @click="
@@ -281,11 +282,11 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
   />
   <template v-else-if="!weekly">
     <section class="dashboard-card" aria-label="Plan dnia">
-      <h2>Plan na {{ day }}</h2>
+      <h2>Plan na {{ dayText(day) }}</h2>
       <p class="hint">
         Szacowany czas planu:
         {{
-          duration(
+          hhmm(
             planned.reduce(
               (sum, t) => sum + (t.details?.estimateMinutes ?? 0) * 60000,
               0,
@@ -372,7 +373,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             :disabled="busy"
             @click="plan(task, nextDay())"
           >
-            Przełóż na {{ nextDay() }}</button
+            Przełóż na {{ dayText(nextDay()) }}</button
           ><button
             class="today-button"
             :disabled="busy"
@@ -397,7 +398,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           :key="task.id"
           class="journal-task-row"
         >
-          <span>{{ task.title }} · {{ task.details?.plannedDay }}</span
+          <span>{{ task.title }} · {{ dayText(task.details!.plannedDay) }}</span
           ><button
             class="today-button"
             :disabled="busy"
@@ -451,28 +452,37 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         class="timeline-row"
         :class="{ gap: !item.session }"
       >
-        <span class="mono">{{ clock(item.start) }} → {{ clock(item.end) }}</span
+        <span class="mono"
+          >{{ clock(item.start) }} →
+          {{ item.session?.endedAt === null ? "teraz" : clock(item.end) }}</span
         ><span>{{
           item.session
             ? taskMap.get(item.session.taskId)?.title
             : "Luka w zapisie"
         }}</span
         ><strong class="mono">{{ duration(item.end - item.start) }}</strong
-        ><button
-          v-if="item.session"
-          class="today-button"
-          :disabled="item.session.endedAt === null"
-          @click="emit('edit', item.session)"
+        ><span class="timeline-actions"
+          ><button
+            v-if="item.session"
+            class="today-button"
+            :disabled="item.session.endedAt === null"
+            :title="
+              item.session.endedAt === null
+                ? 'Zatrzymaj pomiar przed edycją'
+                : undefined
+            "
+            @click="emit('edit', item.session)"
+          >
+            Edytuj</button
+          ><button
+            v-if="item.session"
+            class="today-button"
+            :aria-label="'Podziel przedział ' + item.session.id"
+            @click="emit('split', item.session)"
+          >
+            Podziel
+          </button></span
         >
-          Edytuj</button
-        ><button
-          v-if="item.session"
-          class="today-button"
-          :aria-label="'Podziel przedział ' + item.session.id"
-          @click="emit('split', item.session)"
-        >
-          Podziel
-        </button>
       </div>
       <div
         v-for="task in data.tasks.filter((t) => t.details?.notes?.[day])"
@@ -511,7 +521,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
   <template v-if="weekly && !closing && weekView === 'summary'">
     <section class="report-summary">
       <div>
-        <p>{{ week[0].key }} — {{ week[6].key }}</p>
+        <p>{{ dayText(week[0].key) }} — {{ dayText(week[6].key) }}</p>
         <h2>Podsumowanie tygodnia</h2>
       </div>
       <div>
@@ -531,7 +541,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           class="weekly-day"
           @click="emit('report', d.key)"
         >
-          <span>{{ d.key }}</span
+          <span>{{ dayText(d.key) }}</span
           ><span
             class="mono target-diff"
             :class="{ over: targetDiffMinutes(d.total, d.target) > 0 }"
@@ -591,7 +601,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         <span>{{ row.task.title }}</span
         ><span class="hint">{{
           row.task.details?.plannedDay
-            ? "Plan " + row.task.details.plannedDay
+            ? "Plan " + dayText(row.task.details.plannedDay)
             : "Bez planu"
         }}</span>
       </div>

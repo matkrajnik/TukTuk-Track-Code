@@ -9,7 +9,7 @@ import {
   planBlocks,
   workBlocks,
 } from "../dayplan";
-import { hm, signedDiff, targetDiffMinutes } from "../target";
+import { hhmm, signedDiff, targetDiffMinutes } from "../target";
 import { dayKey } from "../time";
 
 const props = defineProps<{
@@ -227,12 +227,12 @@ const workText = (b: (typeof work.value)[number]) =>
               >nieplanowane</span
             ><span v-else-if="row.noEstimate" class="dtl-status"
               >bez szacunku</span
-            ><template v-else>{{ hm(row.plan) }}</template>
+            ><template v-else>{{ hhmm(row.plan) }}</template>
           </td>
           <td class="mono">
             <span v-if="row.status === 'unstarted'" class="dtl-status"
               >niezaczęte</span
-            ><template v-else>{{ hm(row.actual) }}</template>
+            ><template v-else>{{ hhmm(row.actual) }}</template>
           </td>
           <td
             class="mono"
@@ -247,15 +247,15 @@ const workText = (b: (typeof work.value)[number]) =>
       <tfoot>
         <tr>
           <th scope="row">Razem</th>
-          <td class="mono">{{ hm(totals.plan) }}</td>
+          <td class="mono">{{ hhmm(totals.plan) }}</td>
           <td class="mono">
-            {{ hm(totals.actual)
+            {{ hhmm(totals.actual)
             }}<span
               v-if="totals.all !== totals.actual"
               class="dtl-status dtl-all"
               title="Cała praca dnia, także spoza planu i bez szacunku"
             >
-              · łącznie {{ hm(totals.all) }}</span
+              · łącznie {{ hhmm(totals.all) }}</span
             >
           </td>
           <td

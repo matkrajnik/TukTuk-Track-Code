@@ -6,7 +6,7 @@
   align-items: center;
 }
 .date-picker input {
-  font-size: 13px;
+  font-size: var(--fs-base);
   padding: 7px;
 }
 .report-summary {
@@ -17,33 +17,33 @@
   padding: 25px;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
 }
 .report-summary p {
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-base);
   margin-bottom: 9px;
 }
 .report-total {
-  font-size: 32px;
+  font-size: var(--fs-2xl);
   color: var(--accent);
   font-weight: 500;
 }
 .report-note {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   margin: 14px 0 22px;
   line-height: 1.6;
 }
 .report-expand {
   width: 100%;
-  padding: 18px;
+  padding: var(--space-5);
 }
 .ts-report {
   margin-bottom: 22px;
-  padding: 18px;
+  padding: var(--space-5);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 .ts-heading {
@@ -59,7 +59,7 @@
   resize: vertical;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius);
   background: var(--bg);
   color: var(--text);
   font:
@@ -71,7 +71,7 @@
   min-height: 18px;
   margin-top: 8px;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .report-expand strong {
   font-weight: 500;
@@ -86,15 +86,12 @@
 }
 @media (max-width: 600px) {
   .report-summary {
-    padding: 18px;
+    padding: var(--space-5);
     flex-wrap: wrap;
   }
 }
 
 /* Raport TS z wybranych dni: kalendarz miesiąca i lista zestawu. */
-.report-modes {
-  margin-right: auto;
-}
 .multi-report {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
@@ -103,9 +100,9 @@
 }
 .month-calendar,
 .multi-side {
-  padding: 18px;
+  padding: var(--space-5);
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-lg);
   background: var(--surface);
   min-width: 0;
 }
@@ -127,7 +124,7 @@
 }
 .month-weekday {
   text-align: center;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--muted);
   padding-bottom: 4px;
 }
@@ -136,8 +133,8 @@
   min-height: 36px;
   padding: 6px 0 10px;
   border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 13px;
+  border-radius: var(--radius);
+  font-size: var(--fs-base);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -195,7 +192,7 @@
   gap: 8px;
   padding: 4px 0;
   border-bottom: 1px solid var(--line);
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .selected-days li:last-child {
   border-bottom: 0;

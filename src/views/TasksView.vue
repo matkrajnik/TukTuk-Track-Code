@@ -93,13 +93,13 @@ const elapsed = (s: Session) =>
 const taskGroups = computed(() =>
   [
     {
-      name: "W trakcie",
+      name: "Rozpoczęte",
       tasks: visible.value.filter(
         (t) => !t.done && !t.details?.waiting && startedTaskIds.value.has(t.id),
       ),
     },
     {
-      name: "Do zaplanowania",
+      name: "Nierozpoczęte",
       tasks: visible.value.filter(
         (t) =>
           !t.done && !t.details?.waiting && !startedTaskIds.value.has(t.id),

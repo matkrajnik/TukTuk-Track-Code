@@ -152,7 +152,7 @@ test("day closing tells how much is missing or over the target without blocking"
   // Sobota nie jest dniem roboczym: brak komunikatu.
   await page.getByLabel("Dzień planu").fill("2026-10-17");
   await page.getByLabel("Dzień planu").dispatchEvent("change");
-  await expect(page.getByRole("heading", { name: /2026-10-17/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /sob., 17 paź/ })).toBeVisible();
   await expect(page.getByText(/Do celu brakuje|Cel przekroczony/)).toHaveCount(
     0,
   );

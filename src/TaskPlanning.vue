@@ -2,7 +2,15 @@
 import { ref, watch } from "vue";
 import { detailsOf, saveDetails, type Task, type Snapshot } from "./store";
 import { dayKey } from "./time";
-const props = defineProps<{ task: Task; projects: string[] }>();
+const props = withDefaults(
+  defineProps<{
+    task: Task;
+    projects: string[];
+    /** Karta zadania ma własny wybór priorytetu w wierszu. */
+    showPriority?: boolean;
+  }>(),
+  { showPriority: true },
+);
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
 const draft = ref(detailsOf(props.task));
 const noteDay = ref(dayKey(Date.now()));
@@ -75,7 +83,7 @@ async function save() {
   >
     <h3>Plan i notatki</h3>
     <div class="planning-fields">
-      <label
+      <label v-if="showPriority"
         >Priorytet<select
           v-model.number="draft.priority"
           aria-label="Priorytet"
@@ -141,6 +149,7 @@ async function save() {
         v-for="(item, index) in draft.checklist"
         :key="index"
         class="checklist-row"
+        :class="{ done: item.done }"
       >
         <input
           v-model="item.done"
@@ -163,7 +172,7 @@ async function save() {
           Usuń
         </button>
       </div>
-      <div class="planning-actions">
+      <div class="checklist-add">
         <input
           v-model="newCheck"
           aria-label="Nowy krok"

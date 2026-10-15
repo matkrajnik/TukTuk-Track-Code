@@ -12,13 +12,18 @@ export type View =
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   ArrowDownToLine,
+  ArrowLeftRight,
   CalendarDays,
+  CalendarRange,
   Check,
-  ExternalLink,
+  History,
+  LayoutDashboard,
   ListTodo,
   Moon,
   PictureInPicture2,
+  Settings,
   Sun,
+  Ticket,
 } from "lucide-vue-next";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -31,7 +36,11 @@ import {
 import { onSettingsChanged, writeSettings } from "../settings";
 
 const view = defineModel<View>("view", { required: true });
-const emit = defineEmits<{ quick: []; error: [message: string] }>();
+const emit = defineEmits<{
+  quick: [];
+  settings: [];
+  error: [message: string];
+}>();
 
 const theme = ref<"dark" | "light">("dark");
 try {
@@ -141,14 +150,14 @@ async function hide() {
         :aria-pressed="view === 'dashboard'"
         @click="view = 'dashboard'"
       >
-        Dashboard
+        <LayoutDashboard :size="16" />Dashboard
       </button>
       <button
         :class="{ selected: view === 'journal' }"
         :aria-pressed="view === 'journal'"
         @click="view = 'journal'"
       >
-        Plan i historia
+        <CalendarRange :size="16" />Plan i historia
       </button>
       <button
         :class="{ selected: view === 'reports' }"
@@ -162,25 +171,31 @@ async function hide() {
         :aria-pressed="view === 'jira'"
         @click="view = 'jira'"
       >
-        <ExternalLink :size="16" />Jira
+        <Ticket :size="16" />Jira
       </button>
       <button
         :class="{ selected: view === 'library' }"
+        :aria-pressed="view === 'library'"
         @click="view = 'library'"
       >
-        Historia i kopie
+        <History :size="16" />Historia i kopie
       </button>
     </nav>
     <div class="header-actions">
+      <span
+        v-if="!desktop"
+        class="preview-label"
+        title="Dane zapisywane tylko w tej przeglądarce; funkcje Windows są wyłączone"
+        >Podgląd</span
+      >
       <button
-        class="today-button"
+        class="quick-button"
         aria-label="Szybkie przełączanie"
-        title="Ctrl+K / Ctrl+Shift+Space"
+        title="Szybkie przełączanie zadania (Ctrl+K, globalnie Ctrl+Shift+Space)"
         @click="emit('quick')"
       >
-        ⇄
+        <ArrowLeftRight :size="15" /><kbd>Ctrl K</kbd>
       </button>
-      <span v-if="!desktop" class="preview-label">Podgląd</span>
       <button
         class="icon-button widget-switch"
         :class="{ on: widgetOn }"
@@ -199,6 +214,14 @@ async function hide() {
         @click="theme = theme === 'dark' ? 'light' : 'dark'"
       >
         <Sun v-if="theme === 'dark'" :size="18" /><Moon v-else :size="18" />
+      </button>
+      <button
+        class="icon-button"
+        aria-label="Otwórz ustawienia"
+        title="Ustawienia"
+        @click="emit('settings')"
+      >
+        <Settings :size="18" />
       </button>
       <button
         v-if="desktop"

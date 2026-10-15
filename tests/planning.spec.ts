@@ -28,7 +28,9 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
   await page
     .getByRole("button", { name: "Przedziały: Import WMS", exact: true })
     .click();
-  await page.getByLabel("Priorytet", { exact: true }).selectOption("1");
+  await page
+    .getByLabel("Priorytet: Import WMS", { exact: true })
+    .selectOption("1");
   await page.getByLabel("Planowany dzień", { exact: true }).fill("2026-10-14");
   await page.getByLabel("Termin", { exact: true }).fill("2026-10-15");
   await page.getByLabel("Projekt / obszar", { exact: true }).fill("WMS");
@@ -72,7 +74,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
   await expect(page.locator(".timeline-row")).toHaveCount(3);
   await expect(page.locator(".timeline-row.gap")).toContainText("01:00:00");
   await page
-    .getByRole("button", { name: "Przełóż na 2026-10-15", exact: true })
+    .getByRole("button", { name: "Przełóż na czw., 15 paź", exact: true })
     .click();
   await expect(page.getByRole("region", { name: "Plan dnia" })).toContainText(
     "Brak zaplanowanych",
@@ -101,7 +103,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
     page.getByRole("region", { name: "Czekam na…", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("region", { name: "W trakcie", exact: true }),
+    page.getByRole("region", { name: "Rozpoczęte", exact: true }),
   ).toContainText("Import WMS");
   await page.reload();
   await expect(
@@ -122,7 +124,7 @@ test("higher priority sorts first and plan works on an empty day", async ({
   await page
     .getByRole("button", { name: "Przedziały: Ważne", exact: true })
     .click();
-  await page.getByLabel("Priorytet", { exact: true }).selectOption("1");
+  await page.getByLabel("Priorytet: Ważne", { exact: true }).selectOption("1");
   await page.getByRole("button", { name: "Zapisz plan i notatki" }).click();
   await expect(page.locator(".task-card .task-title")).toHaveText([
     "Ważne",

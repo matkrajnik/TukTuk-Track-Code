@@ -8,7 +8,7 @@ import {
   saveDetails,
   type Snapshot,
 } from "./store";
-import { dayBounds, dayKey, inDay } from "./time";
+import { dayBounds, dayKey, dayText, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 import { copyReport } from "./clipboard";
 import {
@@ -130,7 +130,7 @@ async function move() {
 <template>
   <section class="dashboard-card">
     <div class="ts-heading">
-      <h2>Zamknięcie dnia · {{ day }}</h2>
+      <h2>Zamknięcie dnia · {{ dayText(day) }}</h2>
       <strong>{{ duration(total) }} · {{ decimal(total) }} h</strong>
     </div>
     <p v-if="data.closedDays?.includes(day)" role="status">

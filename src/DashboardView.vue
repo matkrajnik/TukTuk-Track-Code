@@ -3,6 +3,7 @@ import { computed } from "vue";
 import { duration, type Snapshot } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
 import { compareTasks } from "./order";
+import { atRisk, percent } from "./estimates";
 import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
@@ -55,6 +56,10 @@ const days = computed(() =>
 const weekTotal = computed(() =>
   days.value.reduce((sum, day) => sum + day.total, 0),
 );
+const workedDays = computed(
+  () => days.value.filter((day) => day.total >= 60_000).length,
+);
+const risky = computed(() => atRisk(props.data, props.now));
 const maxDay = computed(() =>
   Math.max(1, ...days.value.map((day) => Math.max(day.total, day.target))),
 );
@@ -76,13 +81,13 @@ const counts = computed(() => {
   const started = new Set(props.data.sessions.map((s) => s.taskId));
   return [
     {
-      label: "W trakcie",
+      label: "Rozpoczęte",
       count: props.data.tasks.filter(
         (t) => !t.archived && !t.done && !t.details?.waiting && started.has(t.id),
       ).length,
     },
     {
-      label: "Do zaplanowania",
+      label: "Nierozpoczęte",
       count: props.data.tasks.filter(
         (t) => !t.archived && !t.done && !t.details?.waiting && !started.has(t.id),
       ).length,
@@ -150,10 +155,23 @@ const topTasks = computed(() =>
     <section class="dashboard-card">
       <h2>Ostatnie 7 dni</h2>
       <strong class="mono">{{ duration(weekTotal) }}</strong>
+      <span class="target-note"
+        >Średnio
+        <span class="mono">{{
+          hhmm(workedDays ? weekTotal / workedDays : 0)
+        }}</span>
+        na dzień pracy</span
+      >
     </section>
     <section class="dashboard-card">
       <h2>Ten miesiąc</h2>
       <strong class="mono">{{ duration(monthTotal) }}</strong>
+      <span class="target-note">{{
+        new Intl.DateTimeFormat("pl-PL", {
+          month: "long",
+          year: "numeric",
+        }).format(now)
+      }}</span>
     </section>
   </div>
   <div class="dashboard-columns">
@@ -177,22 +195,40 @@ const topTasks = computed(() =>
             class="target-line"
             :style="{ left: `${(day.target / maxDay) * 100}%` }"
         /></span
-        ><span class="mono">{{ duration(day.total) }}</span>
+        ><span class="mono" :class="{ 'dashboard-zero': !day.total }">{{
+          duration(day.total)
+        }}</span>
       </button>
     </section>
-    <section class="dashboard-card" aria-label="Statusy zadań">
-      <h2>Zadania</h2>
-      <div v-for="item in counts" :key="item.label" class="dashboard-count">
-        <span>{{ item.label }}</span
-        ><strong>{{ item.count }}</strong>
-      </div>
-    </section>
+    <div class="dashboard-side">
+      <section class="dashboard-card" aria-label="Zagrożone teraz">
+        <h2>Zagrożone teraz</h2>
+        <p v-if="!risky.length" class="report-note">
+          Żadne otwarte zadanie nie przekroczyło szacunku.
+        </p>
+        <div v-for="row in risky" :key="row.task.id" class="dashboard-count">
+          <span>{{ row.task.title }}</span
+          ><strong class="mono"
+            >{{ hhmm(row.actual) }} / {{ hhmm(row.estimate) }} ·
+            <span class="estimate-over"
+              >{{ percent(row.actual, row.estimate) }}%</span
+            ></strong
+          >
+        </div>
+      </section>
+      <section class="dashboard-card" aria-label="Statusy zadań">
+        <h2>Zadania</h2>
+        <dl class="dashboard-status-grid">
+          <div v-for="item in counts" :key="item.label">
+            <dt>{{ item.label }}</dt>
+            <dd><strong>{{ item.count }}</strong></dd>
+          </div>
+        </dl>
+      </section>
+    </div>
   </div>
-  <AgentsCard :now="now" />
-  <section
-    class="dashboard-card dashboard-top"
-    aria-label="Najwięcej czasu dzisiaj"
-  >
+  <div class="dashboard-columns even dashboard-top">
+  <section class="dashboard-card" aria-label="Najwięcej czasu dzisiaj">
     <h2>Najwięcej czasu dzisiaj</h2>
     <div v-for="row in topTasks" :key="row.task.id" class="dashboard-count">
       <span>{{ row.task.title }}</span
@@ -202,6 +238,8 @@ const topTasks = computed(() =>
       Brak zarejestrowanej pracy dzisiaj.
     </p>
   </section>
+  <AgentsCard :now="now" />
+  </div>
   <EstimateAccuracy
     :data="data"
     :now="now"

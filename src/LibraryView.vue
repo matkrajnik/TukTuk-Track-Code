@@ -2,15 +2,16 @@
 import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { change, desktop, duration, type Snapshot } from "./store";
-import { dayKey, inDay } from "./time";
+import { dayKey, dayText, inDay } from "./time";
 import SettingsPanel from "./components/SettingsPanel.vue";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
   report: [day: string];
 }>();
-const tab = ref("history"),
-  query = ref(""),
+/** Zakładka; App otwiera tu Ustawienia z przycisku w pasku. */
+const tab = defineModel<string>("tab", { default: "history" });
+const query = ref(""),
   from = ref(""),
   to = ref(""),
   busy = ref(false),
@@ -117,11 +118,12 @@ async function restore() {
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <p v-if="message" role="status">{{ message }}</p>
   <section v-if="tab === 'history'" class="dashboard-card">
-    <div class="planning-fields">
-      <label
+    <div class="filter-fields">
+      <label class="filter-query"
         >Szukaj tytułu, notatki, projektu lub daty<input
           v-model="query"
-          type="search" /></label
+          type="search"
+          placeholder="np. WMS albo 2026-10" /></label
       ><label>Od dnia<input v-model="from" type="date" /></label
       ><label>Do dnia<input v-model="to" type="date" /></label>
     </div>
@@ -137,7 +139,7 @@ async function restore() {
         <small>{{ row.task.details?.project }}</small>
       </div>
       <button class="today-button" @click="emit('report', row.day)">
-        {{ row.day }} · {{ duration(row.total) }}
+        {{ dayText(row.day) }} · {{ duration(row.total) }}
       </button>
     </div>
     <p v-if="!days.length" class="report-note">Brak pasującej historii.</p>

@@ -3,12 +3,10 @@ import { computed, ref } from "vue";
 import type { Snapshot } from "../store";
 import { hhmm } from "../target";
 import {
-  atRisk,
   biggestMisses,
   buckets,
   estimateRows,
   histogram,
-  percent,
   periods,
   projectMedians,
   ratioText,
@@ -27,7 +25,6 @@ const counts = computed(() => histogram(rows.value));
 const maxCount = computed(() => Math.max(1, ...counts.value));
 const projects = computed(() => projectMedians(rows.value));
 const misses = computed(() => biggestMisses(rows.value));
-const risky = computed(() => atRisk(props.data, props.now));
 const stats = computed(() => [
   { label: "Zadania", value: String(summary.value.count) },
   {
@@ -141,20 +138,5 @@ const stats = computed(() => [
         </li>
       </ol>
     </template>
-  </section>
-  <section class="dashboard-card estimate-card" aria-label="Zagrożone teraz">
-    <h2>Zagrożone teraz</h2>
-    <p v-if="!risky.length" class="report-note">
-      Żadne otwarte zadanie nie przekroczyło szacunku.
-    </p>
-    <div v-for="row in risky" :key="row.task.id" class="dashboard-count">
-      <span>{{ row.task.title }}</span
-      ><strong class="mono"
-        >{{ hhmm(row.actual) }} / {{ hhmm(row.estimate) }} ·
-        <span class="estimate-over"
-          >{{ percent(row.actual, row.estimate) }}%</span
-        ></strong
-      >
-    </div>
   </section>
 </template>

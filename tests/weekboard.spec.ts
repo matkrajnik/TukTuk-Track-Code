@@ -108,20 +108,20 @@ test("week board: columns, estimate sums against capacity and the summary tab", 
   ]);
   await expect(
     column(page, "Środa 2026-10-14").locator(".week-estimate"),
-  ).toHaveText("5:00 / 8:00");
+  ).toHaveText("05:00 / 08:00");
   await expect(
     column(page, "Środa 2026-10-14").locator(".week-actual"),
-  ).toHaveText("Praca 2:00");
+  ).toHaveText("Praca 02:00");
   // Wdrożenie: 2 h z 4 h szacunku.
   await expect(
-    column(page, "Środa 2026-10-14").getByText("4:00 · 50%"),
+    column(page, "Środa 2026-10-14").getByText("04:00 · 50%"),
   ).toBeVisible();
   await expect(capacity(page, "Środa 2026-10-14")).toHaveClass(/\bok\b/);
   // 7:30 z 8:00 = 94% → bursztynowy.
   await expect(capacity(page, "Czwartek 2026-10-15")).toHaveClass(/\bnear\b/);
   await expect(
     column(page, "Sobota 2026-10-17").locator(".week-estimate"),
-  ).toHaveText("0:00 / wolne");
+  ).toHaveText("00:00 / wolne");
   await expect(
     column(page, "Poniedziałek 2026-10-12").getByText("Ukończone"),
   ).toBeVisible();
@@ -148,7 +148,7 @@ test("moving a task to Wednesday through the menu updates the sum and flags over
   const menu = page.getByRole("menu", { name: "Przenieś na: Analiza importu" });
   await expect(menu.getByRole("menuitem").first()).toBeFocused();
   await menu
-    .getByRole("menuitem", { name: "Środa 2026-10-14", exact: true })
+    .getByRole("menuitem", { name: "Środa, 14 paź", exact: true })
     .click();
   await expect(menu).toHaveCount(0);
   await expect(cards(page, "Środa 2026-10-14")).toHaveText([
@@ -160,11 +160,11 @@ test("moving a task to Wednesday through the menu updates the sum and flags over
   // 5 h + 4 h + 1 h = 10 h przy pojemności 8 h → czerwony pasek.
   await expect(
     column(page, "Środa 2026-10-14").locator(".week-estimate"),
-  ).toHaveText("10:00 / 8:00");
+  ).toHaveText("10:00 / 08:00");
   await expect(capacity(page, "Środa 2026-10-14")).toHaveClass(/\bover\b/);
   await expect(capacity(page, "Środa 2026-10-14")).toHaveAttribute(
     "aria-valuetext",
-    "10:00 / 8:00",
+    "10:00 / 08:00",
   );
 
   // Zmieniły się tylko plannedDay i order, reszta planu została.
@@ -188,7 +188,7 @@ test("moving a task to Wednesday through the menu updates the sum and flags over
     .getByRole("button", { name: "Przenieś na…: Stary plan", exact: true })
     .click();
   await page
-    .getByRole("menuitem", { name: "Piątek 2026-10-16", exact: true })
+    .getByRole("menuitem", { name: "Piątek, 16 paź", exact: true })
     .click();
   await expect(cards(page, "Piątek 2026-10-16")).toHaveText(["Stary plan"]);
   await expect(
@@ -199,7 +199,7 @@ test("moving a task to Wednesday through the menu updates the sum and flags over
     .click();
   await page
     .getByRole("menuitem", {
-      name: "Następny poniedziałek 2026-10-19",
+      name: "Następny poniedziałek, 19 paź",
       exact: true,
     })
     .click();
@@ -242,7 +242,7 @@ test("after a move from the menu focus lands on the moved card", async ({
     .getByRole("button", { name: "Przenieś na…: Analiza importu", exact: true })
     .click();
   await page
-    .getByRole("menuitem", { name: "Czwartek 2026-10-15", exact: true })
+    .getByRole("menuitem", { name: "Czwartek, 15 paź", exact: true })
     .click();
   await expect(cards(page, "Czwartek 2026-10-15")).toHaveText([
     "Analiza importu",
@@ -292,7 +292,7 @@ test("dragging a card by its handle moves it to another day", async ({
   await expect(cards(page, "Wtorek 2026-10-13")).toHaveText(["Spotkanie"]);
   await expect(
     column(page, "Środa 2026-10-14").locator(".week-estimate"),
-  ).toHaveText("4:00 / 8:00");
+  ).toHaveText("04:00 / 08:00");
   // Alt+↑ na uchwycie zmienia kolejność w obrębie kolumny.
   await page
     .getByRole("button", { name: "Przesuń: Przegląd", exact: true })

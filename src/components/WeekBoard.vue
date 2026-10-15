@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import { planTask, type Snapshot, type Task } from "../store";
-import { dayBounds, dayKey, inDay } from "../time";
+import { dayBounds, dayKey, dayText, inDay } from "../time";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
-import { dayTarget, hm, useSettings } from "../target";
+import { dayTarget, hhmm, useSettings } from "../target";
 import { useReorder } from "../composables/useReorder";
 import WeekCard from "./WeekCard.vue";
 
@@ -64,7 +64,7 @@ const days = computed(() => {
       tasks,
       estimate,
       target,
-      capacity: target ? hm(target) : "wolne",
+      capacity: target ? hhmm(target) : "wolne",
       width:
         target > 0
           ? Math.min(100, (estimate / target) * 100)
@@ -249,7 +249,7 @@ function columnProps(id: string, lists: string[], day: string) {
 <template>
   <section class="week-board-wrap" aria-label="Tablica tygodnia">
     <p class="hint">
-      {{ weekStart }} — {{ weekEnd }} · Przeciągnij kartę za uchwyt ⋮⋮ do innego
+      {{ dayText(weekStart) }} — {{ dayText(weekEnd) }} · Przeciągnij kartę za uchwyt ⋮⋮ do innego
       dnia albo użyj „Przenieś na…”.
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -326,7 +326,7 @@ function columnProps(id: string, lists: string[], day: string) {
           <span
             class="week-estimate mono"
             title="Suma szacunków względem pojemności dnia"
-            >{{ hm(d.estimate) }} / {{ d.capacity }}</span
+            >{{ hhmm(d.estimate) }} / {{ d.capacity }}</span
           >
         </header>
         <div
@@ -337,12 +337,12 @@ function columnProps(id: string, lists: string[], day: string) {
           aria-valuemin="0"
           aria-valuemax="100"
           :aria-valuenow="Math.round(d.width)"
-          :aria-valuetext="hm(d.estimate) + ' / ' + d.capacity"
+          :aria-valuetext="hhmm(d.estimate) + ' / ' + d.capacity"
         >
           <span :style="{ width: d.width + '%' }"></span>
         </div>
         <p class="week-actual hint">
-          Praca <span class="mono">{{ hm(d.actual) }}</span>
+          Praca <span class="mono">{{ hhmm(d.actual) }}</span>
         </p>
         <ul class="week-cards">
           <li

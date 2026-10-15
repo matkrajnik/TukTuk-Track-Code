@@ -128,13 +128,20 @@ test("started tasks stay in progress after stop, reload and restore", async ({
     .locator(".task-card")
     .filter({ has: page.locator(".task-title", { hasText: "Nowe zadanie" }) });
   await expect(page.locator(".task-status")).toHaveCount(0);
+  // Odznaka „W trakcie” jest tylko przy trwającym pomiarze; po Stop zadanie
+  // zostaje w grupie „Rozpoczęte”.
+  const startedGroup = page.getByRole("region", {
+    name: "Rozpoczęte",
+    exact: true,
+  });
   await page.getByLabel("Start: Rozpoczęte zadanie", { exact: true }).click();
   await expect(started.locator(".task-status")).toHaveText("W trakcie");
   await page.getByLabel("Stop: Rozpoczęte zadanie", { exact: true }).click();
-  await expect(started.locator(".task-status")).toHaveText("W trakcie");
+  await expect(started.locator(".task-status")).toHaveCount(0);
+  await expect(startedGroup).toContainText("Rozpoczęte zadanie");
   await page.reload();
-  await expect(started.locator(".task-status")).toHaveText("W trakcie");
-  await expect(fresh.locator(".task-status")).toHaveCount(0);
+  await expect(startedGroup).toContainText("Rozpoczęte zadanie");
+  await expect(startedGroup).not.toContainText("Nowe zadanie");
   await page.getByLabel("Ukończ: Rozpoczęte zadanie", { exact: true }).click();
   await page.getByRole("button", { name: "Ukończone", exact: true }).click();
   await expect(started.locator(".task-status")).toHaveCount(0);
@@ -143,7 +150,7 @@ test("started tasks stay in progress after stop, reload and restore", async ({
     .getByLabel("Przywróć: Rozpoczęte zadanie", { exact: true })
     .click();
   await page.getByRole("button", { name: "Do zrobienia", exact: true }).click();
-  await expect(started.locator(".task-status")).toHaveText("W trakcie");
+  await expect(startedGroup).toContainText("Rozpoczęte zadanie");
 });
 
 test("task groups prioritize started tasks and dashboard links to daily reports", async ({
@@ -152,22 +159,22 @@ test("task groups prioritize started tasks and dashboard links to daily reports"
   await seed(page);
   await add(page, "Do zaplanowania nowe");
   await expect(page.locator(".task-group-heading")).toHaveText([
-    "W trakcie 1",
-    "Do zaplanowania 1",
+    "Rozpoczęte 1",
+    "Nierozpoczęte 1",
   ]);
   await expect(page.locator(".task-card .task-title")).toHaveText([
     "Projekt strony",
     "Do zaplanowania nowe",
   ]);
   await page.getByLabel("Start: Do zaplanowania nowe", { exact: true }).click();
-  await expect(page.locator(".task-group-heading")).toHaveText(["W trakcie 2"]);
+  await expect(page.locator(".task-group-heading")).toHaveText(["Rozpoczęte 2"]);
   await expect(page.locator(".task-card .task-title")).toHaveText([
     "Do zaplanowania nowe",
     "Projekt strony",
   ]);
   await page.getByRole("button", { name: "Wszystkie", exact: true }).click();
   await expect(page.locator(".task-group-heading")).toHaveText([
-    "W trakcie 2",
+    "Rozpoczęte 2",
     "Ukończone 1",
   ]);
   await page.getByLabel("Szukaj zadań").fill("Spotkanie");

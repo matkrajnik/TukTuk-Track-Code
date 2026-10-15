@@ -76,9 +76,9 @@ test("day timeline compares plan blocks with work and lists differences", async 
   ]);
   const table = card.getByRole("table", { name: "Plan i rzeczywistość" });
   expect(await rowTexts(table)).toEqual([
-    "Analiza | 1:00 | 1:15 | +0:15",
-    "Wdrożenie | 1:30 | niezaczęte | −1:30",
-    "Razem | 2:30 | 1:15 | −1:15",
+    "Analiza | 01:00 | 01:15 | +0:15",
+    "Wdrożenie | 01:30 | niezaczęte | −1:30",
+    "Razem | 02:30 | 01:15 | −1:15",
   ]);
   await expect(
     table.locator("tbody tr").first().locator("td").last(),
@@ -209,12 +209,12 @@ test("pinned start, missing estimate, unplanned and running work", async ({
   expect(
     await rowTexts(card.getByRole("table", { name: "Plan i rzeczywistość" })),
   ).toEqual([
-    "Przegląd | 0:45 | 1:00 | +0:15",
+    "Przegląd | 00:45 | 01:00 | +0:15",
     "Stand-up | bez szacunku | niezaczęte | —",
-    "Raport | 0:30 | niezaczęte | −0:30",
-    "Telefon | nieplanowane | 0:45 | —",
+    "Raport | 00:30 | niezaczęte | −0:30",
+    "Telefon | nieplanowane | 00:45 | —",
     // Różnica „Razem” tylko z wierszy z szacunkiem; cała praca osobno.
-    "Razem | 1:15 | 1:00 · łącznie 1:45 | −0:15",
+    "Razem | 01:15 | 01:00 · łącznie 01:45 | −0:15",
   ]);
   await expect(card.locator("tfoot td").last()).not.toHaveClass(/dtl-over/);
   await page.setViewportSize({ width: 760, height: 900 });

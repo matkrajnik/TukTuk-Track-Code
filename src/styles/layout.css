@@ -2,8 +2,8 @@
 .topbar {
   display: flex;
   align-items: center;
-  gap: 32px;
-  padding: 0 32px;
+  gap: var(--space-6);
+  padding: 0 var(--space-6);
   height: 64px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
@@ -14,7 +14,7 @@
   gap: 0;
   color: var(--text);
   text-decoration: none;
-  font-size: 19px;
+  font-size: var(--fs-lg);
   font-weight: 650;
   letter-spacing: -0.5px;
 }
@@ -27,7 +27,7 @@
   color: var(--accent);
   width: 28px;
   height: 28px;
-  border-radius: 7px;
+  border-radius: var(--radius);
   display: inline-grid;
   place-items: center;
   margin-right: 9px;
@@ -35,10 +35,11 @@
 nav {
   display: flex;
   align-self: stretch;
-  gap: 8px;
+  gap: 2px;
 }
 nav button {
-  padding: 0 14px;
+  padding: 0 10px;
+  white-space: nowrap;
   border-radius: 0;
   color: var(--muted);
   border-bottom: 2px solid transparent;
@@ -54,7 +55,7 @@ nav button.selected {
   gap: 8px;
 }
 .preview-label {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--muted);
 }
 main {
@@ -99,7 +100,7 @@ main {
   nav button {
     white-space: nowrap;
     flex-shrink: 0;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
   nav button svg {
     display: none;
@@ -123,18 +124,18 @@ main {
   overflow-y: auto;
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   padding: 26px;
   box-shadow: 0 20px 80px #0005;
 }
 .modal h2 {
   margin-bottom: 22px;
-  font-size: 20px;
+  font-size: var(--fs-lg);
 }
 .modal label {
   display: block;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-sm);
   margin: 16px 0 8px;
 }
 .modal input,
@@ -158,8 +159,8 @@ main {
   gap: 2px 12px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--radius);
+  font-size: var(--fs-sm);
 }
 .split-preview strong {
   grid-column: 1 / -1;
@@ -235,7 +236,7 @@ main {
   align-items: center;
   padding-left: 18px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-xs);
 }
 .window-controls {
   display: flex;
@@ -258,7 +259,7 @@ main {
   }
   nav button {
     padding: 0 10px;
-    font-size: 12px;
+    font-size: var(--fs-sm);
   }
 }
 @media (max-width: 600px) {
@@ -268,4 +269,21 @@ main {
 }
 .widget-switch.on {
   color: var(--accent);
+}
+.quick-button {
+  white-space: nowrap;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.quick-button kbd {
+  font-family: inherit;
+}
+.preview-label {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  cursor: help;
 }

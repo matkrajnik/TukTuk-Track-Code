@@ -25,7 +25,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="dashboard-card dashboard-top" aria-label="Agenci AI">
+  <section class="dashboard-card" aria-label="Agenci AI">
     <h2>Agenci AI</h2>
     <div
       v-for="agent in agents"

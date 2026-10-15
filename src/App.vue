@@ -31,6 +31,12 @@ const busy = ref(false);
 const loading = ref(true);
 const error = ref("");
 const view = ref<View>("tasks");
+/** Zakładka „Historia i kopie”; przycisk ustawień w pasku otwiera „settings”. */
+const libraryTab = ref("history");
+function openSettings() {
+  libraryTab.value = "settings";
+  view.value = "library";
+}
 const selectedDay = ref(dayKey(now.value));
 const editing = ref<Task | null>(null);
 const editTitle = ref("");
@@ -177,7 +183,12 @@ onUnmounted(() => {
 <template>
   <div class="app-shell">
     <TitleBar v-if="desktop" @error="error = $event" />
-    <AppNav v-model:view="view" @quick="openQuick" @error="error = $event" />
+    <AppNav
+      v-model:view="view"
+      @quick="openQuick"
+      @settings="openSettings"
+      @error="error = $event"
+    />
     <main>
       <IdleBanner
         :tasks="data.tasks"
@@ -206,6 +217,7 @@ onUnmounted(() => {
         />
         <LibraryView
           v-else-if="view === 'library'"
+          v-model:tab="libraryTab"
           :data="data"
           :now="now"
           @updated="data = $event"

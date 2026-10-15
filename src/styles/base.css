@@ -2,18 +2,37 @@
 :root {
   font-family: "Segoe UI", sans-serif;
   color-scheme: dark;
-  --bg: #141719;
-  --surface: #1d2225;
-  --raised: #252c30;
-  --line: #343c40;
-  --text: #e7edeb;
-  --muted: #a0adaa;
-  --accent: #99d5b4;
-  --accent-bg: #263f34;
-  --accent-text: #12281d;
-  --danger: #ffb4a9;
-  --danger-bg: #462c2b;
+  --bg: #111318;
+  --surface: #1a1d24;
+  --raised: #242833;
+  --line: #303542;
+  --text: #e6e9f0;
+  --muted: #9ba2b3;
+  --accent: #8fb3ff;
+  --accent-bg: #1f2a44;
+  --accent-text: #0d1730;
+  --danger: #ffaaa1;
+  --danger-bg: #44282a;
   --warning: #f2c46d;
+  /* Skala typografii: wszystkie rozmiary fontu biorą się stąd. */
+  --fs-xs: 11.5px;
+  --fs-sm: 12.5px;
+  --fs-base: 13.5px;
+  --fs-md: 14.5px;
+  --fs-lg: 17px;
+  --fs-xl: 22px;
+  --fs-2xl: 28px;
+  /* Zaokrąglenia: drobne (odznaki), kontrolki, karty. */
+  --radius-sm: 4px;
+  --radius: 7px;
+  --radius-lg: 10px;
+  /* Odstępy: krok 4 px. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
   /* Paleta osi dnia (DayTimeline): 8 odcieni przypisywanych zadaniom. */
   --tl-0: #7cc4a0;
   --tl-1: #7fb2e5;
@@ -25,24 +44,24 @@
   --tl-7: #b3bb84;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f5f7f6;
+  --bg: #f5f6f9;
   --surface: #ffffff;
-  --raised: #eaf0ed;
-  --line: #d7e0dc;
-  --text: #21332b;
-  --muted: #596e62;
-  --accent: #2f7450;
-  --accent-bg: #e7f2e9;
+  --raised: #eceff5;
+  --line: #d9dde7;
+  --text: #1f2433;
+  --muted: #5b6375;
+  --accent: #2f5bd3;
+  --accent-bg: #e6edff;
   --accent-text: #ffffff;
-  --danger: #a8352d;
-  --danger-bg: #ffebe8;
+  --danger: #b3261e;
+  --danger-bg: #fdebea;
   --warning: #9a6400;
   --tl-0: #2f8a5f;
   --tl-1: #2f6fb0;
@@ -74,7 +93,7 @@ button {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  border-radius: 6px;
+  border-radius: var(--radius);
 }
 button:disabled {
   opacity: 0.45;
@@ -98,7 +117,7 @@ textarea {
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius);
   padding: 9px 11px;
 }
 input::placeholder {
@@ -113,12 +132,12 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: 24px;
+  font-size: var(--fs-xl);
   font-weight: 600;
   letter-spacing: -0.5px;
 }
 h2 {
-  font-size: 17px;
+  font-size: var(--fs-lg);
   font-weight: 600;
 }
 .mono {
@@ -146,7 +165,7 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .inline-check input {
   accent-color: var(--accent);
@@ -162,11 +181,11 @@ h2 {
   padding: 44px 20px;
   color: var(--muted);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .empty-detail,
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--muted);
   line-height: 1.6;
   margin: 8px 0 0;
@@ -174,7 +193,7 @@ h2 {
 .today-button {
   padding: 8px 10px;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .error {
   display: flex;
@@ -182,22 +201,22 @@ h2 {
   gap: 12px;
   background: var(--danger-bg);
   color: var(--danger);
-  border-radius: 7px;
+  border-radius: var(--radius);
   padding: 12px;
   margin-bottom: 16px;
   overflow-wrap: anywhere;
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .secondary-button {
   border: 1px solid var(--line);
   padding: 8px 12px;
   color: var(--text);
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .text-link {
   color: var(--accent);
   padding: 4px 2px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   text-align: left;
 }
 input[type="checkbox"] {
