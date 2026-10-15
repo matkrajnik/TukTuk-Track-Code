@@ -622,7 +622,7 @@ export async function onWidgetStatus(
  */
 export interface NavigateRequest {
   view?: string | null;
-  /** `today` = filtr „Dzisiaj: plan i praca”. */
+  /** `today` = filtr „Dzisiaj: plan i praca”; `due` = ten filtr z terminami dziś i zaległymi. */
   filter?: string | null;
   /** Zadanie do rozwinięcia na liście zadań. */
   task?: number | null;

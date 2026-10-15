@@ -112,15 +112,15 @@ const views: View[] = [
 async function navigate(request: NavigateRequest) {
   const target = views.find((v) => v === request.view);
   if (!target) return;
-  if (!busy.value) closeModal();
+  // Otwartego okna dialogowego nie zamykamy: niezapisane zmiany zostają, a
+  // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
+  // wtedy, gdy żadne okno nie jest otwarte.
   view.value = target;
   if (target === "tasks") tasksRequest.value = { ...request };
   if (target === "journal" && request.dayClose) journalDayClose.value = true;
-  if (request.split != null) {
+  if (request.split != null && !modalOpen.value) {
     await refresh();
-    const session =
-      data.value.sessions.find((s) => s.id === request.split) ??
-      data.value.sessions.find((s) => s.endedAt === null);
+    const session = data.value.sessions.find((s) => s.id === request.split);
     if (session && !modalOpen.value) openSplit(session);
   }
 }

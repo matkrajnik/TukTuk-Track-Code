@@ -78,7 +78,7 @@ test("navigate z długiego pomiaru rozwija bieżące zadanie i otwiera Podziel",
   ).toBeNull();
 });
 
-test("navigate z terminu włącza filtr Dzisiaj z zaległymi terminami", async ({
+test("navigate z terminu włącza filtr Dzisiaj z zaległymi terminami tylko z powiadomienia", async ({
   page,
 }) => {
   const data = seed();
@@ -87,12 +87,66 @@ test("navigate z terminu włącza filtr Dzisiaj z zaległymi terminami", async (
   await openPreview(page, { data });
   const today = page.getByLabel("Dzisiaj: plan i praca");
   await expect(today).not.toBeChecked();
-  await navigatePreview(page, { view: "tasks", filter: "today" });
+  await navigatePreview(page, { view: "tasks", filter: "due" });
   await expect(today).toBeChecked();
   // Termin wczoraj (bez planu i pracy dziś) jest widoczny, plan z wczoraj nie.
   await expect(expandButton(page, "Code review")).toBeVisible();
   await expect(expandButton(page, "Analiza importu")).toBeVisible();
   await expect(expandButton(page, "Wdrożenie etykiet")).toHaveCount(0);
+  await expect(page.getByText("+ terminy dziś i zaległe")).toBeVisible();
+  // Ręczne wyłączenie i włączenie przywraca zwykłe znaczenie filtra.
+  await today.uncheck();
+  await today.check();
+  await expect(page.getByText("+ terminy dziś i zaległe")).toHaveCount(0);
+  await expect(expandButton(page, "Code review")).toHaveCount(0);
+  await expect(expandButton(page, "Analiza importu")).toBeVisible();
+});
+
+test("ręczny filtr Dzisiaj nie obejmuje terminów; filter today z navigate też nie", async ({
+  page,
+}) => {
+  const data = seed();
+  const review = data.tasks.find((t) => t.id === ids.review)!;
+  review.details = { ...review.details, dueDay: "2026-10-14" };
+  await openPreview(page, { data });
+  const today = page.getByLabel("Dzisiaj: plan i praca");
+  await today.check();
+  await expect(expandButton(page, "Analiza importu")).toBeVisible();
+  await expect(expandButton(page, "Code review")).toHaveCount(0);
+  await expect(page.getByText("+ terminy dziś i zaległe")).toHaveCount(0);
+  await today.uncheck();
+  await navigatePreview(page, { view: "tasks", filter: "today" });
+  await expect(today).toBeChecked();
+  await expect(expandButton(page, "Code review")).toHaveCount(0);
+});
+
+test("navigate nie zamyka otwartego okna dialogowego ani nie gubi zmian", async ({
+  page,
+}) => {
+  const data = await openPreview(page, {
+    active: { task: ids.analysis, from: "11:00" },
+  });
+  const active = data.sessions.find((s) => s.endedAt === null)!;
+  await expandButton(page, "Analiza importu").click();
+  await page.getByLabel("Edytuj: Analiza importu", { exact: true }).click();
+  const editor = page.getByRole("dialog", { name: "Edytuj zadanie" });
+  await expect(editor).toBeVisible();
+  await page.getByLabel("Nazwa zadania").fill("Analiza importu – szkic");
+  // Kliknięcie treści i „Podziel…”: okno zostaje, edytor przedziału się nie otwiera.
+  await navigatePreview(page, { view: "journal", dayClose: true });
+  await navigatePreview(page, {
+    view: "tasks",
+    task: ids.analysis,
+    split: active.id,
+  });
+  await expect(editor).toBeVisible();
+  await expect(page.getByLabel("Nazwa zadania")).toHaveValue(
+    "Analiza importu – szkic",
+  );
+  await expect(
+    page.getByRole("dialog", { name: "Edytuj przedział" }),
+  ).toHaveCount(0);
+  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "true");
 });
 
 test("navigate z wieczoru i celu otwiera Zamknięcie dnia na dziś", async ({

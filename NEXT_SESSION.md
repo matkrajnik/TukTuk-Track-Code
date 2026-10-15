@@ -4,6 +4,17 @@
 
 Otwarty punkt: wzorce w `tests/visual.spec.ts-snapshots` powstały lokalnie na Windows 11, a plan (Etap 1, pkt 1) każe generować je na windows-latest. Gałąź nie była pushowana, więc warunek „zrzuty zielone w CI dwa razy z rzędu” nie jest sprawdzony. Po pierwszym pushu: jeśli krok „Zrzuty wzorcowe” w workflow Check padnie na różnicach renderowania, uruchomić Check ręcznie (workflow_dispatch) z `update_snapshots` = true, pobrać artefakt `visual-snapshots`, podmienić nim katalog wzorców, zacommitować i potwierdzić dwa kolejne zielone przebiegi.
 
+## 1.3 w toku: akcje w powiadomieniach (N1) — etap niezamknięty
+
+Plan (Etap 2, Testy) wymaga sprawdzenia natywnie po instalacji każdego przycisku z tabeli; tego nie zrobiono, są tylko testy Rust i Playwright. Do czasu tej walidacji N1 nie jest „gotowe” w rozumieniu planu. Niepotwierdzone: czy `on_activated` z `tauri-winrt-notification` 0.8.1 dociera do kanału przy zainstalowanym AUMID, także po przeniesieniu toastu do Centrum akcji i po zakończeniu wątku, który wywołał `show()`.
+
+Do sprawdzenia na zainstalowanym pakiecie NSIS (osobny identyfikator walidacyjny, nie instalacja użytkownika), ze zrzutami w `test-results/`:
+- „Zatrzymaj” i „Podziel…” na toaście długiego pomiaru, także z Centrum akcji i po podziale pomiaru (Zatrzymaj ma zatrzymać dalszy ciąg; Podziel… otwiera bieżący wiersz);
+- „Zatrzymaj teraz” na toaście wieczornym;
+- „Rozpocznij” i „Zaplanuj na dziś” na toaście nowych zgłoszeń Jiry;
+- kliknięcie treści każdego powiadomienia (termin → Zadania z filtrem „Dzisiaj” + terminy, długi pomiar, wieczór, cel, Jira, skrót Start/Stop);
+- kliknięcie starego toastu po restarcie aplikacji (tylko główne okno).
+
 ## Stan po 1.0 (14 października 2026)
 
 Gałąź `release/1.0`, lokalnie, bez pusha. Wszystkie funkcje z PLAN_1.0.md (0.1–0.4 i A–L) mają commity implementacji na tej gałęzi; większość ma też osobny commit „uwagi z przeglądu”. Commit R1 podnosi wersję w `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` i `src-tauri/tauri.conf.json` do 1.0.0 i aktualizuje README (Organizacja pracy 1.0, Ustawienia, Skróty, Mini-widget, Okna/tray/autostart, Powiadomienia, Sprawdzenie).

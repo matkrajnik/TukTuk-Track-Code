@@ -38,7 +38,8 @@ const DUE_TITLES: usize = 3;
 #[serde(rename_all = "camelCase")]
 pub struct View {
     pub view: Option<&'static str>,
-    /// Filtr listy zadań: `today` = „Dzisiaj: plan i praca”.
+    /// Filtr listy zadań: `today` = „Dzisiaj: plan i praca”, `due` = ten sam filtr
+    /// rozszerzony o terminy dziś i zaległe (tylko z powiadomienia o terminach).
     pub filter: Option<&'static str>,
     /// Zadanie do rozwinięcia na liście zadań.
     pub task: Option<i64>,
@@ -168,27 +169,37 @@ pub fn perform(
     };
     match command {
         Command::Stop(session) => {
-            // Stary toast nie zatrzymuje pomiaru, który zaczął się później.
-            let running = active(db).map_err(|e| e.to_string())?;
-            if running.is_some_and(|(id, ..)| id == session) {
+            // Zatrzymujemy tylko pomiar z toastu (także jego dalszy ciąg po podziale);
+            // stary toast nie zatrzymuje pomiaru, który zaczął się później. Gdy nie ma
+            // czego zatrzymać, okno pokazuje, co faktycznie trwa.
+            if continuation(db, session)
+                .map_err(|e| e.to_string())?
+                .is_some()
+            {
                 crate::db::stop(db, now).map_err(|e| e.to_string())?;
                 return Ok(changed(true));
             }
-            Ok(changed(false))
+            Ok(Outcome {
+                changed: false,
+                navigate: Some(View::tasks()),
+            })
         }
         Command::Split(session) => {
-            // Po wcześniejszym podziale trwa już nowy wiersz; dzielimy bieżący pomiar.
-            let target: Option<(i64, i64)> = match active(db).map_err(|e| e.to_string())? {
-                Some((id, task, ..)) => Some((id, task)),
-                None => db
-                    .query_row(
-                        "SELECT id, task_id FROM sessions WHERE id=?1",
-                        [session],
-                        |r| Ok((r.get(0)?, r.get(1)?)),
-                    )
-                    .optional()
-                    .map_err(|e| e.to_string())?,
-            };
+            // Po wcześniejszym podziale trwa już nowy wiersz tego samego pomiaru;
+            // dzielimy go. Pomiar innego zadania nie jest celem starego toastu: wtedy
+            // edytor przedziału z toastu, a gdy go już nie ma, sama lista zadań.
+            let target: Option<(i64, i64)> =
+                match continuation(db, session).map_err(|e| e.to_string())? {
+                    Some(found) => Some(found),
+                    None => db
+                        .query_row(
+                            "SELECT id, task_id FROM sessions WHERE id=?1",
+                            [session],
+                            |r| Ok((r.get(0)?, r.get(1)?)),
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?,
+                };
             Ok(Outcome {
                 changed: false,
                 navigate: Some(View {
@@ -277,6 +288,40 @@ fn claim(db: &Connection, key: &str, now: i64) -> rusqlite::Result<bool> {
     )? == 1)
 }
 
+/// Trwający dalszy ciąg pomiaru `session` (id przedziału, id zadania): sam przedział,
+/// gdy jeszcze trwa, albo wiersz powstały z jego podziału (kolejne podziały też) na
+/// tym samym zadaniu. Podział zamyka przedział w chwili `at` i wstawia nowy od `at`,
+/// więc idziemy po łańcuchu „koniec = początek następnego”. Ponowny start tego samego
+/// zadania później nie jest dalszym ciągiem.
+fn continuation(db: &Connection, session: i64) -> rusqlite::Result<Option<(i64, i64)>> {
+    let mut current: Option<(i64, i64, Option<i64>)> = db
+        .query_row(
+            "SELECT id, task_id, ended_at FROM sessions WHERE id=?1",
+            [session],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()?;
+    // Ograniczenie na wypadek zapętlonych danych (przedziały zerowej długości).
+    for _ in 0..1_000 {
+        let Some((id, task, ended)) = current else {
+            return Ok(None);
+        };
+        let Some(end) = ended else {
+            return Ok(Some((id, task)));
+        };
+        current = db
+            .query_row(
+                "SELECT id, task_id, ended_at FROM sessions
+                 WHERE task_id=?1 AND started_at=?2 AND id<>?3
+                 ORDER BY id DESC LIMIT 1",
+                params![task, end, id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+    }
+    Ok(None)
+}
+
 /// Aktywny pomiar: id sesji, id zadania, tytuł zadania, początek.
 fn active(db: &Connection) -> rusqlite::Result<Option<(i64, i64, String, i64)>> {
     db.query_row(
@@ -319,7 +364,7 @@ pub fn due_message(day: NaiveDate, titles: &[String]) -> Message {
         body: lines.join("\n"),
         actions: Vec::new(),
         open: View {
-            filter: Some("today"),
+            filter: Some("due"),
             ..View::tasks()
         },
     }
@@ -1012,7 +1057,7 @@ mod tests {
         assert_eq!(
             m[0].open,
             View {
-                filter: Some("today"),
+                filter: Some("due"),
                 ..View::tasks()
             }
         );
@@ -1168,5 +1213,152 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.navigate.unwrap().split, Some(first));
+    }
+
+    #[test]
+    fn split_action_from_stale_toast_ignores_other_task_measurement() {
+        let mut db = setup();
+        // Toast o długim pomiarze zadania A (1); potem użytkownik przechodzi na B (2).
+        let a = session(&db, 1, at("2026-10-14 08:00"), Some(at("2026-10-14 12:00")));
+        let b = session(&db, 2, at("2026-10-14 12:00"), None);
+        let out = perform(
+            &mut db,
+            command(Some(&format!("split:{a}")), &View::default()),
+            "2026-10-14",
+            at("2026-10-14 12:30"),
+        )
+        .unwrap();
+        assert_eq!(
+            out.navigate,
+            Some(View {
+                task: Some(1),
+                split: Some(a),
+                ..View::tasks()
+            })
+        );
+        assert_eq!(active(&db).unwrap().unwrap().0, b);
+        // Ponowny start A później to nowy pomiar, nie dalszy ciąg toastu.
+        db::stop(&db, at("2026-10-14 13:00")).unwrap();
+        let again = session(&db, 1, at("2026-10-14 13:05"), None);
+        let out = perform(
+            &mut db,
+            Command::Split(a),
+            "2026-10-14",
+            at("2026-10-14 13:10"),
+        )
+        .unwrap();
+        assert_eq!(out.navigate.unwrap().split, Some(a));
+        let out = perform(
+            &mut db,
+            Command::Stop(a),
+            "2026-10-14",
+            at("2026-10-14 13:10"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: false,
+                navigate: Some(View::tasks())
+            }
+        );
+        assert_eq!(active(&db).unwrap().unwrap().0, again);
+        // Przedziału z toastu już nie ma: sama lista zadań, bez edytora.
+        db.execute("DELETE FROM sessions WHERE id=?1", [a]).unwrap();
+        let out = perform(
+            &mut db,
+            Command::Split(a),
+            "2026-10-14",
+            at("2026-10-14 13:10"),
+        )
+        .unwrap();
+        assert_eq!(out.navigate, Some(View::tasks()));
+    }
+
+    #[test]
+    fn stop_action_after_split_stops_continued_measurement() {
+        let mut db = setup();
+        let first = session(&db, 1, at("2026-10-14 08:00"), None);
+        // Dwa podziały: pomiar trwa w trzecim wierszu tego samego zadania.
+        db::split_session(
+            &mut db,
+            first,
+            at("2026-10-14 09:00"),
+            None,
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        let (second, ..) = active(&db).unwrap().unwrap();
+        db::split_session(
+            &mut db,
+            second,
+            at("2026-10-14 10:00"),
+            None,
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        let (third, ..) = active(&db).unwrap().unwrap();
+        assert!(third != first && third != second);
+        let out = perform(
+            &mut db,
+            command(Some(&format!("split:{first}")), &View::default()),
+            "2026-10-14",
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        assert_eq!(out.navigate.unwrap().split, Some(third));
+        let out = perform(
+            &mut db,
+            command(Some(&format!("stop:{first}")), &View::default()),
+            "2026-10-14",
+            at("2026-10-14 12:30"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: true,
+                navigate: None
+            }
+        );
+        assert!(active(&db).unwrap().is_none());
+        // Drugie kliknięcie: nic do zatrzymania, okno pokazuje listę zadań.
+        let out = perform(
+            &mut db,
+            Command::Stop(first),
+            "2026-10-14",
+            at("2026-10-14 12:31"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: false,
+                navigate: Some(View::tasks())
+            }
+        );
+    }
+
+    #[test]
+    fn split_to_other_task_is_not_continuation_of_toast() {
+        let mut db = setup();
+        let first = session(&db, 1, at("2026-10-14 08:00"), None);
+        db::split_session(
+            &mut db,
+            first,
+            at("2026-10-14 09:00"),
+            Some(2),
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        let out = perform(
+            &mut db,
+            Command::Stop(first),
+            "2026-10-14",
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        assert!(!out.changed);
+        assert!(active(&db).unwrap().is_some());
     }
 }

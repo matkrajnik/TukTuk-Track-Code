@@ -72,14 +72,14 @@ Małe okno 320×64 zawsze na wierzchu, domyślnie wyłączone. Pokazuje nazwę b
 
 Powiadomienia Windows wysyła backend Rust bezpośrednio przez `tauri-winrt-notification` (plugin `tauri-plugin-notification` nie przekazuje na Windows kliknięć ani przycisków i zostaje tylko dla innych systemów); reguły są sprawdzane co 30 s:
 
-- **Termin**: przy starcie i o 09:00, gdy są nieukończone zadania z terminem dziś lub wcześniej; treść podaje liczbę i pierwsze trzy tytuły. Kliknięcie: Zadania z filtrem „Dzisiaj: plan i praca” (filtr obejmuje też terminy dziś i zaległe).
+- **Termin**: przy starcie i o 09:00, gdy są nieukończone zadania z terminem dziś lub wcześniej; treść podaje liczbę i pierwsze trzy tytuły. Kliknięcie: Zadania z filtrem „Dzisiaj: plan i praca” (tylko po takim kliknięciu filtr obejmuje też terminy dziś i zaległe; ręcznie włączony filtr działa jak dotąd).
 - **Długi pomiar**: aktywny przedział trwa co najmniej ustawioną liczbę minut; jedna wiadomość na przedział. Po podziale pomiaru nowa część liczy czas od momentu podziału. Kliknięcie: Zadania z rozwiniętym bieżącym zadaniem. Przyciski „Zatrzymaj” i „Podziel…” (edytor bieżącego pomiaru na zakładce Podziel).
 - **Wieczór**: o ustawionej godzinie pomiar nadal trwa. Kliknięcie: Zamknięcie dnia. Przycisk „Zatrzymaj teraz”.
 - **Cel**: suma dnia roboczego osiągnęła cel (domyślnie wyłączone). Kliknięcie: Zamknięcie dnia.
 - **Nowe zgłoszenia z Jiry**: kliknięcie otwiera Zadania przy grupie „Nierozpoczęte” (jedno zgłoszenie: rozwinięte). Przyciski „Rozpocznij” (tylko przy jednym zgłoszeniu; ta sama ścieżka co w widoku Jira, więc zadanie wraca z kosza lub archiwum) i „Zaplanuj na dziś”.
 - **Potwierdzenie skrótu Start/Stop**: kliknięcie pokazuje główne okno.
 
-Każde powiadomienie pojawia się najwyżej raz: klucz trafia do tabeli `notifications_sent` przed wysłaniem, także po ponownym uruchomieniu. Wpisy starsze niż 7 dni są usuwane przy starcie. Przyciski działają, gdy aplikacja jest uruchomiona: „Zatrzymaj” zatrzymuje tylko ten pomiar, którego dotyczy powiadomienie, „Rozpocznij” zatrzymuje poprzedni pomiar; nic poza tym nie przełącza timera. Nieznana akcja (np. stary toast po aktualizacji) tylko pokazuje główne okno. Kliknięcie starego toastu po restarcie uruchamia aplikację. W `tauri dev` powiadomienia mogą nie pojawić się albo podpisywać się inną aplikacją (AUMID PowerShella), a przyciski mogą nie działać; miarodajny jest pakiet NSIS.
+Każde powiadomienie pojawia się najwyżej raz: klucz trafia do tabeli `notifications_sent` przed wysłaniem, także po ponownym uruchomieniu. Wpisy starsze niż 7 dni są usuwane przy starcie. Przyciski działają, gdy aplikacja jest uruchomiona: „Zatrzymaj” zatrzymuje tylko ten pomiar, którego dotyczy powiadomienie (także jego dalszy ciąg po podziale; gdy nie ma czego zatrzymać, pokazuje Zadania), „Podziel…” na starym toaście nie otwiera pomiaru innego zadania, kliknięcie nie zamyka otwartego okna dialogowego, „Rozpocznij” zatrzymuje poprzedni pomiar; nic poza tym nie przełącza timera. Nieznana akcja (np. stary toast po aktualizacji) tylko pokazuje główne okno. Kliknięcie starego toastu po restarcie uruchamia aplikację. W `tauri dev` powiadomienia mogą nie pojawić się albo podpisywać się inną aplikacją (AUMID PowerShella), a przyciski mogą nie działać; miarodajny jest pakiet NSIS.
 
 ### Dotychczasowe funkcje
 

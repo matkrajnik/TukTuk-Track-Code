@@ -42,6 +42,15 @@ const query = ref("");
 const filter = ref("active");
 const projectFilter = ref("");
 const todayOnly = ref(false);
+/**
+ * Tylko po kliknięciu powiadomienia o terminach (`filter: "due"`): „Dzisiaj”
+ * obejmuje też terminy dziś i zaległe. Ręczne wyłączenie filtra przywraca
+ * zwykłe znaczenie (plan na dziś i praca z dziś).
+ */
+const dueIncluded = ref(false);
+watch(todayOnly, (on) => {
+  if (!on) dueIncluded.value = false;
+});
 const expanded = ref(new Set<number>());
 
 const projects = computed(() =>
@@ -83,8 +92,11 @@ const visible = computed(() =>
           : t.details?.project === projectFilter.value)) &&
       (!todayOnly.value ||
         t.details?.plannedDay === todayKey.value ||
-        // Termin dziś lub po terminie (cel kliknięcia powiadomienia o terminach).
-        (!t.done && !!t.details?.dueDay && t.details.dueDay <= todayKey.value) ||
+        // Termin dziś lub po terminie: tylko po kliknięciu powiadomienia o terminach.
+        (dueIncluded.value &&
+          !t.done &&
+          !!t.details?.dueDay &&
+          t.details.dueDay <= todayKey.value) ||
         props.data.sessions.some(
           (s) => s.taskId === t.id && inDay(s, todayKey.value, props.now) > 0,
         )) &&
@@ -144,7 +156,8 @@ watch(
     filter.value = "active";
     query.value = "";
     projectFilter.value = "";
-    todayOnly.value = request.filter === "today";
+    todayOnly.value = request.filter === "today" || request.filter === "due";
+    dueIncluded.value = request.filter === "due";
     if (request.task != null) expanded.value.add(request.task);
     await nextTick();
     const target =
@@ -273,6 +286,9 @@ async function priority(task: Task, e: Event) {
   <div class="organization-filters">
     <label class="inline-check"
       ><input v-model="todayOnly" type="checkbox" />Dzisiaj: plan i praca</label
+    >
+    <span v-if="dueIncluded" class="due-included"
+      >+ terminy dziś i zaległe</span
     >
     <label
       >Projekt

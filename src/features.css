@@ -1319,3 +1319,10 @@ html.widget-root body {
   font-size: var(--fs-base);
   line-height: 1.7;
 }
+
+/* Filtr „Dzisiaj” po kliknięciu powiadomienia o terminach. */
+.due-included {
+  color: var(--muted);
+  font-size: 12px;
+  align-self: center;
+}
