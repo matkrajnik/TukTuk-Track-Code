@@ -424,9 +424,19 @@ onUnmounted(() => {
         @change="save({ notifyTarget: checked($event) })"
       />Powiadom o osiągnięciu celu dnia</label
     >
+    <label class="inline-check"
+      ><input
+        :checked="settings.notifyMorningReview"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ notifyMorningReview: checked($event) })"
+      />Przypominaj o porannym przeglądzie dnia</label
+    >
     <p class="hint">
       Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz na
-      przedział, wieczór o wybranej godzinie, cel raz dziennie. Każde pojawia się
+      przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd dnia
+      w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam dzień”.
+      Każde pojawia się
       najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
       Start/Stop pokazuje się, gdy widget jest schowany.
     </p>

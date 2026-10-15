@@ -42,6 +42,13 @@ pub struct AppSettings {
     pub calendar_show_titles: bool,
     /// Szacunki z poprawką z historii (P1) w pojemności, osi planu i „Rozłóż”.
     pub plan_with_correction: bool,
+    /// Powiadomienie „Przegląd dnia” w dzień roboczy po początku dnia (P2).
+    pub notify_morning_review: bool,
+    /// Dzień ostatniego porannego przeglądu (`RRRR-MM-DD`, pusty = nigdy).
+    pub morning_review_day: String,
+    /// Chwila ostatniego „Zaczynam dzień” (Unix ms, 0 = nigdy): od niej liczą się
+    /// „Nowe z Jiry” w następnym przeglądzie.
+    pub morning_review_at: i64,
 }
 
 impl Default for AppSettings {
@@ -71,6 +78,9 @@ impl Default for AppSettings {
             focus_break_stops: true,
             calendar_show_titles: true,
             plan_with_correction: false,
+            notify_morning_review: true,
+            morning_review_day: String::new(),
+            morning_review_at: 0,
         }
     }
 }
@@ -103,6 +113,11 @@ pub fn valid_time(value: &str) -> bool {
         && [0, 1, 3, 4].iter().all(|&i| b[i].is_ascii_digit())
         && (b[0] - b'0') * 10 + (b[1] - b'0') < 24
         && (b[3] - b'0') * 10 + (b[4] - b'0') < 60
+}
+
+/// Dzień `RRRR-MM-DD` istniejący w kalendarzu.
+pub fn valid_day(value: &str) -> bool {
+    value.len() == 10 && chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d").is_ok()
 }
 
 fn parse_shortcut(value: &str) -> Option<tauri_plugin_global_shortcut::Shortcut> {
@@ -195,6 +210,12 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     s.agent_muted_folders = folders;
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());
+    }
+    if !(s.morning_review_day.is_empty() || valid_day(&s.morning_review_day)) {
+        return Err("Dzień przeglądu musi mieć format RRRR-MM-DD.".into());
+    }
+    if s.morning_review_at < 0 {
+        return Err("Niepoprawna chwila przeglądu dnia.".into());
     }
     if !valid_time(&s.notify_evening) {
         return Err("Godzina wieczornego przypomnienia musi mieć format GG:MM.".into());
@@ -515,6 +536,40 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(&db).focus_block_minutes, 25);
+    }
+
+    #[test]
+    fn morning_review_fields_are_validated_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert!(base.notify_morning_review);
+        assert_eq!(base.morning_review_day, "");
+        assert_eq!(base.morning_review_at, 0);
+        for bad in [
+            json!({"morningReviewDay": "2026-02-30"}),
+            json!({"morningReviewDay": "15.10.2026"}),
+            json!({"morningReviewDay": "2026-10-15x"}),
+            json!({"morningReviewAt": -1}),
+            json!({"notifyMorningReview": "tak"}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad} powinno być odrzucone");
+        }
+        let saved = save(
+            &mut db,
+            &json!({"morningReviewDay": "2026-10-15", "morningReviewAt": 1_792_058_400_000_i64, "notifyMorningReview": false}),
+        )
+        .unwrap();
+        assert_eq!(load(&db), saved);
+        assert_eq!(saved.morning_review_day, "2026-10-15");
+        assert_eq!(saved.morning_review_at, 1_792_058_400_000);
+        assert!(!saved.notify_morning_review);
+        // Uszkodzony zapisany dzień wraca do pustego.
+        db.execute(
+            "UPDATE settings SET value='wczoraj' WHERE key='morning_review_day'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(load(&db).morning_review_day, "");
     }
 
     #[test]

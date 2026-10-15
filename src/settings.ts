@@ -36,6 +36,12 @@ export interface AppSettings {
   calendarShowTitles: boolean;
   /** Szacunki z poprawką z historii w pojemności, osi planu i „Rozłóż”. */
   planWithCorrection: boolean;
+  /** Powiadomienie „Przegląd dnia” w dzień roboczy po początku dnia. */
+  notifyMorningReview: boolean;
+  /** Dzień ostatniego porannego przeglądu (RRRR-MM-DD, pusty = nigdy). */
+  morningReviewDay: string;
+  /** Chwila ostatniego „Zaczynam dzień” (ms, 0 = nigdy). */
+  morningReviewAt: number;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -71,6 +77,9 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   focusBreakStops: true,
   calendarShowTitles: true,
   planWithCorrection: false,
+  notifyMorningReview: true,
+  morningReviewDay: "",
+  morningReviewAt: 0,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -177,6 +186,18 @@ export const normFolder = (folder: string) =>
 const minutes = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1440;
 
+/** Dzień RRRR-MM-DD istniejący w kalendarzu (valid_day w Rust). */
+function validDay(value: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return (
+    d.getUTCFullYear() === +m[1] &&
+    d.getUTCMonth() === +m[2] - 1 &&
+    d.getUTCDate() === +m[3]
+  );
+}
+
 const range = (v: unknown, min: number, max: number) =>
   typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
 
@@ -224,6 +245,10 @@ function applyFields(
   s.agentMutedFolders = folders;
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
+  if (s.morningReviewDay !== "" && !validDay(s.morningReviewDay))
+    throw new Error("Dzień przeglądu musi mieć format RRRR-MM-DD.");
+  if (!Number.isSafeInteger(s.morningReviewAt) || s.morningReviewAt < 0)
+    throw new Error("Niepoprawna chwila przeglądu dnia.");
   if (!time.test(s.notifyEvening))
     throw new Error(
       "Godzina wieczornego przypomnienia musi mieć format GG:MM.",

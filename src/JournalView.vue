@@ -24,6 +24,7 @@ import {
 import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
+import MorningReview from "./MorningReview.vue";
 import ReorderHandle from "./components/ReorderHandle.vue";
 import DayTimeline from "./components/DayTimeline.vue";
 import WeekBoard from "./components/WeekBoard.vue";
@@ -33,6 +34,8 @@ const props = defineProps<{
   now: number;
   /** Żądanie z powiadomienia: otwórz Zamknięcie dnia na dziś. */
   dayClose?: boolean;
+  /** Żądanie z powiadomienia lub Dashboardu: otwórz zakładkę Rano. */
+  morning?: boolean;
 }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -40,12 +43,15 @@ const emit = defineEmits<{
   split: [session: Session];
   report: [day: string];
   dayCloseShown: [];
+  morningShown: [];
 }>();
 const day = ref(dayKey(props.now));
 /** Poprawka szacunków (podpowiedź w rozwiniętym planie); przeliczana co minutę. */
 const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
 const correctionOf = computed(() => corrections(props.data, minute.value));
 const closing = ref(false);
+/** Zakładka Rano: poranny przegląd dzisiejszego dnia. */
+const morning = ref(false);
 const weekly = ref(false),
   busy = ref(false),
   error = ref("");
@@ -59,8 +65,20 @@ watch(
     if (!open) return;
     day.value = dayKey(props.now);
     weekly.value = false;
+    morning.value = false;
     closing.value = true;
     emit("dayCloseShown");
+  },
+  { immediate: true },
+);
+watch(
+  () => props.morning,
+  (open) => {
+    if (!open) return;
+    weekly.value = false;
+    closing.value = false;
+    morning.value = true;
+    emit("morningShown");
   },
   { immediate: true },
 );
@@ -242,7 +260,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
 <template>
   <div class="page-heading">
     <h1>Plan i historia</h1>
-    <div class="date-picker">
+    <div v-if="!morning" class="date-picker">
       <button
         class="icon-button"
         aria-label="Poprzedni okres"
@@ -266,16 +284,27 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
   </div>
   <div class="tabs journal-tabs" role="group" aria-label="Widok planu">
     <button
-      :class="{ selected: !weekly && !closing }"
+      :class="{ selected: morning }"
       @click="
+        morning = true;
+        weekly = false;
+        closing = false;
+      "
+    >
+      Rano</button
+    ><button
+      :class="{ selected: !weekly && !closing && !morning }"
+      @click="
+        morning = false;
         weekly = false;
         closing = false;
       "
     >
       Dzień</button
     ><button
-      :class="{ selected: weekly && !closing }"
+      :class="{ selected: weekly && !closing && !morning }"
       @click="
+        morning = false;
         weekly = true;
         closing = false;
       "
@@ -283,8 +312,9 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       Tydzień
     </button>
     <button
-      :class="{ selected: closing }"
+      :class="{ selected: closing && !morning }"
       @click="
+        morning = false;
         closing = true;
         weekly = false;
       "
@@ -293,8 +323,14 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
     </button>
   </div>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
+  <MorningReview
+    v-if="morning"
+    :data="data"
+    :now="now"
+    @updated="emit('updated', $event)"
+  />
   <DayClose
-    v-if="closing"
+    v-else-if="closing"
     :data="data"
     :day="day"
     :now="now"

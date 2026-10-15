@@ -114,6 +114,8 @@ function openDelete(task: Task) {
 /** Żądania z powiadomień Windows (`navigate`) dla Zadań i Zamknięcia dnia. */
 const tasksRequest = ref<NavigateRequest | null>(null);
 const journalDayClose = ref(false);
+/** Żądanie otwarcia Plan i historia → Rano (powiadomienie „Przegląd dnia”, Dashboard). */
+const journalMorning = ref(false);
 const views: View[] = [
   "tasks",
   "reports",
@@ -139,6 +141,8 @@ async function navigate(request: NavigateRequest) {
     settingsSection.value = request.section;
   if (target === "tasks") tasksRequest.value = { ...request };
   if (target === "journal" && request.dayClose) journalDayClose.value = true;
+  else if (target === "journal" && request.section === "morning")
+    journalMorning.value = true;
   if (request.split != null && !modalOpen.value) {
     await refresh();
     const session = data.value.sessions.find((s) => s.id === request.split);
@@ -315,7 +319,9 @@ onUnmounted(() => {
           :data="data"
           :now="now"
           :day-close="journalDayClose"
+          :morning="journalMorning"
           @day-close-shown="journalDayClose = false"
+          @morning-shown="journalMorning = false"
           @updated="updated"
           @edit="openSession"
           @split="openSplit"

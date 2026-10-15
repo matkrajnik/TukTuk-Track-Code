@@ -1067,7 +1067,8 @@ export interface NavigateRequest {
   /** Przedział do otwarcia w edytorze na zakładce Podziel. */
   split?: number | null;
   /**
-   * Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”), albo przy
+   * Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”), przy
+   * `view: "journal"` zakładka `morning` (Plan i historia → Rano), albo przy
    * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `jira`,
    * `notifications`, `focus`, `templates`, `windows`, `shortcuts`, `startup`).
    */

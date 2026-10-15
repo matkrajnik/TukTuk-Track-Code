@@ -115,6 +115,18 @@ pub fn day_goal_ms(
     (target_ms - uncovered).max(0)
 }
 
+/// Czy dzień `date` jest wolny przez całodniowe „poza biurem” z kalendarza
+/// (bez połączonego kalendarza: nie).
+pub fn off_day_in<Tz: TimeZone>(db: &Connection, tz: &Tz, date: NaiveDate) -> bool {
+    if !calendar::connected(db) {
+        return false;
+    }
+    let day = stats::day_bounds(tz, date);
+    calendar::events_between(db, day.0, day.1)
+        .map(|events| off_day(&events, day))
+        .unwrap_or(false)
+}
+
 /// Cel mierzonego czasu dnia `date` z bazy (tray, powiadomienie o celu).
 /// Bez połączonego kalendarza równy celowi dnia.
 pub fn goal_ms_in<Tz: TimeZone>(

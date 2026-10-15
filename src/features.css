@@ -1720,3 +1720,49 @@ html.widget-root body {
 .estimate-hint {
   margin: -4px 0 8px;
 }
+
+/* Poranny przegląd (Plan i historia → Rano). */
+.morning-step {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 6px;
+}
+.morning-step h3 {
+  margin: 8px 0;
+}
+.morning-step h4 {
+  margin: 14px 0 6px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.morning-row {
+  margin: 8px 0;
+}
+.morning-row small {
+  display: block;
+}
+.morning-capacity {
+  height: 8px;
+  margin: 8px 0 6px;
+}
+.morning-capacity-text {
+  margin: 0;
+}
+.morning-list {
+  margin: 0;
+  padding-left: 22px;
+  font-size: var(--fs-base);
+}
+.morning-list li {
+  margin: 4px 0;
+}
+.morning-list li.done {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.morning-actions {
+  margin-top: 18px;
+}
+.dashboard-heading-actions {
+  margin-top: 0;
+}

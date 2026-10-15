@@ -96,6 +96,9 @@ export const settingsSections = [
       "Wieczorne „pomiar nadal trwa”",
       "Przypominaj wieczorem, że pomiar nadal trwa",
       "Powiadom o osiągnięciu celu dnia",
+      "przegląd dnia",
+      "poranny przegląd",
+      "Przypominaj o porannym przeglądzie dnia",
     ],
   },
   {

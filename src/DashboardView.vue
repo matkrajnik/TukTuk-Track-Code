@@ -8,7 +8,7 @@ import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
 import { useFocus } from "./focus";
-import { openSettings } from "./navigation";
+import { openSettings, openView } from "./navigation";
 import { dayGoal, offDayEvent } from "./capacity";
 import { useMeetings } from "./composables/useMeetings";
 import {
@@ -132,9 +132,16 @@ const topTasks = computed(() =>
 <template>
   <div class="page-heading">
     <h1>Dashboard</h1>
-    <button class="today-button" @click="$emit('report', today)">
-      Raport dzisiejszy
-    </button>
+    <div class="planning-actions dashboard-heading-actions">
+      <button
+        class="today-button"
+        @click="openView({ view: 'journal', section: 'morning' })"
+      >
+        Przegląd dnia</button
+      ><button class="today-button" @click="$emit('report', today)">
+        Raport dzisiejszy
+      </button>
+    </div>
   </div>
   <div class="dashboard-stats">
     <section class="dashboard-card">

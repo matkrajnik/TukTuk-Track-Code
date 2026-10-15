@@ -12,7 +12,9 @@
 //! - `due:<dzień>`: przy starcie i o 09:00 są nieukończone zadania z terminem dziś lub wcześniej;
 //! - `long:<id sesji>`: aktywny pomiar trwa co najmniej `notify_long_minutes` (0 wyłącza);
 //! - `evening:<dzień>`: o `notify_evening` pomiar nadal trwa;
-//! - `target:<dzień>`: suma dnia osiągnęła cel (domyślnie wyłączone).
+//! - `target:<dzień>`: suma dnia osiągnęła cel (domyślnie wyłączone);
+//! - `morning:<dzień>`: dzień roboczy po godzinie początku dnia, a poranny przegląd
+//!   jeszcze nie zrobiony (`morning_review`, osobno od `tick`).
 //!
 //! Logika siedzi w `NotifyClock` z czasem i strefą podawanymi z zewnątrz, więc testy
 //! sterują zegarem. Klucz trafia do bazy przed wysłaniem (`INSERT OR IGNORE`), dlatego
@@ -45,8 +47,9 @@ pub struct View {
     pub task: Option<i64>,
     /// Przedział do otwarcia w edytorze na zakładce Podziel.
     pub split: Option<i64>,
-    /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć, albo przy
-    /// `view: "settings"` sekcja Ustawień (np. `notifications`).
+    /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć, przy
+    /// `view: "settings"` sekcja Ustawień (np. `notifications`), a przy
+    /// `view: "journal"` zakładka `morning` (Plan i historia → Rano).
     pub section: Option<&'static str>,
     /// Plan i historia → Zamknięcie dnia (dzisiaj).
     pub day_close: bool,
@@ -63,6 +66,14 @@ impl View {
         View {
             view: Some("journal"),
             day_close: true,
+            ..View::default()
+        }
+    }
+    /// Plan i historia → Rano („Przegląd dnia”).
+    pub fn morning_review() -> Self {
+        View {
+            view: Some("journal"),
+            section: Some("morning"),
             ..View::default()
         }
     }
@@ -496,6 +507,84 @@ impl NotifyClock {
     }
 }
 
+/// Liczba niedokończonych zadań zaplanowanych przed `day` (bez archiwum, kosza
+/// i wzorców cykli, których `plannedDay` to tylko początek cyklu).
+fn unfinished_before(db: &Connection, day: NaiveDate) -> rusqlite::Result<usize> {
+    db.query_row(
+        "SELECT COUNT(*) FROM tasks t
+         JOIN task_details d ON d.task_id = t.id
+         LEFT JOIN task_lifecycle l ON l.task_id = t.id
+         WHERE t.done = 0 AND COALESCE(l.archived, 0) = 0 AND l.deleted_at IS NULL
+           AND COALESCE(json_extract(d.json, '$.plannedDay'), '') <> ''
+           AND json_extract(d.json, '$.plannedDay') < ?1
+           AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0",
+        [day.format("%Y-%m-%d").to_string()],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n.max(0) as usize)
+}
+
+/// Czy przypomnieć o porannym przeglądzie: wyłącznik włączony, dzień roboczy
+/// (dni tygodnia i święta z ustawień), nie urlop całodniowy z kalendarza (`off`),
+/// po godzinie początku dnia i bez przeglądu zapisanego na ten dzień.
+pub fn morning_review_due(s: &AppSettings, today: NaiveDate, time: NaiveTime, off: bool) -> bool {
+    let Ok(start) = NaiveTime::parse_from_str(&s.day_start, "%H:%M") else {
+        return false;
+    };
+    s.notify_morning_review
+        && crate::holidays::is_work_day(s, today)
+        && !off
+        && time >= start
+        && s.morning_review_day != today.format("%Y-%m-%d").to_string()
+}
+
+/// Treść powiadomienia „Przegląd dnia”: niedokończone z wcześniejszych dni i terminy.
+pub fn morning_message(day: NaiveDate, unfinished: usize, due: usize) -> Message {
+    let body = match (unfinished, due) {
+        (0, 0) => "Zaplanuj dzień: spotkania, plan i pojemność.".to_owned(),
+        (u, 0) => format!("Niedokończone: {}", tasks_word(u)),
+        (0, d) => format!("Terminy: {}", tasks_word(d)),
+        (u, d) => format!(
+            "Niedokończone: {} · terminy: {}",
+            tasks_word(u),
+            tasks_word(d)
+        ),
+    };
+    Message {
+        key: format!("morning:{day}"),
+        title: "Przegląd dnia".into(),
+        body,
+        actions: Vec::new(),
+        open: View::morning_review(),
+    }
+}
+
+/// Reguła „Przegląd dnia” w chwili `now`: najwyżej jedno powiadomienie dziennie
+/// (klucz `morning:<dzień>` w `notifications_sent`, także po restarcie). Nie
+/// zmienia planu ani timera; kliknięcie otwiera Plan i historia → Rano.
+pub fn morning_review<Tz: TimeZone>(
+    db: &Connection,
+    s: &AppSettings,
+    tz: &Tz,
+    now: i64,
+) -> rusqlite::Result<Option<Message>> {
+    let Some(local) = tz.timestamp_millis_opt(now).earliest() else {
+        return Ok(None);
+    };
+    let today = local.date_naive();
+    if !morning_review_due(s, today, local.time(), false)
+        || crate::capacity::off_day_in(db, tz, today)
+    {
+        return Ok(None);
+    }
+    let message = morning_message(
+        today,
+        unfinished_before(db, today)?,
+        due_titles(db, today)?.len(),
+    );
+    Ok(claim(db, &message.key, now)?.then_some(message))
+}
+
 /// Usuwa wpisy dedupe starsze niż 7 dni. Klucz trwającej sesji zostaje, żeby
 /// wielodniowy pomiar nie dostał drugiego powiadomienia o długim przedziale.
 pub fn cleanup(db: &Connection, now: i64) -> rusqlite::Result<usize> {
@@ -670,9 +759,12 @@ pub fn start(app: &tauri::AppHandle) {
             let messages = match app.state::<Database>().0.lock() {
                 Ok(db) => {
                     let s = crate::settings::load(&db);
-                    clock
-                        .tick(&db, &s, &chrono::Local, crate::db::now())
-                        .unwrap_or_default()
+                    let now = crate::db::now();
+                    let mut messages = clock.tick(&db, &s, &chrono::Local, now).unwrap_or_default();
+                    if let Ok(Some(m)) = morning_review(&db, &s, &chrono::Local, now) {
+                        messages.push(m);
+                    }
+                    messages
                 }
                 Err(_) => Vec::new(),
             };
@@ -1452,6 +1544,130 @@ mod tests {
                 navigate: Some(View::tasks())
             }
         );
+    }
+
+    fn morning(db: &Connection, s: &AppSettings, when: &str) -> Option<Message> {
+        morning_review(db, s, &Warsaw, at(when)).unwrap()
+    }
+
+    #[test]
+    fn morning_review_fires_once_after_day_start_on_work_day() {
+        let db = setup();
+        let s = AppSettings::default();
+        // Czwartek 15.10.2026: wczoraj niedokończone A, zaległy termin B, wzorzec
+        // cyklu C (pomijany), ukończone D.
+        details(&db, 1, json!({"plannedDay": "2026-10-14"}));
+        details(&db, 2, json!({"dueDay": "2026-10-15"}));
+        details(
+            &db,
+            3,
+            json!({"plannedDay": "2026-10-12", "repeatDays": [1, 2, 3, 4, 5]}),
+        );
+        details(&db, 4, json!({"plannedDay": "2026-10-14"}));
+        db.execute("UPDATE tasks SET done=1 WHERE id=4", [])
+            .unwrap();
+        // Przed początkiem dnia (08:00): nic i bez klucza.
+        assert!(morning(&db, &s, "2026-10-15 07:59").is_none());
+        assert!(!sent(&db).contains(&"morning:2026-10-15".to_owned()));
+        let m = morning(&db, &s, "2026-10-15 08:00").unwrap();
+        assert_eq!(m.key, "morning:2026-10-15");
+        assert_eq!(m.title, "Przegląd dnia");
+        assert_eq!(m.body, "Niedokończone: 1 zadanie · terminy: 1 zadanie");
+        assert!(m.actions.is_empty());
+        assert_eq!(m.open, View::morning_review());
+        assert_eq!(
+            serde_json::to_value(&m.open).unwrap(),
+            json!({"view": "journal", "filter": null, "task": null, "split": null,
+                   "section": "morning", "dayClose": false})
+        );
+        // Drugi raz tego dnia nie przychodzi, także po restarcie.
+        assert!(morning(&db, &s, "2026-10-15 08:00").is_none());
+        assert!(morning(&db, &s, "2026-10-15 15:00").is_none());
+        // Własny początek dnia: następny dzień roboczy o 09:30.
+        let late = AppSettings {
+            day_start: "09:30".into(),
+            ..s.clone()
+        };
+        assert!(morning(&db, &late, "2026-10-16 09:29").is_none());
+        assert!(morning(&db, &late, "2026-10-16 09:30").is_some());
+    }
+
+    #[test]
+    fn morning_review_skips_free_days_holidays_and_reviewed_days() {
+        let mut db = setup();
+        let s = AppSettings::default();
+        // Sobota i niedziela: dni wolne.
+        assert!(morning(&db, &s, "2026-10-17 10:00").is_none());
+        assert!(morning(&db, &s, "2026-10-18 10:00").is_none());
+        // Święto w dzień roboczy (środa 11.11.2026), chyba że święta nie są
+        // uwzględniane.
+        assert!(morning(&db, &s, "2026-11-11 10:00").is_none());
+        let no_holidays = AppSettings {
+            holidays_in_target: false,
+            ..s.clone()
+        };
+        assert!(morning(&db, &no_holidays, "2026-11-11 10:00").is_some());
+        // Sobota jako dzień roboczy z ustawień.
+        let saturday = AppSettings {
+            work_days: vec![6],
+            ..s.clone()
+        };
+        assert!(morning(&db, &saturday, "2026-10-17 10:00").is_some());
+        // Już przejrzane dziś: nic. Przegląd z wczoraj nie liczy się dziś.
+        let reviewed = AppSettings {
+            morning_review_day: "2026-10-19".into(),
+            ..s.clone()
+        };
+        assert!(morning(&db, &reviewed, "2026-10-19 10:00").is_none());
+        assert!(!sent(&db).contains(&"morning:2026-10-19".to_owned()));
+        let yesterday = AppSettings {
+            morning_review_day: "2026-10-19".into(),
+            ..s.clone()
+        };
+        assert!(morning(&db, &yesterday, "2026-10-20 10:00").is_some());
+        // Wyłącznik w Ustawieniach → Powiadomienia.
+        let off = AppSettings {
+            notify_morning_review: false,
+            ..s.clone()
+        };
+        assert!(morning(&db, &off, "2026-10-21 10:00").is_none());
+        assert!(!sent(&db).contains(&"morning:2026-10-21".to_owned()));
+        // Urlop całodniowy z kalendarza: dzień wolny.
+        let (from, to) = crate::stats::day_bounds(
+            &Warsaw,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 22).unwrap(),
+        );
+        crate::calendar::replace_range(
+            &mut db,
+            at("2026-10-19 00:00"),
+            at("2026-10-26 00:00"),
+            &[crate::calendar::CalendarEvent {
+                id: "u".into(),
+                start: from,
+                end: to,
+                subject: "Urlop".into(),
+                show_as: "oof".into(),
+                all_day: true,
+                cancelled: false,
+                response: "accepted".into(),
+            }],
+            at("2026-10-19 07:00"),
+        )
+        .unwrap();
+        crate::calendar::set_test_email(&db, "jan@firma.example");
+        assert!(morning(&db, &s, "2026-10-22 10:00").is_none());
+        assert!(morning(&db, &s, "2026-10-23 10:00").is_some());
+    }
+
+    #[test]
+    fn morning_message_without_work_left_invites_to_plan() {
+        let day = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+        assert_eq!(
+            morning_message(day, 0, 0).body,
+            "Zaplanuj dzień: spotkania, plan i pojemność."
+        );
+        assert_eq!(morning_message(day, 3, 0).body, "Niedokończone: 3 zadania");
+        assert_eq!(morning_message(day, 0, 5).body, "Terminy: 5 zadań");
     }
 
     #[test]
