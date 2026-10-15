@@ -261,7 +261,7 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
-            // korzystają komendy. Wątki tray, widget, reminder, idle, agents i notify
+            // korzystają komendy. Wątki tray, widget, reminder, idle, agents, notify i jira
             // kończą się, gdy nie ma okna main (zamykanie aplikacji), więc
             // startują dopiero po create_windows; inaczej przy wolnym starcie
             // (np. autostart zaraz po zalogowaniu) kończyłyby się od razu.
@@ -274,6 +274,7 @@ fn main() {
             idle::start(app.handle());
             agents::start(app.handle());
             notify::start(app.handle());
+            jira::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
             if !autostart::started_hidden(std::env::args()) {
@@ -389,7 +390,7 @@ mod tests {
             assert!(labels.contains(&label), "brak okna {label}");
         }
     }
-    /// Wątki tray, widget, reminder, idle, agents i notify kończą się, gdy nie ma okna
+    /// Wątki tray, widget, reminder, idle, agents, notify i jira kończą się, gdy nie ma okna
     /// main, więc muszą startować po `create_windows` w `setup`; inaczej tray
     /// nie odświeżałby tooltipu i ikony przez całą sesję.
     #[test]
@@ -404,6 +405,7 @@ mod tests {
             "idle::start(",
             "agents::start(",
             "notify::start(",
+            "jira::start(",
         ] {
             let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
             assert!(at > windows, "{call} musi być po create_windows");

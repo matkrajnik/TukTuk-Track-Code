@@ -207,6 +207,21 @@ onUnmounted(() => {
       nagłówku.
     </p>
 
+    <h2>Jira</h2>
+    <label class="inline-check"
+      ><input
+        :checked="settings.jiraAutoImport"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ jiraAutoImport: checked($event) })"
+      />Dodawaj nowe zgłoszenia przypisane do mnie</label
+    >
+    <p class="hint">
+      Co 5 minut, gdy konto Jiry jest połączone. Nowe zgłoszenie trafia do „Do
+      zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
+      sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
+    </p>
+
     <h2>Powiadomienia</h2>
     <label class="inline-check"
       ><input

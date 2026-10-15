@@ -22,6 +22,8 @@ pub struct AppSettings {
     pub notify_evening: String,
     pub notify_evening_enabled: bool,
     pub notify_target: bool,
+    /// Co 5 min dodaje nowe zgłoszenia przypisane w Jirze do „Do zaplanowania”.
+    pub jira_auto_import: bool,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
 }
@@ -42,6 +44,7 @@ impl Default for AppSettings {
             notify_evening: "17:30".into(),
             notify_evening_enabled: true,
             notify_target: false,
+            jira_auto_import: true,
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
         }

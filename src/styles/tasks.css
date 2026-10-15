@@ -212,6 +212,16 @@
   line-height: 1.5;
   color: var(--muted);
 }
+.task-jira-status {
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  background: var(--raised);
+  white-space: nowrap;
+}
 .task-status {
   font-size: 11px;
   line-height: 1.5;

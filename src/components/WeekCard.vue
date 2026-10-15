@@ -89,6 +89,12 @@ function arrows(event: KeyboardEvent) {
         task.jiraKey
       }}</span>
       <span
+        v-if="task.jiraKey && task.jiraStatus"
+        class="task-jira-status"
+        :title="'Status w Jirze: ' + task.jiraStatus"
+        >{{ task.jiraStatus }}</span
+      >
+      <span
         v-if="task.details?.estimateMinutes"
         class="mono"
         :class="{ 'week-over-estimate': (percent ?? 0) > 100 }"

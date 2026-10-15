@@ -46,7 +46,7 @@ pub struct NotifyClock {
 }
 
 /// „1 zadanie”, „3 zadania”, „5 zadań”.
-fn tasks_word(n: usize) -> String {
+pub fn tasks_word(n: usize) -> String {
     let word = if n == 1 {
         "zadanie"
     } else if (2..=4).contains(&(n % 10)) && !(12..=14).contains(&(n % 100)) {
@@ -64,7 +64,7 @@ fn hm(ms: i64) -> String {
 }
 
 /// Tytuł zadania w jednej linii, najwyżej 80 znaków.
-fn short(title: &str) -> String {
+pub fn short(title: &str) -> String {
     let line = title.split_whitespace().collect::<Vec<_>>().join(" ");
     if line.chars().count() <= 80 {
         line

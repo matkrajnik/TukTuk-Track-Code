@@ -349,6 +349,44 @@ fn merge_issues(
     }
     Ok(())
 }
+/// Pobiera wszystkie strony wyniku JQL (stronicowanie `nextPageToken`) i podaje
+/// każdą odpowiedź do `each`.
+async fn pages(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    path: &str,
+    jql: &str,
+    mut each: impl FnMut(&Value) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut cursor = String::new();
+    let mut seen = HashSet::new();
+    for _ in 0..200 {
+        let mut query = vec![
+            ("jql", jql.into()),
+            ("maxResults", "100".into()),
+            ("fields", "summary,status".into()),
+        ];
+        if !cursor.is_empty() {
+            query.push(("nextPageToken", cursor.clone()));
+        }
+        let value = get(client, c, secret, path, &query).await?;
+        each(&value)?;
+        if value["isLast"].as_bool() == Some(true) {
+            return Ok(());
+        }
+        match value["nextPageToken"].as_str().filter(|s| !s.is_empty()) {
+            Some(next) if seen.insert(next.to_owned()) => cursor = next.to_owned(),
+            None if value["isLast"].as_bool() != Some(false) => return Ok(()),
+            _ => {
+                return Err(
+                    "Nie można pobrać kolejnej strony wyników Jiry. Odśwież tablicę.".into(),
+                )
+            }
+        }
+    }
+    Err("Tablica zwróciła zbyt wiele wyników. Ogranicz wybór do otwartych zadań.".into())
+}
 async fn board_issues(
     client: &Client,
     c: &Config,
@@ -362,40 +400,12 @@ async fn board_issues(
         "assignee = currentUser() ORDER BY updated DESC"
     };
     let mut result = BTreeMap::new();
-    let mut cursor = String::new();
-    let mut seen = HashSet::new();
-    for _ in 0..200 {
-        let mut query = vec![
-            ("jql", jql.into()),
-            ("maxResults", "100".into()),
-            ("fields", "summary,status".into()),
-        ];
-        if !cursor.is_empty() {
-            query.push(("nextPageToken", cursor.clone()));
-        }
-        let value = get(
-            client,
-            c,
-            secret,
-            &format!("/rest/software/1.0/board/{}/issue", board.id),
-            &query,
-        )
-        .await?;
-        merge_issues(&mut result, &value, c, board)?;
-        if value["isLast"].as_bool() == Some(true) {
-            return Ok(result);
-        }
-        match value["nextPageToken"].as_str().filter(|s| !s.is_empty()) {
-            Some(next) if seen.insert(next.to_owned()) => cursor = next.to_owned(),
-            None if value["isLast"].as_bool() != Some(false) => return Ok(result),
-            _ => {
-                return Err(
-                    "Nie można pobrać kolejnej strony wyników Jiry. Odśwież tablicę.".into(),
-                )
-            }
-        }
-    }
-    Err("Tablica zwróciła zbyt wiele wyników. Ogranicz wybór do otwartych zadań.".into())
+    let path = format!("/rest/software/1.0/board/{}/issue", board.id);
+    pages(client, c, secret, &path, jql, |value| {
+        merge_issues(&mut result, value, c, board)
+    })
+    .await?;
+    Ok(result)
 }
 #[tauri::command]
 pub async fn jira_issues(app: tauri::AppHandle, open_only: bool) -> Result<Issues, String> {
@@ -430,6 +440,19 @@ pub async fn jira_issues(app: tauri::AppHandle, open_only: bool) -> Result<Issue
         return Err("Ustawienia zmieniły się podczas pobierania. Odśwież wyniki.".into());
     }
     let issues: Vec<Issue> = result.into_values().collect();
+    {
+        let state = app.state::<Database>();
+        let mut db = state.0.lock().map_err(|e| e.to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        save_statuses(
+            &tx,
+            &c.site,
+            issues.iter().map(|i| (i.key.as_str(), i.status.as_str())),
+        )
+        .and_then(|_| tx.commit())
+        .map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("data-changed", ());
     *app.state::<JiraState>()
         .0
         .lock()
@@ -519,6 +542,223 @@ fn start_issue(
     tx.commit().map_err(|e| e.to_string())?;
     db::snapshot(connection).map_err(|e| e.to_string())
 }
+/// Co ile sprawdzać nowe przypisania w Jirze.
+const WATCH_EVERY: i64 = 5 * 60_000;
+/// Co ile wątek sprawdza, czy pora na zapytanie (szybka reakcja na włączenie opcji).
+const WATCH_TICK: Duration = Duration::from_secs(20);
+/// Moje zgłoszenia: otwarte (do importu) i niedawno zamknięte (aktualizacja statusu).
+const WATCH_JQL: &str =
+    "assignee = currentUser() AND (statusCategory != Done OR updated >= -14d) ORDER BY created DESC";
+
+/// Zgłoszenie z odpowiedzi wyszukiwania: klucz, tytuł, status i czy jest otwarte.
+#[derive(Clone, Debug, PartialEq)]
+struct Assigned {
+    key: String,
+    summary: String,
+    status: String,
+    open: bool,
+}
+
+fn assigned_rows(value: &Value, out: &mut Vec<Assigned>) -> Result<(), String> {
+    let issues = value["issues"]
+        .as_array()
+        .ok_or("Jira nie zwróciła listy zgłoszeń.")?;
+    for issue in issues {
+        let Some(key) = issue["key"].as_str().filter(|k| valid_key(k)) else {
+            continue;
+        };
+        let status = &issue["fields"]["status"];
+        out.push(Assigned {
+            key: key.to_owned(),
+            summary: issue["fields"]["summary"]
+                .as_str()
+                .unwrap_or(key)
+                .to_owned(),
+            status: status["name"].as_str().unwrap_or("").to_owned(),
+            open: status["statusCategory"]["key"].as_str() != Some("done"),
+        });
+    }
+    Ok(())
+}
+
+async fn fetch_assigned(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+) -> Result<Vec<Assigned>, String> {
+    let mut rows = Vec::new();
+    pages(
+        client,
+        c,
+        secret,
+        "/rest/api/3/search/jql",
+        WATCH_JQL,
+        |value| assigned_rows(value, &mut rows),
+    )
+    .await?;
+    Ok(rows)
+}
+
+fn save_statuses<'a>(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    rows: impl Iterator<Item = (&'a str, &'a str)>,
+) -> rusqlite::Result<()> {
+    for (key, status) in rows {
+        tx.execute(
+            "INSERT INTO jira_issues(site,issue_key,status) VALUES(?1,?2,?3) ON CONFLICT(site,issue_key) DO UPDATE SET status=excluded.status",
+            params![site, key, status],
+        )?;
+    }
+    Ok(())
+}
+
+/// Zapisuje statusy i dodaje zadania dla otwartych zgłoszeń, które od ostatniego
+/// sprawdzenia zostały przypisane do mnie. `baseline` (pierwsze sprawdzenie dla
+/// konta) tylko zapamiętuje obecne przypisania, bez importu całego backlogu.
+/// Nowe zadanie nie ma dnia w planie, więc trafia do „Do zaplanowania”; zgłoszenie
+/// już powiązane z lokalnym zadaniem (także w archiwum lub koszu) nie jest dublowane.
+fn sync_assigned(
+    connection: &mut rusqlite::Connection,
+    site: &str,
+    rows: &[Assigned],
+    baseline: bool,
+    now: i64,
+) -> Result<Vec<Assigned>, String> {
+    let tx = connection.transaction().map_err(|e| e.to_string())?;
+    save_statuses(
+        &tx,
+        site,
+        rows.iter().map(|r| (r.key.as_str(), r.status.as_str())),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut imported = Vec::new();
+    for row in rows.iter().filter(|r| r.open) {
+        let known: bool = tx
+            .query_row(
+                "SELECT assigned=1 OR EXISTS(SELECT 1 FROM jira_tasks WHERE site=?1 AND issue_key=?2) FROM jira_issues WHERE site=?1 AND issue_key=?2",
+                params![site, row.key],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if baseline || known {
+            continue;
+        }
+        let title: String = row.summary.chars().take(240).collect();
+        tx.execute(
+            "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
+            params![title, now],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(?1,?2,?3)",
+            params![tx.last_insert_rowid(), site, row.key],
+        )
+        .map_err(|e| e.to_string())?;
+        imported.push(row.clone());
+    }
+    tx.execute("UPDATE jira_issues SET assigned=0 WHERE site=?1", [site])
+        .map_err(|e| e.to_string())?;
+    for row in rows.iter().filter(|r| r.open) {
+        tx.execute(
+            "UPDATE jira_issues SET assigned=1 WHERE site=?1 AND issue_key=?2",
+            params![site, row.key],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(imported)
+}
+
+/// Powiadomienie o zaimportowanych zgłoszeniach (najwyżej trzy wymienione).
+fn imported_message(rows: &[Assigned]) -> (String, String) {
+    let title = if rows.len() == 1 {
+        "Nowe zadanie z Jiry".to_owned()
+    } else {
+        format!("Nowe z Jiry: {}", crate::notify::tasks_word(rows.len()))
+    };
+    let mut lines: Vec<String> = rows
+        .iter()
+        .take(3)
+        .map(|r| crate::notify::short(&format!("{} · {}", r.key, r.summary)))
+        .collect();
+    if rows.len() > 3 {
+        lines.push(format!("i jeszcze {}", rows.len() - 3));
+    }
+    lines.push("Dodano do „Do zaplanowania”.".into());
+    (title, lines.join("\n"))
+}
+
+/// Jedno sprawdzenie przypisań; `None`, gdy opcja wyłączona lub brak połączenia.
+fn watch_once(app: &tauri::AppHandle) -> Option<Result<Vec<Assigned>, String>> {
+    if !crate::settings::current(app).jira_auto_import {
+        return None;
+    }
+    let c = config(app).ok()?;
+    if c.email.is_empty() {
+        return None;
+    }
+    let secret = token(app, &c).ok()?;
+    let fetched =
+        tauri::async_runtime::block_on(async { fetch_assigned(&client()?, &c, &secret).await });
+    Some(fetched.and_then(|rows| {
+        let current = config(app)?;
+        if current.site != c.site || current.email != c.email {
+            return Ok(Vec::new());
+        }
+        let watch = format!("{}|{}", c.site, c.email);
+        let state = app.state::<Database>();
+        let mut db = state.0.lock().map_err(|e| e.to_string())?;
+        let baseline = db
+            .query_row("SELECT value FROM settings WHERE key='jira_watch'", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .optional()
+            .map_err(|e| e.to_string())?
+            .as_deref()
+            != Some(watch.as_str());
+        let imported = sync_assigned(&mut db, &c.site, &rows, baseline, db::now())?;
+        db.execute(
+            "INSERT INTO settings(key,value) VALUES('jira_watch',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [watch],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(imported)
+    }))
+}
+
+/// Wątek sprawdzający co 5 min nowe przypisania w Jirze. Kończy się, gdy okno
+/// main zniknie, więc wołać po `create_windows`.
+pub fn start(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut last: Option<i64> = None;
+        loop {
+            std::thread::sleep(WATCH_TICK);
+            if app.get_webview_window("main").is_none() {
+                break;
+            }
+            let now = db::now();
+            if last.is_some_and(|at| now - at < WATCH_EVERY) {
+                continue;
+            }
+            match watch_once(&app) {
+                None => last = None,
+                Some(result) => {
+                    last = Some(now);
+                    if let Ok(imported) = result {
+                        let _ = app.emit("data-changed", ());
+                        if !imported.is_empty() {
+                            let (title, body) = imported_message(&imported);
+                            crate::notify::show(&app, &title, &body);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 #[tauri::command]
 pub fn jira_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
     if url == "https://id.atlassian.com/manage-profile/security/api-tokens" {
@@ -613,6 +853,117 @@ mod tests {
         .unwrap();
         assert_eq!(rows.len(), 2);
         server.join().unwrap();
+    }
+    fn row(key: &str, status: &str, open: bool) -> Assigned {
+        Assigned {
+            key: key.into(),
+            summary: format!("Zgłoszenie {key}"),
+            status: status.into(),
+            open,
+        }
+    }
+    #[test]
+    fn reads_status_and_category_from_search() {
+        let value = serde_json::json!({"issues":[
+            {"key":"WMS-1","fields":{"summary":"A","status":{"name":"W toku","statusCategory":{"key":"indeterminate"}}}},
+            {"key":"WMS-2","fields":{"summary":"B","status":{"name":"Gotowe","statusCategory":{"key":"done"}}}},
+            {"key":"../x","fields":{}}
+        ]});
+        let mut rows = Vec::new();
+        assigned_rows(&value, &mut rows).unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                Assigned {
+                    key: "WMS-1".into(),
+                    summary: "A".into(),
+                    status: "W toku".into(),
+                    open: true
+                },
+                Assigned {
+                    key: "WMS-2".into(),
+                    summary: "B".into(),
+                    status: "Gotowe".into(),
+                    open: false
+                },
+            ]
+        );
+    }
+    #[test]
+    fn sync_imports_only_new_assignments_and_keeps_statuses() {
+        let site = "https://a.atlassian.net";
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&connection).unwrap();
+        // Pierwsze sprawdzenie: backlog zapamiętany, nic nie zaimportowane.
+        let first = vec![
+            row("WMS-1", "Do zrobienia", true),
+            row("WMS-9", "Gotowe", false),
+        ];
+        assert!(sync_assigned(&mut connection, site, &first, true, 100)
+            .unwrap()
+            .is_empty());
+        assert!(db::snapshot(&connection).unwrap().tasks.is_empty());
+        // Nowe przypisanie WMS-2 trafia do zadań bez dnia w planie.
+        let second = vec![
+            row("WMS-1", "W toku", true),
+            row("WMS-2", "Do zrobienia", true),
+        ];
+        let imported = sync_assigned(&mut connection, site, &second, false, 200).unwrap();
+        assert_eq!(imported, vec![row("WMS-2", "Do zrobienia", true)]);
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].title, "Zgłoszenie WMS-2");
+        assert_eq!(s.tasks[0].jira_key.as_deref(), Some("WMS-2"));
+        assert_eq!(s.tasks[0].jira_status.as_deref(), Some("Do zrobienia"));
+        assert_eq!(s.tasks[0].details.planned_day, "");
+        assert!(s.sessions.is_empty());
+        // Kolejne sprawdzenie nie dubluje, ale aktualizuje status.
+        let third = vec![
+            row("WMS-1", "W toku", true),
+            row("WMS-2", "Code review", true),
+        ];
+        assert!(sync_assigned(&mut connection, site, &third, false, 300)
+            .unwrap()
+            .is_empty());
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].jira_status.as_deref(), Some("Code review"));
+        // Usunięte lokalnie zadanie nie wraca, dopóki zgłoszenie jest przypisane.
+        db::change(&mut connection, "delete", Some(s.tasks[0].id), None, 400).unwrap();
+        assert!(sync_assigned(&mut connection, site, &third, false, 500)
+            .unwrap()
+            .is_empty());
+        // Zgłoszenie z istniejącym lokalnym zadaniem (Rozpocznij) nie jest dublowane.
+        start_issue(&mut connection, site, "WMS-3", "Ręcznie", 600).unwrap();
+        let fourth = vec![row("WMS-3", "W toku", true)];
+        assert!(sync_assigned(&mut connection, site, &fourth, false, 700)
+            .unwrap()
+            .is_empty());
+        // WMS-1 zdjęte z listy i przypisane ponownie: import.
+        let again = vec![
+            row("WMS-1", "Do zrobienia", true),
+            row("WMS-3", "W toku", true),
+        ];
+        let imported = sync_assigned(&mut connection, site, &again, false, 800).unwrap();
+        assert_eq!(imported.len(), 1);
+        assert_eq!(imported[0].key, "WMS-1");
+        // Zamknięte zgłoszenie nie jest importowane.
+        let closed = vec![row("WMS-5", "Gotowe", false)];
+        assert!(sync_assigned(&mut connection, site, &closed, false, 900)
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
+    fn imported_message_lists_first_three() {
+        let (title, body) = imported_message(&[row("WMS-1", "", true)]);
+        assert_eq!(title, "Nowe zadanie z Jiry");
+        assert!(body.starts_with("WMS-1 · Zgłoszenie WMS-1"));
+        let rows: Vec<_> = (1..=5)
+            .map(|i| row(&format!("WMS-{i}"), "", true))
+            .collect();
+        let (title, body) = imported_message(&rows);
+        assert_eq!(title, "Nowe z Jiry: 5 zadań");
+        assert!(body.contains("i jeszcze 2"));
     }
     #[test]
     fn validates_cloud_address_and_issue_keys() {

@@ -4,6 +4,12 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
+### Nowości 1.1
+
+- **Nowe zgłoszenia z Jiry**: co 5 minut aplikacja sprawdza zgłoszenia przypisane do Ciebie (`assignee = currentUser()`, wszystkie projekty, nie tylko wybrane tablice). Każde nowe otwarte przypisanie staje się zadaniem w „Do zaplanowania” (bez dnia w planie, bez uruchamiania timera), a Windows pokazuje powiadomienie. Przy pierwszym sprawdzeniu dla konta obecne przypisania są tylko zapamiętywane, więc istniejący backlog nie jest importowany. Zgłoszenie powiązane już z lokalnym zadaniem (także w archiwum lub koszu) nie jest dublowane; zgłoszenie zdjęte z Ciebie i przypisane ponownie wraca jako nowe. Opcję wyłącza **Ustawienia → Jira → „Dodawaj nowe zgłoszenia przypisane do mnie”**.
+- **Status z Jiry na kafelku**: obok klucza zgłoszenia widać jego status (np. „Code review”) w Zadaniach i na tablicy tygodnia. Status odświeża się przy każdym sprawdzeniu (otwarte i zmienione w ciągu 14 dni) oraz przy odświeżeniu zakładki Jira.
+- **Agenci AI**: praca Claude Code i Codex liczy się jako aktywność przy wykrywaniu bezczynności, a Dashboard pokazuje pracujących agentów (szczegóły niżej).
+
 ### Organizacja pracy — 1.0
 
 Czas:
@@ -35,6 +41,7 @@ Domyślną zakładką nadal są **Zadania**.
 **Historia i kopie → Ustawienia** ma sekcje:
 
 - **Czas pracy**: pytanie o czas po co najmniej 10 minutach bezczynności, „Praca agentów AI (Claude Code, Codex) liczy się jako aktywność”, cel dzienny w minutach (0–1440), początek dnia (`HH:MM`, dla osi planu) i dni robocze. Pod polami widać wyliczony cel dnia i tygodnia.
+- **Jira**: „Dodawaj nowe zgłoszenia przypisane do mnie” (domyślnie włączone).
 - **Okna**: „Pokazuj mini-widget zawsze na wierzchu” i „Tylko gdy główne okno jest schowane lub bez fokusu”.
 - **Powiadomienia**: terminy na dziś i przekroczone, długi pomiar bez Stop (minuty, domyślnie 240, 0 wyłącza), wieczorne „pomiar nadal trwa” (godzina, domyślnie 17:30, z osobnym wyłącznikiem) i osiągnięcie celu dnia (domyślnie wyłączone).
 - **Skróty**: dwa pola przechwytujące kombinację klawiszy, z błędem rejestracji przy polu i przyciskiem przywrócenia domyślnego.
@@ -106,7 +113,7 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Wersja w repozytorium: 1.0.0. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.0.0_x64-setup.exe`. Instalator 1.0.0 jest zbudowany, ale nie był instalowany: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
+Wersja w repozytorium: 1.1.0. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.1.0_x64-setup.exe`. Instalator 1.1.0 jest zbudowany, ale nie był instalowany. Nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
 
 Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
@@ -126,7 +133,7 @@ Otwórz zakładkę **Jira** w aplikacji desktopowej. Adres `https://asistonwms.a
 
 Wybierz tablice (maksymalnie 20) i zapisz wybór. Aplikacja pobiera wszystkie strony wyników dla `assignee = currentUser()`, łączy powtarzające się zgłoszenia i pokazuje informację, jeśli którejś tablicy nie udało się pobrać. Domyślnie widoczne są tylko otwarte zgłoszenia; filtr można wyłączyć. Wyszukiwanie działa po kluczu lub nazwie w pobranych wynikach. Odświeżenie następuje przy wejściu w zakładkę, zmianie tablic/filtra oraz po kliknięciu „Odśwież”.
 
-„Rozpocznij” tworzy lokalne zadanie powiązane z kluczem Jiry albo wykorzystuje istniejące, przywraca je do zrobienia i uruchamia timer. Poprzedni pomiar zostaje zatrzymany. Link pozostaje dostępny również w rozwiniętym kafelku lokalnego zadania. Integracja odczytuje Jirę; nie zmienia zgłoszeń i nie wysyła worklogów. Działa z Jira Cloud, nie z Server/Data Center.
+„Rozpocznij” tworzy lokalne zadanie powiązane z kluczem Jiry albo wykorzystuje istniejące, przywraca je do zrobienia i uruchamia timer. Poprzedni pomiar zostaje zatrzymany. Link pozostaje dostępny również w rozwiniętym kafelku lokalnego zadania. Co 5 minut aplikacja dodaje też nowe zgłoszenia przypisane do Ciebie do „Do zaplanowania” i odświeża statusy na kafelkach (zob. „Nowości 1.1”; zapytanie `/rest/api/3/search/jql` z `assignee = currentUser() AND (statusCategory != Done OR updated >= -14d)`). Integracja odczytuje Jirę; nie zmienia zgłoszeń i nie wysyła worklogów. Działa z Jira Cloud, nie z Server/Data Center.
 
 Dokumentacja API: [tablice i stronicowanie Jira Cloud](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/), [logowanie e-mailem i tokenem](https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/).
 

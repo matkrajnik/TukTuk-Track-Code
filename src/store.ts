@@ -7,6 +7,8 @@ export interface Task {
   createdAt: number;
   jiraKey?: string | null;
   jiraUrl?: string | null;
+  /** Ostatni znany status zgłoszenia w Jirze. */
+  jiraStatus?: string | null;
   details?: TaskDetails;
   archived?: boolean;
 }

@@ -110,6 +110,12 @@ async function openJira(url: string) {
               task.jiraKey
             }}</span>
             <span
+              v-if="task.jiraKey && task.jiraStatus"
+              class="task-jira-status"
+              :title="'Status w Jirze: ' + task.jiraStatus"
+              >{{ task.jiraStatus }}</span
+            >
+            <span
               v-if="!task.done && !task.details?.waiting && started"
               class="task-status"
               >W trakcie</span

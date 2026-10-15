@@ -11,6 +11,8 @@ pub struct Task {
     pub created_at: i64,
     pub jira_key: Option<String>,
     pub jira_url: Option<String>,
+    /// Ostatni znany status zgłoszenia w Jirze (`jira_issues`).
+    pub jira_status: Option<String>,
     pub details: crate::planner::Details,
     pub archived: bool,
 }
@@ -49,13 +51,14 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS recurrence_occurrences (source_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, day TEXT NOT NULL, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, PRIMARY KEY(source_id,day));
         CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS jira_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_key TEXT NOT NULL, UNIQUE(site,issue_key));
+        CREATE TABLE IF NOT EXISTS jira_issues (site TEXT NOT NULL, issue_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site,issue_key));
         CREATE INDEX IF NOT EXISTS sessions_task ON sessions(task_id);
         CREATE INDEX IF NOT EXISTS sessions_started ON sessions(started_at);
         CREATE TABLE IF NOT EXISTS notifications_sent (key TEXT PRIMARY KEY, at INTEGER);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db
-        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
+        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,'') FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
         .query_map([], |r| {
             Ok((Task {
                 id: r.get(0)?,
@@ -64,6 +67,7 @@ pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
                 created_at: r.get(3)?,
                 jira_key: r.get(4)?,
                 jira_url: r.get(5)?,
+                jira_status: r.get(9)?,
                 details: serde_json::from_str(&r.get::<_, String>(6)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?,
                 archived: r.get(7)?,
             },r.get::<_,bool>(8)?))

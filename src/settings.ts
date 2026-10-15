@@ -17,6 +17,7 @@ export interface AppSettings {
   notifyEvening: string;
   notifyEveningEnabled: boolean;
   notifyTarget: boolean;
+  jiraAutoImport: boolean;
   shortcutQuick: string;
   shortcutToggle: string;
 }
@@ -43,6 +44,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyEvening: "17:30",
   notifyEveningEnabled: true,
   notifyTarget: false,
+  jiraAutoImport: true,
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
 });
