@@ -383,6 +383,45 @@ test("selected days: month shortcuts use the current month, midnight keeps the m
   ).toHaveAttribute("aria-pressed", "true");
 });
 
+test("selected days: work-day shortcut skips holidays unless time was recorded", async ({
+  page,
+}) => {
+  // Do 20.11.2026: 15 dni Pon–Pt, w tym święto 11.11 (środa); przyszłe dni pomijane.
+  await seed(
+    page,
+    "2026-11-20T12:00:00+01:00",
+    [{ id: 1, title: "Wdrożenie" }],
+    [],
+  );
+  await openMultiDay(page);
+  const workDays = page.getByRole("button", {
+    name: "Dni robocze tego miesiąca",
+    exact: true,
+  });
+  await workDays.click();
+  await expect(
+    page.getByRole("heading", { name: "Wybrane dni (14)" }),
+  ).toBeVisible();
+
+  // Praca w święto zostaje w raporcie TS.
+  await seed(
+    page,
+    "2026-11-20T12:00:00+01:00",
+    [{ id: 1, title: "Wdrożenie" }],
+    [[1, "2026-11-11T09:00:00", "2026-11-11T10:00:00"]],
+  );
+  await openMultiDay(page);
+  await workDays.click();
+  await expect(
+    page.getByRole("heading", { name: "Wybrane dni (15)" }),
+  ).toBeVisible();
+  await expect(
+    page
+      .getByRole("list", { name: "Wybrane dni" })
+      .getByRole("button", { name: /^2026-11-11/ }),
+  ).toBeVisible();
+});
+
 test("day close copies the TS report with the selection fallback", async ({
   page,
   context,

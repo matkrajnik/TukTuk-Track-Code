@@ -10,7 +10,7 @@ import {
   tsText,
   type TsLayout,
 } from "../report";
-import { isWorkDay, useSettings } from "../target";
+import { isoWeekday, isWorkDay, useSettings } from "../target";
 import { copyReport } from "../clipboard";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
@@ -166,12 +166,17 @@ function weekOf(offset: number) {
     ),
   );
 }
+/**
+ * Dzień do skrótu „Dni robocze”: dzień roboczy albo święto w dniu roboczym
+ * tygodnia, w które zapisano czas (żeby praca w święto nie znikała z TS).
+ */
+const workOrWorkedDay = (d: string) =>
+  isWorkDay(settings.value, d) ||
+  (settings.value.workDays.includes(isoWeekday(d)) && totalOf(d) > 0);
 /** Bieżący miesiąc (od dzisiaj, jak skróty tygodnia); kalendarz wraca na niego. */
 function currentMonth(workOnly: boolean) {
   const [y, m] = todayKey.value.split("-").map(Number);
-  choose(
-    monthDays(y, m).filter((d) => !workOnly || isWorkDay(settings.value, d)),
-  );
+  choose(monthDays(y, m).filter((d) => !workOnly || workOrWorkedDay(d)));
   month.value = monthOf(todayKey.value);
 }
 
