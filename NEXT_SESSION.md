@@ -1,4 +1,39 @@
-﻿# Todo Track — stan po 1.4.0
+﻿# Todo Track — stan po 1.5.0
+
+## Stan po 1.5.0 (15 października 2026)
+
+Gałąź `release/1.0`, lokalnie, bez pusha. Wydanie 1.5.0 obejmuje etap 4 z PLAN_1.3.md: AG1 (rozpoznanie zadania agenta: `git_branch` czyta `HEAD` bez procesu `git`, także worktree, submoduł i odłączony HEAD, cache 30 s; klucz Jiry z gałęzi albo nazwy sesji Claude Code; tabela `agent_bindings` przez `CREATE TABLE IF NOT EXISTS` z komendami `agent_bindings`, `agent_bind`, `agent_unbind` i odpowiednikami w podglądzie; kafelek Agenci AI z gałęzią i zadaniem) oraz AG2 (propozycje przełączenia w `src-tauri/src/suggest.rs`: baner `AgentSuggestions.vue`, linia w widgecie, powiadomienie z „Przełącz” przy schowanym oknie, „Nie teraz”, „Nie proponuj dla tego folderu”, „Zapamiętaj dla tego folderu”; ustawienia `agentSuggest` i `agentMutedFolders` w Ustawieniach → Czas pracy; trzecia odpowiedź banera bezczynności „Przypisz przerwę do X”). Wersja 1.5.0 w pięciu plikach, instalator `releases/Todo Track_1.5.0_x64-setup.exe` (nie instalowany), lokalny tag `v1.5.0` (niewypchnięty).
+
+Weryfikacja: `npm run build`, 137 testów Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 116 testów Rust (`cargo test --locked`) oraz `npm run tauri build -- -- --locked` przechodzą (Git Bash, cargo dodane do PATH).
+
+Odstępstwa od planu:
+- Etap 4 nie jest sprawdzony w natywnej aplikacji ani po instalacji NSIS; e2e działają na podglądzie z symulowanymi agentami, a test Rust tabeli `agent_bindings` używa tylko bazy w pamięci.
+- AG2 świadomie zmienił wygląd Ustawień (wyłącznik propozycji agentów): 4 wzorce `ustawienia-*-win32.png` zregenerowano lokalnie, nie na windows-latest.
+- Po przeglądzie AG2 „Przełącz” dla zgłoszenia znanego tylko z Jiry nie wymaga już wczytanej listy: gdy listy nie pobrano od startu aplikacji, tytuł pobiera wprost z Jiry (`jira::start_by_key`). Komunikat „Odśwież listę zgłoszeń przed rozpoczęciem.” zostaje tylko w `jira_start` z widoku Jira. Kafelek Agenci AI pokazuje tytuł z Jiry nadal dopiero po wczytaniu listy w sesji.
+- Otwarte jak po 1.4.0: etap 0 (instalacja 1.2.0, tagi `v1.0.0` i `v1.2.0`, push tagów), dwa zielone przebiegi CI, natywna walidacja przycisków w powiadomieniach.
+
+Do ręcznego sprawdzenia:
+
+AG1 — w natywnej aplikacji (`tauri dev` albo po instalacji NSIS):
+- Sesja Claude Code w repo na gałęzi typu `feature/WMS-123-x`: kafelek Agenci AI pokazuje gałąź i zadanie powiązane z WMS-123.
+- To samo w worktree git (plik `.git` z `gitdir:` i ścieżką bezwzględną zapisaną ukośnikami) oraz w submodule.
+- Odłączony HEAD pokazuje „odłączony HEAD <hash>”. Sesja Claude Code z nazwą zawierającą klucz, na gałęzi bez klucza, bierze klucz z nazwy.
+- Klucz znany tylko z listy Jiry: tytuł z Jiry pojawia się dopiero po wczytaniu listy w widoku Jira w tej sesji; inaczej widać sam klucz.
+- Start na istniejącej bazie użytkownika (po aktualizacji): tabela `agent_bindings` powstaje bez utraty danych. Test automatyczny używa tylko bazy w pamięci.
+- Zmiana gałęzi w repo: kafelek nadąża w ciągu około 35 s (cache 30 s plus pętla 5 s).
+- Kopia i przywracanie obejmują `agent_bindings`, bo kopiowany jest cały plik SQLite; nie sprawdzono tego ręcznie.
+
+AG2 — wszystko wymaga natywnej aplikacji (`tauri dev`) albo instalacji NSIS; nic nie było sprawdzone natywnie:
+- Baner z prawdziwym agentem: prawdziwy agent Claude Code albo Codex na gałęzi typu `feature/KEY-123` lub w przypisanym folderze daje baner po około 2 minutach (pętla co 5 s). „Przełącz” uruchamia zadanie i zatrzymuje poprzednie, tray i widget się odświeżają.
+- Powiadomienie przy głównym oknie schowanym w trayu: jeden toast na parę z działającym przyciskiem „Przełącz” (wymaga zainstalowanego AUMID); zbiorczy toast przy kilku zadaniach; kliknięcie treści toastu pokazuje główne okno z banerem.
+- „Nie teraz” w realnym użyciu: trzyma przez kolejne tury `busy` tej samej sesji Claude i wraca po ponad 10 minutach bezczynności agenta.
+- Wyciszanie i wyłącznik: „Nie proponuj dla tego folderu” zapisuje do prawdziwej bazy (klucz `agent_muted_folders`), działa dla podfolderów i da się cofnąć w Ustawieniach → Czas pracy; wyłącznik funkcji wyłącza wszystko od razu (`set_settings` przelicza propozycje).
+- „Zapamiętaj dla tego folderu” w banerze i wybór zadania w kafelku Agenci AI zapisują przypisanie, a kolejna propozycja dla folderu używa go.
+- Linia w widgecie: „Agent: …” i przycisk z ikoną Bot mieszczą się w oknie 320×64 w obu motywach.
+- Baner bezczynności, trzecia opcja: przy prawdziwej nieobecności (10+ minut), gdy agent pracuje nad innym zadaniem, pojawia się trzecia opcja; po kliknięciu pomiar dzieli się w chwili wyjścia (`awaySince`) i trwa dalej na X.
+- Zgłoszenie tylko z Jiry: przy połączonej Jirze „Przełącz” na takiej propozycji tworzy zadanie; z wczytaną listą przez `jira_start`, bez listy z tytułem pobranym wprost z Jiry (`start_by_key`). Bez połączonego konta ma się pokazać „Połącz konto Jiry, żeby rozpocząć zgłoszenie.”
+- Istniejąca baza po aktualizacji: ustawienia dostają nowe klucze z wartościami domyślnymi (propozycje włączone, brak wyciszonych folderów).
+- Zrzuty w CI: 4 wzorce Ustawień powstały lokalnie; potwierdzić na windows-latest.
 
 ## Stan po 1.4.0 (15 października 2026)
 
