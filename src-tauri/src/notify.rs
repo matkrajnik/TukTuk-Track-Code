@@ -524,6 +524,26 @@ fn unfinished_before(db: &Connection, day: NaiveDate) -> rusqlite::Result<usize>
     .map(|n| n.max(0) as usize)
 }
 
+/// Liczba nieukończonych zadań z terminem `<= day` bez tych, które liczy już
+/// `unfinished_before` — jak krok „Terminy” w Porannym przeglądzie (`dueTasks`
+/// z pominięciem zadań z kroku 1), żeby jedno zadanie nie liczyło się dwa razy.
+fn due_after_unfinished(db: &Connection, day: NaiveDate) -> rusqlite::Result<usize> {
+    db.query_row(
+        "SELECT COUNT(*) FROM tasks t
+         JOIN task_details d ON d.task_id = t.id
+         LEFT JOIN task_lifecycle l ON l.task_id = t.id
+         WHERE t.done = 0 AND COALESCE(l.archived, 0) = 0 AND l.deleted_at IS NULL
+           AND COALESCE(json_extract(d.json, '$.dueDay'), '') <> ''
+           AND json_extract(d.json, '$.dueDay') <= ?1
+           AND NOT (COALESCE(json_extract(d.json, '$.plannedDay'), '') <> ''
+                AND json_extract(d.json, '$.plannedDay') < ?1
+                AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0)",
+        [day.format("%Y-%m-%d").to_string()],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|n| n.max(0) as usize)
+}
+
 /// Czy przypomnieć o porannym przeglądzie: wyłącznik włączony, dzień roboczy
 /// (dni tygodnia i święta z ustawień), nie urlop całodniowy z kalendarza (`off`),
 /// po godzinie początku dnia i bez przeglądu zapisanego na ten dzień.
@@ -580,7 +600,7 @@ pub fn morning_review<Tz: TimeZone>(
     let message = morning_message(
         today,
         unfinished_before(db, today)?,
-        due_titles(db, today)?.len(),
+        due_after_unfinished(db, today)?,
     );
     Ok(claim(db, &message.key, now)?.then_some(message))
 }
@@ -1657,6 +1677,35 @@ mod tests {
         crate::calendar::set_test_email(&db, "jan@firma.example");
         assert!(morning(&db, &s, "2026-10-22 10:00").is_none());
         assert!(morning(&db, &s, "2026-10-23 10:00").is_some());
+    }
+
+    #[test]
+    fn morning_review_counts_task_planned_yesterday_and_due_today_once() {
+        let db = setup();
+        let s = AppSettings::default();
+        // A: plan z wczoraj i termin dziś — tylko w „Niedokończone”, jak w widoku.
+        details(
+            &db,
+            1,
+            json!({"plannedDay": "2026-10-14", "dueDay": "2026-10-15"}),
+        );
+        let m = morning(&db, &s, "2026-10-15 08:00").unwrap();
+        assert_eq!(m.body, "Niedokończone: 1 zadanie");
+        // B: wzorzec cyklu z terminem dziś nie trafia do kroku 1, więc liczy się
+        // w terminach; C: zaplanowane dziś z terminem dziś — też termin.
+        details(
+            &db,
+            2,
+            json!({"plannedDay": "2026-10-12", "repeatDays": [1, 2, 3, 4, 5],
+                   "dueDay": "2026-10-16"}),
+        );
+        details(
+            &db,
+            3,
+            json!({"plannedDay": "2026-10-16", "dueDay": "2026-10-16"}),
+        );
+        let m = morning(&db, &s, "2026-10-16 08:00").unwrap();
+        assert_eq!(m.body, "Niedokończone: 1 zadanie · terminy: 2 zadania");
     }
 
     #[test]
