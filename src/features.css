@@ -515,6 +515,41 @@
   margin-top: 0;
   font-size: var(--fs-lg);
 }
+/* Propozycje przełączenia z pracy agentów AI */
+.agent-suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.agent-suggestions li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.agent-suggestions .planning-actions {
+  margin: 0;
+}
+.muted-folders {
+  list-style: none;
+  margin: 4px 0 8px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.muted-folders li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.widget-suggest {
+  color: var(--accent);
+}
 .repeat-options {
   display: flex;
   flex-wrap: wrap;

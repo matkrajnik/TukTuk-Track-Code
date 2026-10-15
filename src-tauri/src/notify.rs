@@ -72,6 +72,8 @@ pub const STOP: &str = "stop";
 pub const SPLIT: &str = "split";
 pub const JIRA_START: &str = "jira-start";
 pub const PLAN_TODAY: &str = "plan-today";
+/// „Przełącz” z propozycji agenta AI (`suggest`): start zadania o podanym id.
+pub const AGENT_SWITCH: &str = "agent-switch";
 
 /// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
 #[derive(Clone, Debug, PartialEq)]
@@ -120,6 +122,8 @@ pub enum Command {
     JiraStart(i64),
     /// Zaplanuj zadania na dziś.
     PlanToday(Vec<i64>),
+    /// Start zadania z propozycji agenta (poprzedni pomiar staje).
+    AgentSwitch(i64),
     /// Pokaż główne okno z widokiem.
     Open(View),
 }
@@ -137,6 +141,7 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         STOP => number.map(Command::Stop),
         SPLIT => number.map(Command::Split),
         JIRA_START => number.map(Command::JiraStart),
+        AGENT_SWITCH => number.map(Command::AgentSwitch),
         PLAN_TODAY => arg
             .split(',')
             .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
@@ -230,6 +235,10 @@ pub fn perform(
                 }
             }
             Ok(changed(any))
+        }
+        Command::AgentSwitch(task) => {
+            crate::db::change(db, "start", Some(task), None, now)?;
+            Ok(changed(true))
         }
         Command::Open(view) => Ok(Outcome {
             changed: false,
@@ -513,6 +522,7 @@ fn activate(app: &tauri::AppHandle, command: Command) {
             if outcome.changed {
                 crate::reminder::reset(app);
                 let _ = app.emit("data-changed", ());
+                crate::suggest::refresh(app, crate::db::now());
             }
             if let Some(view) = outcome.navigate {
                 crate::show(app);

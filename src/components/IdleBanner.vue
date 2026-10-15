@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { desktop, type Snapshot, type Task } from "../store";
+import type { AgentTask } from "../agents";
 
 defineProps<{ tasks: Task[] }>();
 const emit = defineEmits<{
@@ -13,6 +14,8 @@ const idleNotice = ref<{
   taskId: number;
   idleAt: number;
   returnedAt: number;
+  /** Zadania, nad którymi agenci pracowali podczas nieobecności (`idle::Notice`). */
+  agentTasks?: AgentTask[];
 } | null>(null);
 let unlisten: UnlistenFn | undefined;
 
@@ -22,6 +25,18 @@ async function readIdle() {
 async function resolveIdle(trim: boolean) {
   try {
     emit("updated", await invoke("idle_resolve", { trim }));
+    idleNotice.value = null;
+  } catch (e) {
+    emit("error", String(e));
+  }
+}
+/** „Przypisz przerwę do X”: podział pomiaru w chwili początku przerwy. */
+async function assignBreak(task: AgentTask) {
+  try {
+    emit(
+      "updated",
+      await invoke("idle_resolve", { trim: false, assign: task.taskId }),
+    );
     idleNotice.value = null;
   } catch (e) {
     emit("error", String(e));
@@ -46,11 +61,22 @@ onUnmounted(() => unlisten?.());
       {{ new Date(idleNotice.idleAt).toLocaleTimeString("pl-PL") }}. Czy cały
       ten czas był pracą?
     </p>
+    <p v-if="idleNotice.agentTasks?.length" class="hint">
+      W tym czasie agent AI pracował nad innym zadaniem. Przerwę możesz
+      przypisać do niego: pomiar zostanie podzielony w chwili jej początku.
+    </p>
     <div class="planning-actions">
       <button class="today-button" @click="resolveIdle(false)">
         Zachowaj cały czas</button
       ><button class="today-button" @click="resolveIdle(true)">
-        Zatrzymaj na początku przerwy
+        Zatrzymaj na początku przerwy</button
+      ><button
+        v-for="task in idleNotice.agentTasks ?? []"
+        :key="task.taskId ?? ''"
+        class="today-button"
+        @click="assignBreak(task)"
+      >
+        Przypisz przerwę do „{{ task.title }}”
       </button>
     </div>
   </section>

@@ -14,6 +14,7 @@ mod reminder;
 mod settings;
 mod shortcuts;
 mod stats;
+mod suggest;
 mod templates;
 mod tray;
 mod widget;
@@ -287,6 +288,7 @@ fn main() {
             reminder::setup(app.handle());
             idle::setup(app.handle());
             agents::setup(app.handle());
+            suggest::setup(app.handle());
             notify::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
             // korzystają komendy. Wątki tray, widget, reminder, idle, agents, notify i jira
@@ -375,6 +377,9 @@ fn main() {
             agents::agent_bindings,
             agents::agent_bind,
             agents::agent_unbind,
+            suggest::agent_suggestions,
+            suggest::agent_switch,
+            suggest::agent_dismiss,
             backup::export_backup,
             backup::inspect_backup,
             backup::restore_backup,

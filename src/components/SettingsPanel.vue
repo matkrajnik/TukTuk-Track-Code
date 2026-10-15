@@ -158,6 +158,40 @@ onUnmounted(() => {
         @change="save({ idleAgents: checked($event) })"
       />Praca agentów AI (Claude Code, Codex) liczy się jako aktywność</label
     >
+    <label class="inline-check"
+      ><input
+        :checked="settings.agentSuggest"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ agentSuggest: checked($event) })"
+      />Proponuj przełączenie na zadanie, nad którym pracuje agent AI</label
+    >
+    <p class="hint">
+      Po 2 minutach pracy agenta nad innym zadaniem niż mierzone. Timer nigdy
+      nie przełącza się sam.
+    </p>
+    <template v-if="settings.agentMutedFolders.length">
+      <p class="hint">Bez propozycji dla folderów (z podfolderami):</p>
+      <ul class="muted-folders" aria-label="Foldery bez propozycji agentów">
+        <li v-for="folder in settings.agentMutedFolders" :key="folder">
+          <code class="mono">{{ folder }}</code
+          ><button
+            class="text-link"
+            :disabled="busy"
+            :aria-label="`Proponuj znowu dla ${folder}`"
+            @click="
+              save({
+                agentMutedFolders: settings.agentMutedFolders.filter(
+                  (f) => f !== folder,
+                ),
+              })
+            "
+          >
+            Proponuj znowu
+          </button>
+        </li>
+      </ul>
+    </template>
     <div class="planning-fields settings-fields">
       <label
         >Cel dzienny (minuty)<input

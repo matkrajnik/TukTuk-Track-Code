@@ -6,6 +6,7 @@ import AppNav, { type View } from "./components/AppNav.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import SessionEditor, { type SessionTab } from "./components/SessionEditor.vue";
 import IdleBanner from "./components/IdleBanner.vue";
+import AgentSuggestions from "./components/AgentSuggestions.vue";
 import TasksView from "./views/TasksView.vue";
 import ReportsView from "./views/ReportsView.vue";
 import JiraView from "./JiraView.vue";
@@ -230,7 +231,13 @@ onUnmounted(() => {
     <main>
       <IdleBanner
         :tasks="data.tasks"
-        @updated="data = $event"
+        @updated="updated"
+        @error="error = $event"
+      />
+      <AgentSuggestions
+        :tasks="data.tasks"
+        :active-task-id="activeTask?.id ?? null"
+        @updated="updated"
         @error="error = $event"
       />
       <div v-if="error && !modalOpen" class="error" role="alert">

@@ -163,7 +163,7 @@ fn agent_key(agent: &Agent) -> Option<String> {
 
 /// Folder do porównań: ukośniki `/`, bez końcowego separatora, małe litery
 /// (ścieżki Windows nie rozróżniają wielkości liter).
-fn norm_folder(folder: &str) -> String {
+pub fn norm_folder(folder: &str) -> String {
     folder
         .trim()
         .replace('\\', "/")
@@ -607,6 +607,9 @@ pub fn start(app: &tauri::AppHandle) {
                 if let Some(agents) = changed {
                     let _ = app.emit("agents-changed", agents);
                 }
+                // Propozycje przełączenia liczone co przebieg: zależą też od czasu
+                // pracy agenta (2 min) i od bieżącego pomiaru.
+                crate::suggest::refresh(&app, now);
             }
             std::thread::sleep(CHECK);
         }
@@ -658,6 +661,16 @@ fn rematch(app: &tauri::AppHandle) {
     if let Some(agents) = changed {
         let _ = app.emit("agents-changed", agents);
     }
+    crate::suggest::refresh(app, db::now());
+}
+
+/// Agenci pracujący teraz (ostatni odczyt pętli).
+pub fn current(app: &tauri::AppHandle) -> Vec<Agent> {
+    app.state::<State>()
+        .0
+        .lock()
+        .map(|w| w.agents.clone())
+        .unwrap_or_default()
 }
 
 /// Ile ms minęło od ostatniej pracy agenta (`u32::MAX`, gdy nigdy).

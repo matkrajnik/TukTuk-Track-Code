@@ -6,6 +6,10 @@ import { desktop, previewWidgetSettingsChanged } from "./store";
 export interface AppSettings {
   idleEnabled: boolean;
   idleAgents: boolean;
+  /** Proponuj przełączenie na zadanie, nad którym pracuje agent AI. */
+  agentSuggest: boolean;
+  /** Foldery (z podfolderami) z wyłączonymi propozycjami agentów. */
+  agentMutedFolders: string[];
   targetDayMinutes: number;
   workDays: number[];
   dayStart: string;
@@ -33,6 +37,8 @@ export interface AppInfo {
 export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   idleEnabled: true,
   idleAgents: true,
+  agentSuggest: true,
+  agentMutedFolders: [],
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   dayStart: "08:00",
@@ -145,7 +151,11 @@ export function altGrLetter(value: string): boolean {
 const fresh = (): AppSettings => ({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
+  agentMutedFolders: [],
 });
+/** Folder do porównań jak `agents::norm_folder`. */
+export const normFolder = (folder: string) =>
+  folder.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 const minutes = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1440;
 
@@ -175,6 +185,18 @@ function applyFields(
   if (s.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7))
     throw new Error("Dni robocze muszą być liczbami od 1 do 7.");
   s.workDays = [...new Set(s.workDays)].sort((a, b) => a - b);
+  // Jak w Rust: bez pustych i bez powtórek tego samego folderu.
+  const folders: string[] = [];
+  for (const raw of s.agentMutedFolders) {
+    const folder = typeof raw === "string" ? raw.trim() : "";
+    if (!folder || [...folder].length > 1024)
+      throw new Error("Niepoprawny folder agenta.");
+    if (!folders.some((f) => normFolder(f) === normFolder(folder)))
+      folders.push(folder);
+  }
+  if (folders.length > 200)
+    throw new Error("Za dużo wyciszonych folderów agentów.");
+  s.agentMutedFolders = folders;
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
   if (!time.test(s.notifyEvening))

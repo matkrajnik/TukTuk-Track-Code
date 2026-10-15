@@ -11,6 +11,10 @@ pub struct AppSettings {
     pub idle_enabled: bool,
     /// Praca agentów AI (Claude Code, Codex) liczy się jako aktywność.
     pub idle_agents: bool,
+    /// Proponuj przełączenie timera na zadanie, nad którym pracuje agent AI.
+    pub agent_suggest: bool,
+    /// Foldery (z podfolderami), dla których nie proponujemy przełączenia.
+    pub agent_muted_folders: Vec<String>,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     pub day_start: String,
@@ -33,6 +37,8 @@ impl Default for AppSettings {
         Self {
             idle_enabled: true,
             idle_agents: true,
+            agent_suggest: true,
+            agent_muted_folders: Vec::new(),
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             day_start: "08:00".into(),
@@ -144,6 +150,25 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     s.work_days.sort_unstable();
     s.work_days.dedup();
+    // Wyciszone foldery: bez pustych, bez powtórek (ten sam folder innymi
+    // separatorami albo wielkością liter), w kolejności dodania.
+    let mut folders: Vec<String> = Vec::new();
+    for folder in s.agent_muted_folders.iter().map(|f| f.trim()) {
+        if folder.is_empty() || folder.chars().count() > 1024 {
+            return Err("Niepoprawny folder agenta.".into());
+        }
+        let norm = crate::agents::norm_folder(folder);
+        if !folders
+            .iter()
+            .any(|f| crate::agents::norm_folder(f) == norm)
+        {
+            folders.push(folder.to_string());
+        }
+    }
+    if folders.len() > 200 {
+        return Err("Za dużo wyciszonych folderów agentów.".into());
+    }
+    s.agent_muted_folders = folders;
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());
     }
@@ -271,6 +296,8 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
         crate::idle::clear(&app);
     }
     let _ = app.emit("settings-changed", result.clone());
+    // Wyłącznik propozycji agentów i wyciszone foldery działają od razu.
+    crate::suggest::refresh(&app, crate::db::now());
     Ok(result)
 }
 
@@ -407,6 +434,27 @@ mod tests {
         assert_eq!(s.shortcut_quick, d.shortcut_quick);
         assert_eq!(s.shortcut_toggle, d.shortcut_toggle);
         assert_eq!(s.day_start, "09:00");
+    }
+
+    #[test]
+    fn agent_muted_folders_are_cleaned_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert!(base.agent_suggest);
+        assert!(base.agent_muted_folders.is_empty());
+        assert!(apply(&base, &json!({"agentMutedFolders": ["  "]})).is_err());
+        assert!(apply(&base, &json!({"agentMutedFolders": "C:\\x"})).is_err());
+        let saved = save(
+            &mut db,
+            &json!({"agentMutedFolders": [" C:\\Projekty\\wms ", "c:/projekty/WMS/", "D:\\api"], "agentSuggest": false}),
+        )
+        .unwrap();
+        assert_eq!(
+            saved.agent_muted_folders,
+            vec!["C:\\Projekty\\wms".to_string(), "D:\\api".to_string()]
+        );
+        assert_eq!(load(&db), saved);
+        assert!(!load(&db).agent_suggest);
     }
 
     #[test]

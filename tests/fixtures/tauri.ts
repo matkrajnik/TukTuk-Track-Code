@@ -115,27 +115,40 @@ function install(init: {
       if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
     });
 
-  // idle::Clock
+  // idle::Clock (z `see` i `agent_tasks` dla „Przypisz przerwę do X”)
   const idle: {
     candidate: [number, number, number] | null;
     pending: any;
-  } = { candidate: null, pending: null };
+    awaySince: number | null;
+    seen: { at: number; task: any }[];
+  } = { candidate: null, pending: null, awaySince: null, seen: [] };
   const MIN10 = 600_000;
   function idleTick({
     userIdle,
     agentIdle = Number.MAX_SAFE_INTEGER,
+    working = [],
   }: {
     userIdle: number;
     agentIdle?: number;
+    /** Zadania pracujących agentów (`agents::Match`), jak `Clock::see`. */
+    working?: any[];
   }) {
     if (!settings.idleEnabled) {
       idle.candidate = null;
       idle.pending = null;
+      idle.awaySince = null;
+      idle.seen = [];
       return false;
     }
     const now = Date.now();
     const agent = settings.idleAgents ? agentIdle : Number.MAX_SAFE_INTEGER;
     const active = snapshot.sessions.find((s: any) => s.endedAt === null);
+    idle.seen = idle.seen.filter((x) => now - x.at <= 24 * 3_600_000);
+    for (const task of working) {
+      if (task.taskId == null || task.taskId === active?.taskId) continue;
+      idle.seen = idle.seen.filter((x) => x.task.taskId !== task.taskId);
+      idle.seen.push({ at: now, task: clone(task) });
+    }
     if (!active) {
       idle.candidate = null;
       return false;
@@ -143,23 +156,30 @@ function install(init: {
     const idleMs = Math.min(userIdle, agent);
     let due = false;
     if (idleMs >= MIN10) {
-      if (idle.candidate?.[0] !== active.id)
+      if (idle.candidate?.[0] !== active.id) {
         idle.candidate = [
           active.id,
           active.taskId,
           Math.max(now - idleMs, active.startedAt),
         ];
+        idle.awaySince = now - userIdle;
+      }
     } else if (userIdle >= MIN10) {
       idle.candidate = null;
     } else if (idle.candidate) {
       const [id, task, at] = idle.candidate;
       idle.candidate = null;
       if (id === active.id && !idle.pending && now - at >= MIN10) {
+        const since = Math.min(idle.awaySince ?? at, at);
         idle.pending = {
           sessionId: id,
           taskId: task,
           idleAt: at,
           returnedAt: now,
+          agentTasks: idle.seen
+            .filter((x) => x.at >= since && x.task.taskId !== task)
+            .sort((a, b) => b.at - a.at)
+            .map((x) => clone(x.task)),
         };
         due = true;
       }
@@ -280,6 +300,8 @@ function install(init: {
           };
         case "agents_status":
           return [];
+        case "agent_suggestions":
+          return [];
         case "jira_settings":
           return {
             config: {
@@ -305,7 +327,24 @@ function install(init: {
         case "idle_resolve": {
           const notice = idle.pending;
           if (!notice) throw "Brak zgłoszonej bezczynności.";
-          if (args.trim) {
+          if (args.assign != null) {
+            // idle::assign_break → db::split_session w chwili początku przerwy.
+            if (!notice.agentTasks.some((t: any) => t.taskId === args.assign))
+              throw "To zadanie nie jest pracą agenta z tej przerwy.";
+            const s = snapshot.sessions.find(
+              (x: any) => x.id === notice.sessionId,
+            );
+            const end = s?.endedAt ?? now;
+            if (!s || !(s.startedAt < notice.idleAt && notice.idleAt < end))
+              throw "Moment podziału musi leżeć wewnątrz przedziału.";
+            snapshot.sessions.unshift({
+              id: nextSessionId(),
+              taskId: args.assign,
+              startedAt: notice.idleAt,
+              endedAt: s.endedAt,
+            });
+            s.endedAt = notice.idleAt;
+          } else if (args.trim) {
             const s = snapshot.sessions.find(
               (x: any) => x.id === notice.sessionId,
             );

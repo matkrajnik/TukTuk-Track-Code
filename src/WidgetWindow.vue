@@ -2,7 +2,13 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { GripVertical, Play, Square, X } from "lucide-vue-next";
+import { Bot, GripVertical, Play, Square, X } from "lucide-vue-next";
+import {
+  onSuggestionsChanged,
+  readSuggestions,
+  switchToSuggestion,
+  type Suggestion,
+} from "./agents";
 import QuickSwitch from "./QuickSwitch.vue";
 import {
   desktop,
@@ -33,10 +39,54 @@ const activeTask = computed(() =>
 const resume = computed(() =>
   active.value ? undefined : resumeCandidate(data.value),
 );
+/** Propozycje przełączenia z pracy agentów AI (bez bieżącego zadania). */
+const suggestions = ref<Suggestion[]>([]);
+const proposals = computed(() =>
+  suggestions.value.filter(
+    (s) => s.task.taskId == null || s.task.taskId !== active.value?.taskId,
+  ),
+);
+const proposalName = (s: Suggestion) => s.task.title || s.task.key || "";
+/** „2 zadania”, „5 zadań” (jak `notify::tasks_word`). */
+const tasksWord = (n: number) =>
+  `${n} ${n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? "zadania" : "zadań"}`;
+/** Linia propozycji: jedno zadanie z nazwy, kilka jako liczba. */
+const proposalLine = computed(() =>
+  proposals.value.length === 1
+    ? `Agent: ${proposalName(proposals.value[0])}`
+    : proposals.value.length
+      ? `Agenci: ${tasksWord(proposals.value.length)} do przełączenia`
+      : "",
+);
+async function loadSuggestions() {
+  try {
+    suggestions.value = await readSuggestions();
+  } catch {
+    suggestions.value = [];
+  }
+}
+/** Jedno zadanie lokalne: „Przełącz” od razu; inaczej główne okno z banerem. */
+async function useProposal() {
+  const only = proposals.value.length === 1 ? proposals.value[0] : null;
+  if (!only || only.task.taskId == null) return showMain();
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    data.value = await switchToSuggestion(only.task);
+    showFeedback(`Start: ${proposalName(only)}`);
+    await loadSuggestions();
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
 const subline = computed(
   () =>
     error.value ||
     feedback.value ||
+    proposalLine.value ||
     (activeTask.value
       ? activeTask.value.details?.project || "Pomiar trwa"
       : resume.value
@@ -143,7 +193,13 @@ onMounted(async () => {
       error.value = String(e);
     }
   }
+  try {
+    unsubscribers.push(
+      await onSuggestionsChanged(() => void loadSuggestions()),
+    );
+  } catch {}
   await refresh();
+  await loadSuggestions();
 });
 onUnmounted(() => {
   clearInterval(tick);
@@ -172,9 +228,28 @@ onUnmounted(() => {
       @click="showMain"
     >
       <strong>{{ activeTask?.title ?? "Brak pomiaru" }}</strong>
-      <small :class="{ 'widget-error': !!error }" role="status">{{
-        subline
-      }}</small>
+      <small
+        :class="{
+          'widget-error': !!error,
+          'widget-suggest': !error && !feedback && !!proposalLine,
+        }"
+        role="status"
+        >{{ subline }}</small
+      >
+    </button>
+    <button
+      v-if="proposals.length"
+      class="icon-button widget-suggest"
+      :aria-label="
+        proposals.length === 1 && proposals[0].task.taskId != null
+          ? `Przełącz na: ${proposalName(proposals[0])}`
+          : 'Pokaż propozycje agentów'
+      "
+      :title="proposalLine"
+      :disabled="busy"
+      @click="useProposal"
+    >
+      <Bot :size="16" />
     </button>
     <span
       v-if="active"

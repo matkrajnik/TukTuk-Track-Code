@@ -1,14 +1,20 @@
+use crate::agents::Match;
 use crate::{db, Database};
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
-#[derive(Clone, Serialize)]
+/// Jak długo pamiętamy, nad czym pracowali agenci (do przypisania przerwy).
+const SEEN_KEEP: i64 = 24 * 3_600_000;
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
     pub session_id: i64,
     pub task_id: i64,
     pub idle_at: i64,
     pub returned_at: i64,
+    /// Zadania (inne niż mierzone), nad którymi agenci pracowali podczas
+    /// nieobecności: trzecia odpowiedź „Przypisz przerwę do X”. Najpierw ostatnie.
+    pub agent_tasks: Vec<Match>,
 }
 #[derive(Default)]
 pub struct State(Mutex<Clock>);
@@ -16,8 +22,33 @@ pub struct State(Mutex<Clock>);
 struct Clock {
     candidate: Option<(i64, i64, i64)>,
     pending: Option<Notice>,
+    /// Ostatnie wejście użytkownika przed przerwą-kandydatem.
+    away_since: Option<i64>,
+    /// Zadania z lokalnym id, nad którymi pracowali agenci, z chwilą ostatniej pracy.
+    seen: Vec<(i64, Match)>,
 }
 impl Clock {
+    /// Zapamiętuje zadania pracujących agentów inne niż mierzone (`active`).
+    fn see(&mut self, working: &[Match], active: Option<i64>, now: i64) {
+        self.seen.retain(|(at, _)| now - at <= SEEN_KEEP);
+        for m in working {
+            let Some(id) = m.task_id.filter(|id| Some(*id) != active) else {
+                continue;
+            };
+            self.seen.retain(|(_, s)| s.task_id != Some(id));
+            self.seen.push((now, m.clone()));
+        }
+    }
+    /// Zadania agentów od `since`, bez `task`, najpierw ostatnie.
+    fn agent_tasks(&self, since: i64, task: i64) -> Vec<Match> {
+        let mut found: Vec<&(i64, Match)> = self
+            .seen
+            .iter()
+            .filter(|(at, m)| *at >= since && m.task_id != Some(task))
+            .collect();
+        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.into_iter().map(|(_, m)| m.clone()).collect()
+    }
     /// `user_idle`: czas od ostatniego wejścia z klawiatury/myszy, `agent_idle`: od
     /// ostatniej pracy agenta (`agents`). Praca agenta liczy się jako aktywność:
     /// przerwa trwa, gdy oba są dłuższe niż 10 min, a jej początek to późniejsza z
@@ -38,16 +69,19 @@ impl Clock {
         if idle_ms >= 600_000 {
             if self.candidate.as_ref().map(|v| v.0) != Some(id) {
                 self.candidate = Some((id, task, (now - i64::from(idle_ms)).max(start)));
+                self.away_since = Some(now - i64::from(user_idle));
             }
         } else if user_idle >= 600_000 {
             self.candidate = None;
         } else if let Some((old_id, task, at)) = self.candidate.take() {
             if old_id == id && self.pending.is_none() && now - at >= 600_000 {
+                let since = self.away_since.unwrap_or(at).min(at);
                 self.pending = Some(Notice {
                     session_id: id,
                     task_id: task,
                     idle_at: at,
                     returned_at: now,
+                    agent_tasks: self.agent_tasks(since, task),
                 });
                 return true;
             }
@@ -133,11 +167,19 @@ pub fn start(app: &tauri::AppHandle) {
             )
             .ok()
         });
+        // Zadania pracujących agentów: do „Przypisz przerwę do X”.
+        let working: Vec<Match> = crate::agents::current(&app)
+            .into_iter()
+            .filter_map(|a| a.task)
+            .collect();
         let due = app
             .state::<State>()
             .0
             .lock()
-            .map(|mut c| c.observe(session, now, idle, agent_idle))
+            .map(|mut c| {
+                c.see(&working, session.map(|(_, task, _)| task), now);
+                c.observe(session, now, idle, agent_idle)
+            })
             .unwrap_or(false);
         if due {
             let _ = app.emit("idle-notice", ());
@@ -159,8 +201,26 @@ pub fn clear(app: &tauri::AppHandle) {
     }
     let _ = app.emit("idle-notice", ());
 }
+/// „Przypisz przerwę do X”: podział pomiaru z banera w chwili początku przerwy,
+/// druga część (do końca albo dalej trwająca) należy do X. Ten sam mechanizm co
+/// zakładka Podziel (`db::split_session`). X musi być zadaniem agenta z banera.
+pub fn assign_break(
+    conn: &mut rusqlite::Connection,
+    notice: &Notice,
+    task: i64,
+    now: i64,
+) -> Result<db::Snapshot, String> {
+    if !notice.agent_tasks.iter().any(|m| m.task_id == Some(task)) {
+        return Err("To zadanie nie jest pracą agenta z tej przerwy.".into());
+    }
+    db::split_session(conn, notice.session_id, notice.idle_at, Some(task), now)
+}
 #[tauri::command]
-pub fn idle_resolve(app: tauri::AppHandle, trim: bool) -> Result<db::Snapshot, String> {
+pub fn idle_resolve(
+    app: tauri::AppHandle,
+    trim: bool,
+    assign: Option<i64>,
+) -> Result<db::Snapshot, String> {
     let state = app.state::<State>();
     let mut clock = state.0.lock().map_err(|e| e.to_string())?;
     let notice = clock
@@ -168,12 +228,19 @@ pub fn idle_resolve(app: tauri::AppHandle, trim: bool) -> Result<db::Snapshot, S
         .clone()
         .ok_or("Brak zgłoszonej bezczynności.")?;
     let database = app.state::<Database>();
-    let conn = database.0.lock().map_err(|e| e.to_string())?;
-    if trim {
+    let mut conn = database.0.lock().map_err(|e| e.to_string())?;
+    if let Some(task) = assign {
+        assign_break(&mut conn, &notice, task, db::now())?;
+    } else if trim {
         conn.execute("UPDATE sessions SET ended_at=MAX(started_at,?1) WHERE id=?2 AND (ended_at IS NULL OR ended_at>?1)",rusqlite::params![notice.idle_at,notice.session_id]).map_err(|e|e.to_string())?;
     }
     clock.pending = None;
     let result = db::snapshot(&conn).map_err(|e| e.to_string())?;
+    drop(conn);
+    drop(clock);
+    if assign.is_some() {
+        crate::reminder::reset(&app);
+    }
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
@@ -220,5 +287,64 @@ mod tests {
         assert!(!c.observe(Some((1, 2, 0)), 1_100_000, 800_000, 0));
         assert!(!c.observe(Some((1, 2, 0)), 1_200_000, 0, 0));
         assert!(c.pending.is_none());
+    }
+    fn task(id: i64) -> Match {
+        Match {
+            task_id: Some(id),
+            title: format!("Zadanie {id}"),
+            key: None,
+            source: "task".into(),
+        }
+    }
+    #[test]
+    fn agent_work_during_absence_is_offered_for_the_break() {
+        let mut c = Clock::default();
+        // Przed wyjściem użytkownika agent pracował nad zadaniem 7: to nie ta przerwa.
+        c.see(&[task(7)], Some(2), 50_000);
+        // Użytkownik wychodzi o 100 000; agent pracuje nad 3 (i nad mierzonym 2).
+        c.see(&[task(3), task(2)], Some(2), 400_000);
+        assert!(!c.observe(Some((1, 2, 0)), 400_000, 300_000, 0));
+        c.see(&[task(3)], Some(2), 500_000);
+        // Agent kończy o 500 000; przerwa od 500 000, powrót o 1 200 000.
+        assert!(!c.observe(Some((1, 2, 0)), 1_100_000, 1_000_000, 600_000));
+        assert!(c.observe(Some((1, 2, 0)), 1_200_000, 0, 700_000));
+        let notice = c.pending.clone().unwrap();
+        assert_eq!(notice.idle_at, 500_000);
+        let ids: Vec<_> = notice.agent_tasks.iter().map(|m| m.task_id).collect();
+        assert_eq!(ids, vec![Some(3)]);
+        // Bez pracy agentów trzeciej odpowiedzi nie ma.
+        let mut c = Clock::default();
+        c.observe(Some((1, 2, 0)), 700_000, 650_000, N);
+        assert!(c.observe(Some((1, 2, 0)), 800_000, 0, N));
+        assert!(c.pending.unwrap().agent_tasks.is_empty());
+    }
+    #[test]
+    fn assigning_break_splits_measurement_at_its_start() {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        for title in ["Mierzone", "Agent"] {
+            conn.execute("INSERT INTO tasks(title,created_at) VALUES(?1,0)", [title])
+                .unwrap();
+        }
+        db::change(&mut conn, "start", Some(1), None, 1_000).unwrap();
+        let session: i64 = conn
+            .query_row("SELECT id FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        let notice = Notice {
+            session_id: session,
+            task_id: 1,
+            idle_at: 5_000,
+            returned_at: 9_000,
+            agent_tasks: vec![task(2)],
+        };
+        assert!(assign_break(&mut conn, &notice, 1, 9_000).is_err());
+        let snap = assign_break(&mut conn, &notice, 2, 9_000).unwrap();
+        let mut rows: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|s| (s.task_id, s.started_at, s.ended_at))
+            .collect();
+        rows.sort();
+        assert_eq!(rows, vec![(1, 1_000, Some(5_000)), (2, 5_000, None)]);
     }
 }
