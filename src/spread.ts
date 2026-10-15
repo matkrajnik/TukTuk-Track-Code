@@ -72,12 +72,15 @@ const clock = (ms: number) => {
 /**
  * Układa `tasks` (kandydatów; zakończone i zarchiwizowane też są pomijane) na
  * `days` (kolejne dni od dziś do końca widocznego tygodnia). `duration` zwraca
- * czas zadania w ms; 0 oznacza brak szacunku (wtedy 30 min).
+ * czas zadania w ms; 0 oznacza brak szacunku (wtedy 30 min). `today` (klucz
+ * dnia) rozstrzyga, czy termin już minął; bez niego liczy się pierwszy dzień
+ * z `days`.
  */
 export function spread(
   tasks: readonly Task[],
   days: readonly SpreadDay[],
   duration: (task: Task) => number,
+  today?: string,
 ): SpreadResult {
   const result: SpreadDayResult[] = days.map((d) => ({
     ...d,
@@ -107,7 +110,8 @@ export function spread(
     }
     let reason: string;
     if (!eligible.length) {
-      if (due && (!result.length || due < result[0].day))
+      const first = today ?? result[0]?.day;
+      if (due && (!first || due < first))
         reason = `Termin ${dayLabel(due)} już minął`;
       else if (due) reason = `Brak dnia roboczego do terminu ${dayLabel(due)}`;
       else reason = "Brak dni roboczych do końca tygodnia";

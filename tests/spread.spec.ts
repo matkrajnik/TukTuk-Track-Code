@@ -374,7 +374,8 @@ test("spread e2e: preview, cancel and apply", async ({ page }) => {
   await page.getByRole("button", { name: "Rozłóż", exact: true }).click();
   const preview = page.getByRole("region", { name: "Podgląd: Rozłóż" });
   await expect(preview).toBeVisible();
-  await expect(preview).toContainText("Pominięte (czekam na, cykliczne): 1.");
+  // Czeka na klienta i cykliczne Spotkanie zespołu (plan z poniedziałku).
+  await expect(preview).toContainText("Pominięte (czekam na, cykliczne): 2.");
   // Dni od dziś (czwartek) do niedzieli; przed → po względem pojemności.
   const thursday = preview.getByRole("listitem", {
     name: "Rozłóż: Czwartek 2026-10-15",
@@ -397,6 +398,8 @@ test("spread e2e: preview, cancel and apply", async ({ page }) => {
   await expect(missed.getByRole("listitem")).toHaveText([
     /Pilna poprawka\s+01:00 — Brak miejsca do terminu 15\.10/,
     /Migracja bazy\s+15:00 — Dłuższe niż pojemność dnia \(8:00\)/,
+    // Zaplanowane na środę (miniony dzień tego tygodnia) też jest zaległe.
+    /Wdrożenie etykiet\s+08:00 — Brak miejsca do końca tygodnia/,
   ]);
 
   // Anuluj: podgląd znika, dane bez zmian.
@@ -424,6 +427,7 @@ test("spread e2e: preview, cancel and apply", async ({ page }) => {
   expect(day(20)).toBe("");
   expect(day(22)).toBe("");
   expect(day(23)).toBe("");
+  expect(day(ids.labels)).toBe("2026-10-14");
   expect(day(ids.standup)).toBe(
     before.tasks.find((t: Task) => t.id === ids.standup).details.plannedDay,
   );
@@ -431,6 +435,106 @@ test("spread e2e: preview, cancel and apply", async ({ page }) => {
   const review = after.tasks.find((t: Task) => t.id === ids.review).details;
   expect(review.project).toBe("Foundation");
   expect(review.estimateMinutes).toBe(60);
+});
+
+test("spread: a due date is past only before today", () => {
+  // Widoczny tydzień w przyszłości: termin w bieżącym tygodniu nie minął.
+  const next = ["2026-10-19", "2026-10-20"].map((day) => ({
+    day,
+    capacity: 8 * H,
+    load: 0,
+  }));
+  const friday = task("Na piątek", { estimateMinutes: 30, dueDay: "2026-10-16" });
+  const old = task("Na środę", { estimateMinutes: 30, dueDay: "2026-10-14" });
+  expect(why(spread([friday, old], next, est, "2026-10-15"))).toEqual({
+    "Na piątek": "Brak dnia roboczego do terminu 16.10",
+    "Na środę": "Termin 14.10 już minął",
+  });
+});
+
+test("spread e2e: next week keeps this week's plan and fresh deadlines", async ({
+  page,
+}) => {
+  const data = seed();
+  data.tasks.push(
+    // Zaplanowane na jutro (piątek): nie jest zaległe, zostaje w piątku.
+    extra(24, "Jutrzejsze", { estimateMinutes: 60, plannedDay: "2026-10-16" }),
+    // Termin w piątek: przy następnym tygodniu nie ma na nie dnia, ale termin nie minął.
+    extra(25, "Termin w piątek", { estimateMinutes: 30, dueDay: "2026-10-16" }),
+  );
+  await openPreview(page, { data });
+  await openWeek(page);
+  await page.getByRole("button", { name: "Następny okres" }).click();
+  await page.getByRole("button", { name: "Rozłóż", exact: true }).click();
+  const preview = page.getByRole("region", { name: "Podgląd: Rozłóż" });
+  await expect(preview).toBeVisible();
+  // Cały następny tydzień; dni bieżącego tygodnia nie ma w podglądzie.
+  await expect(
+    preview.getByRole("listitem", { name: /^Rozłóż: / }),
+  ).toHaveCount(7);
+  const monday = preview.getByRole("listitem", {
+    name: "Rozłóż: Poniedziałek 2026-10-19",
+  });
+  // Code review (1 h) i zaległe ze środy Wdrożenie (8 h) na następny tydzień.
+  await expect(monday.locator(".spread-tasks li")).toContainText([
+    "Code review",
+  ]);
+  await expect(
+    preview
+      .getByRole("listitem", { name: "Rozłóż: Wtorek 2026-10-20" })
+      .locator(".spread-tasks li"),
+  ).toHaveText([/Wdrożenie etykiet\s+08:00/]);
+  await expect(preview.locator(".spread-tasks li")).toHaveCount(2);
+  await expect(
+    preview.getByRole("region", { name: "Nie zmieściło się" }),
+  ).toContainText(
+    /Termin w piątek\s+00:30 — Brak dnia roboczego do terminu 16\.10/,
+  );
+
+  await preview.getByRole("button", { name: "Zastosuj" }).click();
+  await expect(preview).toBeHidden();
+  const after = await stored(page);
+  const day = (id: number) =>
+    after.tasks.find((t: Task) => t.id === id).details.plannedDay;
+  expect(day(24)).toBe("2026-10-16");
+  expect(day(ids.analysis)).toBe(TODAY);
+  expect(day(ids.review)).toBe("2026-10-19");
+  expect(day(ids.labels)).toBe("2026-10-20");
+  expect(day(25)).toBe("");
+});
+
+test("spread e2e: the preview follows changes made while it is open", async ({
+  page,
+}) => {
+  await openPreview(page, { data: spreadData() });
+  await openWeek(page);
+  await page.getByRole("button", { name: "Rozłóż", exact: true }).click();
+  const preview = page.getByRole("region", { name: "Podgląd: Rozłóż" });
+  const friday = preview.getByRole("listitem", {
+    name: "Rozłóż: Piątek 2026-10-16",
+  });
+  await expect(friday.locator(".spread-tasks li")).toHaveText([
+    /Stara notatka/,
+    /Code review/,
+  ]);
+  // Użytkownik sam planuje Code review na sobotę, gdy podgląd jest otwarty.
+  await page
+    .getByRole("button", { name: "Przenieś na…: Code review", exact: true })
+    .click();
+  await page
+    .getByRole("menuitem", { name: "Sobota, 17 paź", exact: true })
+    .click();
+  await expect(friday.locator(".spread-tasks li")).toHaveText([
+    /Stara notatka/,
+  ]);
+  await preview.getByRole("button", { name: "Zastosuj" }).click();
+  await expect(preview).toBeHidden();
+  const after = await stored(page);
+  const day = (id: number) =>
+    after.tasks.find((t: Task) => t.id === id).details.plannedDay;
+  // „Zastosuj” nie nadpisuje ręcznego przeniesienia.
+  expect(day(ids.review)).toBe("2026-10-17");
+  expect(day(21)).toBe("2026-10-16");
 });
 
 /** Pięć ukończonych zadań Foundation z czasem 2× szacunek (z ostatnich dni). */

@@ -207,24 +207,35 @@ function usual(task: Task) {
 }
 
 // „Rozłóż”: podgląd zachłannego planu od dziś do końca widocznego tygodnia.
-// Nic nie zapisuje się bez „Zastosuj”.
-const preview = ref<SpreadResult | null>(null);
-/** Dni tygodnia od dziś (tydzień w przeszłości nie ma takich dni). */
+// Nic nie zapisuje się bez „Zastosuj”. Podgląd liczy się na bieżąco z danych
+// (`computed`), więc zmiana w trakcie (zakończenie, przeniesienie, nowy
+// szacunek, `data-changed` z innego okna) od razu go odświeża, a „Zastosuj”
+// zapisuje dokładnie to, co widać.
+const spreadOpen = ref(false);
+const today = computed(() => dayKey(props.now));
+/**
+ * Dni widocznego tygodnia od dziś (tydzień w przeszłości nie ma takich dni,
+ * tydzień w przyszłości ma wszystkie). Reszta bieżącego tygodnia należy do
+ * jego własnej tablicy.
+ */
 const spreadDays = computed(() =>
-  days.value.filter((d) => d.key >= dayKey(props.now)),
+  days.value.filter((d) => d.key >= today.value),
 );
-function openSpread() {
-  error.value = "";
+const preview = computed<SpreadResult | null>(() => {
+  if (!spreadOpen.value) return null;
+  // Kandydaci: „Do zaplanowania” i zaległe naprawdę, czyli zaplanowane przed
+  // dziś (także na minione dni bieżącego tygodnia). Zadania zaplanowane na
+  // dziś i później zostają tam, gdzie są, także przy tygodniu w przyszłości.
   const candidates = [
     ...backlogAll.value,
     ...props.data.tasks.filter(
       (t) =>
         isOpen(t) &&
         !!t.details?.plannedDay &&
-        t.details.plannedDay < weekStart.value,
+        t.details.plannedDay < today.value,
     ),
   ];
-  preview.value = spread(
+  return spread(
     candidates,
     spreadDays.value.map((d) => ({
       day: d.key,
@@ -232,12 +243,17 @@ function openSpread() {
       load: d.estimate,
     })),
     planned,
+    today.value,
   );
+});
+function openSpread() {
+  error.value = "";
+  spreadOpen.value = true;
 }
 const dayInfo = (key: string) => days.value.find((d) => d.key === key)!;
 watch(
   () => props.day,
-  () => (preview.value = null),
+  () => (spreadOpen.value = false),
 );
 
 /**
@@ -274,7 +290,7 @@ async function applySpread() {
   error.value = "";
   try {
     emit("updated", await planTasks(spreadEntries(preview.value)));
-    preview.value = null;
+    spreadOpen.value = false;
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -402,7 +418,7 @@ function columnProps(id: string, lists: string[], day: string) {
         :disabled="busy || !spreadDays.length"
         :title="
           spreadDays.length
-            ? 'Rozłóż zadania z „Do zaplanowania” i „Zaległych” na dni od dziś do końca tygodnia (podgląd przed zapisem)'
+            ? 'Rozłóż zadania z „Do zaplanowania” i zaległe (zaplanowane przed dziś) na dni od dziś do końca tygodnia (podgląd przed zapisem)'
             : 'Ten tydzień już minął'
         "
         :aria-expanded="!!preview"
@@ -419,8 +435,8 @@ function columnProps(id: string, lists: string[], day: string) {
     >
       <h3>Podgląd: Rozłóż</h3>
       <p class="hint">
-        Zadania z „Do zaplanowania” i „Zaległych” według terminu, priorytetu i
-        kolejności, na dni od dziś do końca tygodnia<template
+        Zadania z „Do zaplanowania” i zaległe (zaplanowane przed dziś) według
+        terminu, priorytetu i kolejności, na dni od dziś do końca tygodnia<template
           v-if="settings.planWithCorrection"
         >
           (szacunki z poprawką)</template
@@ -488,7 +504,7 @@ function columnProps(id: string, lists: string[], day: string) {
           type="button"
           class="secondary-button"
           :disabled="busy"
-          @click="preview = null"
+          @click="spreadOpen = false"
         >
           Anuluj
         </button>
