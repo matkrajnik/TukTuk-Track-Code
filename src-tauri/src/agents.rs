@@ -175,7 +175,7 @@ pub fn norm_folder(folder: &str) -> String {
 }
 
 /// Przypisanie folderu obejmuje też jego podfoldery; wygrywa najdłuższe.
-fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
+pub(crate) fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
     let cwd = norm_folder(cwd);
     if cwd.is_empty() {
         return Ok(None);
@@ -330,6 +330,8 @@ pub fn bind(db: &Connection, folder: &str, task_id: i64) -> Result<Vec<Binding>,
     )
     .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
+    // Okresy agentów z ostatnich 7 dni bez zadania dostają zadanie z przypisania.
+    crate::agent_time::backfill(db, db::now()).map_err(|e| e.to_string())?;
     bindings(db).map_err(|e| e.to_string())
 }
 
@@ -610,6 +612,8 @@ pub fn start(app: &tauri::AppHandle) {
                 // `agents_status` w wątku głównym na niego nie czekał.
                 branches.recognize(&mut found, now, git_branch);
                 match_tasks(&app, &mut found);
+                // Czas agentów jako osobny tor (`agent_sessions`).
+                crate::agent_time::observe(&app, &found, now);
                 let changed = app
                     .state::<State>()
                     .0

@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod agent_time;
 mod agents;
 mod autostart;
 mod backup;
@@ -301,6 +302,8 @@ fn main() {
                     .unwrap_or(env!("CARGO_PKG_VERSION")),
             )?;
             db::init(&connection)?;
+            // Czas agentów starszy niż 400 dni (PLAN_1.7.md, W1).
+            agent_time::prune(&connection, db::now())?;
             maintenance::record_version(
                 &connection,
                 app.config()
@@ -417,6 +420,7 @@ fn main() {
             agents::agent_bindings,
             agents::agent_bind,
             agents::agent_unbind,
+            agent_time::agent_time,
             suggest::agent_suggestions,
             suggest::agent_switch,
             suggest::agent_dismiss,

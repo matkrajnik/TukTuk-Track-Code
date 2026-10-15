@@ -305,6 +305,9 @@ function install(init: {
           return [];
         case "agent_suggestions":
           return [];
+        // Czas agentów (W1): bez okresów; e2e toru i kolumn działa na podglądzie.
+        case "agent_time":
+          return { periods: [], totals: [], unmatchedMs: 0 };
         // Tryb skupienia: bez bloku (logika w `focus.rs`, e2e na podglądzie).
         case "focus_status":
           return {

@@ -3,6 +3,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import { renderTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
+import { agentTotals, type AgentPeriod, type AgentTime } from "./agenttime";
 import {
   emptyRule,
   isRecurring,
@@ -554,6 +555,8 @@ async function previewBindingList(): Promise<AgentBinding[]> {
 }
 function previewBindingsChanged(list: { folder: string; taskId: number }[]) {
   localStorage.setItem(bindingsKey, JSON.stringify(list));
+  // Jak `agents::bind`: przypisanie uzupełnia okresy agentów bez zadania.
+  previewAgentBackfill(Date.now());
   window.dispatchEvent(new Event(previewAgentsEvent));
 }
 /** Przypisania folderów do zadań (`agent_bindings`). */
@@ -577,6 +580,53 @@ export async function bindAgentFolder(
     { folder: clean, taskId },
   ]);
   return previewBindingList();
+}
+/** Okresy pracy agentów w podglądzie (`agent_sessions`), dane z `seed.ts`. */
+export const agentSessionsKey = "todo-track-preview-agent-sessions-v1";
+function previewAgentPeriods(): AgentPeriod[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(agentSessionsKey) ?? "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+/**
+ * Jak `agent_time::backfill`: okresy z ostatnich 7 dni bez zadania dostają
+ * zadanie z przypisania folderu (także podfolderu, wygrywa najdłuższe).
+ */
+function previewAgentBackfill(now: number) {
+  const norm = (f: string) => trimFolder(f).toLowerCase();
+  const bindings = previewBindings().map((b) => ({ ...b, norm: norm(b.folder) }));
+  let changed = false;
+  const periods = previewAgentPeriods().map((p) => {
+    if (p.taskId !== null || p.end < now - 7 * 86_400_000) return p;
+    const folder = norm(p.folder);
+    const found = bindings
+      .filter((b) => b.norm && (folder === b.norm || folder.startsWith(b.norm + "\\")))
+      .sort((a, b) => b.norm.length - a.norm.length)[0];
+    if (!found) return p;
+    changed = true;
+    return { ...p, taskId: found.taskId };
+  });
+  if (changed) localStorage.setItem(agentSessionsKey, JSON.stringify(periods));
+}
+/**
+ * Czas agentów w `[from, to)` (`agent_time`): okresy nakładające się na zakres
+ * i sumy według zadania z częścią równoległą do Twojego pomiaru.
+ */
+export async function agentTime(from: number, to: number): Promise<AgentTime> {
+  if (desktop) return invoke("agent_time", { from, to });
+  if (to < from) throw new Error("Niepoprawny zakres dat.");
+  const periods = previewAgentPeriods()
+    .filter((p) => p.start < to && p.end > from)
+    .sort((a, b) => a.start - b.start || a.id - b.id);
+  const now = Date.now();
+  const { sessions, trashSessions } = await read();
+  return {
+    periods,
+    ...agentTotals(periods, [...sessions, ...(trashSessions ?? [])], from, to, now),
+  };
 }
 /** Usuwa przypisanie folderu (`agent_unbind`). */
 export async function unbindAgentFolder(

@@ -60,7 +60,11 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS focus_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, completed INTEGER);
         CREATE TABLE IF NOT EXISTS focus_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS calendar_events (id TEXT PRIMARY KEY, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', show_as TEXT NOT NULL DEFAULT 'busy', all_day INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0, response TEXT NOT NULL DEFAULT 'none', updated_at INTEGER NOT NULL);
-        CREATE INDEX IF NOT EXISTS calendar_events_start ON calendar_events(start);")
+        CREATE INDEX IF NOT EXISTS calendar_events_start ON calendar_events(start);
+        CREATE TABLE IF NOT EXISTS agent_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, folder TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS agent_sessions_start ON agent_sessions(start);
+        CREATE INDEX IF NOT EXISTS agent_sessions_end ON agent_sessions(\"end\");
+        CREATE INDEX IF NOT EXISTS agent_sessions_task ON agent_sessions(task_id);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db

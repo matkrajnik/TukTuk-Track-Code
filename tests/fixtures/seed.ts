@@ -315,6 +315,33 @@ export function calendarFixture(state: "connected" | "ready" = "connected") {
   };
 }
 
+export const AGENT_SESSIONS_KEY = "todo-track-preview-agent-sessions-v1";
+
+/**
+ * Okresy pracy agentów AI (jak z `agent_time`, tabela `agent_sessions`):
+ * dziś Claude Code nad „Analizą importu” 10:00–11:30 (30 min równolegle z Twoim
+ * pomiarem 08:30–10:30) i Codex bez zadania 11:00–11:40; w środę Claude nad
+ * „Wdrożeniem etykiet” 13:00–14:00 (bez Twojego pomiaru tego zadania), we wtorek
+ * Codex nad „Code review” 14:00–14:45 (zadanie bez Twojego czasu).
+ */
+export function agentSessions() {
+  const period = (
+    id: number,
+    agent: string,
+    folder: string,
+    taskId: number | null,
+    day: string,
+    from: string,
+    to: string,
+  ) => ({ id, agent, folder, taskId, start: at(day, from), end: at(day, to) });
+  return [
+    period(1, "codex", "C:\\Projekty\\api", ids.review, "2026-10-13", "14:00", "14:45"),
+    period(2, "claude", "C:\\Projekty\\wms", ids.labels, "2026-10-14", "13:00", "14:00"),
+    period(3, "claude", "C:\\Projekty\\wms", ids.analysis, TODAY, "10:00", "11:30"),
+    period(4, "codex", "C:\\Projekty\\narzedzia", null, TODAY, "11:00", "11:40"),
+  ];
+}
+
 export interface PreviewOptions extends SeedOptions {
   /** Stały czas strony; domyślnie `NOW`. */
   now?: string | number;
@@ -326,6 +353,8 @@ export interface PreviewOptions extends SeedOptions {
   agents?: unknown[];
   /** Kalendarz Microsoft w podglądzie, np. `calendarFixture()`. */
   calendar?: unknown;
+  /** Okresy pracy agentów w podglądzie, np. `agentSessions()`. */
+  agentSessions?: unknown[];
 }
 
 /**
@@ -344,12 +373,13 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
         options.agents ? JSON.stringify(options.agents) : null,
         options.calendar ? JSON.stringify(options.calendar) : null,
+        options.agentSessions ? JSON.stringify(options.agentSessions) : null,
       ],
     ] as const,
   );

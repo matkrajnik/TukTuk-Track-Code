@@ -7,6 +7,7 @@ import { addToDays, closedDayTotals, decimalHours } from "../report";
 import { holidays } from "../holidays";
 import TargetBar from "./TargetBar.vue";
 import ExportButtons from "./ExportButtons.vue";
+import { sessionsSignature, useAgentTime } from "../composables/useAgentTime";
 import {
   dayTarget,
   daysTarget,
@@ -128,6 +129,54 @@ const taskRows = computed(() => {
     }))
     .sort((a, b) => b.total - a.total || a.task.id - b.task.id);
 });
+/**
+ * Czas agentów w miesiącu (W1): kolumny „Agent” i „Równolegle” w tabeli zadań,
+ * tylko gdy agenci pracowali nad zadaniami. Nie zmienia sum, celu ani eksportu.
+ */
+const monthRange = (): [number, number] => [
+  dayBounds(days.value[0])[0],
+  dayBounds(days.value[days.value.length - 1])[1],
+];
+const agentTime = useAgentTime(monthRange, () =>
+  sessionsSignature(props.data.sessions),
+);
+const agentTotals = computed(
+  () =>
+    new Map(
+      agentTime.time.value.totals
+        .filter((t) => taskIds.value.has(t.taskId))
+        .map((t) => [t.taskId, t]),
+    ),
+);
+const showAgents = computed(() => agentTotals.value.size > 0);
+/** Wiersze tabeli zadań: zadania z Twoim czasem, potem tylko z czasem agentów. */
+const taskTableRows = computed(() => {
+  const own = new Set(taskRows.value.map((r) => r.task.id));
+  const agentOnly = props.data.tasks
+    .filter((t) => !own.has(t.id) && agentTotals.value.has(t.id))
+    .map((task: Task) => ({
+      task,
+      project: task.details?.project?.trim() ?? "",
+      total: 0,
+    }))
+    .sort(
+      (a, b) =>
+        (agentTotals.value.get(b.task.id)?.agentMs ?? 0) -
+          (agentTotals.value.get(a.task.id)?.agentMs ?? 0) ||
+        a.task.id - b.task.id,
+    );
+  return [...taskRows.value, ...agentOnly];
+});
+const agentSum = computed(() =>
+  [...agentTotals.value.values()].reduce(
+    (sum, t) => ({
+      agent: sum.agent + t.agentMs,
+      parallel: sum.parallel + t.parallelMs,
+    }),
+    { agent: 0, parallel: 0 },
+  ),
+);
+const agentOf = (id: number) => agentTotals.value.get(id);
 const projectRows = computed(() => {
   const map = new Map<string, { project: string; total: number; tasks: number }>();
   for (const row of taskRows.value) {
@@ -258,7 +307,10 @@ const running = computed(
       </section>
       <section class="dashboard-card" aria-label="Według zadania">
         <h2>Według zadania</h2>
-        <table v-if="taskRows.length" class="estimate-table monthly-table">
+        <table
+          v-if="taskTableRows.length"
+          class="estimate-table monthly-table"
+        >
           <thead>
             <tr>
               <th>Zadanie</th>
@@ -266,15 +318,37 @@ const running = computed(
               <th>Projekt</th>
               <th>Czas</th>
               <th>Godziny</th>
+              <th
+                v-if="showAgents"
+                title="Czas pracy agentów AI nad zadaniem (poza celem i raportem TS)"
+              >
+                Agent
+              </th>
+              <th
+                v-if="showAgents"
+                title="Część czasu agentów nakładająca się na Twój pomiar tego zadania"
+              >
+                Równolegle
+              </th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in taskRows" :key="row.task.id">
+            <tr v-for="row in taskTableRows" :key="row.task.id">
               <td>{{ row.task.title }}</td>
               <td class="mono">{{ row.task.jiraKey ?? "" }}</td>
               <td>{{ row.project }}</td>
               <td class="mono">{{ hhmm(row.total) }}</td>
               <td class="mono">{{ decimalHours(row.total) }}</td>
+              <td v-if="showAgents" class="mono monthly-agent">
+                {{ agentOf(row.task.id) ? hhmm(agentOf(row.task.id)!.agentMs) : "" }}
+              </td>
+              <td v-if="showAgents" class="mono monthly-agent">
+                {{
+                  agentOf(row.task.id)
+                    ? hhmm(agentOf(row.task.id)!.parallelMs)
+                    : ""
+                }}
+              </td>
             </tr>
           </tbody>
           <tfoot>
@@ -284,10 +358,20 @@ const running = computed(
               <td></td>
               <td class="mono">{{ hhmm(total) }}</td>
               <td class="mono">{{ decimalHours(total) }}</td>
+              <td v-if="showAgents" class="mono monthly-agent">
+                {{ hhmm(agentSum.agent) }}
+              </td>
+              <td v-if="showAgents" class="mono monthly-agent">
+                {{ hhmm(agentSum.parallel) }}
+              </td>
             </tr>
           </tfoot>
         </table>
         <p v-else class="report-note">Brak zarejestrowanej pracy w tym miesiącu.</p>
+        <p v-if="showAgents" class="report-note">
+          Czas agentów AI jest osobną informacją: nie wlicza się do celu, raportu
+          TS ani eksportu.
+        </p>
       </section>
     </div>
 

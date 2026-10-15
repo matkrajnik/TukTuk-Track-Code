@@ -14,6 +14,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import TaskPlanning from "../TaskPlanning.vue";
 import ReorderHandle from "./ReorderHandle.vue";
+import AgentTaskTime from "./AgentTaskTime.vue";
 import {
   desktop,
   duration,
@@ -411,6 +412,7 @@ async function openJira(url: string) {
       <p v-if="running" class="hint">
         Zatrzymaj bieżący pomiar, aby edytować jego godziny.
       </p>
+      <AgentTaskTime :task="task" :sessions="sessions" :own="taskTime" />
       <TaskPlanning
         :task="task"
         :projects="projects"

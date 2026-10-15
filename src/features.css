@@ -985,23 +985,20 @@ html.widget-root body {
   font-size: var(--fs-sm);
   color: var(--muted);
 }
+/* Wiersze siatki i pozycje etykiet ustawia DayTimeline według widocznych torów. */
 .dtl-labels span {
   align-self: center;
 }
-.dtl-labels span:first-child {
-  grid-row: 2;
+/* Czas agentów (W1): kolor zadania, szary dla agenta bez zadania; tylko informacja. */
+.dtl-agent {
+  fill-opacity: 0.45;
+  cursor: default;
 }
-.dtl-labels span:last-child {
-  grid-row: 4;
-}
-.dtl-labels.meetings {
-  grid-template-rows: 22px 28px 10px 28px 10px 28px;
-}
-.dtl-labels.meetings span:nth-child(2) {
-  grid-row: 4;
-}
-.dtl-labels.meetings span:last-child {
-  grid-row: 6;
+.dtl-agent.unmatched,
+.dtl-agent-swatch {
+  fill: var(--muted);
+  background: var(--muted);
+  opacity: 0.6;
 }
 /* Spotkania z kalendarza: wstępne (tentative) kreskowane, całodniowe bledsze. */
 .dtl-meeting {
@@ -1802,4 +1799,11 @@ html.widget-root body {
   width: 100%;
   resize: vertical;
   font: inherit;
+}
+/* Czas agentów w rozwiniętym kafelku (W1). */
+.agent-task-time {
+  margin-top: 12px;
+}
+.agent-task-time .estimate-table {
+  max-width: 360px;
 }
