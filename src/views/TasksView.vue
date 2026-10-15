@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { Plus, Scissors, Search, Square } from "lucide-vue-next";
 import TaskCard from "../components/TaskCard.vue";
 import {
   change,
   duration,
   setPriority,
+  type NavigateRequest,
   type Session,
   type Snapshot,
   type Task,
@@ -22,6 +23,8 @@ const props = defineProps<{
   now: number;
   busy: boolean;
   loading: boolean;
+  /** Żądanie z powiadomienia (`navigate`); nowy obiekt = nowe żądanie. */
+  request?: NavigateRequest | null;
 }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -80,6 +83,8 @@ const visible = computed(() =>
           : t.details?.project === projectFilter.value)) &&
       (!todayOnly.value ||
         t.details?.plannedDay === todayKey.value ||
+        // Termin dziś lub po terminie (cel kliknięcia powiadomienia o terminach).
+        (!t.done && !!t.details?.dueDay && t.details.dueDay <= todayKey.value) ||
         props.data.sessions.some(
           (s) => s.taskId === t.id && inDay(s, todayKey.value, props.now) > 0,
         )) &&
@@ -126,6 +131,33 @@ const reorder = useReorder({
   updated: (data) => emit("updated", data),
   error: (message) => emit("error", message),
 });
+
+/**
+ * Kliknięcie powiadomienia: lista bez wyszukiwania i filtra projektu, „Do zrobienia”,
+ * opcjonalnie „Dzisiaj: plan i praca”, rozwinięte zadanie i przewinięcie do niego
+ * albo do wskazanej grupy.
+ */
+watch(
+  () => props.request,
+  async (request) => {
+    if (!request) return;
+    filter.value = "active";
+    query.value = "";
+    projectFilter.value = "";
+    todayOnly.value = request.filter === "today";
+    if (request.task != null) expanded.value.add(request.task);
+    await nextTick();
+    const target =
+      (request.task != null &&
+        document.querySelector(`[aria-controls="sessions-${request.task}"]`)) ||
+      (request.section &&
+        [...document.querySelectorAll<HTMLElement>("section.task-group")].find(
+          (s) => s.getAttribute("aria-label") === request.section,
+        ));
+    if (target) target.scrollIntoView?.({ block: "nearest" });
+  },
+  { immediate: true },
+);
 
 function toggle(id: number) {
   if (expanded.value.has(id)) expanded.value.delete(id);

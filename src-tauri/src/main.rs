@@ -260,6 +260,7 @@ fn main() {
             reminder::setup(app.handle());
             idle::setup(app.handle());
             agents::setup(app.handle());
+            notify::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
             // korzystają komendy. Wątki tray, widget, reminder, idle, agents, notify i jira
             // kończą się, gdy nie ma okna main (zamykanie aplikacji), więc
@@ -416,6 +417,7 @@ mod tests {
             "reminder::setup(",
             "idle::setup(",
             "agents::setup(",
+            "notify::setup(",
         ] {
             let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
             assert!(

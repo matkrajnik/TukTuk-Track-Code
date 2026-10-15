@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import {
   change,
@@ -27,12 +27,18 @@ import ReorderHandle from "./components/ReorderHandle.vue";
 import DayTimeline from "./components/DayTimeline.vue";
 import WeekBoard from "./components/WeekBoard.vue";
 import { useReorder } from "./composables/useReorder";
-const props = defineProps<{ data: Snapshot; now: number }>();
+const props = defineProps<{
+  data: Snapshot;
+  now: number;
+  /** Żądanie z powiadomienia: otwórz Zamknięcie dnia na dziś. */
+  dayClose?: boolean;
+}>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
   edit: [session: Session];
   split: [session: Session];
   report: [day: string];
+  dayCloseShown: [];
 }>();
 const day = ref(dayKey(props.now));
 const closing = ref(false);
@@ -43,6 +49,17 @@ const expanded = ref(0);
 /** Zakładka Tydzień: tablica (domyślnie) albo dotychczasowe podsumowanie. */
 const weekView = ref<"board" | "summary">("board");
 const settings = useSettings();
+watch(
+  () => props.dayClose,
+  (open) => {
+    if (!open) return;
+    day.value = dayKey(props.now);
+    weekly.value = false;
+    closing.value = true;
+    emit("dayCloseShown");
+  },
+  { immediate: true },
+);
 /** Klik w blok planu na osi: rozwinięcie planu zadania na liście planu dnia. */
 async function openPlan(taskId: number) {
   expanded.value = taskId;

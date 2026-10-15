@@ -19,6 +19,8 @@ import {
   change,
   read,
   desktop,
+  onNavigate,
+  type NavigateRequest,
   type Snapshot,
   type Task,
   type Session,
@@ -91,6 +93,37 @@ function openDelete(task: Task) {
   error.value = "";
   deleting.value = task;
 }
+/** Żądania z powiadomień Windows (`navigate`) dla Zadań i Zamknięcia dnia. */
+const tasksRequest = ref<NavigateRequest | null>(null);
+const journalDayClose = ref(false);
+const views: View[] = [
+  "tasks",
+  "reports",
+  "jira",
+  "dashboard",
+  "journal",
+  "library",
+];
+/**
+ * Kliknięcie treści powiadomienia lub „Podziel…”: Rust już pokazał okno, tu
+ * ustawiamy widok, filtr, rozwinięcie i edytor na zakładce Podziel.
+ * Niczego nie zapisuje i nie przełącza timera.
+ */
+async function navigate(request: NavigateRequest) {
+  const target = views.find((v) => v === request.view);
+  if (!target) return;
+  if (!busy.value) closeModal();
+  view.value = target;
+  if (target === "tasks") tasksRequest.value = { ...request };
+  if (target === "journal" && request.dayClose) journalDayClose.value = true;
+  if (request.split != null) {
+    await refresh();
+    const session =
+      data.value.sessions.find((s) => s.id === request.split) ??
+      data.value.sessions.find((s) => s.endedAt === null);
+    if (session && !modalOpen.value) openSplit(session);
+  }
+}
 async function refresh() {
   try {
     data.value = await read();
@@ -149,6 +182,11 @@ onMounted(async () => {
   tick = setInterval(() => {
     now.value = Date.now();
   }, 1000);
+  try {
+    unsubscribers.push(await onNavigate((request) => void navigate(request)));
+  } catch (e) {
+    error.value = String(e);
+  }
   if (desktop) {
     try {
       unsubscribers.push(
@@ -208,6 +246,7 @@ onUnmounted(() => {
           :now="now"
           :busy="busy"
           :loading="loading"
+          :request="tasksRequest"
           @updated="updated"
           @error="error = $event"
           @edit="openEdit"
@@ -233,6 +272,8 @@ onUnmounted(() => {
           v-else-if="view === 'journal'"
           :data="data"
           :now="now"
+          :day-close="journalDayClose"
+          @day-close-shown="journalDayClose = false"
           @updated="updated"
           @edit="openSession"
           @split="openSplit"

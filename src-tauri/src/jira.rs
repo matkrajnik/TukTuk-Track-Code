@@ -483,6 +483,25 @@ pub fn jira_start(app: tauri::AppHandle, key: String) -> Result<db::Snapshot, St
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+/// „Rozpocznij” z powiadomienia o nowym zgłoszeniu: ta sama ścieżka co widok Jira
+/// (`start_issue`), więc zadanie z kosza lub archiwum wraca, a poprzedni pomiar staje.
+pub fn start_task(
+    connection: &mut rusqlite::Connection,
+    task_id: i64,
+    now: i64,
+) -> Result<db::Snapshot, String> {
+    let (site, key, title): (String, String, String) = connection
+        .query_row(
+            "SELECT j.site, j.issue_key, t.title FROM jira_tasks j JOIN tasks t ON t.id=j.task_id
+             WHERE j.task_id=?1",
+            [task_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or("Nie znaleziono zadania powiązanego ze zgłoszeniem Jiry.")?;
+    start_issue(connection, &site, &key, &title, now)
+}
 fn start_issue(
     connection: &mut rusqlite::Connection,
     site: &str,
@@ -689,8 +708,59 @@ fn imported_message(rows: &[Assigned]) -> (String, String) {
     (title, lines.join("\n"))
 }
 
+/// Lokalne zadania zaimportowanych zgłoszeń, w kolejności `rows`.
+fn imported_task_ids(
+    db: &rusqlite::Connection,
+    site: &str,
+    rows: &[Assigned],
+) -> rusqlite::Result<Vec<i64>> {
+    rows.iter()
+        .map(|r| {
+            db.query_row(
+                "SELECT task_id FROM jira_tasks WHERE site=?1 AND issue_key=?2",
+                params![site, r.key],
+                |row| row.get(0),
+            )
+        })
+        .collect()
+}
+
+/// Powiadomienie z akcjami: kliknięcie otwiera Zadania przy nowych (nierozpoczętych)
+/// zadaniach, „Rozpocznij” tylko przy jednym zgłoszeniu, „Zaplanuj na dziś” dla wszystkich.
+fn imported_notification(rows: &[Assigned], ids: &[i64]) -> crate::notify::Message {
+    use crate::notify::{Action, Message, View, JIRA_START, PLAN_TODAY};
+    let (title, body) = imported_message(rows);
+    let mut actions = Vec::new();
+    if let [id] = ids {
+        actions.push(Action::new(JIRA_START, "Rozpocznij", id));
+    }
+    if !ids.is_empty() {
+        let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        actions.push(Action::new(PLAN_TODAY, "Zaplanuj na dziś", list));
+    }
+    Message {
+        key: format!(
+            "jira:{}",
+            rows.iter()
+                .map(|r| r.key.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        title,
+        body,
+        actions,
+        open: View {
+            section: Some("Nierozpoczęte"),
+            task: if ids.len() == 1 { Some(ids[0]) } else { None },
+            ..View::tasks()
+        },
+    }
+}
+
 /// Jedno sprawdzenie przypisań; `None`, gdy opcja wyłączona lub brak połączenia.
-fn watch_once(app: &tauri::AppHandle) -> Option<Result<Vec<Assigned>, String>> {
+/// Wynik: zaimportowane zgłoszenia i ich lokalne zadania.
+#[allow(clippy::type_complexity)]
+fn watch_once(app: &tauri::AppHandle) -> Option<Result<(Vec<Assigned>, Vec<i64>), String>> {
     if !crate::settings::current(app).jira_auto_import {
         return None;
     }
@@ -704,7 +774,7 @@ fn watch_once(app: &tauri::AppHandle) -> Option<Result<Vec<Assigned>, String>> {
     Some(fetched.and_then(|rows| {
         let current = config(app)?;
         if current.site != c.site || current.email != c.email {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), Vec::new()));
         }
         let watch = format!("{}|{}", c.site, c.email);
         let state = app.state::<Database>();
@@ -723,7 +793,8 @@ fn watch_once(app: &tauri::AppHandle) -> Option<Result<Vec<Assigned>, String>> {
             [watch],
         )
         .map_err(|e| e.to_string())?;
-        Ok(imported)
+        let ids = imported_task_ids(&db, &c.site, &imported).map_err(|e| e.to_string())?;
+        Ok((imported, ids))
     }))
 }
 
@@ -746,11 +817,10 @@ pub fn start(app: &tauri::AppHandle) {
                 None => last = None,
                 Some(result) => {
                     last = Some(now);
-                    if let Ok(imported) = result {
+                    if let Ok((imported, ids)) = result {
                         let _ = app.emit("data-changed", ());
                         if !imported.is_empty() {
-                            let (title, body) = imported_message(&imported);
-                            crate::notify::show(&app, &title, &body);
+                            crate::notify::show(&app, &imported_notification(&imported, &ids));
                         }
                     }
                 }
@@ -964,6 +1034,115 @@ mod tests {
         let (title, body) = imported_message(&rows);
         assert_eq!(title, "Nowe z Jiry: 5 zadań");
         assert!(body.contains("i jeszcze 2"));
+    }
+    #[test]
+    fn imported_notification_offers_start_only_for_single_issue() {
+        use crate::notify::{Action, View, JIRA_START, PLAN_TODAY};
+        let site = "https://a.atlassian.net";
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&connection).unwrap();
+        sync_assigned(&mut connection, site, &[], true, 100).unwrap();
+        let one =
+            sync_assigned(&mut connection, site, &[row("WMS-1", "", true)], false, 200).unwrap();
+        let ids = imported_task_ids(&connection, site, &one).unwrap();
+        let m = imported_notification(&one, &ids);
+        assert_eq!(m.title, "Nowe zadanie z Jiry");
+        assert_eq!(
+            m.actions,
+            [
+                Action::new(JIRA_START, "Rozpocznij", ids[0]),
+                Action::new(PLAN_TODAY, "Zaplanuj na dziś", ids[0]),
+            ]
+        );
+        assert_eq!(m.actions[0].argument(), format!("jira-start:{}", ids[0]));
+        assert_eq!(
+            m.open,
+            View {
+                section: Some("Nierozpoczęte"),
+                task: Some(ids[0]),
+                ..View::tasks()
+            }
+        );
+        let two = sync_assigned(
+            &mut connection,
+            site,
+            &[
+                row("WMS-1", "", true),
+                row("WMS-2", "", true),
+                row("WMS-3", "", true),
+            ],
+            false,
+            300,
+        )
+        .unwrap();
+        let ids = imported_task_ids(&connection, site, &two).unwrap();
+        assert_eq!(ids.len(), 2);
+        let m = imported_notification(&two, &ids);
+        assert_eq!(m.actions.len(), 1);
+        assert_eq!(
+            m.actions[0].argument(),
+            format!("plan-today:{},{}", ids[0], ids[1])
+        );
+        assert_eq!(m.open.task, None);
+        // „Zaplanuj na dziś” ustawia dzień planu obu zadań, na końcu dnia.
+        let out = crate::notify::perform(
+            &mut connection,
+            crate::notify::command(Some(&m.actions[0].argument()), &m.open),
+            "2026-10-15",
+            400,
+        )
+        .unwrap();
+        assert!(out.changed && out.navigate.is_none());
+        let s = db::snapshot(&connection).unwrap();
+        for id in &ids {
+            let task = s.tasks.iter().find(|t| t.id == *id).unwrap();
+            assert_eq!(task.details.planned_day, "2026-10-15");
+        }
+        assert!(s.sessions.is_empty(), "planowanie nie uruchamia pomiaru");
+    }
+    #[test]
+    fn notification_start_restores_trashed_issue_like_jira_view() {
+        use crate::notify::{command, perform, View};
+        let site = "https://a.atlassian.net";
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&connection).unwrap();
+        db::change(&mut connection, "add", None, Some("Lokalne".into()), 0).unwrap();
+        db::change(&mut connection, "start", Some(1), None, 50).unwrap();
+        sync_assigned(&mut connection, site, &[], true, 100).unwrap();
+        let rows =
+            sync_assigned(&mut connection, site, &[row("WMS-4", "", true)], false, 200).unwrap();
+        let id = imported_task_ids(&connection, site, &rows).unwrap()[0];
+        db::change(&mut connection, "delete", Some(id), None, 300).unwrap();
+        assert_eq!(db::snapshot(&connection).unwrap().trash.len(), 1);
+        let m = imported_notification(&rows, &[id]);
+        let out = perform(
+            &mut connection,
+            command(Some(&m.actions[0].argument()), &View::default()),
+            "2026-10-15",
+            400,
+        )
+        .unwrap();
+        assert!(out.changed);
+        assert_eq!(out.navigate, None);
+        let s = db::snapshot(&connection).unwrap();
+        assert!(s.trash.is_empty());
+        assert_eq!(s.tasks.len(), 2);
+        // Jeden aktywny pomiar: poprzedni zamknięty, nowy na zadaniu z Jiry.
+        let active: Vec<_> = s.sessions.iter().filter(|x| x.ended_at.is_none()).collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].task_id, id);
+        assert_eq!(
+            s.sessions.iter().find(|x| x.task_id == 1).unwrap().ended_at,
+            Some(400)
+        );
+        // Zadanie bez powiązania z Jirą: błąd, bez zmian.
+        assert!(perform(
+            &mut connection,
+            command(Some("jira-start:1"), &View::default()),
+            "2026-10-15",
+            500,
+        )
+        .is_err());
     }
     #[test]
     fn validates_cloud_address_and_issue_keys() {

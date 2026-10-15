@@ -616,6 +616,38 @@ export async function onWidgetStatus(
   return () => window.removeEventListener(widgetEvent, listener);
 }
 
+/**
+ * Ładunek zdarzenia `navigate` (`notify::View` w Rust): kliknięcie powiadomienia
+ * Windows lub przycisku „Podziel…”. Brak `view` = tylko główne okno.
+ */
+export interface NavigateRequest {
+  view?: string | null;
+  /** `today` = filtr „Dzisiaj: plan i praca”. */
+  filter?: string | null;
+  /** Zadanie do rozwinięcia na liście zadań. */
+  task?: number | null;
+  /** Przedział do otwarcia w edytorze na zakładce Podziel. */
+  split?: number | null;
+  /** Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”). */
+  section?: string | null;
+  /** Plan i historia → Zamknięcie dnia. */
+  dayClose?: boolean;
+}
+/** Nazwa zdarzenia okna, którym podgląd (i testy) symuluje `navigate` z backendu. */
+export const previewNavigateEvent = "todo-track-navigate";
+
+/** Nasłuch `navigate`: zdarzenie Tauri albo zdarzenie okna w podglądzie. */
+export async function onNavigate(
+  handler: (request: NavigateRequest) => void,
+): Promise<() => void> {
+  if (desktop)
+    return listen<NavigateRequest>("navigate", (e) => handler(e.payload));
+  const listener = (e: Event) =>
+    handler((e as CustomEvent<NavigateRequest>).detail ?? {});
+  window.addEventListener(previewNavigateEvent, listener);
+  return () => window.removeEventListener(previewNavigateEvent, listener);
+}
+
 /** `widget_open_main`: klik w nazwę zadania na widgecie. W podglądzie nic nie robi. */
 export async function openMainWindow(): Promise<void> {
   if (desktop) await invoke("widget_open_main");

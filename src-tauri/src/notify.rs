@@ -1,4 +1,12 @@
-//! Powiadomienia systemowe Windows wysyłane z Rust (tauri-plugin-notification).
+//! Powiadomienia systemowe Windows wysyłane z Rust.
+//!
+//! Na Windows toast idzie bezpośrednio przez `tauri-winrt-notification`, bo
+//! `tauri-plugin-notification` 2.5.0 na desktopie ignoruje akcje i nie przekazuje
+//! kliknięć (uchwyt z `notify_rust::Notification::show` jest porzucany). Kliknięcie
+//! treści lub przycisku trafia kanałem do wątku z `setup`, który wykonuje akcję na
+//! bazie (`perform`) i emituje `navigate` do głównego okna. Plugin zostaje dla innych
+//! systemów. Akcje działają, gdy aplikacja jest uruchomiona; kliknięcie starego toastu
+//! po restarcie tylko uruchamia aplikację (główne okno).
 //!
 //! Reguły (każda z osobnym wyłącznikiem w ustawieniach i kluczem w `notifications_sent`):
 //! - `due:<dzień>`: przy starcie i o 09:00 są nieukończone zadania z terminem dziś lub wcześniej;
@@ -12,9 +20,10 @@
 use crate::{settings::AppSettings, stats, tray, Database};
 use chrono::{Datelike, NaiveDate, NaiveTime, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
+use serde::Serialize;
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
-use tauri::Manager;
-use tauri_plugin_notification::NotificationExt;
+use tauri::{Emitter, Manager};
 
 /// Co ile wątek sprawdza reguły.
 const CHECK: Duration = Duration::from_secs(30);
@@ -23,12 +32,199 @@ pub const KEEP_MS: i64 = 7 * 24 * 3_600_000;
 /// Liczba tytułów wymienionych w powiadomieniu o terminach.
 const DUE_TITLES: usize = 3;
 
-/// Gotowe powiadomienie: klucz dedupe, tytuł i treść.
+/// Dokąd prowadzi kliknięcie: ładunek zdarzenia `navigate` dla głównego okna.
+/// `view: None` tylko pokazuje główne okno.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct View {
+    pub view: Option<&'static str>,
+    /// Filtr listy zadań: `today` = „Dzisiaj: plan i praca”.
+    pub filter: Option<&'static str>,
+    /// Zadanie do rozwinięcia na liście zadań.
+    pub task: Option<i64>,
+    /// Przedział do otwarcia w edytorze na zakładce Podziel.
+    pub split: Option<i64>,
+    /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć.
+    pub section: Option<&'static str>,
+    /// Plan i historia → Zamknięcie dnia (dzisiaj).
+    pub day_close: bool,
+}
+
+impl View {
+    pub fn tasks() -> Self {
+        View {
+            view: Some("tasks"),
+            ..View::default()
+        }
+    }
+    pub fn day_close() -> Self {
+        View {
+            view: Some("journal"),
+            day_close: true,
+            ..View::default()
+        }
+    }
+}
+
+/// Identyfikatory przycisków. Argument toastu to `id` albo `id:arg`.
+pub const STOP: &str = "stop";
+pub const SPLIT: &str = "split";
+pub const JIRA_START: &str = "jira-start";
+pub const PLAN_TODAY: &str = "plan-today";
+
+/// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Action {
+    pub id: &'static str,
+    pub label: String,
+    pub arg: String,
+}
+
+impl Action {
+    pub fn new(id: &'static str, label: &str, arg: impl ToString) -> Self {
+        Action {
+            id,
+            label: label.into(),
+            arg: arg.to_string(),
+        }
+    }
+    /// Tekst przekazywany przez Windows do `on_activated`.
+    pub fn argument(&self) -> String {
+        if self.arg.is_empty() {
+            self.id.to_owned()
+        } else {
+            format!("{}:{}", self.id, self.arg)
+        }
+    }
+}
+
+/// Gotowe powiadomienie: klucz dedupe, tytuł, treść, przyciski i cel kliknięcia treści.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Message {
     pub key: String,
     pub title: String,
     pub body: String,
+    pub actions: Vec<Action>,
+    pub open: View,
+}
+
+/// Co zrobić po aktywacji powiadomienia.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Command {
+    /// Zatrzymaj pomiar, jeśli wskazany przedział nadal trwa.
+    Stop(i64),
+    /// Edytor bieżącego przedziału na zakładce Podziel.
+    Split(i64),
+    /// Start zadania powiązanego ze zgłoszeniem Jiry (jak „Rozpocznij” w widoku Jira).
+    JiraStart(i64),
+    /// Zaplanuj zadania na dziś.
+    PlanToday(Vec<i64>),
+    /// Pokaż główne okno z widokiem.
+    Open(View),
+}
+
+/// Argument z Windows na polecenie. Kliknięcie treści (bez argumentu) otwiera `open`;
+/// nieznany lub uszkodzony argument (np. stary toast po aktualizacji) tylko pokazuje
+/// główne okno, bez zmian w danych.
+pub fn command(argument: Option<&str>, open: &View) -> Command {
+    let Some(argument) = argument.filter(|a| !a.is_empty()) else {
+        return Command::Open(open.clone());
+    };
+    let (id, arg) = argument.split_once(':').unwrap_or((argument, ""));
+    let number = arg.parse::<i64>().ok().filter(|n| *n > 0);
+    let parsed = match id {
+        STOP => number.map(Command::Stop),
+        SPLIT => number.map(Command::Split),
+        JIRA_START => number.map(Command::JiraStart),
+        PLAN_TODAY => arg
+            .split(',')
+            .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
+            .collect::<Option<Vec<i64>>>()
+            .filter(|ids| !ids.is_empty())
+            .map(Command::PlanToday),
+        _ => None,
+    };
+    parsed.unwrap_or_else(|| Command::Open(View::default()))
+}
+
+/// Skutek polecenia: czy dane się zmieniły i dokąd nawigować (wtedy pokazujemy okno).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Outcome {
+    pub changed: bool,
+    pub navigate: Option<View>,
+}
+
+/// Wykonuje polecenie na bazie. `today` to lokalny dzień `YYYY-MM-DD`. Timer zmienia
+/// się tylko po jawnym kliknięciu „Zatrzymaj” albo „Rozpocznij”.
+pub fn perform(
+    db: &mut Connection,
+    command: Command,
+    today: &str,
+    now: i64,
+) -> Result<Outcome, String> {
+    let changed = |changed| Outcome {
+        changed,
+        navigate: None,
+    };
+    match command {
+        Command::Stop(session) => {
+            // Stary toast nie zatrzymuje pomiaru, który zaczął się później.
+            let running = active(db).map_err(|e| e.to_string())?;
+            if running.is_some_and(|(id, ..)| id == session) {
+                crate::db::stop(db, now).map_err(|e| e.to_string())?;
+                return Ok(changed(true));
+            }
+            Ok(changed(false))
+        }
+        Command::Split(session) => {
+            // Po wcześniejszym podziale trwa już nowy wiersz; dzielimy bieżący pomiar.
+            let target: Option<(i64, i64)> = match active(db).map_err(|e| e.to_string())? {
+                Some((id, task, ..)) => Some((id, task)),
+                None => db
+                    .query_row(
+                        "SELECT id, task_id FROM sessions WHERE id=?1",
+                        [session],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?,
+            };
+            Ok(Outcome {
+                changed: false,
+                navigate: Some(View {
+                    task: target.map(|(_, task)| task),
+                    split: target.map(|(id, _)| id),
+                    ..View::tasks()
+                }),
+            })
+        }
+        Command::JiraStart(task) => {
+            crate::jira::start_task(db, task, now)?;
+            Ok(changed(true))
+        }
+        Command::PlanToday(ids) => {
+            let mut any = false;
+            for id in ids {
+                let order: i64 = db
+                    .query_row(
+                        "SELECT COALESCE(MAX(json_extract(json,'$.order')),-1)+1 FROM task_details
+                         WHERE json_extract(json,'$.plannedDay')=?1",
+                        [today],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+                // Zadanie usunięte w międzyczasie pomijamy.
+                if crate::planner::plan_task(db, id, today, order.clamp(0, 1_000_000)).is_ok() {
+                    any = true;
+                }
+            }
+            Ok(changed(any))
+        }
+        Command::Open(view) => Ok(Outcome {
+            changed: false,
+            navigate: Some(view),
+        }),
+    }
 }
 
 fn due_hour() -> NaiveTime {
@@ -81,13 +277,13 @@ fn claim(db: &Connection, key: &str, now: i64) -> rusqlite::Result<bool> {
     )? == 1)
 }
 
-/// Aktywny pomiar: id sesji, tytuł zadania, początek.
-fn active(db: &Connection) -> rusqlite::Result<Option<(i64, String, i64)>> {
+/// Aktywny pomiar: id sesji, id zadania, tytuł zadania, początek.
+fn active(db: &Connection) -> rusqlite::Result<Option<(i64, i64, String, i64)>> {
     db.query_row(
-        "SELECT s.id, t.title, s.started_at FROM sessions s JOIN tasks t ON t.id=s.task_id
+        "SELECT s.id, t.id, t.title, s.started_at FROM sessions s JOIN tasks t ON t.id=s.task_id
          WHERE s.ended_at IS NULL ORDER BY s.started_at DESC LIMIT 1",
         [],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
     )
     .optional()
 }
@@ -121,6 +317,11 @@ pub fn due_message(day: NaiveDate, titles: &[String]) -> Message {
         key: format!("due:{day}"),
         title: format!("Termin dziś lub po terminie: {}", tasks_word(titles.len())),
         body: lines.join("\n"),
+        actions: Vec::new(),
+        open: View {
+            filter: Some("today"),
+            ..View::tasks()
+        },
     }
 }
 
@@ -159,7 +360,7 @@ impl NotifyClock {
         }
 
         // Długi przedział: jedna wiadomość na sesję.
-        if let Some((id, title, started)) = &running {
+        if let Some((id, task, title, started)) = &running {
             let limit = i64::from(s.notify_long_minutes) * 60_000;
             let elapsed = now - started;
             if limit > 0 && elapsed >= limit && claim(db, &format!("long:{id}"), now)? {
@@ -167,6 +368,14 @@ impl NotifyClock {
                     key: format!("long:{id}"),
                     title: "Długi pomiar bez Stop".into(),
                     body: format!("{} · trwa już {}", short(title), hm(elapsed)),
+                    actions: vec![
+                        Action::new(STOP, "Zatrzymaj", id),
+                        Action::new(SPLIT, "Podziel…", id),
+                    ],
+                    open: View {
+                        task: Some(*task),
+                        ..View::tasks()
+                    },
                 });
             }
         }
@@ -175,13 +384,16 @@ impl NotifyClock {
         if let Ok(evening) = NaiveTime::parse_from_str(&s.notify_evening, "%H:%M") {
             if time >= evening && self.evening_checked != Some(today) {
                 self.evening_checked = Some(today);
-                if let (true, Some((_, title, started))) = (s.notify_evening_enabled, &running) {
+                if let (true, Some((id, _, title, started))) = (s.notify_evening_enabled, &running)
+                {
                     let key = format!("evening:{today}");
                     if claim(db, &key, now)? {
                         out.push(Message {
                             key,
                             title: "Pomiar nadal trwa".into(),
                             body: format!("{} · {}", short(title), tray::hms(now - started)),
+                            actions: vec![Action::new(STOP, "Zatrzymaj teraz", id)],
+                            open: View::day_close(),
                         });
                     }
                 }
@@ -199,6 +411,8 @@ impl NotifyClock {
                     key,
                     title: "Cel dnia osiągnięty".into(),
                     body: format!("Dzisiaj {} / {}", hm(total), hm(target)),
+                    actions: Vec::new(),
+                    open: View::day_close(),
                 });
             }
         }
@@ -210,7 +424,7 @@ impl NotifyClock {
 /// wielodniowy pomiar nie dostał drugiego powiadomienia o długim przedziale.
 pub fn cleanup(db: &Connection, now: i64) -> rusqlite::Result<usize> {
     let keep = active(db)?
-        .map(|(id, _, _)| format!("long:{id}"))
+        .map(|(id, ..)| format!("long:{id}"))
         .unwrap_or_default();
     db.execute(
         "DELETE FROM notifications_sent WHERE COALESCE(at, 0) < ?1 AND key <> ?2",
@@ -218,9 +432,108 @@ pub fn cleanup(db: &Connection, now: i64) -> rusqlite::Result<usize> {
     )
 }
 
-/// Wysyła powiadomienie Windows. Błąd (np. brak AUMID w `tauri dev`) jest pomijany.
-pub fn show(app: &tauri::AppHandle, title: &str, body: &str) {
-    let _ = app.notification().builder().title(title).body(body).show();
+/// Kliknięcie toastu: argument przycisku (`None` = treść) i cel kliknięcia treści.
+type Activation = (Option<String>, View);
+
+/// Nadawca kanału aktywacji; odbiorca żyje w wątku z `setup`.
+pub struct Activations(Mutex<mpsc::Sender<Activation>>);
+
+/// Rejestruje kanał aktywacji i wątek wykonujący akcje z powiadomień. Wołać przed
+/// `create_windows` (manage). Wątek czeka na kanale, nie zależy od okna `main`.
+pub fn setup(app: &tauri::AppHandle) {
+    let (tx, rx) = mpsc::channel::<Activation>();
+    app.manage(Activations(Mutex::new(tx)));
+    let app = app.clone();
+    std::thread::spawn(move || {
+        while let Ok((argument, open)) = rx.recv() {
+            activate(&app, command(argument.as_deref(), &open));
+        }
+    });
+}
+
+/// Wykonuje polecenie z powiadomienia na `AppHandle`: zmiana danych → `data-changed`,
+/// widok → główne okno na wierzchu i `navigate`, błąd → okno z komunikatem.
+fn activate(app: &tauri::AppHandle, command: Command) {
+    let result = app
+        .state::<Database>()
+        .0
+        .lock()
+        .map_err(|e| e.to_string())
+        .and_then(|mut db| {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            perform(&mut db, command, &today, crate::db::now())
+        });
+    match result {
+        Ok(outcome) => {
+            if outcome.changed {
+                crate::reminder::reset(app);
+                let _ = app.emit("data-changed", ());
+            }
+            if let Some(view) = outcome.navigate {
+                crate::show(app);
+                let _ = app.emit_to("main", "navigate", view);
+            }
+        }
+        Err(e) => {
+            crate::show(app);
+            let _ = app.emit("storage-error", e);
+        }
+    }
+}
+
+/// AUMID jak w tauri-plugin-notification 2.5.0: identyfikator aplikacji dla
+/// zainstalowanego exe, AUMID PowerShella dla kompilacji z `target\debug|release`.
+#[cfg(windows)]
+fn app_id(app: &tauri::AppHandle) -> String {
+    let dev = tauri::utils::platform::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.display().to_string()))
+        .is_some_and(|dir| dir.ends_with(r"\target\debug") || dir.ends_with(r"\target\release"));
+    if dev {
+        tauri_winrt_notification::Toast::POWERSHELL_APP_ID.to_owned()
+    } else {
+        app.config().identifier.clone()
+    }
+}
+
+/// Wysyła toast Windows z przyciskami. Błąd (np. brak AUMID) jest pomijany.
+#[cfg(windows)]
+pub fn show(app: &tauri::AppHandle, message: &Message) {
+    let sender = app
+        .try_state::<Activations>()
+        .and_then(|s| s.0.lock().ok().map(|tx| tx.clone()));
+    let app_id = app_id(app);
+    let message = message.clone();
+    // Jak w pluginie: wysyłka poza wątkiem wywołującym (np. obsługą skrótu globalnego).
+    std::thread::spawn(move || {
+        let mut toast = tauri_winrt_notification::Toast::new(&app_id)
+            .title(&message.title)
+            .text1(&message.body)
+            .sound(None);
+        for action in &message.actions {
+            toast = toast.add_button(&action.label, &action.argument());
+        }
+        if let Some(tx) = sender {
+            let open = message.open.clone();
+            toast = toast.on_activated(move |argument| {
+                let _ = tx.send((argument, open.clone()));
+                Ok(())
+            });
+        }
+        let _ = toast.show();
+    });
+}
+
+/// Poza Windows zostaje plugin (bez przycisków i kliknięć).
+#[cfg(not(windows))]
+pub fn show(app: &tauri::AppHandle, message: &Message) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title(&message.title)
+        .body(&message.body)
+        .show();
 }
 
 /// Potwierdzenie Start/Stop ze skrótu globalnego, gdy nie widać go w widgecie
@@ -237,7 +550,16 @@ pub fn toggle_feedback(app: &tauri::AppHandle, text: &str) {
             .and_then(|w| w.is_focused().ok())
             .unwrap_or(false);
     if !visible(crate::widget::LABEL) && !main_front {
-        show(app, "Todo Track", text);
+        show(
+            app,
+            &Message {
+                key: String::new(),
+                title: "Todo Track".into(),
+                body: text.into(),
+                actions: Vec::new(),
+                open: View::default(),
+            },
+        );
     }
 }
 
@@ -263,7 +585,7 @@ pub fn start(app: &tauri::AppHandle) {
                 Err(_) => Vec::new(),
             };
             for m in messages {
-                show(&app, &m.title, &m.body);
+                show(&app, &m);
             }
             std::thread::sleep(CHECK);
         }
@@ -669,5 +991,182 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cleanup(&db, at("2026-10-21 09:00")).unwrap(), 0);
+    }
+
+    #[test]
+    fn rules_map_to_messages_with_actions_and_targets() {
+        let db = setup();
+        let s = AppSettings {
+            notify_target: true,
+            target_day_minutes: 60,
+            ..AppSettings::default()
+        };
+        details(&db, 1, json!({"dueDay": "2026-10-14"}));
+        let id = session(&db, 2, at("2026-10-14 08:00"), None);
+        let m = NotifyClock::default()
+            .tick(&db, &s, &Warsaw, at("2026-10-14 18:00"))
+            .unwrap();
+        assert_eq!(m.len(), 4);
+        // Termin: Zadania z filtrem „Dzisiaj”, bez przycisków.
+        assert!(m[0].actions.is_empty());
+        assert_eq!(
+            m[0].open,
+            View {
+                filter: Some("today"),
+                ..View::tasks()
+            }
+        );
+        // Długi pomiar: rozwinięte bieżące zadanie, „Zatrzymaj” i „Podziel…”.
+        assert_eq!(
+            m[1].actions,
+            [
+                Action::new(STOP, "Zatrzymaj", id),
+                Action::new(SPLIT, "Podziel…", id)
+            ]
+        );
+        assert_eq!(
+            m[1].actions
+                .iter()
+                .map(Action::argument)
+                .collect::<Vec<_>>(),
+            [format!("stop:{id}"), format!("split:{id}")]
+        );
+        assert_eq!(
+            m[1].open,
+            View {
+                task: Some(2),
+                ..View::tasks()
+            }
+        );
+        // Wieczór: Zamknięcie dnia i „Zatrzymaj teraz”.
+        assert_eq!(m[2].actions, [Action::new(STOP, "Zatrzymaj teraz", id)]);
+        assert_eq!(m[2].open, View::day_close());
+        // Cel: Zamknięcie dnia, bez przycisków.
+        assert!(m[3].actions.is_empty());
+        assert_eq!(m[3].open, View::day_close());
+        // Ładunek zdarzenia `navigate` dla frontendu.
+        assert_eq!(
+            serde_json::to_value(&m[1].open).unwrap(),
+            json!({"view": "tasks", "filter": null, "task": 2, "split": null,
+                   "section": null, "dayClose": false})
+        );
+        assert_eq!(
+            serde_json::to_value(View::day_close()).unwrap()["dayClose"],
+            json!(true)
+        );
+    }
+
+    #[test]
+    fn unknown_action_only_shows_main_window() {
+        let mut db = setup();
+        let id = session(&db, 1, at("2026-10-14 08:00"), None);
+        let open = View {
+            task: Some(1),
+            ..View::tasks()
+        };
+        // Kliknięcie treści: cel z powiadomienia.
+        assert_eq!(command(None, &open), Command::Open(open.clone()));
+        assert_eq!(command(Some(""), &open), Command::Open(open.clone()));
+        for bad in [
+            "bogus",
+            "bogus:1",
+            "stop",
+            "stop:abc",
+            "stop:-1",
+            "split:",
+            "plan-today:1,x",
+            "jira-start:0",
+        ] {
+            assert_eq!(
+                command(Some(bad), &open),
+                Command::Open(View::default()),
+                "{bad}"
+            );
+        }
+        let before = db::snapshot(&db).unwrap();
+        let out = perform(
+            &mut db,
+            command(Some("bogus:1"), &open),
+            "2026-10-14",
+            at("2026-10-14 09:00"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: false,
+                navigate: Some(View::default())
+            }
+        );
+        let after = db::snapshot(&db).unwrap();
+        assert_eq!(after.sessions.len(), before.sessions.len());
+        assert!(after.sessions.iter().any(|s| s.ended_at.is_none()));
+        // „Zatrzymaj” ze starego toastu nie zatrzymuje późniejszego pomiaru.
+        let out = perform(
+            &mut db,
+            Command::Stop(id + 100),
+            "2026-10-14",
+            at("2026-10-14 09:00"),
+        )
+        .unwrap();
+        assert!(!out.changed);
+        assert!(active(&db).unwrap().is_some());
+        let out = perform(
+            &mut db,
+            command(Some(&format!("stop:{id}")), &open),
+            "2026-10-14",
+            at("2026-10-14 09:00"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: true,
+                navigate: None
+            }
+        );
+        assert!(active(&db).unwrap().is_none());
+    }
+
+    #[test]
+    fn split_action_opens_editor_on_current_measurement() {
+        let mut db = setup();
+        let first = session(&db, 1, at("2026-10-14 08:00"), None);
+        db::split_session(
+            &mut db,
+            first,
+            at("2026-10-14 09:00"),
+            None,
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        let (current, ..) = active(&db).unwrap().unwrap();
+        assert_ne!(current, first);
+        let out = perform(
+            &mut db,
+            command(Some(&format!("split:{first}")), &View::default()),
+            "2026-10-14",
+            at("2026-10-14 12:00"),
+        )
+        .unwrap();
+        assert!(!out.changed);
+        assert_eq!(
+            out.navigate,
+            Some(View {
+                task: Some(1),
+                split: Some(current),
+                ..View::tasks()
+            })
+        );
+        // Po Stop: edytor zakończonego przedziału z toastu.
+        db::stop(&db, at("2026-10-14 12:30")).unwrap();
+        let out = perform(
+            &mut db,
+            Command::Split(first),
+            "2026-10-14",
+            at("2026-10-14 13:00"),
+        )
+        .unwrap();
+        assert_eq!(out.navigate.unwrap().split, Some(first));
     }
 }

@@ -26,3 +26,7 @@ chrono = "0.4"
 [dev-dependencies]
 chrono-tz = "=0.10.4"
 
+[target.'cfg(windows)'.dependencies]
+# Ta sama wersja, której używa notify-rust w tauri-plugin-notification 2.5.0;
+# bezpośrednio, bo plugin nie przekazuje kliknięć ani przycisków na Windows.
+tauri-winrt-notification = "=0.8.1"
