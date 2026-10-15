@@ -132,6 +132,70 @@ test("waiting group sits under started tasks with age and Odblokuj", async ({
   expect(fresh.details.waitingSince).toBe(Date.parse("2026-10-15T12:00:00+02:00"));
 });
 
+test("an edited plan form does not undo Nie teraz on save", async ({ page }) => {
+  const data = seed();
+  data.tasks.find((t) => t.id === ids.analysis)!.jiraStatus = "Code review";
+  await openPreview(page, { data });
+  const proposal = page.getByRole("group", {
+    name: "Propozycja z Jiry: Analiza importu",
+  });
+  await expect(proposal).toContainText("Jira: Code review");
+  // Rozwinięty kafelek z niezapisaną zmianą w formularzu planu.
+  await page
+    .getByRole("button", { name: "Przedziały: Analiza importu", exact: true })
+    .click();
+  await page.getByLabel("Projekt / obszar").fill("Sklep");
+  await proposal.getByRole("button", { name: "Nie teraz", exact: true }).click();
+  await expect(proposal).toHaveCount(0);
+  await expect(page.getByLabel("Projekt / obszar")).toHaveValue("Sklep");
+  await page.getByRole("button", { name: "Zapisz plan i notatki" }).click();
+  await expect(page.getByText("Zapisano plan i notatki.")).toBeVisible();
+  // Zapis szkicu nie przywraca propozycji odrzuconej z kafelka.
+  await expect(proposal).toHaveCount(0);
+  const snap = await stored(page);
+  const details = snap.tasks.find((t: any) => t.id === ids.analysis).details;
+  expect(details.waitingDismissed).toBe("Code review");
+  expect(details.project).toBe("Sklep");
+});
+
+test("a stale remind is ignored and a new block starts without it", async ({
+  page,
+}) => {
+  await openPreview(page);
+  const remind = (id: number) =>
+    page.evaluate(async (taskId) => {
+      const store = await import("/src/store.ts");
+      await store.setWaiting(taskId, { action: "remind", text: "2026-10-16" });
+    }, id);
+  await remind(ids.review);
+  let saved = await stored(page);
+  expect(
+    saved.tasks.find((t: any) => t.id === ids.review).details.waitingRemindDay ??
+      "",
+  ).toBe("");
+  // Nowa blokada ze szkicu z dawnym dniem przypomnienia: dzień znika.
+  await page.evaluate(async (taskId) => {
+    const store = await import("/src/store.ts");
+    const snap = await store.read();
+    const task = snap.tasks.find((t) => t.id === taskId)!;
+    await store.saveDetails(taskId, {
+      ...store.detailsOf(task),
+      waiting: "klient",
+      waitingRemindDay: "2026-10-16",
+    });
+  }, ids.review);
+  saved = await stored(page);
+  expect(
+    saved.tasks.find((t: any) => t.id === ids.review).details.waitingRemindDay,
+  ).toBe("");
+  // Trwająca blokada przyjmuje przypomnienie.
+  await remind(ids.review);
+  saved = await stored(page);
+  expect(
+    saved.tasks.find((t: any) => t.id === ids.review).details.waitingRemindDay,
+  ).toBe("2026-10-16");
+});
+
 test("Jira status proposes waiting and unblocking, nothing changes by itself", async ({
   page,
 }) => {

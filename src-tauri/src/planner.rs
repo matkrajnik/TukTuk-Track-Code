@@ -219,6 +219,11 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
     if !details.waiting.is_empty() && details.waiting_status.is_empty() {
         details.waiting_status = jira_status(&tx, id).map_err(|e| e.to_string())?;
     }
+    // Nowa blokada zaczyna bez przypomnienia: dzień z dawnego toastu
+    // („Przypomnij jutro”) nie może ominąć progu `waitingNotifyDays`.
+    if !details.waiting.is_empty() && !was_waiting {
+        details.waiting_remind_day.clear();
+    }
     if details.waiting.is_empty() && was_waiting {
         details.waiting_dismissed = jira_status(&tx, id).map_err(|e| e.to_string())?;
     }
@@ -441,7 +446,12 @@ pub fn set_waiting(
             if !date_valid(text) {
                 return Err("Niepoprawny dzień przypomnienia.".into());
             }
-            update("'$.waitingRemindDay',?2", &[&id, &text])?;
+            // Stary toast po odblokowaniu zadania: bez blokady nie ma czego przypominać.
+            tx.execute(
+                "UPDATE task_details SET json=json_set(json,'$.waitingRemindDay',?2) WHERE task_id=?1 AND COALESCE(json_extract(json,'$.waiting'),'')<>''",
+                params![id, text],
+            )
+            .map_err(|e| e.to_string())?;
         }
         _ => return Err("Nieznana zmiana blokady.".into()),
     }
@@ -891,6 +901,45 @@ mod tests {
         assert_eq!((one.waiting.as_str(), one.waiting_since), ("", 0));
         assert_eq!(one.waiting_remind_day, "");
         assert_eq!(one.waiting_dismissed, "Review");
+    }
+
+    #[test]
+    fn stale_remind_does_not_reach_a_new_block() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("A".into()), 0).unwrap();
+        let change = |action: &str, text: &str| WaitingChange {
+            action: action.into(),
+            text: text.into(),
+        };
+        // „Przypomnij jutro” ze starego toastu po odblokowaniu nic nie zapisuje.
+        set_waiting(&mut db, 1, &change("remind", "2026-10-16"), 1_000).unwrap();
+        assert_eq!(details_of(&db, 1).waiting_remind_day, "");
+        // Nowa blokada z formularza nie przejmuje dnia przypomnienia ze szkicu.
+        save(
+            &mut db,
+            1,
+            Details {
+                waiting: "Klient".into(),
+                waiting_remind_day: "2026-10-16".into(),
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        let blocked = details_of(&db, 1);
+        assert_eq!(blocked.waiting_remind_day, "");
+        // Trwająca blokada zachowuje przypomnienie przy zapisie formularza.
+        set_waiting(&mut db, 1, &change("remind", "2026-10-17"), 2_000).unwrap();
+        save(
+            &mut db,
+            1,
+            Details {
+                waiting_remind_day: "2026-10-17".into(),
+                ..blocked
+            },
+        )
+        .unwrap();
+        assert_eq!(details_of(&db, 1).waiting_remind_day, "2026-10-17");
     }
     fn link_jira_status(db: &Connection, task: i64, status: &str) {
         db.execute(

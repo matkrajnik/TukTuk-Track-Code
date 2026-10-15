@@ -717,6 +717,8 @@ export async function saveDetails(
     saved.waitingRemindDay = "";
     if (wasWaiting) saved.waitingDismissed = task.jiraStatus ?? "";
   } else {
+    // Nowa blokada zaczyna bez przypomnienia (jak planner::save).
+    if (!wasWaiting) saved.waitingRemindDay = "";
     if (!saved.waitingSince) saved.waitingSince = Date.now();
     if (!saved.waitingStatus) saved.waitingStatus = task.jiraStatus ?? "";
   }
@@ -781,7 +783,8 @@ export async function setWaiting(
   else if (change.action === "remind") {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text))
       throw new Error("Niepoprawny dzień przypomnienia.");
-    d.waitingRemindDay = text;
+    // Stary toast po odblokowaniu: bez blokady nic nie zapisujemy.
+    if (d.waiting) d.waitingRemindDay = text;
   } else throw new Error("Nieznana zmiana blokady.");
   task.details = d;
   localStorage.setItem(key, JSON.stringify(data));

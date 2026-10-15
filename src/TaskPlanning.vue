@@ -87,6 +87,28 @@ watch(
     draft.value.plannedDay = value ?? "";
   },
 );
+// Pola blokady zmienia też set_waiting („Odblokuj”, propozycje z Jiry,
+// „Przypomnij jutro”); zapis starszego szkicu nie może ich cofnąć.
+watch(
+  () => {
+    const d = props.task.details;
+    return JSON.stringify([
+      d?.waiting ?? "",
+      d?.waitingSince ?? 0,
+      d?.waitingStatus ?? "",
+      d?.waitingDismissed ?? "",
+      d?.waitingRemindDay ?? "",
+    ]);
+  },
+  () => {
+    const d = detailsOf(props.task);
+    draft.value.waiting = d.waiting;
+    draft.value.waitingSince = d.waitingSince;
+    draft.value.waitingStatus = d.waitingStatus;
+    draft.value.waitingDismissed = d.waitingDismissed;
+    draft.value.waitingRemindDay = d.waitingRemindDay;
+  },
+);
 watch(
   () => props.task.details,
   () => {
