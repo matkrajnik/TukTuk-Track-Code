@@ -205,6 +205,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo fmt --manifest-path src-tauri/Cargo.toml --check
 ```
 
+Wszystkie cztery kroki naraz (to samo co CI, bez buildu Tauri): `npm run check`. Skrypt `scripts/check.mjs` zatrzymuje się na pierwszym błędzie i sam dodaje `%USERPROFILE%\.cargo\bin` do PATH, gdy `cargo` nie jest w PATH.
+
+Nowe testy korzystają ze wspólnych danych `tests/fixtures/seed.ts` (tydzień 12–18.10.2026, „dziś” czwartek 15.10 12:00: projekty, szacunki, notatki, zadanie z Jiry, cykl, archiwum i kosz). Funkcje wyłączone w podglądzie (baner bezczynności, przywracanie kopii, obserwacja nowych zgłoszeń z Jiry) testuje się przez zastępcze IPC z `tests/fixtures/tauri.ts`, które odwzorowuje reguły `idle::Clock::observe` i `jira::sync_assigned`; same reguły sprawdzają testy Rust.
+
 `npm test` zawsze uruchamia własny serwer Vite na porcie 1430 (nie używa serwera z `npm run dev` na 1420). Przy kilku równoległych przebiegach ustaw inny port przez zmienną `PLAYWRIGHT_PORT`.
 
 Stan z 0.2.0 (historyczny): 14 testów Playwright sprawdza zadania, priorytety i planowanie, notatki, ręczny czas, motywy, przedziały, raporty i TS, zmianę czasu, szerokość 760 px oraz UI Jiry, własny pasek i akcje przypomnienia. Testy UI Jiry używają zastąpionego interfejsu IPC, bez prawdziwego konta. 11 testów Rust sprawdza SQLite, edycję, nowe pola i ręczny czas, kopię bazy WAL, import/wznawianie z Jiry bez duplikatów, stronicowanie HTTP na lokalnym serwerze testowym, walidację adresów oraz próg 300 sekund, reset i odroczenie przypomnienia.
