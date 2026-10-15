@@ -3,10 +3,10 @@ export const meta = {
   description: 'Realizuje PLAN_1.7.md zadanie po zadaniu: implementacja, weryfikacja testami, przegląd, poprawki, commit; jedno wydanie 1.7.0 na końcu',
   whenToUse: 'Pełna delegacja prac nad Todo Track 1.7 według PLAN_1.7.md (K1–W4, R17). args: { from?: "K1", only?: ["P1"], until?: "W4", maxFixRounds?: 3 }',
   phases: [
-    { title: 'Etap 1: Kalendarz', detail: 'logowanie Microsoft, spotkania, pojemność' },
+    { title: 'Etap 1: Kalendarz', detail: 'logowanie Microsoft, spotkania, pojemność, zakładka Ustawienia' },
     { title: 'Etap 2: Planowanie', detail: 'poprawka szacunków, Rozłóż, poranny przegląd, cykle, Czekam na' },
     { title: 'Etap 3: Wgląd', detail: 'czas agentów, rozproszenie, przegląd tygodnia, okna, rozszerzenie przeglądarki' },
-    { title: 'Etap 4: Jira', detail: 'pytanie o przesunięcie zgłoszenia do In Progress' },
+    { title: 'Etap 4: Jira', detail: 'przesunięcie zgłoszenia przy starcie, tablica Jiry i akcje' },
     { title: 'Wydanie 1.7.0', detail: 'wersja, README, NSIS, tag' },
   ],
 }
@@ -30,6 +30,13 @@ const TASKS = [
     section: 'Etap 1 — K2',
     scope: 'Wspólna funkcja pojemności dnia (cel minus nienakładające się spotkania busy/oof/workingElsewhere/tentative, całodniowe oof = wolne) w TS i w Rust tam, gdzie backend liczy cel (tray, powiadomienie o celu). Tor „Spotkania” na osi dnia, bloki planu omijają spotkania (przesunięcie lub podział). Tablica tygodnia: pojemność pomniejszona o spotkania, osobny kolor w pasku i podpowiedź. Zadania → Dzisiaj: nadchodzące spotkania. Zamknięcie dnia: sekcja Spotkania z „Dodaj jako czas” otwierającym ręczne dodanie czasu z godzinami spotkania (ostrzeżenie przy nakładaniu, nic nie dodaje się samo).',
     done: 'Testy pojemności (nakładanie, przez północ, całodniowe oof, tentative). Playwright: tor spotkań, pojemność na tablicy, „Dodaj jako czas”. Zrzuty wzorcowe zaktualizowane świadomie i wymienione w deviations.',
+  },
+
+  {
+    id: 'S1', phase: 'Etap 1: Kalendarz', title: 'Zakładka „Ustawienia”',
+    section: 'Etap 1 — S1',
+    scope: 'Nowa pozycja „Ustawienia” w nawigacji głównej (ostatnia, koło zębate) i skrót Ctrl+,; podzakładka Ustawienia znika z „Historia i kopie” (kopie SQLite zostają tam). Lista sekcji po lewej (przy 760 px rozwijana nad treścią), zapamiętana ostatnia sekcja, pole „Szukaj ustawienia”. Sekcje: Czas pracy, Kalendarz, Jira, Powiadomienia, Skupienie, Szablony, Okna, Skróty, Uruchamianie. Wszystkie dotychczasowe wejścia do ustawień (linki, powiadomienia, navigate, puste stany) prowadzą do nowej zakładki na właściwej sekcji (navigate z polem section). Logika zapisu i etykiety aria bez zmian.',
+    done: 'e2e: zakładka, Ctrl+,, sekcje i wyszukiwanie, link z innego widoku na właściwą sekcję, zapamiętana sekcja. Dotychczasowe testy ustawień zielone po zmianie ścieżki wejścia (opisane w deviations); zrzuty Ustawień i nawigacji zaktualizowane świadomie.',
   },
 
   // --- Etap 2 ---
@@ -82,15 +89,22 @@ const TASKS = [
   {
     id: 'J1', phase: 'Etap 4: Jira', title: 'Przesunięcie zgłoszenia przy starcie pracy',
     section: 'Etap 4 — J1',
-    scope: 'Przy starcie pomiaru zadania z kluczem Jiry (każda droga startu) i statusie w kategorii new: pytanie „Przesunąć KEY do In Progress?” (baner, linia w widgecie, powiadomienie przy schowanym oknie z przyciskiem „Przesuń”, kolejka trybu skupienia), pomiar startuje od razu, nic nie przesuwa się samo. Wybór przejścia z GET /rest/api/3/issue/{key}/transitions (kategoria indeterminate, preferowana nazwa z ustawień, inaczej lista do wyboru), POST transitions, odświeżenie statusu w jira_issues. „Przesuń w Jirze…” w rozwiniętym kafelku i propozycja przy ukończeniu zadania. Ustawienia → Jira: wyłącznik (domyślnie włączony) i nazwa statusu; „Nie pytaj dla tego zadania” w task_details. Odpowiednik w store.ts z symulowanymi przejściami. Wykorzystaj istniejący klient i token Jiry z jira.rs.',
+    scope: 'Przy starcie pomiaru zadania z kluczem Jiry (każda droga startu) i statusie w kategorii new: pytanie „Przesunąć KEY do In Progress?” (baner, linia w widgecie, powiadomienie przy schowanym oknie z przyciskiem „Przesuń”, kolejka trybu skupienia), pomiar startuje od razu, nic nie przesuwa się samo. Wybór przejścia z GET /rest/api/3/issue/{key}/transitions (kategoria indeterminate, preferowana nazwa z ustawień, inaczej lista do wyboru), POST transitions, odświeżenie statusu w jira_issues. „Przesuń w Jirze…” w rozwiniętym kafelku i propozycja przy ukończeniu zadania. Ustawienia → Jira: główny przełącznik „Pozwól aplikacji zmieniać zgłoszenia w Jirze” (domyślnie włączony; wyłączony blokuje każdy zapis do Jiry także w backendzie — J2 też z niego korzysta), wyłącznik pytania (domyślnie włączony) i nazwa statusu; „Nie pytaj dla tego zadania” w task_details. Odpowiednik w store.ts z symulowanymi przejściami. Wykorzystaj istniejący klient i token Jiry z jira.rs.',
     done: 'Rust: wybór przejścia, brak pytania dla in progress/done, „Nie pytaj”, błędy 400/403, parsowanie transitions. e2e z symulowaną Jirą: start → baner → „Przesuń” zmienia status; „Nie pytaj”; przesunięcie przy ukończeniu.',
+  },
+
+  {
+    id: 'J2', phase: 'Etap 4: Jira', title: 'Jira z poziomu Todo Track',
+    section: 'Etap 4 — J2',
+    scope: 'Kolumny z /rest/agile/1.0/board/{id}/configuration i statusy z /rest/api/3/project/{klucz}/statuses (cache w jira_board_columns i jira_statuses, status spoza kolumn według kategorii). Widok Jira: przełącznik Lista/Tablica, wybór tablicy, zakres Moje/Cała tablica (limit 300), karty z kluczem, tytułem, typem, priorytetem, osobą, czasem lokalnym, „mierzone teraz”, „zaplanowane na”, Start i „Otwórz w Jirze”. Przeciągnięcie między kolumnami (i menu „Przesuń do…”) wykonuje przejście z warstwy J1, optymistycznie z cofnięciem; przejście z wymaganymi polami otwiera zgłoszenie w przeglądarce. Akcje: Przypisz do mnie, Zmień osobę (assignable search), Dodaj komentarz (ADF), Kopiuj nazwę gałęzi (prefiks w ustawieniach), Nowe zgłoszenie (createmeta, opcjonalnie lokalne zadanie). Wszystkie zapisy przez jedną funkcję w jira.rs z walidacją i polskimi błędami, z poszanowaniem głównego przełącznika z J1 (wyłączony: tablica tylko do odczytu, bez przeciągania i akcji zapisu, backend odrzuca). Odpowiedniki w store.ts z symulowaną Jirą.',
+    done: 'Rust: konfiguracja tablicy, statusy, przypisanie do kolumny, wybór przejścia, wymagane pola, ADF, nazwa gałęzi, błędy 400/403. Playwright z symulowaną Jirą: tablica, przeciągnięcie = przejście, cofnięcie przy błędzie, przypisanie, komentarz, nowe zgłoszenie. Zrzuty Jiry zaktualizowane świadomie i wymienione w deviations.',
   },
 
   // --- Wydanie ---
   {
     id: 'R17', phase: 'Wydanie 1.7.0', title: 'Wydanie 1.7.0', release: '1.7.0',
     section: 'Wydanie 1.7.0 (R17)',
-    scope: 'Wydanie obejmuje wszystkie zadania z PLAN_1.7.md (K1–W4 i J1). README „Nowości 1.7” musi zawierać instrukcję rejestracji aplikacji w Entra ID i instalacji rozszerzenia przeglądarki.',
+    scope: 'Wydanie obejmuje wszystkie zadania z PLAN_1.7.md (K1, K2, S1, P1–P3, W1–W4, J1, J2). README „Nowości 1.7” musi zawierać instrukcję rejestracji aplikacji w Entra ID i instalacji rozszerzenia przeglądarki.',
     done: '',
   },
 ]
