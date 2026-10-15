@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { Plus, Scissors, Search, Square } from "lucide-vue-next";
+import { Plus, Scissors, Search, Square, Timer } from "lucide-vue-next";
+import { countdown, focusAction, useFocus } from "../focus";
 import TaskCard from "../components/TaskCard.vue";
 import {
   change,
@@ -210,6 +211,25 @@ async function act(
     working.value = false;
   }
 }
+/** Tryb skupienia na pasku bieżącego pomiaru. */
+const focus = useFocus();
+const focusBlock = computed(() =>
+  focus.value.block && focus.value.block.taskId === active.value?.taskId
+    ? focus.value.block
+    : null,
+);
+async function focusRun(action: "start" | "stop") {
+  if (busy.value) return;
+  working.value = true;
+  emit("error", "");
+  try {
+    await focusAction(action);
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    working.value = false;
+  }
+}
 const templateNames = computed(() => templates.value.map((t) => t.name));
 let stopTemplates: (() => void) | undefined;
 let mounted = true;
@@ -323,6 +343,30 @@ async function priority(task: Task, e: Event) {
       activeTask?.title
     }}</span
     ><span class="mono focus-clock">{{ duration(elapsed(active)) }}</span
+    ><span
+      v-if="focusBlock"
+      class="focus-countdown mono"
+      aria-label="Pozostało w bloku skupienia"
+      :title="`Blok skupienia do ${new Date(focusBlock.end).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`"
+      ><Timer :size="12" />{{ countdown(focusBlock.end - now) }}</span
+    ><button
+      v-if="focusBlock"
+      class="stop-button"
+      aria-label="Przerwij blok skupienia"
+      title="Blok zakończy się jako nieukończony; pomiar trwa dalej"
+      :disabled="busy"
+      @click="focusRun('stop')"
+    >
+      Zakończ blok</button
+    ><button
+      v-else
+      class="stop-button"
+      aria-label="Rozpocznij blok skupienia"
+      title="Blok skupienia na tym zadaniu (długość w Ustawieniach)"
+      :disabled="busy"
+      @click="focusRun('start')"
+    >
+      <Timer :size="12" />Skupienie</button
     ><button
       class="stop-button"
       aria-label="Podziel bieżący pomiar"

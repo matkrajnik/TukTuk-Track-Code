@@ -1489,3 +1489,15 @@ html.widget-root body {
   color: var(--danger, #c62828);
   font-size: var(--fs-sm);
 }
+/* Tryb skupienia: odliczanie na pasku pomiaru i w widgecie */
+.focus-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+}
+.widget-focus {
+  color: var(--accent);
+}

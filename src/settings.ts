@@ -26,6 +26,12 @@ export interface AppSettings {
   jiraAutoImport: boolean;
   shortcutQuick: string;
   shortcutToggle: string;
+  /** Długość bloku skupienia w minutach (1–240). */
+  focusBlockMinutes: number;
+  /** Długość przerwy po bloku w minutach (1–60). */
+  focusBreakMinutes: number;
+  /** Przerwa zatrzymuje pomiar. */
+  focusBreakStops: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -56,6 +62,9 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   jiraAutoImport: true,
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
+  focusBlockMinutes: 25,
+  focusBreakMinutes: 5,
+  focusBreakStops: true,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -162,6 +171,9 @@ export const normFolder = (folder: string) =>
 const minutes = (v: unknown) =>
   typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 1440;
 
+const range = (v: unknown, min: number, max: number) =>
+  typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+
 /** Walidacja pól osobno, bez reguł łączących pola (validate_fields w Rust). */
 function applyFields(
   current: AppSettings,
@@ -185,6 +197,10 @@ function applyFields(
     throw new Error("Cel dzienny musi mieć od 0 do 1440 minut.");
   if (!minutes(s.notifyLongMinutes))
     throw new Error("Próg długiego pomiaru musi mieć od 0 do 1440 minut.");
+  if (!range(s.focusBlockMinutes, 1, 240))
+    throw new Error("Blok skupienia musi mieć od 1 do 240 minut.");
+  if (!range(s.focusBreakMinutes, 1, 60))
+    throw new Error("Przerwa musi mieć od 1 do 60 minut.");
   if (s.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7))
     throw new Error("Dni robocze muszą być liczbami od 1 do 7.");
   s.workDays = [...new Set(s.workDays)].sort((a, b) => a - b);

@@ -7,6 +7,7 @@ import { atRisk, percent } from "./estimates";
 import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
+import { useFocus } from "./focus";
 import {
   daysTarget,
   dayTarget,
@@ -19,6 +20,8 @@ import {
 const props = defineProps<{ data: Snapshot; now: number }>();
 defineEmits<{ report: [day: string] }>();
 const settings = useSettings();
+/** Ukończone bloki skupienia dziś i w tym tygodniu. */
+const focus = useFocus();
 const today = computed(() => dayKey(props.now));
 const dayTotal = (key: string) =>
   props.data.sessions.reduce((sum, s) => sum + inDay(s, key, props.now), 0);
@@ -219,6 +222,19 @@ const topTasks = computed(() =>
           <div v-for="item in counts" :key="item.label">
             <dt>{{ item.label }}</dt>
             <dd><strong>{{ item.count }}</strong></dd>
+          </div>
+        </dl>
+      </section>
+      <section class="dashboard-card" aria-label="Bloki skupienia">
+        <h2>Skupienie</h2>
+        <dl class="dashboard-status-grid">
+          <div>
+            <dt>Ukończone bloki dziś</dt>
+            <dd><strong>{{ focus.today }}</strong></dd>
+          </div>
+          <div>
+            <dt>W tym tygodniu</dt>
+            <dd><strong>{{ focus.week }}</strong></dd>
           </div>
         </dl>
       </section>

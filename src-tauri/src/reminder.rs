@@ -85,6 +85,8 @@ pub fn start(app: &tauri::AppHandle) {
                     .unwrap_or(true),
                 Err(_) => true,
             };
+            // Blok skupienia i przerwa po nim: przypomnienie o braku pomiaru milczy.
+            let active = active || crate::focus::quiet(&app);
             let background =
                 !main.is_visible().unwrap_or(true) || !main.is_focused().unwrap_or(true);
             crate::widget::apply(&app, background || main.is_minimized().unwrap_or(false));

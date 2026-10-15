@@ -32,6 +32,12 @@ pub struct AppSettings {
     pub jira_auto_import: bool,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
+    /// Długość bloku skupienia w minutach (1–240, domyślnie 25).
+    pub focus_block_minutes: u32,
+    /// Długość przerwy po bloku w minutach (1–60, domyślnie 5).
+    pub focus_break_minutes: u32,
+    /// Przerwa zatrzymuje pomiar (domyślnie tak); inaczej pomiar trwa przez przerwę.
+    pub focus_break_stops: bool,
 }
 
 impl Default for AppSettings {
@@ -56,6 +62,9 @@ impl Default for AppSettings {
             jira_auto_import: true,
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
+            focus_block_minutes: 25,
+            focus_break_minutes: 5,
+            focus_break_stops: true,
         }
     }
 }
@@ -147,6 +156,12 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     if s.notify_long_minutes > 1440 {
         return Err("Próg długiego pomiaru musi mieć od 0 do 1440 minut.".into());
+    }
+    if !(1..=240).contains(&s.focus_block_minutes) {
+        return Err("Blok skupienia musi mieć od 1 do 240 minut.".into());
+    }
+    if !(1..=60).contains(&s.focus_break_minutes) {
+        return Err("Przerwa musi mieć od 1 do 60 minut.".into());
     }
     if s.work_days.iter().any(|d| !(1..=7).contains(d)) {
         return Err("Dni robocze muszą być liczbami od 1 do 7.".into());
@@ -458,6 +473,42 @@ mod tests {
         );
         assert_eq!(load(&db), saved);
         assert!(!load(&db).agent_suggest);
+    }
+
+    #[test]
+    fn focus_lengths_are_validated_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        for bad in [
+            json!({"focusBlockMinutes": 0}),
+            json!({"focusBlockMinutes": 241}),
+            json!({"focusBreakMinutes": 0}),
+            json!({"focusBreakMinutes": 61}),
+            json!({"focusBreakStops": "nie"}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad} powinno być odrzucone");
+        }
+        let saved = save(
+            &mut db,
+            &json!({"focusBlockMinutes": 50, "focusBreakMinutes": 10, "focusBreakStops": false}),
+        )
+        .unwrap();
+        assert_eq!(load(&db), saved);
+        assert_eq!(
+            (
+                saved.focus_block_minutes,
+                saved.focus_break_minutes,
+                saved.focus_break_stops
+            ),
+            (50, 10, false)
+        );
+        // Uszkodzona zapisana wartość wraca do domyślnej.
+        db.execute(
+            "UPDATE settings SET value='0' WHERE key='focus_block_minutes'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(load(&db).focus_block_minutes, 25);
     }
 
     #[test]

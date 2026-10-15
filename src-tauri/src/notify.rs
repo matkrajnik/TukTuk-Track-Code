@@ -74,6 +74,12 @@ pub const JIRA_START: &str = "jira-start";
 pub const PLAN_TODAY: &str = "plan-today";
 /// „Przełącz” z propozycji agenta AI (`suggest`): start zadania o podanym id.
 pub const AGENT_SWITCH: &str = "agent-switch";
+/// Tryb skupienia (`focus`): „Przerwa” po bloku o podanym id.
+pub const FOCUS_BREAK: &str = "focus-break";
+/// „Kolejny blok” na zadaniu o podanym id.
+pub const FOCUS_NEXT: &str = "focus-next";
+/// „Rozpocznij” po przerwie: start pomiaru zadania o podanym id.
+pub const FOCUS_RESUME: &str = "focus-resume";
 
 /// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +130,12 @@ pub enum Command {
     PlanToday(Vec<i64>),
     /// Start zadania z propozycji agenta (poprzedni pomiar staje).
     AgentSwitch(i64),
+    /// „Przerwa” po bloku skupienia (id bloku); wykonuje `focus::Focus::perform`.
+    FocusBreak(i64),
+    /// „Kolejny blok” na zadaniu (id zadania); wykonuje `focus::Focus::perform`.
+    FocusNext(i64),
+    /// „Rozpocznij” po przerwie: start pomiaru zadania (poprzedni staje).
+    FocusResume(i64),
     /// Pokaż główne okno z widokiem.
     Open(View),
 }
@@ -142,6 +154,9 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         SPLIT => number.map(Command::Split),
         JIRA_START => number.map(Command::JiraStart),
         AGENT_SWITCH => number.map(Command::AgentSwitch),
+        FOCUS_BREAK => number.map(Command::FocusBreak),
+        FOCUS_NEXT => number.map(Command::FocusNext),
+        FOCUS_RESUME => number.map(Command::FocusResume),
         PLAN_TODAY => arg
             .split(',')
             .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
@@ -236,10 +251,16 @@ pub fn perform(
             }
             Ok(changed(any))
         }
-        Command::AgentSwitch(task) => {
+        Command::AgentSwitch(task) | Command::FocusResume(task) => {
             crate::db::change(db, "start", Some(task), None, now)?;
             Ok(changed(true))
         }
+        // Wymagają stanu trybu skupienia: `focus::Focus::perform` (z `activate`).
+        // Bez niego tylko pokazujemy listę zadań.
+        Command::FocusBreak(_) | Command::FocusNext(_) => Ok(Outcome {
+            changed: false,
+            navigate: Some(View::tasks()),
+        }),
         Command::Open(view) => Ok(Outcome {
             changed: false,
             navigate: Some(view),
@@ -508,21 +529,26 @@ pub fn setup(app: &tauri::AppHandle) {
 /// Wykonuje polecenie z powiadomienia na `AppHandle`: zmiana danych → `data-changed`,
 /// widok → główne okno na wierzchu i `navigate`, błąd → okno z komunikatem.
 fn activate(app: &tauri::AppHandle, command: Command) {
-    let result = app
-        .state::<Database>()
-        .0
-        .lock()
-        .map_err(|e| e.to_string())
-        .and_then(|mut db| {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            perform(&mut db, command, &today, crate::db::now())
-        });
+    let result = if matches!(command, Command::FocusBreak(_) | Command::FocusNext(_)) {
+        crate::focus::activate(app, command)
+    } else {
+        app.state::<Database>()
+            .0
+            .lock()
+            .map_err(|e| e.to_string())
+            .and_then(|mut db| {
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                perform(&mut db, command, &today, crate::db::now())
+            })
+    };
     match result {
         Ok(outcome) => {
             if outcome.changed {
                 crate::reminder::reset(app);
                 let _ = app.emit("data-changed", ());
                 crate::suggest::refresh(app, crate::db::now());
+                // Stop albo start z powiadomienia może przerwać blok skupienia.
+                crate::focus::sync(app);
             }
             if let Some(view) = outcome.navigate {
                 crate::show(app);
@@ -551,9 +577,18 @@ fn app_id(app: &tauri::AppHandle) -> String {
     }
 }
 
-/// Wysyła toast Windows z przyciskami. Błąd (np. brak AUMID) jest pomijany.
-#[cfg(windows)]
+/// Wysyła powiadomienie. W czasie bloku skupienia trafia ono do kolejki
+/// (`focus::hold`) i przychodzi po bloku w jednym zbiorczym.
 pub fn show(app: &tauri::AppHandle, message: &Message) {
+    if !crate::focus::hold(app, message) {
+        display(app, message);
+    }
+}
+
+/// Wysyła toast Windows z przyciskami od razu, z pominięciem kolejki trybu
+/// skupienia. Błąd (np. brak AUMID) jest pomijany.
+#[cfg(windows)]
+pub fn display(app: &tauri::AppHandle, message: &Message) {
     let sender = app
         .try_state::<Activations>()
         .and_then(|s| s.0.lock().ok().map(|tx| tx.clone()));
@@ -581,7 +616,7 @@ pub fn show(app: &tauri::AppHandle, message: &Message) {
 
 /// Poza Windows zostaje plugin (bez przycisków i kliknięć).
 #[cfg(not(windows))]
-pub fn show(app: &tauri::AppHandle, message: &Message) {
+pub fn display(app: &tauri::AppHandle, message: &Message) {
     use tauri_plugin_notification::NotificationExt;
     let _ = app
         .notification()
@@ -604,8 +639,9 @@ pub fn toggle_feedback(app: &tauri::AppHandle, text: &str) {
             .get_webview_window("main")
             .and_then(|w| w.is_focused().ok())
             .unwrap_or(false);
+    // Odpowiedź na własne naciśnięcie skrótu: od razu, także w czasie bloku.
     if !visible(crate::widget::LABEL) && !main_front {
-        show(
+        display(
             app,
             &Message {
                 key: String::new(),

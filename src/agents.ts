@@ -6,6 +6,7 @@ import {
   writeSettings,
   type AppSettings,
 } from "./settings";
+import { previewFocusHolds } from "./focus";
 import {
   change,
   desktop,
@@ -244,6 +245,8 @@ function previewDismissed(): Set<string> {
  */
 export async function readSuggestions(): Promise<Suggestion[]> {
   if (desktop) return invoke("agent_suggestions");
+  // W czasie bloku skupienia propozycje czekają (jak `suggest::refresh`).
+  if (previewFocusHolds()) return [];
   const [agents, data, settings] = await Promise.all([
     previewAgents(),
     read(),

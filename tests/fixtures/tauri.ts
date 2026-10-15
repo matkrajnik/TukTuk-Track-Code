@@ -304,6 +304,17 @@ function install(init: {
           return [];
         case "agent_suggestions":
           return [];
+        // Tryb skupienia: bez bloku (logika w `focus.rs`, e2e na podglądzie).
+        case "focus_status":
+          return {
+            block: null,
+            ended: null,
+            pause: null,
+            resume: null,
+            queued: 0,
+            today: 0,
+            week: 0,
+          };
         case "jira_settings":
           return {
             config: {

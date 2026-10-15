@@ -275,11 +275,17 @@ pub fn refresh(app: &tauri::AppHandle, now: i64) {
         return;
     };
     let hidden = main_hidden(app);
+    // W czasie bloku skupienia baner i linia w widgecie czekają, a powiadomienie
+    // trafia do kolejki bloku (`notify::show`); po bloku baner wraca sam.
+    let focus = crate::focus::holding(app);
     let Some((changed, list, fresh)) = state.0.lock().ok().map(|mut g| {
-        let list = g.0.pending(&agents, active, &settings, now);
+        let mut list = g.0.pending(&agents, active, &settings, now);
         // Propozycje widoczne w banerze też liczą się jako zgłoszone, więc schowanie
         // okna później nie wysyła o nich powiadomienia.
         let fresh = g.0.unnotified(&list, now);
+        if focus {
+            list.clear();
+        }
         let changed = list != g.1;
         g.1 = list.clone();
         (changed, list, fresh)
@@ -289,7 +295,7 @@ pub fn refresh(app: &tauri::AppHandle, now: i64) {
     if changed {
         let _ = app.emit("agent-suggestions", list);
     }
-    if hidden {
+    if hidden || focus {
         if let Some(m) = message(&fresh) {
             notify::show(app, &m);
         }

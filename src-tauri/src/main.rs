@@ -4,6 +4,7 @@ mod autostart;
 mod backup;
 mod db;
 mod export;
+mod focus;
 mod holidays;
 mod idle;
 mod jira;
@@ -292,6 +293,7 @@ fn main() {
             agents::setup(app.handle());
             suggest::setup(app.handle());
             notify::setup(app.handle());
+            focus::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
             // korzystają komendy. Wątki tray, widget, reminder, idle, agents, notify i jira
             // kończą się, gdy nie ma okna main (zamykanie aplikacji), więc
@@ -306,6 +308,7 @@ fn main() {
             idle::start(app.handle());
             agents::start(app.handle());
             notify::start(app.handle());
+            focus::start(app.handle());
             jira::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
@@ -386,6 +389,8 @@ fn main() {
             backup::inspect_backup,
             backup::restore_backup,
             export::export_report,
+            focus::focus_status,
+            focus::focus_action,
             reminder::reminder_action,
             widget::widget_status,
             widget::widget_dismiss,

@@ -2,7 +2,23 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Bot, GripVertical, Play, Square, X } from "lucide-vue-next";
+import {
+  Bot,
+  Coffee,
+  GripVertical,
+  Play,
+  SkipForward,
+  Square,
+  Timer,
+  X,
+} from "lucide-vue-next";
+import {
+  countdown,
+  focusAction,
+  refreshFocus,
+  useFocus,
+  type FocusAction,
+} from "./focus";
 import {
   onSuggestionsChanged,
   readSuggestions,
@@ -82,10 +98,41 @@ async function useProposal() {
     busy.value = false;
   }
 }
+/** Tryb skupienia: odliczanie bloku zamiast zegara pomiaru, przerwa i pytania. */
+const focus = useFocus();
+const hhmm = (ms: number) =>
+  new Date(ms).toLocaleTimeString("pl-PL", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+const focusLine = computed(() => {
+  const f = focus.value;
+  if (f.block) return `Skupienie do ${hhmm(f.block.end)}`;
+  if (f.ended) return "Koniec bloku: przerwa czy kolejny?";
+  if (f.pause) return `Przerwa do ${hhmm(f.pause.until)}`;
+  if (f.resume) return `Wracasz do: ${f.resume.title}?`;
+  return "";
+});
+/** Skupienie startuje na mierzonym zadaniu, a bez pomiaru na ostatnim. */
+const focusTarget = computed(() => activeTask.value ?? resume.value);
+async function runFocus(action: FocusAction, taskId: number | null = null) {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await focusAction(action, taskId);
+    await refresh();
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
 const subline = computed(
   () =>
     error.value ||
     feedback.value ||
+    focusLine.value ||
     proposalLine.value ||
     (activeTask.value
       ? activeTask.value.details?.project || "Pomiar trwa"
@@ -107,6 +154,7 @@ async function refresh() {
     data.value = await read();
     now.value = Date.now();
     error.value = "";
+    void refreshFocus();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
   }
@@ -133,6 +181,9 @@ async function openQuick() {
 }
 
 async function toggle() {
+  // Po przerwie „Start” odpowiada na „Wracasz do X?”.
+  if (!active.value && focus.value.resume)
+    return runFocus("resume", focus.value.resume.taskId);
   if (busy.value) return;
   busy.value = true;
   error.value = "";
@@ -251,8 +302,50 @@ onUnmounted(() => {
     >
       <Bot :size="16" />
     </button>
+    <template v-if="focus.ended">
+      <button
+        class="icon-button widget-focus"
+        aria-label="Przerwa"
+        title="Przerwa"
+        :disabled="busy"
+        @click="runFocus('break')"
+      >
+        <Coffee :size="16" /></button
+      ><button
+        class="icon-button widget-focus"
+        aria-label="Kolejny blok"
+        title="Kolejny blok skupienia"
+        :disabled="busy"
+        @click="runFocus('next')"
+      >
+        <SkipForward :size="16" />
+      </button>
+    </template>
+    <button
+      v-else-if="!focus.block && !focus.pause && focusTarget"
+      class="icon-button widget-focus"
+      aria-label="Rozpocznij blok skupienia"
+      :title="`Skupienie: ${focusTarget.title}`"
+      :disabled="busy"
+      @click="runFocus('start', focusTarget.id)"
+    >
+      <Timer :size="16" />
+    </button>
     <span
-      v-if="active"
+      v-if="focus.block"
+      class="widget-clock widget-focus mono"
+      aria-label="Pozostało w bloku skupienia"
+      :title="active ? `Pomiar: ${duration(now - active.startedAt)}` : ''"
+      >{{ countdown(focus.block.end - now) }}</span
+    >
+    <span
+      v-else-if="focus.pause"
+      class="widget-clock widget-focus mono"
+      aria-label="Pozostało z przerwy"
+      >{{ countdown(focus.pause.until - now) }}</span
+    >
+    <span
+      v-else-if="active"
       class="widget-clock mono"
       aria-label="Czas bieżącego pomiaru"
       >{{ duration(now - active.startedAt) }}</span

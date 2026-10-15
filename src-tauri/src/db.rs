@@ -56,7 +56,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS sessions_started ON sessions(started_at);
         CREATE TABLE IF NOT EXISTS notifications_sent (key TEXT PRIMARY KEY, at INTEGER);
         CREATE TABLE IF NOT EXISTS task_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, json TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS agent_bindings (folder TEXT PRIMARY KEY COLLATE NOCASE, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE);")
+        CREATE TABLE IF NOT EXISTS agent_bindings (folder TEXT PRIMARY KEY COLLATE NOCASE, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS focus_blocks (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, completed INTEGER);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db
