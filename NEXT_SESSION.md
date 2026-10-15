@@ -1,5 +1,9 @@
 ﻿# Todo Track — stan po 1.0
 
+## 1.3 w toku: zrzuty wzorcowe (T2)
+
+Otwarty punkt: wzorce w `tests/visual.spec.ts-snapshots` powstały lokalnie na Windows 11, a plan (Etap 1, pkt 1) każe generować je na windows-latest. Gałąź nie była pushowana, więc warunek „zrzuty zielone w CI dwa razy z rzędu” nie jest sprawdzony. Po pierwszym pushu: jeśli krok „Zrzuty wzorcowe” w workflow Check padnie na różnicach renderowania, uruchomić Check ręcznie (workflow_dispatch) z `update_snapshots` = true, pobrać artefakt `visual-snapshots`, podmienić nim katalog wzorców, zacommitować i potwierdzić dwa kolejne zielone przebiegi.
+
 ## Stan po 1.0 (14 października 2026)
 
 Gałąź `release/1.0`, lokalnie, bez pusha. Wszystkie funkcje z PLAN_1.0.md (0.1–0.4 i A–L) mają commity implementacji na tej gałęzi; większość ma też osobny commit „uwagi z przeglądu”. Commit R1 podnosi wersję w `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` i `src-tauri/tauri.conf.json` do 1.0.0 i aktualizuje README (Organizacja pracy 1.0, Ustawienia, Skróty, Mini-widget, Okna/tray/autostart, Powiadomienia, Sprawdzenie).

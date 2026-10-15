@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ids, openPreview } from "./fixtures/seed";
+import { ids, jiraFixture, openPreview, seed } from "./fixtures/seed";
 import { openDesktop } from "./fixtures/tauri";
 
 /**
@@ -11,8 +11,10 @@ import { openDesktop } from "./fixtures/tauri";
  * w róg okna, żeby żaden przycisk nie miał stanu :hover.
  *
  * Testy mają tag @visual (CI uruchamia je osobnym krokiem). Wzorce są
- * zależne od systemu (sufiks `-win32`): generowane na Windows,
- * tak jak CI na windows-latest.
+ * zależne od systemu (sufiks `-win32`). Obecne wzorce powstały lokalnie na
+ * Windows 11; renderowanie czcionek na windows-latest może się różnić. Wzorce
+ * z CI daje ręczne uruchomienie workflow Check z `update_snapshots`
+ * (artefakt `visual-snapshots` do skopiowania do `tests/visual.spec.ts-snapshots`).
  */
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 test.describe.configure({ mode: "parallel" });
@@ -120,33 +122,16 @@ for (const theme of themes)
           );
         });
 
-      // W podglądzie Jira jest wyłączona, więc widok idzie przez zastępcze IPC.
+      // W podglądzie Jira jest wyłączona, więc widok idzie przez zastępcze IPC
+      // z tymi samymi danymi i tym samym trwającym pomiarem co inne widoki.
       test("widok jira", async ({ page }) => {
         await useTheme(page, theme);
         await openDesktop(page, {
-          jira: {
-            boards: [
-              { id: 1, name: "WMS" },
-              { id: 2, name: "Foundation" },
-            ],
-            issues: [
-              {
-                key: "WMS-12",
-                summary: "Analiza importu",
-                status: "W toku",
-                boards: ["WMS"],
-              },
-              {
-                key: "WMS-31",
-                summary: "Obsługa przyjęcia towaru",
-                status: "Do zrobienia",
-                boards: ["WMS", "Foundation"],
-              },
-            ],
-          },
+          data: seed({ active: { task: ids.analysis, from: "11:00" } }),
+          jira: jiraFixture(),
         });
         await nav(page, "Jira");
-        await expect(page.locator(".jira-issue")).toHaveCount(2);
+        await expect(page.locator(".jira-issue")).toHaveCount(3);
         await settle(page);
         await expect(page).toHaveScreenshot(`jira-${theme}-${width}.png`, {
           fullPage: true,

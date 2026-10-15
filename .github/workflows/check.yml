@@ -2,6 +2,15 @@ name: Check
 on:
   push:
   pull_request:
+  # Ręczne uruchomienie z update_snapshots = true generuje wzorce zrzutów na
+  # windows-latest i wysyła je jako artefakt `visual-snapshots` (zawartość do
+  # skopiowania do tests/visual.spec.ts-snapshots i zacommitowania).
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: "Wygeneruj wzorce zrzutów na windows-latest (artefakt visual-snapshots)"
+        type: boolean
+        default: false
 jobs:
   windows:
     runs-on: windows-latest
@@ -23,7 +32,18 @@ jobs:
       - name: Testy Playwright (bez zrzutów)
         run: npx playwright test --grep-invert @visual
       - name: Zrzuty wzorcowe
+        if: ${{ !inputs.update_snapshots }}
         run: npm run test:visual
+      - name: Nowe wzorce zrzutów
+        if: ${{ inputs.update_snapshots }}
+        run: npx playwright test tests/visual.spec.ts --update-snapshots=all
+      - name: Artefakt z nowymi wzorcami
+        if: ${{ inputs.update_snapshots }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-snapshots
+          path: tests/visual.spec.ts-snapshots/
+          retention-days: 14
       - name: Raport Playwright z różnicami zrzutów
         if: failure()
         uses: actions/upload-artifact@v4

@@ -210,6 +210,40 @@ export function seed(options: SeedOptions = {}) {
 }
 export type Seed = ReturnType<typeof seed>;
 
+/**
+ * Połączona Jira dla zastępczego IPC (`openDesktop({ jira })`): tablice
+ * i zgłoszenia zgodne z zadaniami fixture. WMS-12 jest powiązane z „Analizą
+ * importu”, WMS-7 z zadaniem w koszu, a WMS-31 nie ma jeszcze zadania.
+ */
+export function jiraFixture() {
+  return {
+    boards: [
+      { id: 1, name: "WMS" },
+      { id: 2, name: "Foundation" },
+    ],
+    issues: [
+      {
+        key: "WMS-12",
+        summary: "Analiza importu",
+        status: "W toku",
+        boards: ["WMS"],
+      },
+      {
+        key: "WMS-31",
+        summary: "Obsługa przyjęcia towaru",
+        status: "Do zrobienia",
+        boards: ["WMS", "Foundation"],
+      },
+      {
+        key: "WMS-7",
+        summary: "Porzucony prototyp",
+        status: "Do zrobienia",
+        boards: ["WMS"],
+      },
+    ],
+  };
+}
+
 export interface PreviewOptions extends SeedOptions {
   /** Stały czas strony; domyślnie `NOW`. */
   now?: string | number;
