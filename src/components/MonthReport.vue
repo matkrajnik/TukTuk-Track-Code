@@ -6,6 +6,7 @@ import { dayBounds, dayKey } from "../time";
 import { addToDays, closedDayTotals, decimalHours } from "../report";
 import { holidays } from "../holidays";
 import TargetBar from "./TargetBar.vue";
+import ExportButtons from "./ExportButtons.vue";
 import {
   dayTarget,
   daysTarget,
@@ -215,6 +216,11 @@ const running = computed(
             Trwający pomiar jest uwzględniony do bieżącej chwili.</template
           >
         </p>
+        <ExportButtons
+          :days="days"
+          :name="'Todo-Track-' + month"
+          label="Eksport miesiąca"
+        />
       </div>
       <strong class="mono report-total">{{ duration(total) }}</strong>
     </section>

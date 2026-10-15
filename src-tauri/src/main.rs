@@ -3,6 +3,7 @@ mod agents;
 mod autostart;
 mod backup;
 mod db;
+mod export;
 mod holidays;
 mod idle;
 mod jira;
@@ -384,6 +385,7 @@ fn main() {
             backup::export_backup,
             backup::inspect_backup,
             backup::restore_backup,
+            export::export_report,
             reminder::reminder_action,
             widget::widget_status,
             widget::widget_dismiss,

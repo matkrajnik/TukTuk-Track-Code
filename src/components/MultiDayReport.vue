@@ -12,6 +12,7 @@ import {
 } from "../report";
 import { isoWeekday, isWorkDay, useSettings } from "../target";
 import { copyReport } from "../clipboard";
+import ExportButtons from "./ExportButtons.vue";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{ open: [day: string] }>();
@@ -198,6 +199,12 @@ const running = computed(() => {
     active && selected.value.some((d) => inDay(active, d, props.now) > 0),
   );
 });
+/** Nazwa pliku eksportu: zakres od pierwszego do ostatniego wybranego dnia. */
+const exportName = computed(() => {
+  const first = selected.value[0] ?? "";
+  const last = selected.value[selected.value.length - 1] ?? "";
+  return first === last ? `Todo-Track-${first}` : `Todo-Track-${first}_${last}`;
+});
 async function copy() {
   copyStatus.value = "";
   copyStatus.value = await copyReport(text.value, area.value);
@@ -302,6 +309,11 @@ async function copy() {
           Kliknij dni w kalendarzu albo użyj skrótu.
         </li>
       </ul>
+      <ExportButtons
+        :days="selected"
+        :name="exportName"
+        label="Eksport wybranych dni"
+      />
     </div>
   </section>
   <section class="ts-report" aria-label="Raport TS z wybranych dni">

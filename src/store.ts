@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import { renderTitle, type Parsed } from "./quickadd";
+import { exportCsv, exportRows } from "./export";
 export interface Task {
   id: number;
   title: string;
@@ -1052,4 +1053,31 @@ export async function onNavigate(
 /** `widget_open_main`: klik w nazwę zadania na widgecie. W podglądzie nic nie robi. */
 export async function openMainWindow(): Promise<void> {
   if (desktop) await invoke("widget_open_main");
+}
+
+export type ExportFormat = "csv" | "xlsx";
+/** Wynik eksportu: ścieżka zapisanego pliku albo (w podglądzie) tekst CSV. */
+export type ExportResult = { path: string } | { text: string };
+/**
+ * `export_report`: okno zapisu i plik CSV albo XLSX z przedziałami wybranych
+ * dni; `null`, gdy użytkownik anulował. W podglądzie CSV wraca jako tekst,
+ * a XLSX jest niedostępny.
+ */
+export async function exportReport(
+  format: ExportFormat,
+  days: string[],
+  name: string,
+): Promise<ExportResult | null> {
+  if (!days.length) throw new Error("Wybierz co najmniej jeden dzień do eksportu.");
+  if (desktop) {
+    const path = await invoke<string | null>("export_report", {
+      format,
+      days,
+      name,
+    });
+    return path ? { path } : null;
+  }
+  if (format === "xlsx")
+    throw new Error("Eksport XLSX jest dostępny tylko w aplikacji Windows.");
+  return { text: exportCsv(exportRows(await read(), days, Date.now())) };
 }
