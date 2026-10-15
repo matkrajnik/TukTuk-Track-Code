@@ -253,3 +253,62 @@ test("wyszukiwanie sekcji i rozpoznanie sekcji w komunikacie (moduł)", () => {
   ).toBe("templates");
   expect(sectionInMessage("Zwykły błąd zapisu.")).toBeNull();
 });
+
+test("wklejona etykieta pola znajduje jej sekcję", async ({ page }) => {
+  await openPreview(page);
+  await openSettings(page, "Czas pracy");
+  const search = page.getByRole("searchbox", { name: "Szukaj ustawienia" });
+  const tabs = page
+    .getByRole("tablist", { name: "Sekcje ustawień" })
+    .getByRole("tab");
+  for (const [label, name] of [
+    ["Pokazuj tytuły spotkań", "Kalendarz"],
+    ["Pokazuj mini-widget zawsze na wierzchu", "Okna"],
+    ["Uwzględniaj święta w celu", "Czas pracy"],
+    ["Powiadom o osiągnięciu celu dnia", "Powiadomienia"],
+    ["Wieczorne „pomiar nadal trwa”", "Powiadomienia"],
+    ["Uruchamiaj schowane do traya", "Uruchamianie"],
+  ]) {
+    await search.fill(label);
+    await expect(tabs).toHaveText([name]);
+    await expect(page.getByLabel(label, { exact: true })).toBeVisible();
+  }
+  // Słowa w innej kolejności i bez polskich znaków też pasują.
+  await search.fill("spotkan pokazuj");
+  await expect(tabs).toHaveText(["Kalendarz"]);
+});
+
+test("wyszukiwanie po słowach (moduł)", () => {
+  expect(matchingSections("Pokazuj tytuły spotkań").map((s) => s.id)).toEqual([
+    "calendar",
+  ]);
+  expect(
+    matchingSections("Przerwa zatrzymuje pomiar").map((s) => s.id),
+  ).toEqual(["focus"]);
+  expect(matchingSections("pokazuj zzz")).toEqual([]);
+});
+
+test("błąd nieznanego szablonu w szybkim dodawaniu i przełączaniu prowadzi do Ustawienia → Szablony", async ({
+  page,
+}) => {
+  await openPreview(page);
+  const input = page.getByLabel("Nowe zadanie", { exact: true });
+  await input.fill("/nieznany Popraw raport");
+  const chips = page.getByLabel("Rozpoznane pola");
+  await expect(chips.getByRole("alert")).toContainText(
+    "Nie ma szablonu „nieznany”.",
+  );
+  await chips.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await expectSection(page, "Szablony");
+
+  // Szybkie przełączanie: przycisk zamyka okno i otwiera tę samą sekcję.
+  await openSettings(page, "Czas pracy");
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Szybkie przełączanie" });
+  await dialog
+    .getByLabel("Znajdź zadanie do uruchomienia")
+    .fill("/nieznany Popraw raport");
+  await dialog.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await expect(dialog).toBeHidden();
+  await expectSection(page, "Szablony");
+});

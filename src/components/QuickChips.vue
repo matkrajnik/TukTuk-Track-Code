@@ -2,11 +2,21 @@
 import { computed } from "vue";
 import { X } from "lucide-vue-next";
 import { blockingError, type Parsed, type Token } from "../quickadd";
+import { openSettings, sectionInMessage } from "../navigation";
 
 /** Rozpoznane zapisy pod polem szybkiego dodawania; kliknięcie usuwa zapis. */
 const props = defineProps<{ parsed: Parsed }>();
-const emit = defineEmits<{ remove: [token: Token] }>();
+const emit = defineEmits<{ remove: [token: Token]; settings: [] }>();
 const blocking = computed(() => blockingError(props.parsed));
+/** Błąd wskazujący „Ustawienia → X” (np. nieznany szablon) prowadzi do sekcji. */
+const section = computed(() =>
+  blocking.value ? sectionInMessage(blocking.value) : null,
+);
+function openSection() {
+  if (!section.value) return;
+  openSettings(section.value);
+  emit("settings");
+}
 </script>
 
 <template>
@@ -31,5 +41,13 @@ const blocking = computed(() => blockingError(props.parsed));
     <span v-if="blocking" class="quick-chip-error" role="alert">{{
       blocking
     }}</span>
+    <button
+      v-if="section"
+      type="button"
+      class="text-link quick-chip-settings"
+      @click="openSection"
+    >
+      Otwórz ustawienia
+    </button>
   </div>
 </template>

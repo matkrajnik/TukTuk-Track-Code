@@ -1542,6 +1542,9 @@ html.widget-root body {
   font-size: var(--fs-xs);
   color: var(--danger);
 }
+.quick-chip-settings {
+  font-size: var(--fs-xs);
+}
 .quick-create {
   display: grid;
   gap: 5px;

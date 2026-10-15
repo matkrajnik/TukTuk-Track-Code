@@ -10,6 +10,7 @@ import {
   quickAdd,
   quickTask,
   loadTemplates,
+  navigateMain,
   refreshJiraConnected,
   templates,
   type Snapshot,
@@ -24,6 +25,7 @@ import {
   type Token,
 } from "./quickadd";
 import QuickChips from "./components/QuickChips.vue";
+import { setNavigator } from "./navigation";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   query = ref(""),
@@ -153,6 +155,8 @@ function keys(e: KeyboardEvent) {
     void nextTick(() => el.setSelectionRange(done.caret, done.caret));
   }
 }
+// Osobne okno w aplikacji: przejścia (np. „Otwórz ustawienia”) idą do głównego.
+if (desktop) setNavigator((request) => void navigateMain(request));
 onMounted(async () => {
   if (desktop) off = await listen("quick-open", refresh);
   await refresh();
@@ -178,7 +182,11 @@ onUnmounted(() => off?.());
       placeholder="Wpisz nazwę zadania…"
       @input="index = 0"
     />
-    <QuickChips :parsed="parsed" @remove="removeChip" />
+    <QuickChips
+      :parsed="parsed"
+      @remove="removeChip"
+      @settings="close"
+    />
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="quick-results">
       <button

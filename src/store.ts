@@ -1,5 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import { renderTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
@@ -1265,3 +1265,14 @@ export const meetingOccupies = (e: CalendarEvent) =>
 /** Tytuł spotkania w interfejsie: „Spotkanie”, gdy tytuły są wyłączone albo puste. */
 export const meetingTitle = (e: CalendarEvent, showTitles: boolean) =>
   (showTitles && e.subject.trim()) || "Spotkanie";
+
+/**
+ * Przejście w głównym oknie z innego okna (np. szybkiego przełączania):
+ * pokazuje główne okno i wysyła mu `navigate`. W podglądzie nic nie robi,
+ * bo wszystkie widoki są w jednym oknie z zarejestrowaną obsługą.
+ */
+export async function navigateMain(request: NavigateRequest): Promise<void> {
+  if (!desktop) return;
+  await invoke("widget_open_main");
+  await emitTo("main", "navigate", request);
+}

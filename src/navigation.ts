@@ -3,7 +3,8 @@ import type { NavigateRequest } from "./store";
 /**
  * Przejścia między widokami z wnętrza widoków (linki „Ustawienia → …”,
  * komunikaty błędów). Główne okno rejestruje obsługę tak samo jak zdarzenie
- * `navigate` z powiadomień; bez rejestracji (inne okna) nic się nie dzieje.
+ * `navigate` z powiadomień; okno szybkiego przełączania przekazuje przejście
+ * głównemu oknu (`navigateMain`). Bez rejestracji nic się nie dzieje.
  */
 let handler: ((request: NavigateRequest) => void) | null = null;
 
@@ -33,6 +34,13 @@ export const settingsSections = [
       "początek dnia",
       "dni robocze",
       "święta",
+      // Etykiety pól dokładnie jak na ekranie (SettingsPanel).
+      "Zapytaj o czas po co najmniej 10 minutach bezczynności",
+      "Praca agentów AI (Claude Code, Codex) liczy się jako aktywność",
+      "Proponuj przełączenie na zadanie, nad którym pracuje agent AI",
+      "Proponuj znowu",
+      "Cel dzienny (minuty)",
+      "Uwzględniaj święta w celu",
     ],
   },
   {
@@ -48,6 +56,12 @@ export const settingsSections = [
       "dzierżawca",
       "połącz konto Microsoft",
       "tytuły spotkań",
+      // Etykiety pól (CalendarSettings, SettingsPanel).
+      "Identyfikator aplikacji (client ID)",
+      "Pokazuj tytuły spotkań",
+      "Entra ID",
+      "Odśwież",
+      "Rozłącz",
     ],
   },
   {
@@ -59,6 +73,9 @@ export const settingsSections = [
       "import",
       "konto Jiry",
       "token API",
+      "tablice",
+      "Dodawaj nowe zgłoszenia przypisane do mnie",
+      "Połączenie z Jirą",
     ],
   },
   {
@@ -71,22 +88,56 @@ export const settingsSections = [
       "wieczorne",
       "pomiar nadal trwa",
       "osiągnięcie celu dnia",
+      "Przypominaj o terminach na dziś i przekroczonych",
+      "Długi pomiar bez Stop (minuty, 0 wyłącza)",
+      "Wieczorne „pomiar nadal trwa”",
+      "Przypominaj wieczorem, że pomiar nadal trwa",
+      "Powiadom o osiągnięciu celu dnia",
     ],
   },
   {
     id: "focus",
     name: "Skupienie",
-    labels: ["blok skupienia", "przerwa", "pomodoro", "przerwa zatrzymuje pomiar"],
+    labels: [
+      "blok skupienia",
+      "przerwa",
+      "pomodoro",
+      "Przerwa zatrzymuje pomiar",
+      "Blok skupienia (minuty)",
+      "Przerwa (minuty)",
+      "Blok 25 min",
+      "Blok 50 min",
+      "Przerwa 5 min",
+      "Przerwa 10 min",
+    ],
   },
   {
     id: "templates",
     name: "Szablony",
-    labels: ["szablon", "szablony zadań", "nowy szablon", "/review"],
+    labels: [
+      "szablon",
+      "szablony zadań",
+      "Nowy szablon",
+      "/review",
+      "nazwa",
+      "tytuł",
+      "szacunek",
+      "projekt",
+      "priorytet",
+      "kroki",
+    ],
   },
   {
     id: "windows",
     name: "Okna",
-    labels: ["mini-widget", "widget", "zawsze na wierzchu", "główne okno"],
+    labels: [
+      "mini-widget",
+      "widget",
+      "zawsze na wierzchu",
+      "główne okno",
+      "Pokazuj mini-widget zawsze na wierzchu",
+      "Tylko gdy główne okno jest schowane lub bez fokusu",
+    ],
   },
   {
     id: "shortcuts",
@@ -98,12 +149,21 @@ export const settingsSections = [
       "Start/Stop",
       "globalnie",
       "Ctrl",
+      "Ctrl+K",
+      "Szybkie przełączanie (globalnie)",
+      "Start/Stop (globalnie)",
     ],
   },
   {
     id: "startup",
     name: "Uruchamianie",
-    labels: ["autostart", "uruchamiaj z Windows", "schowane do traya", "tray", "wersja"],
+    labels: [
+      "autostart",
+      "Uruchamiaj z Windows",
+      "Uruchamiaj schowane do traya",
+      "tray",
+      "wersja",
+    ],
   },
 ] as const;
 
@@ -123,13 +183,26 @@ function fold(text: string) {
     .trim();
 }
 
-/** Sekcje, których nazwa albo etykiety ustawień zawierają wpisany tekst. */
+/** Słowa tekstu po `fold`, bez cudzysłowów i znaków przestankowych na brzegach. */
+function words(text: string) {
+  return fold(text)
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}/+]+|[^\p{L}\p{N}/+]+$/gu, ""))
+    .filter(Boolean);
+}
+
+/**
+ * Sekcje, których nazwa albo etykiety ustawień zawierają wpisany tekst:
+ * każde słowo zapytania musi wystąpić w nazwie lub etykietach sekcji, więc
+ * wklejona etykieta pola („Pokazuj tytuły spotkań”) też znajduje sekcję.
+ */
 export function matchingSections(query: string) {
-  const q = fold(query);
-  if (!q) return [...settingsSections];
-  return settingsSections.filter((s) =>
-    [s.name, ...s.labels].some((label) => fold(label).includes(q)),
-  );
+  const q = words(query);
+  if (!q.length) return [...settingsSections];
+  return settingsSections.filter((s) => {
+    const text = [s.name, ...s.labels].map(fold).join("\n");
+    return q.every((w) => text.includes(w));
+  });
 }
 
 const SECTION_KEY = "todo-track-settings-section";
