@@ -25,6 +25,7 @@ Planowanie:
 - **Historia i kopie**: wyszukiwanie po tytułach, projektach, notatkach i datach, zakres dat, archiwum, kosz oraz eksport/przywracanie kopii SQLite.
 - Archiwum ukrywa zadanie z bieżącej listy i planowania, zachowując raporty. Usunięcie przenosi zadanie wraz z czasem do kosza; przywrócenie odzyskuje historię. Przedziały z kosza pozostają zarezerwowane przy sprawdzaniu konfliktów czasu.
 - Po co najmniej 10 minutach bezczynności Windows, przy powrocie do aktywnego pomiaru, aplikacja pyta o zachowanie czasu lub zakończenie sesji na początku przerwy. Nie skraca czasu automatycznie. Opcję można wyłączyć w ustawieniach.
+- Praca agentów AI liczy się jako aktywność. Claude Code jest wykrywany po statusie `busy` w `~/.claude/sessions/<pid>.json` i działającym procesie (gdy `busy` trwa ponad 15 min, wymagany jest też świeży zapis transkryptu), Codex po zapisie pliku `~/.codex/sessions/**/rollout-*.jsonl` w ostatnich 90 s. Przerwa liczy się od późniejszej z chwil: ostatniego wejścia z klawiatury/myszy albo końca pracy agenta. Gdy agent zacznie pracę podczas nieobecności, przerwa jest zapominana bez pytania. Pracujących agentów pokazuje kafelek **Agenci AI** na Dashboardzie.
 - Eksport działa również podczas pomiaru i tworzy spójną kopię SQLite. Przywracanie pokazuje nazwę i liczby wpisów, wymaga potwierdzenia zastąpienia danych i najpierw zapisuje `backups/before-restore-*.sqlite`. Aktywna sesja z kopii jest kończona na moment eksportu (dla starszych kopii: modyfikacji pliku). Bieżąca konfiguracja Jiry pozostaje zachowana, token nie jest przenoszony.
 
 Domyślną zakładką nadal są **Zadania**.
@@ -33,7 +34,7 @@ Domyślną zakładką nadal są **Zadania**.
 
 **Historia i kopie → Ustawienia** ma sekcje:
 
-- **Czas pracy**: pytanie o czas po co najmniej 10 minutach bezczynności, cel dzienny w minutach (0–1440), początek dnia (`HH:MM`, dla osi planu) i dni robocze. Pod polami widać wyliczony cel dnia i tygodnia.
+- **Czas pracy**: pytanie o czas po co najmniej 10 minutach bezczynności, „Praca agentów AI (Claude Code, Codex) liczy się jako aktywność”, cel dzienny w minutach (0–1440), początek dnia (`HH:MM`, dla osi planu) i dni robocze. Pod polami widać wyliczony cel dnia i tygodnia.
 - **Okna**: „Pokazuj mini-widget zawsze na wierzchu” i „Tylko gdy główne okno jest schowane lub bez fokusu”.
 - **Powiadomienia**: terminy na dziś i przekroczone, długi pomiar bez Stop (minuty, domyślnie 240, 0 wyłącza), wieczorne „pomiar nadal trwa” (godzina, domyślnie 17:30, z osobnym wyłącznikiem) i osiągnięcie celu dnia (domyślnie wyłączone).
 - **Skróty**: dwa pola przechwytujące kombinację klawiszy, z błędem rejestracji przy polu i przyciskiem przywrócenia domyślnego.
