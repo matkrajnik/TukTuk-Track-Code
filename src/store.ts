@@ -289,7 +289,9 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
     title,
     done: false,
     createdAt: now,
-    ...(jiraKey ? { jiraKey: jiraKey, jiraUrl: `${previewJiraSite}/browse/${jiraKey}` } : {}),
+    ...(jiraKey
+      ? { jiraKey: jiraKey, jiraUrl: `${previewJiraSite}/browse/${jiraKey}` }
+      : {}),
     ...(details ? { details } : {}),
   });
   if (task.start) {
@@ -331,7 +333,9 @@ const templateEvent = "templates-changed";
 const TEMPLATE_NAME = /^[\p{L}\p{N}_-]{1,60}$/u;
 const sortTemplates = (list: TaskTemplate[]) =>
   [...list].sort((a, b) =>
-    a.name.toLocaleLowerCase("pl").localeCompare(b.name.toLocaleLowerCase("pl"), "pl"),
+    a.name
+      .toLocaleLowerCase("pl")
+      .localeCompare(b.name.toLocaleLowerCase("pl"), "pl"),
   );
 function previewTemplates(): TaskTemplate[] {
   try {
@@ -469,6 +473,78 @@ export async function deleteTemplate(id: number): Promise<TaskTemplate[]> {
     throw new Error("Nie znaleziono szablonu.");
   previewTemplatesChanged(list.filter((t) => t.id !== id));
   return loadTemplates();
+}
+/** Folder przypisany do zadania (`agents::Binding`, tabela `agent_bindings`). */
+export interface AgentBinding {
+  folder: string;
+  taskId: number;
+  title: string;
+}
+const bindingsKey = "todo-track-preview-agent-bindings-v1";
+/** Zdarzenie podglądu: przypisania folderów zmieniły się, dopasuj agentów od nowa. */
+export const previewAgentsEvent = "todo-track-preview-agents";
+/** Przypisania w podglądzie: `{ folder, taskId }` z localStorage. */
+export function previewBindings(): { folder: string; taskId: number }[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(bindingsKey) ?? "[]");
+    return Array.isArray(value) ? value : [];
+  } catch {
+    return [];
+  }
+}
+const trimFolder = (folder: string) => folder.trim().replace(/[\\/]+$/, "");
+const sameFolder = (a: string, b: string) =>
+  trimFolder(a).toLowerCase() === trimFolder(b).toLowerCase();
+async function previewBindingList(): Promise<AgentBinding[]> {
+  const data = await read();
+  return previewBindings()
+    .flatMap((b) => {
+      const task = [...data.tasks, ...(data.trash ?? [])].find(
+        (t) => t.id === b.taskId,
+      );
+      return task
+        ? [{ folder: b.folder, taskId: b.taskId, title: task.title }]
+        : [];
+    })
+    .sort((a, b) =>
+      a.folder.toLowerCase().localeCompare(b.folder.toLowerCase()),
+    );
+}
+function previewBindingsChanged(list: { folder: string; taskId: number }[]) {
+  localStorage.setItem(bindingsKey, JSON.stringify(list));
+  window.dispatchEvent(new Event(previewAgentsEvent));
+}
+/** Przypisania folderów do zadań (`agent_bindings`). */
+export async function agentBindings(): Promise<AgentBinding[]> {
+  if (desktop) return invoke("agent_bindings");
+  return previewBindingList();
+}
+/** Przypisuje folder agenta do zadania (`agent_bind`); zastępuje wcześniejsze. */
+export async function bindAgentFolder(
+  folder: string,
+  taskId: number,
+): Promise<AgentBinding[]> {
+  if (desktop) return invoke("agent_bind", { folder, taskId });
+  const clean = trimFolder(folder);
+  if (!clean || [...clean].length > 1024)
+    throw new Error("Niepoprawny folder.");
+  if (!(await read()).tasks.some((t) => t.id === taskId))
+    throw new Error("Nie znaleziono zadania.");
+  previewBindingsChanged([
+    ...previewBindings().filter((b) => !sameFolder(b.folder, clean)),
+    { folder: clean, taskId },
+  ]);
+  return previewBindingList();
+}
+/** Usuwa przypisanie folderu (`agent_unbind`). */
+export async function unbindAgentFolder(
+  folder: string,
+): Promise<AgentBinding[]> {
+  if (desktop) return invoke("agent_unbind", { folder });
+  previewBindingsChanged(
+    previewBindings().filter((b) => !sameFolder(b.folder, folder)),
+  );
+  return previewBindingList();
 }
 /** Odświeża `templates` po zmianie w innym oknie (np. szybkie przełączanie). */
 export async function onTemplatesChanged(): Promise<() => void> {
@@ -863,7 +939,10 @@ export async function writeAutostart(
 ): Promise<Autostart> {
   if (desktop) return invoke("autostart_set", { enabled, hidden });
   localStorage.setItem(autostartKey, JSON.stringify({ enabled }));
-  const settings = { ...previewJson(previewSettingsKey), autostartHidden: hidden };
+  const settings = {
+    ...previewJson(previewSettingsKey),
+    autostartHidden: hidden,
+  };
   localStorage.setItem(previewSettingsKey, JSON.stringify(settings));
   return readAutostart();
 }

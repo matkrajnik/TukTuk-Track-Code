@@ -1422,3 +1422,16 @@ html.widget-root body {
     grid-column: auto;
   }
 }
+.agent-work {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0 0 16px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.agent-work code {
+  font-size: inherit;
+}

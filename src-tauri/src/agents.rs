@@ -10,7 +10,15 @@
 //!
 //! Wątek co 5 s odświeża listę, wysyła `agents-changed` przy zmianie i zapamiętuje
 //! ostatnią chwilę pracy agenta, z której korzysta `idle`.
+//!
+//! Rozpoznanie zadania (PLAN_1.3.md, etap 4): gałąź git folderu roboczego
+//! (`git_branch`, bez uruchamiania procesu `git`, cache 30 s na katalog), klucz Jiry
+//! z gałęzi albo z nazwy sesji Claude Code i dopasowanie do zadania (`resolve`):
+//! przypisanie folderu (`agent_bindings`) → klucz powiązany z lokalnym zadaniem →
+//! klucz znany z `jira_issues` (zadanie powstanie dopiero przy akceptacji).
+//! Dopasowanie tylko opisuje pracę agenta; timer nigdy nie przełącza się sam.
 use crate::db;
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -24,8 +32,10 @@ const CHECK: Duration = Duration::from_secs(5);
 const CODEX_FRESH: i64 = 90_000;
 /// Po takim czasie `busy` sesja Claude musi mieć świeży transkrypt.
 const STALL: i64 = 15 * 60_000;
+/// Jak długo pamiętamy odczytaną gałąź katalogu.
+const BRANCH_TTL: i64 = 30_000;
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Agent {
     /// `claude` albo `codex`.
@@ -35,6 +45,273 @@ pub struct Agent {
     pub cwd: String,
     /// Od kiedy pracuje (ms).
     pub since: i64,
+    /// Nazwa sesji Claude Code nadana przez użytkownika (źródło klucza bez gałęzi).
+    #[serde(skip)]
+    pub session: Option<String>,
+    /// Gałąź git folderu roboczego, a przy odłączonym HEAD skrót commita.
+    pub branch: Option<String>,
+    /// `true`, gdy HEAD jest odłączony (`branch` to wtedy skrót commita).
+    pub detached: bool,
+    /// Klucz Jiry z gałęzi, a bez niego z nazwy sesji.
+    pub key: Option<String>,
+    /// Dopasowane zadanie.
+    pub task: Option<Match>,
+}
+
+/// Zadanie, nad którym pracuje agent.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Match {
+    /// Lokalne zadanie; `None`, gdy klucz zna tylko lista zgłoszeń z Jiry.
+    pub task_id: Option<i64>,
+    /// Tytuł zadania albo zgłoszenia (pusty, gdy tytuł zgłoszenia nie jest znany).
+    pub title: String,
+    pub key: Option<String>,
+    /// `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`.
+    pub source: String,
+}
+
+/// HEAD repozytorium.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Head {
+    Branch(String),
+    /// Odłączony HEAD: skrót commita (7 znaków).
+    Detached(String),
+}
+
+/// Katalog git dla `cwd`: idzie w górę do `.git`. Plik `.git` z `gitdir:` (worktree,
+/// submoduł) wskazuje katalog względny wobec folderu, w którym leży.
+fn git_dir(cwd: &Path) -> Option<PathBuf> {
+    if !cwd.is_absolute() {
+        return None;
+    }
+    for dir in cwd.ancestors() {
+        let dot = dir.join(".git");
+        let Ok(meta) = std::fs::metadata(&dot) else {
+            continue;
+        };
+        if meta.is_dir() {
+            return Some(dot);
+        }
+        let text = std::fs::read_to_string(&dot).ok()?;
+        let target = text
+            .lines()
+            .find_map(|l| l.trim_start_matches('\u{feff}').strip_prefix("gitdir:"))?
+            .trim();
+        if target.is_empty() {
+            return None;
+        }
+        let path = Path::new(target);
+        return Some(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            dir.join(path)
+        });
+    }
+    None
+}
+
+/// Gałąź (albo odłączony HEAD) repozytorium, w którym leży `cwd`; czyta plik `HEAD`
+/// bez uruchamiania procesu `git`. `None` poza repozytorium.
+pub fn git_branch(cwd: &Path) -> Option<Head> {
+    let head = std::fs::read_to_string(git_dir(cwd)?.join("HEAD")).ok()?;
+    let head = head.trim();
+    if let Some(name) = head.strip_prefix("ref:") {
+        let name = name.trim();
+        let name = name.strip_prefix("refs/heads/").unwrap_or(name);
+        return (!name.is_empty()).then(|| Head::Branch(name.to_string()));
+    }
+    (head.len() >= 7 && head.chars().all(|c| c.is_ascii_hexdigit()))
+        .then(|| Head::Detached(head[..7].to_string()))
+}
+
+/// Pierwszy klucz Jiry (`[A-Z][A-Z0-9]+-\d+`) w tekście, np. `feature/WMS-123-eksport`.
+/// Klucz nie może być doklejony do poprzedzającej litery lub cyfry.
+pub fn jira_key(text: &str) -> Option<String> {
+    let b = text.as_bytes();
+    for start in 0..b.len() {
+        if !b[start].is_ascii_uppercase() || (start > 0 && b[start - 1].is_ascii_alphanumeric()) {
+            continue;
+        }
+        let mut dash = start + 1;
+        while dash < b.len() && (b[dash].is_ascii_uppercase() || b[dash].is_ascii_digit()) {
+            dash += 1;
+        }
+        if dash - start < 2 || b.get(dash) != Some(&b'-') {
+            continue;
+        }
+        let mut end = dash + 1;
+        while end < b.len() && b[end].is_ascii_digit() {
+            end += 1;
+        }
+        if end > dash + 1 {
+            return Some(text[start..end].to_string());
+        }
+    }
+    None
+}
+
+/// Klucz agenta: z gałęzi, a gdy go tam nie ma, z nazwy sesji Claude Code.
+fn agent_key(agent: &Agent) -> Option<String> {
+    agent
+        .branch
+        .as_deref()
+        .filter(|_| !agent.detached)
+        .and_then(jira_key)
+        .or_else(|| agent.session.as_deref().and_then(jira_key))
+}
+
+/// Folder do porównań: ukośniki `/`, bez końcowego separatora, małe litery
+/// (ścieżki Windows nie rozróżniają wielkości liter).
+fn norm_folder(folder: &str) -> String {
+    folder
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+/// Przypisanie folderu obejmuje też jego podfoldery; wygrywa najdłuższe.
+fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
+    let cwd = norm_folder(cwd);
+    if cwd.is_empty() {
+        return Ok(None);
+    }
+    let rows = db
+        .prepare(
+            "SELECT b.folder,t.id,t.title,j.issue_key FROM agent_bindings b JOIN tasks t ON t.id=b.task_id
+             LEFT JOIN task_lifecycle l ON l.task_id=t.id LEFT JOIN jira_tasks j ON j.task_id=t.id
+             WHERE l.deleted_at IS NULL",
+        )?
+        .query_map([], |r| {
+            Ok((
+                norm_folder(&r.get::<_, String>(0)?),
+                Match {
+                    task_id: Some(r.get(1)?),
+                    title: r.get(2)?,
+                    key: r.get(3)?,
+                    source: "folder".into(),
+                },
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|(f, _)| !f.is_empty() && (cwd == *f || cwd.starts_with(&format!("{f}/"))))
+        .max_by_key(|(f, _)| f.len())
+        .map(|(_, m)| m))
+}
+
+/// Dopasowanie zadania w kolejności z planu: przypisanie folderu → klucz powiązany
+/// z lokalnym zadaniem (poza koszem) → klucz znany z `jira_issues`.
+pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Result<Option<Match>> {
+    if let Some(found) = bound_task(db, cwd)? {
+        return Ok(Some(found));
+    }
+    let Some(key) = key else {
+        return Ok(None);
+    };
+    let local = db
+        .query_row(
+            "SELECT t.id,t.title FROM jira_tasks j JOIN tasks t ON t.id=j.task_id
+             LEFT JOIN task_lifecycle l ON l.task_id=t.id
+             WHERE j.issue_key=?1 AND l.deleted_at IS NULL ORDER BY t.done, t.id DESC LIMIT 1",
+            [key],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    if let Some((id, title)) = local {
+        return Ok(Some(Match {
+            task_id: Some(id),
+            title,
+            key: Some(key.into()),
+            source: "task".into(),
+        }));
+    }
+    let known: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM jira_issues WHERE issue_key=?1)",
+        [key],
+        |r| r.get(0),
+    )?;
+    Ok(known.then(|| Match {
+        task_id: None,
+        title: String::new(),
+        key: Some(key.into()),
+        source: "jira".into(),
+    }))
+}
+
+/// Gałęzie katalogów z czasem odczytu.
+#[derive(Default)]
+struct Branches(HashMap<String, (i64, Option<Head>)>);
+impl Branches {
+    /// Gałąź z cache albo z `read`, gdy wpis jest starszy niż `BRANCH_TTL`.
+    fn get(&mut self, cwd: &str, now: i64, read: impl Fn(&Path) -> Option<Head>) -> Option<Head> {
+        if let Some((at, head)) = self.0.get(cwd) {
+            if now - at < BRANCH_TTL && now >= *at {
+                return head.clone();
+            }
+        }
+        self.0
+            .retain(|_, (at, _)| now - *at < BRANCH_TTL && now >= *at);
+        let head = read(Path::new(cwd));
+        self.0.insert(cwd.to_string(), (now, head.clone()));
+        head
+    }
+}
+
+/// Folder przypisany do zadania (`agent_bindings`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Binding {
+    pub folder: String,
+    pub task_id: i64,
+    pub title: String,
+}
+
+pub fn bindings(db: &Connection) -> rusqlite::Result<Vec<Binding>> {
+    db.prepare(
+        "SELECT b.folder,b.task_id,t.title FROM agent_bindings b JOIN tasks t ON t.id=b.task_id ORDER BY b.folder COLLATE NOCASE",
+    )?
+    .query_map([], |r| {
+        Ok(Binding {
+            folder: r.get(0)?,
+            task_id: r.get(1)?,
+            title: r.get(2)?,
+        })
+    })?
+    .collect()
+}
+
+/// Przypisuje folder do zadania (zastępuje wcześniejsze przypisanie tego folderu).
+pub fn bind(db: &Connection, folder: &str, task_id: i64) -> Result<Vec<Binding>, String> {
+    let folder = folder.trim().trim_end_matches(['\\', '/']);
+    if folder.is_empty() || folder.chars().count() > 1024 {
+        return Err("Niepoprawny folder.".into());
+    }
+    let live: bool = db
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks t LEFT JOIN task_lifecycle l ON l.task_id=t.id WHERE t.id=?1 AND l.deleted_at IS NULL)",
+            [task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !live {
+        return Err("Nie znaleziono zadania.".into());
+    }
+    db.execute(
+        "INSERT INTO agent_bindings(folder,task_id) VALUES(?1,?2) ON CONFLICT(folder) DO UPDATE SET folder=excluded.folder, task_id=excluded.task_id",
+        params![folder, task_id],
+    )
+    .map_err(|e| e.to_string())?;
+    bindings(db).map_err(|e| e.to_string())
+}
+
+pub fn unbind(db: &Connection, folder: &str) -> Result<Vec<Binding>, String> {
+    let folder = folder.trim().trim_end_matches(['\\', '/']);
+    db.execute("DELETE FROM agent_bindings WHERE folder=?1", [folder])
+        .map_err(|e| e.to_string())?;
+    bindings(db).map_err(|e| e.to_string())
 }
 
 #[derive(Default)]
@@ -47,6 +324,8 @@ struct Watch {
     /// Codex: od kiedy plik jest świeży (start pracy) i odczytany folder roboczy.
     codex_since: HashMap<PathBuf, i64>,
     codex_cwd: HashMap<PathBuf, String>,
+    /// Gałęzie folderów roboczych (cache 30 s).
+    branches: Branches,
 }
 
 #[derive(Deserialize)]
@@ -98,15 +377,15 @@ fn claude_agent(
             return None;
         }
     }
-    let name = s
-        .name
-        .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| folder(&s.cwd));
+    let session = s.name.filter(|n| !n.trim().is_empty());
+    let name = session.clone().unwrap_or_else(|| folder(&s.cwd));
     Some(Agent {
         kind: "claude".into(),
         name,
         cwd: s.cwd,
         since,
+        session,
+        ..Agent::default()
     })
 }
 
@@ -187,9 +466,21 @@ impl Watch {
                     name: folder(&cwd),
                     cwd,
                     since,
+                    ..Agent::default()
                 }
             })
             .collect()
+    }
+    /// Dopisuje gałąź (z cache 30 s, inaczej z `read`) i klucz Jiry.
+    fn recognize(&mut self, agents: &mut [Agent], now: i64, read: impl Fn(&Path) -> Option<Head>) {
+        for agent in agents {
+            (agent.branch, agent.detached) = match self.branches.get(&agent.cwd, now, &read) {
+                Some(Head::Branch(name)) => (Some(name), false),
+                Some(Head::Detached(hash)) => (Some(hash), true),
+                None => (None, false),
+            };
+            agent.key = agent_key(agent);
+        }
     }
     /// Zapisuje nową listę; `true`, gdy się zmieniła.
     fn update(&mut self, mut agents: Vec<Agent>, now: i64) -> bool {
@@ -265,15 +556,72 @@ pub fn start(app: &tauri::AppHandle) {
         let fresh = codex_home()
             .map(|h| codex_fresh(&h, now))
             .unwrap_or_default();
-        let changed = app.state::<State>().0.lock().ok().map(|mut w| {
+        let recognized = app.state::<State>().0.lock().ok().map(|mut w| {
             found.extend(w.codex_agents(fresh, now));
-            w.update(found, now).then(|| w.agents.clone())
+            w.recognize(&mut found, now, git_branch);
+            found
         });
-        if let Some(Some(agents)) = changed {
-            let _ = app.emit("agents-changed", agents);
+        if let Some(mut found) = recognized {
+            match_tasks(&app, &mut found);
+            let changed = app
+                .state::<State>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|mut w| w.update(found, now).then(|| w.agents.clone()));
+            if let Some(agents) = changed {
+                let _ = app.emit("agents-changed", agents);
+            }
         }
         std::thread::sleep(CHECK);
     });
+}
+
+/// Dopasowuje zadania agentów (`resolve`); tytuł zgłoszenia znanego tylko z Jiry
+/// pochodzi z listy wczytanej w tej sesji (`jira::cached_summary`).
+fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
+    {
+        let state = app.state::<crate::Database>();
+        let Ok(db) = state.0.lock() else {
+            return;
+        };
+        for agent in agents.iter_mut() {
+            agent.task = resolve(&db, &agent.cwd, agent.key.as_deref())
+                .ok()
+                .flatten();
+        }
+    }
+    for found in agents.iter_mut().filter_map(|a| a.task.as_mut()) {
+        if found.title.is_empty() {
+            if let Some(key) = found.key.clone() {
+                found.title = crate::jira::cached_summary(app, &key).unwrap_or_default();
+            }
+        }
+    }
+}
+
+/// Ponowne dopasowanie po zmianie przypisań folderów, bez czekania na pętlę.
+fn rematch(app: &tauri::AppHandle) {
+    let Some(mut agents) = app.state::<State>().0.lock().ok().map(|w| w.agents.clone()) else {
+        return;
+    };
+    match_tasks(app, &mut agents);
+    let changed = app.state::<State>().0.lock().ok().and_then(|mut w| {
+        let same = |a: &Agent, b: &Agent| a.kind == b.kind && a.cwd == b.cwd && a.since == b.since;
+        let mut changed = false;
+        for current in w.agents.iter_mut() {
+            if let Some(next) = agents.iter().find(|a| same(a, current)) {
+                if current.task != next.task {
+                    current.task = next.task.clone();
+                    changed = true;
+                }
+            }
+        }
+        changed.then(|| w.agents.clone())
+    });
+    if let Some(agents) = changed {
+        let _ = app.emit("agents-changed", agents);
+    }
 }
 
 /// Ile ms minęło od ostatniej pracy agenta (`u32::MAX`, gdy nigdy).
@@ -294,6 +642,39 @@ pub fn agents_status(app: tauri::AppHandle) -> Vec<Agent> {
         .lock()
         .map(|w| w.agents.clone())
         .unwrap_or_default()
+}
+
+#[tauri::command]
+pub fn agent_bindings(state: tauri::State<crate::Database>) -> Result<Vec<Binding>, String> {
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    bindings(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn agent_bind(
+    app: tauri::AppHandle,
+    state: tauri::State<crate::Database>,
+    folder: String,
+    task_id: i64,
+) -> Result<Vec<Binding>, String> {
+    let list = bind(
+        &*state.0.lock().map_err(|e| e.to_string())?,
+        &folder,
+        task_id,
+    )?;
+    rematch(&app);
+    Ok(list)
+}
+
+#[tauri::command]
+pub fn agent_unbind(
+    app: tauri::AppHandle,
+    state: tauri::State<crate::Database>,
+    folder: String,
+) -> Result<Vec<Binding>, String> {
+    let list = unbind(&*state.0.lock().map_err(|e| e.to_string())?, &folder)?;
+    rematch(&app);
+    Ok(list)
 }
 
 #[cfg(test)]
@@ -387,11 +768,250 @@ mod tests {
             name: "api".into(),
             cwd: "api".into(),
             since: 1,
+            ..Agent::default()
         };
         assert!(w.update(vec![a.clone()], 2));
         assert!(!w.update(vec![a], 3));
         assert_eq!(w.last_busy, Some(3));
         assert!(w.update(Vec::new(), 4));
         assert_eq!(w.last_busy, Some(3));
+    }
+
+    /// Katalog tymczasowy testu (usuwany na początku, żeby powtórka była czysta).
+    fn temp(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("todo-track-git-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn git_branch_reads_head_of_plain_repo_from_subfolder() {
+        let root = temp("plain");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join("src").join("deep")).unwrap();
+        std::fs::write(
+            repo.join(".git").join("HEAD"),
+            "ref: refs/heads/feature/WMS-123-eksport\n",
+        )
+        .unwrap();
+        let expected = Some(Head::Branch("feature/WMS-123-eksport".into()));
+        assert_eq!(git_branch(&repo), expected);
+        assert_eq!(git_branch(&repo.join("src").join("deep")), expected);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn git_branch_follows_gitdir_file_of_worktree_and_submodule() {
+        let root = temp("worktree");
+        let main = root.join("repo");
+        let admin = main.join(".git").join("worktrees").join("wt");
+        std::fs::create_dir_all(&admin).unwrap();
+        std::fs::write(main.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(admin.join("HEAD"), "ref: refs/heads/bugfix/ABC-7\n").unwrap();
+        let wt = root.join("wt");
+        std::fs::create_dir_all(wt.join("src")).unwrap();
+        // Git na Windows zapisuje ścieżkę bezwzględną z ukośnikami `/`.
+        let gitdir = admin.to_string_lossy().replace('\\', "/");
+        std::fs::write(wt.join(".git"), format!("gitdir: {gitdir}\n")).unwrap();
+        assert_eq!(
+            git_branch(&wt.join("src")),
+            Some(Head::Branch("bugfix/ABC-7".into()))
+        );
+
+        // Submoduł: względny `gitdir:` liczony od folderu z plikiem `.git`.
+        let modules = main.join(".git").join("modules").join("lib");
+        std::fs::create_dir_all(&modules).unwrap();
+        std::fs::write(modules.join("HEAD"), "ref: refs/heads/lib-dev\n").unwrap();
+        let sub = main.join("lib");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join(".git"), "gitdir: ../.git/modules/lib\n").unwrap();
+        assert_eq!(git_branch(&sub), Some(Head::Branch("lib-dev".into())));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn git_branch_reports_detached_head_and_missing_repo() {
+        let root = temp("detached");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(
+            repo.join(".git").join("HEAD"),
+            "0123456789abcdef0123456789abcdef01234567\n",
+        )
+        .unwrap();
+        assert_eq!(git_branch(&repo), Some(Head::Detached("0123456".into())));
+
+        let plain = root.join("bez-repo");
+        std::fs::create_dir_all(&plain).unwrap();
+        assert_eq!(git_branch(&plain), None);
+        // Ścieżka względna albo pusta nie jest szukana względem procesu aplikacji.
+        assert_eq!(git_branch(Path::new("")), None);
+        assert_eq!(git_branch(Path::new("repo")), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn branch_cache_keeps_result_for_thirty_seconds() {
+        let reads = std::cell::Cell::new(0);
+        let read = |_: &Path| {
+            reads.set(reads.get() + 1);
+            Some(Head::Branch(format!("b{}", reads.get())))
+        };
+        let b = |name: &str| Some(Head::Branch(name.into()));
+        let mut cache = Branches::default();
+        assert_eq!(cache.get("C:\\a", 0, read), b("b1"));
+        assert_eq!(cache.get("C:\\a", BRANCH_TTL - 1, read), b("b1"));
+        assert_eq!(cache.get("C:\\b", 1, read), b("b2"));
+        assert_eq!(cache.get("C:\\a", BRANCH_TTL, read), b("b3"));
+        assert_eq!(reads.get(), 3);
+    }
+
+    #[test]
+    fn extracts_jira_key_from_branch_or_session_name() {
+        let key = |text: &str| jira_key(text);
+        assert_eq!(key("feature/WMS-123-eksport").as_deref(), Some("WMS-123"));
+        assert_eq!(key("WMS-7").as_deref(), Some("WMS-7"));
+        assert_eq!(key("Poprawka AB2-45 w raporcie").as_deref(), Some("AB2-45"));
+        assert_eq!(key("fix/ABC-1x").as_deref(), Some("ABC-1"));
+        assert_eq!(key("Zażółć WMS-9").as_deref(), Some("WMS-9"));
+        for none in ["feature/wms-123", "W-1", "xWMS-12", "WMS-", "main", ""] {
+            assert_eq!(key(none), None, "{none}");
+        }
+
+        let mut agent = Agent {
+            branch: Some("feature/WMS-123-eksport".into()),
+            session: Some("Przegląd DEV-5".into()),
+            ..Agent::default()
+        };
+        assert_eq!(agent_key(&agent).as_deref(), Some("WMS-123"));
+        agent.branch = Some("main".into());
+        assert_eq!(agent_key(&agent).as_deref(), Some("DEV-5"));
+        // Skrót commita przy odłączonym HEAD nie jest gałęzią.
+        agent.branch = Some("ABCD-12".into());
+        agent.detached = true;
+        assert_eq!(agent_key(&agent).as_deref(), Some("DEV-5"));
+        agent.session = None;
+        assert_eq!(agent_key(&agent), None);
+    }
+
+    #[test]
+    fn recognize_fills_branch_and_key() {
+        let mut w = Watch::default();
+        let mut agents = vec![
+            Agent {
+                cwd: "C:\\repo".into(),
+                session: Some("Sesja PRJ-2".into()),
+                ..Agent::default()
+            },
+            Agent {
+                cwd: "C:\\inne".into(),
+                session: Some("Sesja PRJ-2".into()),
+                ..Agent::default()
+            },
+        ];
+        w.recognize(&mut agents, 0, |p| {
+            (p == Path::new("C:\\repo")).then(|| Head::Branch("feature/WMS-1-a".into()))
+        });
+        assert_eq!(agents[0].branch.as_deref(), Some("feature/WMS-1-a"));
+        assert_eq!(agents[0].key.as_deref(), Some("WMS-1"));
+        assert_eq!(agents[1].branch, None);
+        assert_eq!(agents[1].key.as_deref(), Some("PRJ-2"));
+    }
+
+    fn open() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["Eksport", "Przypisane", "W koszu"] {
+            db.execute("INSERT INTO tasks(title,created_at) VALUES(?1,0)", [title])
+                .unwrap();
+        }
+        db.execute_batch(
+            "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(1,'https://x.atlassian.net','WMS-123');
+             INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(3,'https://x.atlassian.net','WMS-7');
+             INSERT INTO task_lifecycle(task_id,archived,deleted_at) VALUES(3,0,5);
+             INSERT INTO jira_issues(site,issue_key,status) VALUES('https://x.atlassian.net','WMS-200','Do zrobienia');
+             INSERT INTO jira_issues(site,issue_key,status) VALUES('https://x.atlassian.net','WMS-7','W toku');",
+        )
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn resolve_prefers_folder_binding_then_local_task_then_jira_issue() {
+        let db = open();
+        let found = |cwd: &str, key: Option<&str>| resolve(&db, cwd, key).unwrap();
+
+        // Klucz powiązany z lokalnym zadaniem.
+        let m = found("C:\\Projekty\\wms", Some("WMS-123")).unwrap();
+        assert_eq!(
+            (m.task_id, m.title.as_str(), m.source.as_str()),
+            (Some(1), "Eksport", "task")
+        );
+        // Klucz znany tylko z listy zgłoszeń: zadanie powstanie przy akceptacji.
+        let m = found("C:\\Projekty\\wms", Some("WMS-200")).unwrap();
+        assert_eq!(
+            (m.task_id, m.key.as_deref(), m.source.as_str()),
+            (None, Some("WMS-200"), "jira")
+        );
+        // Zadanie w koszu nie jest dopasowane; zostaje zgłoszenie z Jiry.
+        assert_eq!(found("C:\\x", Some("WMS-7")).unwrap().source, "jira");
+        assert_eq!(found("C:\\x", Some("NIE-1")), None);
+        assert_eq!(found("C:\\x", None), None);
+
+        // Przypisanie folderu wygrywa z kluczem i obejmuje podfoldery.
+        bind(&db, "c:/projekty/WMS/", 2).unwrap();
+        let m = found("C:\\Projekty\\wms\\src", Some("WMS-123")).unwrap();
+        assert_eq!(
+            (m.task_id, m.title.as_str(), m.source.as_str()),
+            (Some(2), "Przypisane", "folder")
+        );
+        assert_eq!(found("C:\\Projekty\\wms-api", None), None);
+        // Bliższe przypisanie wygrywa z dalszym.
+        bind(&db, "C:\\Projekty\\wms\\src", 1).unwrap();
+        assert_eq!(
+            found("C:\\Projekty\\wms\\src\\a", None).unwrap().task_id,
+            Some(1)
+        );
+        assert_eq!(
+            found("C:\\Projekty\\wms\\doc", None).unwrap().task_id,
+            Some(2)
+        );
+        // Przypisanie do zadania w koszu jest pomijane.
+        db.execute(
+            "UPDATE task_lifecycle SET deleted_at=NULL WHERE task_id=3",
+            [],
+        )
+        .unwrap();
+        bind(&db, "C:\\kosz", 3).unwrap();
+        db.execute("UPDATE task_lifecycle SET deleted_at=9 WHERE task_id=3", [])
+            .unwrap();
+        assert_eq!(found("C:\\kosz", Some("WMS-123")).unwrap().source, "task");
+    }
+
+    #[test]
+    fn bindings_replace_folder_and_reject_missing_or_trashed_task() {
+        let db = open();
+        let missing = Err("Nie znaleziono zadania.".to_string());
+        assert_eq!(bind(&db, "C:\\a", 99), missing);
+        assert_eq!(bind(&db, "C:\\a", 3), missing);
+        assert_eq!(bind(&db, "  ", 1), Err("Niepoprawny folder.".into()));
+        bind(&db, "C:\\a\\", 1).unwrap();
+        let list = bind(&db, "c:\\A", 2).unwrap();
+        assert_eq!(
+            list,
+            vec![Binding {
+                folder: "c:\\A".into(),
+                task_id: 2,
+                title: "Przypisane".into()
+            }]
+        );
+        assert!(unbind(&db, "C:\\a").unwrap().is_empty());
+        // Trwałe usunięcie zadania usuwa przypisanie (ON DELETE CASCADE).
+        bind(&db, "C:\\b", 2).unwrap();
+        db.execute("DELETE FROM tasks WHERE id=2", []).unwrap();
+        assert!(bindings(&db).unwrap().is_empty());
     }
 }
