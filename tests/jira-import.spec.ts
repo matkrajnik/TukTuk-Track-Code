@@ -7,6 +7,11 @@ const column = (page: Page, name: string) =>
   page.getByRole("region", { name, exact: true });
 const unplanned = (page: Page) =>
   column(page, "Do zaplanowania").locator(".week-card-title");
+// „Code review” to też tytuł innego zadania, więc status szukamy w kafelku.
+const jiraStatusOn = (page: Page, title: string) =>
+  page
+    .getByRole("article", { name: title, exact: true })
+    .locator(".task-jira-status");
 
 test("Jira watch: first check only remembers, next one adds new issues to Do zaplanowania without duplicating trashed ones", async ({
   page,
@@ -17,6 +22,7 @@ test("Jira watch: first check only remembers, next one adds new issues to Do zap
     .click();
   await page.getByRole("button", { name: "Tydzień", exact: true }).click();
   await expect(unplanned(page)).toHaveText(["Code review"]);
+  await expect(jiraStatusOn(page, "Analiza importu")).toHaveText("W toku");
 
   // Pierwsze sprawdzenie dla konta: przypisania są tylko zapamiętywane.
   const first = await backend<string[]>(page, "jiraCheck", [
@@ -45,6 +51,8 @@ test("Jira watch: first check only remembers, next one adds new issues to Do zap
   await expect(
     column(page, "Do zaplanowania").getByText("WMS-21"),
   ).toBeVisible();
+  // Status istniejącego zgłoszenia odświeża się na kafelku.
+  await expect(jiraStatusOn(page, "Analiza importu")).toHaveText("Code review");
 
   // Kolejne sprawdzenie z tym samym zestawem niczego nie dubluje.
   expect(
@@ -54,6 +62,7 @@ test("Jira watch: first check only remembers, next one adds new issues to Do zap
     ]),
   ).toEqual([]);
   await expect(unplanned(page)).toHaveText(["Etykiety palet", "Code review"]);
+  await expect(jiraStatusOn(page, "Etykiety palet")).toHaveText("W toku");
 
   // Zadania: nowe zgłoszenie z kluczem i statusem, zadanie z kosza nie wraca.
   await page.getByRole("button", { name: "Zadania", exact: true }).click();
@@ -70,9 +79,13 @@ test("Jira watch: first check only remembers, next one adds new issues to Do zap
     {
       title: "Etykiety palet",
       jiraUrl: "https://asistonwms.atlassian.net/browse/WMS-21",
+      jiraStatus: "W toku",
       done: false,
     },
   ]);
+  expect(
+    snapshot.tasks.find((t: any) => t.jiraKey === "WMS-12").jiraStatus,
+  ).toBe("Code review");
   expect(snapshot.tasks.some((t: any) => t.jiraKey === "WMS-7")).toBe(false);
   expect(snapshot.trash.map((t: any) => t.id)).toEqual([ids.trashed]);
 
