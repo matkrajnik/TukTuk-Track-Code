@@ -1,4 +1,32 @@
-﻿# Todo Track — stan po 1.3.0
+﻿# Todo Track — stan po 1.4.0
+
+## Stan po 1.4.0 (15 października 2026)
+
+Gałąź `release/1.0`, lokalnie, bez pusha. Wydanie 1.4.0 obejmuje etap 3 z PLAN_1.3.md: Q1 (składnia szybkiego dodawania: parser `src/quickadd.ts`, chipy `QuickChips.vue`, komenda `quick_add` w `src-tauri/src/quickadd.rs` z odpowiednikiem w podglądzie, „Utwórz i rozpocznij” / „Utwórz” w szybkim przełączaniu) i Q2 (szablony zadań: tabela `task_templates` przez `CREATE TABLE IF NOT EXISTS`, `templates.rs`, „Zapisz jako szablon” w kafelku, Ustawienia → Szablony z `TemplateEditor.vue`, szablony w kopii i przywracaniu). Wersja 1.4.0 w pięciu plikach, instalator `releases/Todo Track_1.4.0_x64-setup.exe` (nie instalowany), lokalny tag `v1.4.0` (niewypchnięty).
+
+Weryfikacja: `npm run build`, 123 testy Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 93 testy Rust (`cargo test --locked`) oraz `npm run tauri build -- -- --locked` przechodzą (Git Bash, cargo dodane do PATH).
+
+Odstępstwa od planu:
+- Etap 3 nie jest sprawdzony w natywnej aplikacji ani po instalacji NSIS; tytuł z Jiry dla samego klucza sprawdzono tylko na symulowanej liście zgłoszeń. Bez listy wczytanej w sesji (`jira::cached_summary`) zadanie z samym kluczem nie powstaje i pokazuje „Nie znam tytułu…”.
+- Q2 świadomie zmienił wygląd Ustawień (sekcja Szablony): 4 wzorce `ustawienia-*-win32.png` zregenerowano lokalnie, nie na windows-latest. Test `quick-switch.spec.ts` zmieniono w Q1: wcześniej sprawdzał, że Enter bez wyników nic nie robi; teraz sprawdza propozycję „Utwórz i rozpocznij”, bo plan zmienia to zachowanie.
+- Otwarte jak po 1.3.0: etap 0 (instalacja 1.2.0, tagi `v1.0.0` i `v1.2.0`, push tagów), dwa zielone przebiegi CI, natywna walidacja przycisków w powiadomieniach.
+
+Do ręcznego sprawdzenia:
+
+Q1 — w natywnej aplikacji (`tauri dev` albo po instalacji NSIS):
+- Widok Jira, odświeżenie listy, potem w „Nowe zadanie” sam klucz (np. `WMS-123`): tytuł pochodzi ze zgłoszenia, a zadanie linkuje do właściwej witryny.
+- To samo po restarcie bez odświeżonej listy: błąd ma być czytelny.
+- Okno Ctrl+Shift+Space (osobne okno szybkiego przełączania): brak wyników, Enter tworzy i uruchamia, Shift+Enter tylko tworzy, okno się chowa, a główne okno się odświeża (zdarzenie `data-changed`).
+- Wygląd chipów w ciemnym i jasnym motywie oraz uzupełnianie Tab przy polskim układzie klawiatury.
+- Przypomnienie resetuje się po „Utwórz i rozpocznij”.
+
+Q2 — w natywnej aplikacji albo po instalacji pakietu NSIS:
+- Aktualizacja: start na istniejącej bazie użytkownika (po aktualizacji); tabela `task_templates` powstaje bez utraty danych. Test automatyczny używa tylko bazy w pamięci.
+- Zapis i użycie: zapisać szablon z rozwiniętego kafelka, potem w „Nowe zadanie” `/review WMS-123` przy połączonej Jirze. Tytuł ma pochodzić z listy zgłoszeń (`jira::cached_summary`), co działa dopiero po wczytaniu listy w sesji; inaczej „Nie znam tytułu”. Automatycznie sprawdzono tylko symulowaną listę.
+- Okno szybkiego przełączania (skrót globalny): Tab uzupełnia nazwę szablonu, a szablon dodany w Ustawieniach widać przy następnym otwarciu okna (ładowany przy otwarciu).
+- Kopia: eksport, usunięcie lub zmiana szablonu, przywrócenie; szablony zgodne z kopią.
+- Ustawienia → Szablony: zmiana nazwy, edycja, usunięcie z potwierdzeniem, próba nazwy różniącej się tylko wielkością liter (komunikat błędu).
+- Zrzuty w CI: 4 wzorce Ustawień powstały lokalnie; potwierdzić na windows-latest.
 
 ## Stan po 1.3.0 (15 października 2026)
 

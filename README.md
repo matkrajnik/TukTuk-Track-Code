@@ -4,6 +4,14 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
+### Nowości 1.4
+
+- **Składnia szybkiego dodawania** w polu „Nowe zadanie” (parser `src/quickadd.ts`): klucz Jiry na początku (`WMS-123`; sam klucz bierze tytuł z listy zgłoszeń wczytanej w widoku Jira, a gdy jej nie ma, pokazuje błąd „Nie znam tytułu…”), szacunek `~30m`, `~2h`, `~1h30`, dzień w planie `@dziś`, `@jutro`, `@pon`…`@nd`, `@20.10`, termin `do:pt`, `do:20.10`, priorytet `!` / `!niski`, projekt `#nazwa`, szablon `/nazwa` i `\` przed znakiem dla zapisu dosłownego (`C\#`). Pod polem widać chipy z rozpoznanymi polami; kliknięcie chipa usuwa zapis, Tab uzupełnia projekt i szablon, błędne zapisy (np. `@31.02`) blokują dodanie. Tekst bez zapisów dodaje się jak dotąd. Zadanie z polami powstaje w jednej transakcji (komenda `quick_add`).
+- **To samo pole w szybkim przełączaniu**: gdy nic nie pasuje, Enter tworzy zadanie i uruchamia pomiar (poprzedni staje), Shift+Enter tylko tworzy.
+- **Szablony zadań**: „Zapisz jako szablon” w rozwiniętym kafelku, zarządzanie w Ustawieniach → Szablony (zmiana nazwy, edycja, usunięcie z potwierdzeniem; nazwy unikalne bez względu na wielkość liter). Szablon ma tytuł z polami `{klucz}` i `{tytuł}`, kroki, szacunek, projekt i priorytet; `/review WMS-123` tworzy zadanie z tytułem z szablonu i zgłoszenia, a pola podane jawnie w linii wygrywają z szablonem. Kopia SQLite obejmuje szablony, przywracanie je zastępuje.
+- Nowa tabela `task_templates` powstaje przy starcie (`CREATE TABLE IF NOT EXISTS`); istniejące dane się nie zmieniają.
+- Składnię i szablony sprawdzono testami Playwright (parser i e2e na podglądzie z symulowaną Jirą) oraz Rust; w natywnej aplikacji i po instalacji NSIS nie były jeszcze sprawdzane.
+
 ### Nowości 1.3
 
 - **Akcje w powiadomieniach Windows**: powiadomienia idą bezpośrednio przez `tauri-winrt-notification`, więc kliknięcie i przyciski trafiają do aplikacji. Termin otwiera Zadania z filtrem „Dzisiaj: plan i praca”, długi pomiar rozwija bieżące zadanie i ma przyciski „Zatrzymaj” i „Podziel…”, wieczór otwiera Zamknięcie dnia i ma „Zatrzymaj teraz”, cel otwiera Zamknięcie dnia, nowe zgłoszenia z Jiry mają „Rozpocznij” (przy jednym zgłoszeniu) i „Zaplanuj na dziś”. Timer zmieniają tylko przyciski, które klikniesz; nic nie przełącza się samo. Szczegóły w sekcji „Powiadomienia”. Przyciski sprawdzono testami Rust i Playwright; na zainstalowanym pakiecie NSIS nie były jeszcze klikane.
@@ -122,7 +130,7 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Wersja w repozytorium: 1.3.0 (akcje w powiadomieniach Windows, zrzuty wzorcowe i nowe testy; bez zmian w bazie). Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.3.0_x64-setup.exe`; gotowe instalatory (1.2.0 i 1.3.0) leżą w repozytorium w `releases/`. Instalatory 1.2.0 i 1.3.0 nie były jeszcze instalowane, więc przyciski w powiadomieniach nie są sprawdzone natywnie. Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
+Wersja w repozytorium: 1.4.0 (składnia szybkiego dodawania i szablony zadań; nowa tabela `task_templates` tworzona przy starcie przez `IF NOT EXISTS`). Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.4.0_x64-setup.exe`; gotowe instalatory (1.2.0, 1.3.0 i 1.4.0) leżą w repozytorium w `releases/`. Instalatory 1.2.0, 1.3.0 i 1.4.0 nie były jeszcze instalowane, więc przyciski w powiadomieniach, szybkie dodawanie i szablony nie są sprawdzone natywnie. Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
 
 Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
@@ -197,6 +205,8 @@ Usunięcie zadania usuwa też jego sesje (z potwierdzeniem). Ukończenie zadania
 Raporty dzielą sesję przez lokalną północ i uwzględniają zmianę czasu (doby 23- i 25-godzinne). W rozwiniętym raporcie wyświetlany jest pełny przedział, a obok czas przypadający wyłącznie na wybrany dzień. Usunięte zadania i ich sesje znikają również z raportów. Edycja przedziałów korzysta z dotychczasowej bazy; aktualizacja aplikacji nie wymaga migracji danych.
 
 ## Sprawdzenie
+
+Weryfikacja 1.4.0 (15 października 2026, gałąź `release/1.0`): `npm run build`, 123 testy Playwright (w tym zrzuty wzorcowe; parser szybkiego dodawania, e2e składni i szablonów), `cargo fmt --check`, 93 testy Rust (`cargo test --locked`) i `npm run tauri build -- -- --locked` przechodzą. Wzorce zrzutów Ustawień (sekcja Szablony) odświeżono lokalnie; CI na windows-latest nadal nie był uruchomiony.
 
 Weryfikacja 1.3.0 (15 października 2026, gałąź `release/1.0`): `npm run build`, 101 testów Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 79 testów Rust (`cargo test --locked`) i `npm run tauri build -- -- --locked` przechodzą. Workflow CI z krokiem zrzutów nie był jeszcze uruchomiony na windows-latest.
 
