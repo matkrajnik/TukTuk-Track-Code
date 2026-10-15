@@ -315,6 +315,19 @@ function install(init: {
             today: 0,
             week: 0,
           };
+        // Kalendarz niepołączony (logika w `calendar.rs`, e2e na podglądzie).
+        case "calendar_status":
+          return {
+            clientId: "",
+            tenant: "organizations",
+            email: "",
+            connected: false,
+            connecting: false,
+            lastSync: null,
+            lastError: "",
+          };
+        case "calendar_events":
+          return [];
         case "jira_settings":
           return {
             config: {

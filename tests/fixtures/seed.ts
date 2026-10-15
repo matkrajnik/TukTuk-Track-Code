@@ -244,6 +244,77 @@ export function jiraFixture() {
   };
 }
 
+
+export const CALENDAR_KEY = "todo-track-preview-calendar-v1";
+/** Identyfikator aplikacji w Entra ID używany w testach kalendarza. */
+export const CALENDAR_CLIENT_ID = "0a1b2c3d-4e5f-4789-abcd-ef0123456789";
+
+/**
+ * Przykładowe spotkania z kalendarza Microsoft (jak z `calendar_events`): dziś
+ * daily, przegląd z odpowiedzią „wstępnie”, anulowane i odrzucone (nie zajmują
+ * czasu), jutro całodniowe „poza biurem” od lokalnej północy i daily w
+ * poniedziałek tego tygodnia.
+ */
+export function calendarEvents() {
+  const event = (
+    id: string,
+    day: string,
+    from: string,
+    to: string,
+    subject: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    start: at(day, from),
+    end: at(day, to),
+    subject,
+    showAs: "busy",
+    allDay: false,
+    cancelled: false,
+    response: "accepted",
+    ...extra,
+  });
+  return [
+    event("m-daily-mon", "2026-10-12", "09:15", "09:30", "Daily WMS"),
+    event("m-daily", TODAY, "09:15", "09:30", "Daily WMS"),
+    event("m-review", TODAY, "13:00", "14:00", "Przegląd sprintu", {
+      showAs: "tentative",
+      response: "tentativelyAccepted",
+    }),
+    event("m-cancelled", TODAY, "15:00", "15:30", "Odwołane demo", {
+      cancelled: true,
+    }),
+    event("m-declined", TODAY, "16:00", "17:00", "Warsztat z klientem", {
+      response: "declined",
+    }),
+    {
+      ...event("m-oof", "2026-10-16", "00:00", "00:00", "Urlop", {
+        showAs: "oof",
+        allDay: true,
+      }),
+      end: at("2026-10-17", "00:00"),
+    },
+  ];
+}
+
+/**
+ * Kalendarz podglądu (`openPreview({ calendar })`): `connected` ma zalogowane
+ * konto i pobrane spotkania, `ready` tylko zapisany client ID; w obu „chmura”
+ * (`sample`) ma spotkania z `calendarEvents()`, które pobierze „Połącz” i „Odśwież”.
+ */
+export function calendarFixture(state: "connected" | "ready" = "connected") {
+  const sample = calendarEvents();
+  return {
+    clientId: CALENDAR_CLIENT_ID,
+    tenant: "organizations",
+    email: state === "connected" ? "jan.kowalski@firma.example" : "",
+    lastSync: state === "connected" ? at(TODAY, "11:50") : null,
+    lastError: "",
+    events: state === "connected" ? sample : [],
+    sample,
+  };
+}
+
 export interface PreviewOptions extends SeedOptions {
   /** Stały czas strony; domyślnie `NOW`. */
   now?: string | number;
@@ -253,6 +324,8 @@ export interface PreviewOptions extends SeedOptions {
   settings?: Record<string, unknown>;
   /** Pracujący agenci AI w podglądzie. */
   agents?: unknown[];
+  /** Kalendarz Microsoft w podglądzie, np. `calendarFixture()`. */
+  calendar?: unknown;
 }
 
 /**
@@ -271,11 +344,12 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
         options.agents ? JSON.stringify(options.agents) : null,
+        options.calendar ? JSON.stringify(options.calendar) : null,
       ],
     ] as const,
   );

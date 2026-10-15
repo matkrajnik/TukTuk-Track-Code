@@ -1081,3 +1081,180 @@ export async function exportReport(
     throw new Error("Eksport XLSX jest dostępny tylko w aplikacji Windows.");
   return { text: exportCsv(exportRows(await read(), days, Date.now())) };
 }
+
+/** Stan kalendarza Microsoft (`calendar_status`). */
+export interface CalendarStatus {
+  clientId: string;
+  tenant: string;
+  /** Zalogowane konto; pusty, gdy niepołączone. */
+  email: string;
+  connected: boolean;
+  /** Trwa logowanie w przeglądarce. */
+  connecting: boolean;
+  lastSync: number | null;
+  lastError: string;
+}
+/** Spotkanie (`calendar_events`): czasy w ms, całodniowe od lokalnej północy. */
+export interface CalendarEvent {
+  id: string;
+  start: number;
+  end: number;
+  subject: string;
+  /** `free`, `tentative`, `busy`, `oof`, `workingElsewhere` albo `unknown`. */
+  showAs: string;
+  allDay: boolean;
+  cancelled: boolean;
+  /** Odpowiedź na zaproszenie, np. `accepted`, `declined`, `organizer`. */
+  response: string;
+}
+/** Dane podglądu: ustawienia, pobrane spotkania i spotkania „w chmurze” (`sample`). */
+interface PreviewCalendar {
+  clientId: string;
+  tenant: string;
+  email: string;
+  lastSync: number | null;
+  lastError: string;
+  events: CalendarEvent[];
+  sample: CalendarEvent[];
+}
+export const calendarKey = "todo-track-preview-calendar-v1";
+const calendarEvent = "calendar-changed";
+/** Konto „zalogowane” w podglądzie. */
+export const previewCalendarEmail = "jan.kowalski@firma.example";
+const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Jak `calendar::valid_tenant`: organizations/common/consumers, GUID albo domena. */
+const validTenant = (t: string) =>
+  ["organizations", "common", "consumers"].includes(t) ||
+  guid.test(t) ||
+  (t.length <= 253 &&
+    t.includes(".") &&
+    t.split(".").every((l) => /^[a-z0-9-]+$/i.test(l)));
+export const calendarClientIdMessage =
+  "Podaj identyfikator aplikacji (client ID) z rejestracji w Entra ID, np. 00000000-0000-0000-0000-000000000000.";
+function previewCalendar(): PreviewCalendar {
+  const empty: PreviewCalendar = {
+    clientId: "",
+    tenant: "organizations",
+    email: "",
+    lastSync: null,
+    lastError: "",
+    events: [],
+    sample: [],
+  };
+  try {
+    const value = JSON.parse(localStorage.getItem(calendarKey) ?? "{}");
+    return value && typeof value === "object" ? { ...empty, ...value } : empty;
+  } catch {
+    return empty;
+  }
+}
+function savePreviewCalendar(data: PreviewCalendar) {
+  localStorage.setItem(calendarKey, JSON.stringify(data));
+  window.dispatchEvent(new Event(calendarEvent));
+}
+const previewStatus = (c: PreviewCalendar): CalendarStatus => ({
+  clientId: c.clientId,
+  tenant: c.tenant || "organizations",
+  email: c.email,
+  connected: !!c.email && !!c.clientId,
+  connecting: false,
+  lastSync: c.lastSync,
+  lastError: c.lastError,
+});
+export async function calendarStatus(): Promise<CalendarStatus> {
+  if (desktop) return invoke("calendar_status");
+  return previewStatus(previewCalendar());
+}
+/**
+ * „Połącz konto Microsoft”: logowanie w przeglądarce i pierwsze pobranie.
+ * Podgląd symuluje udane logowanie i „pobiera” spotkania z `sample`.
+ */
+export async function calendarConnect(
+  clientId: string,
+  tenant: string,
+): Promise<CalendarStatus> {
+  if (desktop) return invoke("calendar_connect", { clientId, tenant });
+  const id = clientId.trim().toLowerCase();
+  const t = tenant.trim().toLowerCase() || "organizations";
+  if (!guid.test(id)) throw new Error(calendarClientIdMessage);
+  if (!validTenant(t))
+    throw new Error(
+      "Podaj dzierżawcę: organizations, identyfikator albo domenę firmy.",
+    );
+  const c = previewCalendar();
+  const next: PreviewCalendar = {
+    ...c,
+    clientId: id,
+    tenant: t,
+    email: previewCalendarEmail,
+    lastSync: Date.now(),
+    lastError: "",
+    events: c.sample.map((e) => ({ ...e })),
+  };
+  savePreviewCalendar(next);
+  return previewStatus(next);
+}
+/** „Rozłącz”: usuwa token i spotkania; client ID i dzierżawca zostają. */
+export async function calendarDisconnect(): Promise<CalendarStatus> {
+  if (desktop) return invoke("calendar_disconnect");
+  const next = {
+    ...previewCalendar(),
+    email: "",
+    lastSync: null,
+    lastError: "",
+    events: [],
+  };
+  savePreviewCalendar(next);
+  return previewStatus(next);
+}
+/** „Odśwież”: pobiera spotkania teraz. */
+export async function calendarRefresh(): Promise<CalendarStatus> {
+  if (desktop) return invoke("calendar_refresh");
+  const c = previewCalendar();
+  if (!c.clientId)
+    throw new Error(
+      "Kalendarz jest wyłączony: podaj client ID w Ustawieniach → Kalendarz.",
+    );
+  if (!c.email)
+    throw new Error("Połącz konto Microsoft w Ustawieniach → Kalendarz.");
+  const next = {
+    ...c,
+    lastSync: Date.now(),
+    lastError: "",
+    events: c.sample.map((e) => ({ ...e })),
+  };
+  savePreviewCalendar(next);
+  return previewStatus(next);
+}
+/** Spotkania nakładające się na `[from, to)`, według początku. */
+export async function calendarEvents(
+  from: number,
+  to: number,
+): Promise<CalendarEvent[]> {
+  if (desktop) return invoke("calendar_events", { from, to });
+  if (to < from) throw new Error("Niepoprawny zakres dat.");
+  return previewCalendar()
+    .events.filter(
+      (e) => e.start < to && (e.end > from || (e.end === e.start && e.start >= from)),
+    )
+    .sort((a, b) => a.start - b.start || a.end - b.end || a.id.localeCompare(b.id));
+}
+/** Nasłuch zmian kalendarza (pobranie, połączenie, rozłączenie). */
+export async function onCalendarChanged(
+  handler: () => void,
+): Promise<() => void> {
+  if (desktop) return listen(calendarEvent, () => handler());
+  window.addEventListener(calendarEvent, handler);
+  return () => window.removeEventListener(calendarEvent, handler);
+}
+/**
+ * Czy spotkanie zajmuje czas (`calendar::occupies`): busy, oof, workingElsewhere
+ * albo tentative, nieanulowane i nieodrzucone.
+ */
+export const meetingOccupies = (e: CalendarEvent) =>
+  ["busy", "oof", "workingElsewhere", "tentative"].includes(e.showAs) &&
+  !e.cancelled &&
+  e.response !== "declined";
+/** Tytuł spotkania w interfejsie: „Spotkanie”, gdy tytuły są wyłączone albo puste. */
+export const meetingTitle = (e: CalendarEvent, showTitles: boolean) =>
+  (showTitles && e.subject.trim()) || "Spotkanie";

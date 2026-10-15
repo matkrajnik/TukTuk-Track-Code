@@ -4489,15 +4489,18 @@ name = "todo-track"
 version = "1.6.0"
 dependencies = [
  "auto-launch",
+ "base64 0.22.1",
  "calamine",
  "chrono",
  "chrono-tz",
+ "getrandom 0.3.4",
  "keyring",
  "reqwest 0.12.28",
  "rusqlite",
  "rust_xlsxwriter",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",

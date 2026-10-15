@@ -2,6 +2,7 @@
 mod agents;
 mod autostart;
 mod backup;
+mod calendar;
 mod db;
 mod export;
 mod focus;
@@ -286,6 +287,7 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
+            calendar::setup(app.handle());
             let tray_refresher = tray::setup(app)?;
             let widget_waker = widget::setup(app);
             reminder::setup(app.handle());
@@ -310,6 +312,7 @@ fn main() {
             notify::start(app.handle());
             focus::start(app.handle());
             jira::start(app.handle());
+            calendar::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
             if !autostart::started_hidden(std::env::args()) {
@@ -403,6 +406,11 @@ fn main() {
             jira::jira_issues,
             jira::jira_start,
             jira::jira_open,
+            calendar::calendar_status,
+            calendar::calendar_connect,
+            calendar::calendar_disconnect,
+            calendar::calendar_refresh,
+            calendar::calendar_events,
             templates::templates_list,
             templates::template_save,
             templates::template_delete

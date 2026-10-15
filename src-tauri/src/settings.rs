@@ -38,6 +38,8 @@ pub struct AppSettings {
     pub focus_break_minutes: u32,
     /// Przerwa zatrzymuje pomiar (domyślnie tak); inaczej pomiar trwa przez przerwę.
     pub focus_break_stops: bool,
+    /// Tytuły spotkań z kalendarza w interfejsie; wyłączone = „Spotkanie”.
+    pub calendar_show_titles: bool,
 }
 
 impl Default for AppSettings {
@@ -65,6 +67,7 @@ impl Default for AppSettings {
             focus_block_minutes: 25,
             focus_break_minutes: 5,
             focus_break_stops: true,
+            calendar_show_titles: true,
         }
     }
 }

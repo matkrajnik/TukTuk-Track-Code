@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
+import CalendarSettings from "./CalendarSettings.vue";
 import {
   defaultSettings,
   onSettingsChanged,
@@ -333,6 +334,21 @@ onUnmounted(() => {
       Co 5 minut, gdy konto Jiry jest połączone. Nowe zgłoszenie trafia do „Do
       zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
       sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
+    </p>
+
+    <h2>Kalendarz</h2>
+    <CalendarSettings />
+    <label class="inline-check"
+      ><input
+        :checked="settings.calendarShowTitles"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ calendarShowTitles: checked($event) })"
+      />Pokazuj tytuły spotkań</label
+    >
+    <p class="hint">
+      Wyłączone: zamiast tytułu widać „Spotkanie”, np. przy udostępnianiu
+      ekranu. Spotkania są tylko do odczytu; czas spotkania dodajesz sam.
     </p>
 
     <h2>Powiadomienia</h2>
