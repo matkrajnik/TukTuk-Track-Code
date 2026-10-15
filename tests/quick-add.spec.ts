@@ -1,5 +1,14 @@
 import { test, expect } from "@playwright/test";
-import { at, ids, NOW, openPreview, stored, TODAY } from "./fixtures/seed";
+import {
+  at,
+  ids,
+  jiraFixture,
+  NOW,
+  openPreview,
+  stored,
+  TODAY,
+} from "./fixtures/seed";
+import { openDesktop } from "./fixtures/tauri";
 test.use({ timezoneId: "Europe/Warsaw" });
 
 test("quick add: full syntax with chips, chip removal and Tab completion", async ({
@@ -96,6 +105,41 @@ test("quick add: impossible date blocks adding and plain titles stay untouched",
   expect(task.jiraKey).toBeUndefined();
 });
 
+test("quick add: /template blocks adding instead of vanishing from the title", async ({
+  page,
+}) => {
+  await openPreview(page);
+  const input = page.getByLabel("Nowe zadanie", { exact: true });
+  const addButton = page.getByRole("button", {
+    name: "Dodaj zadanie",
+    exact: true,
+  });
+  await input.fill("/review Popraw raport");
+  await expect(
+    page.getByText("Szablony będą dostępne wkrótce.", { exact: false }),
+  ).toBeVisible();
+  await expect(addButton).toBeDisabled();
+  await input.press("Enter");
+  expect(
+    (await stored(page)).tasks.some((t: any) => t.title.includes("Popraw raport")),
+  ).toBe(false);
+
+  // Szybkie przełączanie też nie tworzy zadania bez słowa /review.
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Szybkie przełączanie" });
+  await dialog
+    .getByLabel("Znajdź zadanie do uruchomienia")
+    .fill("/review Popraw raport");
+  await page.keyboard.press("Shift+Enter");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("alert").first()).toContainText(
+    "Szablony będą dostępne wkrótce.",
+  );
+  expect(
+    (await stored(page)).tasks.some((t: any) => t.title.includes("Popraw raport")),
+  ).toBe(false);
+});
+
 test("quick switch: no results offers create-and-start (Enter) and create (Shift+Enter)", async ({
   page,
 }) => {
@@ -154,4 +198,25 @@ test("quick switch: no results offers create-and-start (Enter) and create (Shift
         s.taskId === ids.analysis && s.startedAt === at(TODAY, "11:00"),
     ),
   ).toMatchObject({ endedAt: Date.parse(NOW) });
+});
+
+test("quick add: without connected Jira a key-like word stays in the title", async ({
+  page,
+}) => {
+  await openDesktop(page);
+  const input = page.getByLabel("Nowe zadanie", { exact: true });
+  await input.fill("COVID-19 raport ~1h");
+  const chips = page.getByLabel("Rozpoznane pola");
+  await expect(chips.getByRole("button")).toHaveText(["Szacunek: 1 h"]);
+});
+
+test("quick add: connected Jira recognizes the key", async ({ page }) => {
+  await openDesktop(page, { jira: jiraFixture() });
+  const input = page.getByLabel("Nowe zadanie", { exact: true });
+  await input.fill("WMS-31 ~1h");
+  const chips = page.getByLabel("Rozpoznane pola");
+  await expect(chips.getByRole("button")).toHaveText([
+    "Jira: WMS-31",
+    "Szacunek: 1 h",
+  ]);
 });

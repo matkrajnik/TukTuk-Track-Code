@@ -63,6 +63,11 @@ export interface QuickSettings {
   projects?: string[];
   /** Nazwy szablonów (etap Q2); na razie tylko do podpowiedzi. */
   templates?: string[];
+  /**
+   * Czy Jira jest połączona. `false`: słowo wyglądające jak klucz (np.
+   * „COVID-19”) zostaje w tytule. Domyślnie (`undefined`) klucz jest rozpoznawany.
+   */
+  jiraEnabled?: boolean;
 }
 
 const SPECIAL = "~@#!/\\";
@@ -273,7 +278,12 @@ export function parse(
       literal();
       continue;
     }
-    if (!titleStarted && JIRA_KEY.test(w) && !fields.jiraKey) {
+    if (
+      settings.jiraEnabled !== false &&
+      !titleStarted &&
+      JIRA_KEY.test(w) &&
+      !fields.jiraKey
+    ) {
       set("jira", word, `Jira: ${w}`, () => (fields.jiraKey = w), false);
       continue;
     }
@@ -408,4 +418,16 @@ export function complete(
     text: text.slice(0, start) + inserted + spacer + rest,
     caret: start + inserted.length + 1,
   };
+}
+
+/** Szablony (etap Q2) jeszcze nie działają: `/szablon` blokuje dodanie. */
+export const TEMPLATE_UNAVAILABLE =
+  "Szablony będą dostępne wkrótce. Usuń /szablon albo poprzedź go znakiem \, by zostawić w tytule.";
+
+/** Błąd blokujący dodanie (pierwszy błąd składni albo niedostępny szablon). */
+export function blockingError(parsed: Parsed): string | undefined {
+  return (
+    parsed.errors[0] ??
+    (parsed.fields.template != null ? TEMPLATE_UNAVAILABLE : undefined)
+  );
 }

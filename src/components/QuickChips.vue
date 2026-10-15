@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { X } from "lucide-vue-next";
-import type { Parsed, Token } from "../quickadd";
+import { blockingError, type Parsed, type Token } from "../quickadd";
 
 /** Rozpoznane zapisy pod polem szybkiego dodawania; kliknięcie usuwa zapis. */
-defineProps<{ parsed: Parsed }>();
+const props = defineProps<{ parsed: Parsed }>();
 const emit = defineEmits<{ remove: [token: Token] }>();
+const blocking = computed(() => blockingError(props.parsed));
 </script>
 
 <template>
@@ -18,7 +20,7 @@ const emit = defineEmits<{ remove: [token: Token] }>();
       :key="`${token.start}-${token.text}`"
       type="button"
       class="quick-chip"
-      :class="[token.kind, { invalid: token.kind === 'error' }]"
+      :class="[token.kind, { invalid: token.kind === 'error' || token.kind === 'template' }]"
       :title="token.error ?? `Usuń ${token.text}`"
       :aria-label="`Usuń: ${token.label}`"
       @mousedown.prevent
@@ -26,8 +28,8 @@ const emit = defineEmits<{ remove: [token: Token] }>();
     >
       {{ token.label }}<X :size="11" />
     </button>
-    <span v-if="parsed.errors.length" class="quick-chip-error" role="alert">{{
-      parsed.errors[0]
+    <span v-if="blocking" class="quick-chip-error" role="alert">{{
+      blocking
     }}</span>
   </div>
 </template>

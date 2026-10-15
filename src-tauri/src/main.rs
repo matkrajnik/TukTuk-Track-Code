@@ -182,12 +182,14 @@ fn quick_add(
     app: tauri::AppHandle,
     task: quickadd::NewTask,
 ) -> Result<db::Snapshot, String> {
-    let site = jira::config(&app)?.site;
+    let config = jira::config(&app)?;
+    // Klucz Jiry wiążemy tylko przy połączonym koncie (zapisany e-mail).
+    let site = (!config.email.is_empty()).then_some(config.site);
     let start = task.start;
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = quickadd::create(
         &mut connection,
-        &site,
+        site.as_deref(),
         |key| jira::cached_summary(&app, key),
         task,
         db::now(),

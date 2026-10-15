@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import {
   ExternalLink,
@@ -9,7 +9,7 @@ import {
   Settings2,
   Square,
 } from "lucide-vue-next";
-import { desktop, type Snapshot } from "./store";
+import { desktop, jiraConnected, type Snapshot } from "./store";
 interface Board {
   id: number;
   name: string;
@@ -42,6 +42,13 @@ const settings = ref<Settings>({
   },
   connected: false,
 });
+// Szybkie dodawanie rozpoznaje klucze Jiry tylko przy połączonym koncie.
+watch(
+  () => settings.value.connected,
+  (connected) => {
+    if (desktop) jiraConnected.value = connected;
+  },
+);
 const site = ref(settings.value.config.site),
   email = ref(""),
   apiToken = ref("");

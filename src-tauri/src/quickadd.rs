@@ -18,9 +18,11 @@ pub struct NewTask {
 }
 
 /// Tworzy zadanie. `summary` podaje tytuł zgłoszenia znanego z listy Jiry.
+/// `site` to adres połączonej Jiry; `None`, gdy konto nie jest połączone
+/// (klucz Jiry jest wtedy odrzucany zamiast wiązać zadanie z domyślnym adresem).
 pub fn create(
     db: &mut Connection,
-    site: &str,
+    site: Option<&str>,
     summary: impl FnOnce(&str) -> Option<String>,
     task: NewTask,
     now: i64,
@@ -34,6 +36,14 @@ pub fn create(
             return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
         }
     }
+    let site = match (&key, site) {
+        (Some(key), None) => {
+            return Err(format!(
+                "Jira nie jest połączona, więc {key} nie zostanie powiązane. Połącz konto w widoku Jira albo poprzedź klucz znakiem \\."
+            ))
+        }
+        (_, site) => site.unwrap_or_default(),
+    };
     let mut title = task.title.trim().to_owned();
     if title.is_empty() {
         if let Some(key) = &key {
@@ -126,7 +136,7 @@ mod tests {
         db::change(&mut db, "start", Some(1), None, 10).unwrap();
         let snap = create(
             &mut db,
-            SITE,
+            Some(SITE),
             |_| None,
             NewTask {
                 title: "  Raport  ".into(),
@@ -164,7 +174,7 @@ mod tests {
         db::change(&mut db, "start", Some(1), None, 10).unwrap();
         let snap = create(
             &mut db,
-            SITE,
+            Some(SITE),
             |_| None,
             NewTask {
                 title: "Nowe".into(),
@@ -186,7 +196,7 @@ mod tests {
         let mut db = open();
         let snap = create(
             &mut db,
-            SITE,
+            Some(SITE),
             |key| (key == "WMS-123").then(|| "Eksport etykiet".to_owned()),
             NewTask {
                 jira_key: Some("WMS-123".into()),
@@ -204,7 +214,7 @@ mod tests {
         // Ten sam klucz drugi raz nie tworzy duplikatu.
         let err = create(
             &mut db,
-            SITE,
+            Some(SITE),
             |_| None,
             NewTask {
                 title: "Inny".into(),
@@ -219,7 +229,7 @@ mod tests {
         // Nieznane zgłoszenie bez tytułu: czytelny błąd, nic nie powstaje.
         let err = create(
             &mut db,
-            SITE,
+            Some(SITE),
             |_| None,
             NewTask {
                 jira_key: Some("WMS-9".into()),
@@ -252,8 +262,42 @@ mod tests {
                 ..NewTask::default()
             },
         ] {
-            assert!(create(&mut db, SITE, |_| None, task, 1).is_err());
+            assert!(create(&mut db, Some(SITE), |_| None, task, 1).is_err());
         }
         assert!(db::snapshot(&db).unwrap().tasks.is_empty());
+    }
+
+    #[test]
+    fn jira_key_without_connected_account_is_rejected() {
+        let mut db = open();
+        let err = create(
+            &mut db,
+            None,
+            |_| Some("Raport".into()),
+            NewTask {
+                title: "raport".into(),
+                jira_key: Some("COVID-19".into()),
+                ..NewTask::default()
+            },
+            1,
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("COVID-19"), "{err}");
+        assert!(db::snapshot(&db).unwrap().tasks.is_empty());
+        // Bez klucza zadanie powstaje zwyczajnie.
+        let snap = create(
+            &mut db,
+            None,
+            |_| None,
+            NewTask {
+                title: "COVID-19 raport".into(),
+                ..NewTask::default()
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(snap.tasks[0].title, "COVID-19 raport");
+        assert_eq!(snap.tasks[0].jira_key, None);
     }
 }

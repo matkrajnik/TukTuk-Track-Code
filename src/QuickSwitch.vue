@@ -6,13 +6,21 @@ import {
   change,
   read,
   desktop,
+  jiraConnected,
   quickAdd,
   quickTask,
+  refreshJiraConnected,
   type Snapshot,
 } from "./store";
 import { compareTasks } from "./order";
 import { dayKey } from "./time";
-import { complete, parse, removeToken, type Token } from "./quickadd";
+import {
+  blockingError,
+  complete,
+  parse,
+  removeToken,
+  type Token,
+} from "./quickadd";
 import QuickChips from "./components/QuickChips.vue";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
@@ -45,7 +53,10 @@ const projects = computed(() =>
   ].sort((a, b) => a.localeCompare(b, "pl")),
 );
 const parsed = computed(() =>
-  parse(query.value, dayKey(Date.now()), { projects: projects.value }),
+  parse(query.value, dayKey(Date.now()), {
+    projects: projects.value,
+    jiraEnabled: jiraConnected.value,
+  }),
 );
 /** Brak wyników i jest co utworzyć: Enter tworzy i uruchamia, Shift+Enter tylko tworzy. */
 const creatable = computed(
@@ -56,8 +67,9 @@ const creatable = computed(
 );
 async function create(start: boolean) {
   if (busy.value) return;
-  if (parsed.value.errors.length) {
-    error.value = parsed.value.errors[0];
+  const blocking = blockingError(parsed.value);
+  if (blocking) {
+    error.value = blocking;
     return;
   }
   busy.value = true;
@@ -78,6 +90,7 @@ function removeChip(token: Token) {
 async function refresh() {
   try {
     data.value = await read();
+    await refreshJiraConnected();
     query.value = "";
     index.value = 0;
     error.value = "";

@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { ref } from "vue";
 import type { Parsed } from "./quickadd";
 export interface Task {
   id: number;
@@ -60,6 +61,23 @@ export interface Snapshot {
   recurrenceState?: Record<string, string>;
 }
 export const desktop = isTauri();
+/**
+ * Czy Jira jest połączona: tylko wtedy szybkie dodawanie rozpoznaje klucz
+ * zgłoszenia. W podglądzie Jira udaje połączoną (dane przykładowe mają zgłoszenia,
+ * a `quickAdd` wiąże klucz z adresem domyślnym).
+ */
+export const jiraConnected = ref(!desktop);
+/** Odświeża `jiraConnected` z `jira_settings` (w podglądzie nic nie robi). */
+export async function refreshJiraConnected(): Promise<void> {
+  if (!desktop) return;
+  try {
+    jiraConnected.value = (
+      await invoke<{ connected: boolean }>("jira_settings")
+    ).connected;
+  } catch {
+    jiraConnected.value = false;
+  }
+}
 const key = "todo-track-preview-v1";
 export async function read(): Promise<Snapshot> {
   if (desktop) return invoke("get_snapshot");

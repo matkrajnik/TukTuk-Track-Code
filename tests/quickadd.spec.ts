@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { complete, parse, removeToken } from "../src/quickadd";
+import {
+  blockingError,
+  complete,
+  parse,
+  removeToken,
+  TEMPLATE_UNAVAILABLE,
+} from "../src/quickadd";
 
 // Testy jednostkowe parsera składni szybkiego dodawania (bez przeglądarki).
 // „Dziś” to czwartek 15.10.2026, jak w tests/fixtures/seed.ts.
@@ -166,6 +172,35 @@ test("parser: projects, multi-word projects and Jira key alone", () => {
   expect(key.fields).toEqual({ jiraKey: "WMS-123" });
   // Klucz w środku tytułu to zwykły tekst.
   expect(parse("Raport ~1h WMS-1", TODAY).fields.jiraKey).toBeUndefined();
+});
+
+test("parser: without connected Jira a key-like word stays in the title", () => {
+  const off = { ...settings, jiraEnabled: false };
+  const covid = parse("COVID-19 raport", TODAY, off);
+  expect(covid.title).toBe("COVID-19 raport");
+  expect(covid.fields).toEqual({});
+  expect(covid.tokens).toEqual([]);
+  const iso = parse("ISO-9001 audyt ~1h", TODAY, off);
+  expect(iso.title).toBe("ISO-9001 audyt");
+  expect(iso.fields).toEqual({ estimateMinutes: 60 });
+  // Z połączoną Jirą ten sam zapis jest kluczem.
+  expect(
+    parse("ISO-9001 audyt", TODAY, { ...settings, jiraEnabled: true }).fields,
+  ).toEqual({ jiraKey: "ISO-9001" });
+});
+
+test("parser: /template blocks adding until templates exist", () => {
+  const r = parse("/review Popraw raport", TODAY, settings);
+  expect(r.fields.template).toBe("review");
+  expect(blockingError(r)).toBe(TEMPLATE_UNAVAILABLE);
+  // Poprzedzone `\` zostaje w tytule i nie blokuje.
+  const literal = parse("\\/review Popraw raport", TODAY, settings);
+  expect(literal.title).toBe("/review Popraw raport");
+  expect(blockingError(literal)).toBeUndefined();
+  // Błąd składni ma pierwszeństwo.
+  expect(blockingError(parse("Raport @31.02 /review", TODAY))).toBe(
+    "Nie ma dnia 31.02.2027.",
+  );
 });
 
 test("parser helpers: removing a chip token and Tab completion", () => {

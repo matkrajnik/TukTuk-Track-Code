@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { Plus, Scissors, Search, Square } from "lucide-vue-next";
 import TaskCard from "../components/TaskCard.vue";
 import {
   change,
   duration,
+  jiraConnected,
   quickAdd,
   quickTask,
+  refreshJiraConnected,
   setPriority,
   type NavigateRequest,
   type Session,
@@ -21,6 +23,7 @@ import { dayTarget, hhmm, useSettings } from "../target";
 import { useReorder } from "../composables/useReorder";
 import QuickChips from "../components/QuickChips.vue";
 import {
+  blockingError,
   complete,
   hasFields,
   parse,
@@ -204,20 +207,25 @@ async function act(
     working.value = false;
   }
 }
+onMounted(refreshJiraConnected);
 const newInput = ref<HTMLInputElement | null>(null);
 const parsed = computed(() =>
-  parse(newTitle.value, todayKey.value, { projects: projects.value }),
+  parse(newTitle.value, todayKey.value, {
+    projects: projects.value,
+    jiraEnabled: jiraConnected.value,
+  }),
 );
 /** Bez zapisów składni dodanie działa dokładnie jak wcześniej (`mutate add`). */
 const canAdd = computed(
   () =>
-    !parsed.value.errors.length &&
+    !blockingError(parsed.value) &&
     (!!parsed.value.title.trim() || !!parsed.value.fields.jiraKey),
 );
 async function add() {
   const result = parsed.value;
-  if (result.errors.length) {
-    emit("error", result.errors[0]);
+  const blocking = blockingError(result);
+  if (blocking) {
+    emit("error", blocking);
     return;
   }
   if (!hasFields(result)) {
