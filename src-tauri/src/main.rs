@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod agents;
 mod autostart;
 mod backup;
 mod db;
@@ -258,8 +259,9 @@ fn main() {
             let widget_waker = widget::setup(app);
             reminder::setup(app.handle());
             idle::setup(app.handle());
+            agents::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
-            // korzystają komendy. Wątki tray, widget, reminder, idle i notify
+            // korzystają komendy. Wątki tray, widget, reminder, idle, agents i notify
             // kończą się, gdy nie ma okna main (zamykanie aplikacji), więc
             // startują dopiero po create_windows; inaczej przy wolnym starcie
             // (np. autostart zaraz po zalogowaniu) kończyłyby się od razu.
@@ -270,6 +272,7 @@ fn main() {
             widget::start(app.handle(), widget_waker);
             reminder::start(app.handle());
             idle::start(app.handle());
+            agents::start(app.handle());
             notify::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
@@ -338,6 +341,7 @@ fn main() {
             plan_task,
             idle::idle_notice,
             idle::idle_resolve,
+            agents::agents_status,
             backup::export_backup,
             backup::inspect_backup,
             backup::restore_backup,
@@ -385,7 +389,7 @@ mod tests {
             assert!(labels.contains(&label), "brak okna {label}");
         }
     }
-    /// Wątki tray, widget, reminder, idle i notify kończą się, gdy nie ma okna
+    /// Wątki tray, widget, reminder, idle, agents i notify kończą się, gdy nie ma okna
     /// main, więc muszą startować po `create_windows` w `setup`; inaczej tray
     /// nie odświeżałby tooltipu i ikony przez całą sesję.
     #[test]
@@ -398,6 +402,7 @@ mod tests {
             "widget::start(",
             "reminder::start(",
             "idle::start(",
+            "agents::start(",
             "notify::start(",
         ] {
             let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
@@ -408,6 +413,7 @@ mod tests {
             "widget::setup(",
             "reminder::setup(",
             "idle::setup(",
+            "agents::setup(",
         ] {
             let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));
             assert!(

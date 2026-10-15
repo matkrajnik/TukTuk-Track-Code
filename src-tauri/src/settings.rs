@@ -9,6 +9,8 @@ use tauri::{Emitter, Manager};
 #[serde(default, rename_all = "camelCase")]
 pub struct AppSettings {
     pub idle_enabled: bool,
+    /// Praca agentów AI (Claude Code, Codex) liczy się jako aktywność.
+    pub idle_agents: bool,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     pub day_start: String,
@@ -28,6 +30,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             idle_enabled: true,
+            idle_agents: true,
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             day_start: "08:00".into(),

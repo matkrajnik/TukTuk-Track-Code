@@ -63,6 +63,25 @@
 .dashboard-top {
   margin-top: 20px;
 }
+.agent-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: agent-pulse 1.6s ease-in-out infinite;
+}
+@keyframes agent-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-dot {
+    animation: none;
+  }
+}
 .planning-form {
   border-top: 1px solid var(--line);
   padding-top: 18px;

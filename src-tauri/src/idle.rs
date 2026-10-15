@@ -18,15 +18,29 @@ struct Clock {
     pending: Option<Notice>,
 }
 impl Clock {
-    fn observe(&mut self, session: Option<(i64, i64, i64)>, now: i64, idle_ms: u32) -> bool {
+    /// `user_idle`: czas od ostatniego wejścia z klawiatury/myszy, `agent_idle`: od
+    /// ostatniej pracy agenta (`agents`). Praca agenta liczy się jako aktywność:
+    /// przerwa trwa, gdy oba są dłuższe niż 10 min, a jej początek to późniejsza z
+    /// tych chwil. Pytanie pada tylko po powrocie użytkownika; gdy przerwę kończy
+    /// agent, zapominamy ją bez pytania.
+    fn observe(
+        &mut self,
+        session: Option<(i64, i64, i64)>,
+        now: i64,
+        user_idle: u32,
+        agent_idle: u32,
+    ) -> bool {
         let Some((id, task, start)) = session else {
             self.candidate = None;
             return false;
         };
+        let idle_ms = user_idle.min(agent_idle);
         if idle_ms >= 600_000 {
             if self.candidate.as_ref().map(|v| v.0) != Some(id) {
                 self.candidate = Some((id, task, (now - i64::from(idle_ms)).max(start)));
             }
+        } else if user_idle >= 600_000 {
+            self.candidate = None;
         } else if let Some((old_id, task, at)) = self.candidate.take() {
             if old_id == id && self.pending.is_none() && now - at >= 600_000 {
                 self.pending = Some(Notice {
@@ -87,14 +101,16 @@ pub fn start(app: &tauri::AppHandle) {
         let Some(_) = app.get_webview_window("main") else {
             break;
         };
-        let enabled = app
+        let Some(settings) = app
             .state::<Database>()
             .0
             .lock()
             .ok()
-            .map(|db| crate::settings::load(&db).idle_enabled)
-            .unwrap_or(false);
-        if !enabled {
+            .map(|db| crate::settings::load(&db))
+        else {
+            continue;
+        };
+        if !settings.idle_enabled {
             if let Ok(mut state) = app.state::<State>().0.lock() {
                 *state = Clock::default();
             }
@@ -102,6 +118,12 @@ pub fn start(app: &tauri::AppHandle) {
         }
         let Some(idle) = idle_ms() else {
             continue;
+        };
+        let now = db::now();
+        let agent_idle = if settings.idle_agents {
+            crate::agents::idle_ms(&app, now)
+        } else {
+            u32::MAX
         };
         let session = app.state::<Database>().0.lock().ok().and_then(|db| {
             db.query_row(
@@ -115,7 +137,7 @@ pub fn start(app: &tauri::AppHandle) {
             .state::<State>()
             .0
             .lock()
-            .map(|mut c| c.observe(session, db::now(), idle))
+            .map(|mut c| c.observe(session, now, idle, agent_idle))
             .unwrap_or(false);
         if due {
             let _ = app.emit("idle-notice", ());
@@ -158,25 +180,45 @@ pub fn idle_resolve(app: tauri::AppHandle, trim: bool) -> Result<db::Snapshot, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// Żaden agent nie pracował.
+    const N: u32 = u32::MAX;
     #[test]
     fn only_prompts_after_return_without_mutating_time() {
         let mut c = Clock::default();
-        assert!(!c.observe(Some((1, 2, 100)), 700_000, 650_000));
-        assert!(c.observe(Some((1, 2, 100)), 800_000, 0));
+        assert!(!c.observe(Some((1, 2, 100)), 700_000, 650_000, N));
+        assert!(c.observe(Some((1, 2, 100)), 800_000, 0, N));
         assert_eq!(c.pending.as_ref().unwrap().idle_at, 50_000);
-        assert!(!c.observe(Some((1, 2, 100)), 800_010, 10));
+        assert!(!c.observe(Some((1, 2, 100)), 800_010, 10, N));
     }
     #[test]
     fn short_break_and_switching_sessions_do_not_prompt() {
         let mut c = Clock::default();
-        assert!(!c.observe(Some((1, 2, 0)), 500_000, 499_999));
-        assert!(!c.observe(Some((1, 2, 0)), 500_001, 0));
+        assert!(!c.observe(Some((1, 2, 0)), 500_000, 499_999, N));
+        assert!(!c.observe(Some((1, 2, 0)), 500_001, 0, N));
         assert!(c.pending.is_none());
-        c.observe(Some((1, 2, 0)), 700_000, 650_000);
-        assert!(!c.observe(Some((2, 3, 700_000)), 800_000, 0));
+        c.observe(Some((1, 2, 0)), 700_000, 650_000, N);
+        assert!(!c.observe(Some((2, 3, 700_000)), 800_000, 0, N));
         assert!(c.pending.is_none());
-        c.observe(Some((2, 3, 700_000)), 1_400_000, 650_000);
-        c.observe(None, 1_500_000, 0);
-        assert!(!c.observe(Some((3, 4, 1_500_000)), 1_500_100, 0));
+        c.observe(Some((2, 3, 700_000)), 1_400_000, 650_000, N);
+        c.observe(None, 1_500_000, 0, N);
+        assert!(!c.observe(Some((3, 4, 1_500_000)), 1_500_100, 0, N));
+    }
+    #[test]
+    fn agent_work_counts_as_activity() {
+        // Agent pracuje przez całą nieobecność: brak przerwy.
+        let mut c = Clock::default();
+        assert!(!c.observe(Some((1, 2, 0)), 1_000_000, 900_000, 1_000));
+        assert!(!c.observe(Some((1, 2, 0)), 1_000_100, 0, 1_000));
+        assert!(c.pending.is_none());
+        // Agent skończył 700 s temu, użytkownika nie ma 900 s: przerwa od końca pracy agenta.
+        assert!(!c.observe(Some((1, 2, 0)), 2_000_000, 900_000, 700_000));
+        assert!(c.observe(Some((1, 2, 0)), 2_000_100, 0, 700_100));
+        assert_eq!(c.pending.as_ref().unwrap().idle_at, 1_300_000);
+        // Agent rusza podczas nieobecności: przerwa zapomniana, bez pytania po powrocie.
+        let mut c = Clock::default();
+        c.observe(Some((1, 2, 0)), 1_000_000, 700_000, N);
+        assert!(!c.observe(Some((1, 2, 0)), 1_100_000, 800_000, 0));
+        assert!(!c.observe(Some((1, 2, 0)), 1_200_000, 0, 0));
+        assert!(c.pending.is_none());
     }
 }

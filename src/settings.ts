@@ -5,6 +5,7 @@ import { desktop, previewWidgetSettingsChanged } from "./store";
 /** Odpowiednik `AppSettings` z src-tauri/src/settings.rs (klucze camelCase). */
 export interface AppSettings {
   idleEnabled: boolean;
+  idleAgents: boolean;
   targetDayMinutes: number;
   workDays: number[];
   dayStart: string;
@@ -30,6 +31,7 @@ export interface AppInfo {
 }
 export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   idleEnabled: true,
+  idleAgents: true,
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   dayStart: "08:00",

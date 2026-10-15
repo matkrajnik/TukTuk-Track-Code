@@ -140,6 +140,14 @@ onUnmounted(() => {
       Decydujesz, czy zachować czas, czy zakończyć pomiar na początku przerwy.
       Nic nie jest obcinane automatycznie.
     </p>
+    <label class="inline-check"
+      ><input
+        :checked="settings.idleAgents"
+        type="checkbox"
+        :disabled="busy || !settings.idleEnabled"
+        @change="save({ idleAgents: checked($event) })"
+      />Praca agentów AI (Claude Code, Codex) liczy się jako aktywność</label
+    >
     <div class="planning-fields settings-fields">
       <label
         >Cel dzienny (minuty)<input

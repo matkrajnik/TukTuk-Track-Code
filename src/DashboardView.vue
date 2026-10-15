@@ -5,6 +5,7 @@ import { dayKey, dayBounds, inDay } from "./time";
 import { compareTasks } from "./order";
 import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
+import AgentsCard from "./components/AgentsCard.vue";
 import {
   dayTarget,
   hhmm,
@@ -187,6 +188,7 @@ const topTasks = computed(() =>
       </div>
     </section>
   </div>
+  <AgentsCard :now="now" />
   <section
     class="dashboard-card dashboard-top"
     aria-label="Najwięcej czasu dzisiaj"
