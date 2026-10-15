@@ -492,7 +492,9 @@ export function previewBindings(): { folder: string; taskId: number }[] {
     return [];
   }
 }
-const trimFolder = (folder: string) => folder.trim().replace(/[\\/]+$/, "");
+/** Postać zapisywana (jak `agents::canon_folder` w Windows): separatory `\`, bez końcowego. */
+const trimFolder = (folder: string) =>
+  folder.trim().replace(/[\\/]/g, "\\").replace(/\\+$/, "");
 const sameFolder = (a: string, b: string) =>
   trimFolder(a).toLowerCase() === trimFolder(b).toLowerCase();
 async function previewBindingList(): Promise<AgentBinding[]> {

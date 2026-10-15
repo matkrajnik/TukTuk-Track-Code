@@ -258,6 +258,17 @@ impl Branches {
         self.0.insert(cwd.to_string(), (now, head.clone()));
         head
     }
+    /// Dopisuje gałąź (z cache 30 s, inaczej z `read`) i klucz Jiry.
+    fn recognize(&mut self, agents: &mut [Agent], now: i64, read: impl Fn(&Path) -> Option<Head>) {
+        for agent in agents {
+            (agent.branch, agent.detached) = match self.get(&agent.cwd, now, &read) {
+                Some(Head::Branch(name)) => (Some(name), false),
+                Some(Head::Detached(hash)) => (Some(hash), true),
+                None => (None, false),
+            };
+            agent.key = agent_key(agent);
+        }
+    }
 }
 
 /// Folder przypisany do zadania (`agent_bindings`).
@@ -285,7 +296,7 @@ pub fn bindings(db: &Connection) -> rusqlite::Result<Vec<Binding>> {
 
 /// Przypisuje folder do zadania (zastępuje wcześniejsze przypisanie tego folderu).
 pub fn bind(db: &Connection, folder: &str, task_id: i64) -> Result<Vec<Binding>, String> {
-    let folder = folder.trim().trim_end_matches(['\\', '/']);
+    let folder = canon_folder(folder);
     if folder.is_empty() || folder.chars().count() > 1024 {
         return Err("Niepoprawny folder.".into());
     }
@@ -299,19 +310,48 @@ pub fn bind(db: &Connection, folder: &str, task_id: i64) -> Result<Vec<Binding>,
     if !live {
         return Err("Nie znaleziono zadania.".into());
     }
-    db.execute(
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    drop_folder(&tx, &folder).map_err(|e| e.to_string())?;
+    tx.execute(
         "INSERT INTO agent_bindings(folder,task_id) VALUES(?1,?2) ON CONFLICT(folder) DO UPDATE SET folder=excluded.folder, task_id=excluded.task_id",
         params![folder, task_id],
     )
     .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
     bindings(db).map_err(|e| e.to_string())
 }
 
 pub fn unbind(db: &Connection, folder: &str) -> Result<Vec<Binding>, String> {
-    let folder = folder.trim().trim_end_matches(['\\', '/']);
-    db.execute("DELETE FROM agent_bindings WHERE folder=?1", [folder])
-        .map_err(|e| e.to_string())?;
+    drop_folder(db, folder).map_err(|e| e.to_string())?;
     bindings(db).map_err(|e| e.to_string())
+}
+
+/// Postać zapisywana w `agent_bindings`: separatory systemu (w Windows `\`), bez
+/// końcowego separatora; wielkość liter zostaje do wyświetlania.
+fn canon_folder(folder: &str) -> String {
+    let sep = std::path::MAIN_SEPARATOR;
+    folder
+        .trim()
+        .replace(['\\', '/'], &sep.to_string())
+        .trim_end_matches(sep)
+        .to_string()
+}
+
+/// Usuwa każde przypisanie tego samego folderu (także zapisane wcześniej innymi
+/// separatorami albo inną wielkością liter).
+fn drop_folder(db: &Connection, folder: &str) -> rusqlite::Result<()> {
+    let norm = norm_folder(folder);
+    let same: Vec<String> = db
+        .prepare("SELECT folder FROM agent_bindings")?
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|f| norm_folder(f) == norm)
+        .collect();
+    for f in same {
+        db.execute("DELETE FROM agent_bindings WHERE folder=?1", [f])?;
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -324,8 +364,6 @@ struct Watch {
     /// Codex: od kiedy plik jest świeży (start pracy) i odczytany folder roboczy.
     codex_since: HashMap<PathBuf, i64>,
     codex_cwd: HashMap<PathBuf, String>,
-    /// Gałęzie folderów roboczych (cache 30 s).
-    branches: Branches,
 }
 
 #[derive(Deserialize)]
@@ -471,17 +509,6 @@ impl Watch {
             })
             .collect()
     }
-    /// Dopisuje gałąź (z cache 30 s, inaczej z `read`) i klucz Jiry.
-    fn recognize(&mut self, agents: &mut [Agent], now: i64, read: impl Fn(&Path) -> Option<Head>) {
-        for agent in agents {
-            (agent.branch, agent.detached) = match self.branches.get(&agent.cwd, now, &read) {
-                Some(Head::Branch(name)) => (Some(name), false),
-                Some(Head::Detached(hash)) => (Some(hash), true),
-                None => (None, false),
-            };
-            agent.key = agent_key(agent);
-        }
-    }
     /// Zapisuje nową listę; `true`, gdy się zmieniła.
     fn update(&mut self, mut agents: Vec<Agent>, now: i64) -> bool {
         agents.sort_by(|a, b| (a.since, &a.kind, &a.name).cmp(&(b.since, &b.kind, &b.name)));
@@ -545,35 +572,44 @@ pub fn setup(app: &tauri::AppHandle) {
 /// Pętla co 5 s. Kończy się, gdy okno main zniknie, więc wołać po `create_windows`.
 pub fn start(app: &tauri::AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || loop {
-        if app.get_webview_window("main").is_none() {
-            break;
-        }
-        let now = db::now();
-        let mut found = claude_home()
-            .map(|h| claude_agents(&h, now))
-            .unwrap_or_default();
-        let fresh = codex_home()
-            .map(|h| codex_fresh(&h, now))
-            .unwrap_or_default();
-        let recognized = app.state::<State>().0.lock().ok().map(|mut w| {
-            found.extend(w.codex_agents(fresh, now));
-            w.recognize(&mut found, now, git_branch);
-            found
-        });
-        if let Some(mut found) = recognized {
-            match_tasks(&app, &mut found);
-            let changed = app
+    std::thread::spawn(move || {
+        // Cache gałęzi należy tylko do tego wątku.
+        let mut branches = Branches::default();
+        loop {
+            if app.get_webview_window("main").is_none() {
+                break;
+            }
+            let now = db::now();
+            let mut found = claude_home()
+                .map(|h| claude_agents(&h, now))
+                .unwrap_or_default();
+            let fresh = codex_home()
+                .map(|h| codex_fresh(&h, now))
+                .unwrap_or_default();
+            let codex = app
                 .state::<State>()
                 .0
                 .lock()
                 .ok()
-                .and_then(|mut w| w.update(found, now).then(|| w.agents.clone()));
-            if let Some(agents) = changed {
-                let _ = app.emit("agents-changed", agents);
+                .map(|mut w| w.codex_agents(fresh, now));
+            if let Some(codex) = codex {
+                found.extend(codex);
+                // `.git` (także z dysku sieciowego) czytany poza blokadą stanu, żeby
+                // `agents_status` w wątku głównym na niego nie czekał.
+                branches.recognize(&mut found, now, git_branch);
+                match_tasks(&app, &mut found);
+                let changed = app
+                    .state::<State>()
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|mut w| w.update(found, now).then(|| w.agents.clone()));
+                if let Some(agents) = changed {
+                    let _ = app.emit("agents-changed", agents);
+                }
             }
+            std::thread::sleep(CHECK);
         }
-        std::thread::sleep(CHECK);
     });
 }
 
@@ -899,7 +935,7 @@ mod tests {
 
     #[test]
     fn recognize_fills_branch_and_key() {
-        let mut w = Watch::default();
+        let mut w = Branches::default();
         let mut agents = vec![
             Agent {
                 cwd: "C:\\repo".into(),
@@ -1013,5 +1049,28 @@ mod tests {
         bind(&db, "C:\\b", 2).unwrap();
         db.execute("DELETE FROM tasks WHERE id=2", []).unwrap();
         assert!(bindings(&db).unwrap().is_empty());
+    }
+
+    #[test]
+    fn bindings_ignore_separator_style() {
+        let db = open();
+        let sep = std::path::MAIN_SEPARATOR;
+        // Zapis w jednej postaci: separatory systemu, bez końcowego.
+        let list = bind(&db, "C:/Projekty/wms/", 1).unwrap();
+        assert_eq!(list[0].folder, format!("C:{sep}Projekty{sep}wms"));
+        // Ten sam folder innymi separatorami zastępuje przypisanie, nie dubluje go.
+        let list = bind(&db, "c:\\projekty\\WMS", 2).unwrap();
+        assert_eq!(list.iter().map(|b| b.task_id).collect::<Vec<_>>(), vec![2]);
+        assert!(unbind(&db, "C:\\Projekty\\wms").unwrap().is_empty());
+        bind(&db, "C:/Projekty/wms", 1).unwrap();
+        assert!(unbind(&db, "c:\\projekty\\wms\\").unwrap().is_empty());
+        // Duplikaty zapisane przed ujednoliceniem znikają razem.
+        db.execute_batch(
+            "INSERT INTO agent_bindings(folder,task_id) VALUES('C:\\x',1);
+             INSERT INTO agent_bindings(folder,task_id) VALUES('C:/x',2);",
+        )
+        .unwrap();
+        assert_eq!(bindings(&db).unwrap().len(), 2);
+        assert!(unbind(&db, "c:/X/").unwrap().is_empty());
     }
 }
