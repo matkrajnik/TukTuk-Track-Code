@@ -6,6 +6,7 @@ export const meta = {
     { title: 'Etap 1: Kalendarz', detail: 'logowanie Microsoft, spotkania, pojemność' },
     { title: 'Etap 2: Planowanie', detail: 'poprawka szacunków, Rozłóż, poranny przegląd, cykle, Czekam na' },
     { title: 'Etap 3: Wgląd', detail: 'czas agentów, rozproszenie, przegląd tygodnia, okna, rozszerzenie przeglądarki' },
+    { title: 'Etap 4: Jira', detail: 'pytanie o przesunięcie zgłoszenia do In Progress' },
     { title: 'Wydanie 1.7.0', detail: 'wersja, README, NSIS, tag' },
   ],
 }
@@ -77,11 +78,19 @@ const TASKS = [
     done: 'Rust: rozpoznanie adresów, ramka native messaging (długość LE + JSON, limit 1 MB), wygasanie sygnału, rejestracja na testowej gałęzi rejestru. Playwright: czyste funkcje JS rozszerzenia. W manualChecks: załadowanie rozszerzenia i połączenie z zainstalowaną aplikacją.',
   },
 
+  // --- Etap 4 ---
+  {
+    id: 'J1', phase: 'Etap 4: Jira', title: 'Przesunięcie zgłoszenia przy starcie pracy',
+    section: 'Etap 4 — J1',
+    scope: 'Przy starcie pomiaru zadania z kluczem Jiry (każda droga startu) i statusie w kategorii new: pytanie „Przesunąć KEY do In Progress?” (baner, linia w widgecie, powiadomienie przy schowanym oknie z przyciskiem „Przesuń”, kolejka trybu skupienia), pomiar startuje od razu, nic nie przesuwa się samo. Wybór przejścia z GET /rest/api/3/issue/{key}/transitions (kategoria indeterminate, preferowana nazwa z ustawień, inaczej lista do wyboru), POST transitions, odświeżenie statusu w jira_issues. „Przesuń w Jirze…” w rozwiniętym kafelku i propozycja przy ukończeniu zadania. Ustawienia → Jira: wyłącznik (domyślnie włączony) i nazwa statusu; „Nie pytaj dla tego zadania” w task_details. Odpowiednik w store.ts z symulowanymi przejściami. Wykorzystaj istniejący klient i token Jiry z jira.rs.',
+    done: 'Rust: wybór przejścia, brak pytania dla in progress/done, „Nie pytaj”, błędy 400/403, parsowanie transitions. e2e z symulowaną Jirą: start → baner → „Przesuń” zmienia status; „Nie pytaj”; przesunięcie przy ukończeniu.',
+  },
+
   // --- Wydanie ---
   {
     id: 'R17', phase: 'Wydanie 1.7.0', title: 'Wydanie 1.7.0', release: '1.7.0',
     section: 'Wydanie 1.7.0 (R17)',
-    scope: 'Wydanie obejmuje wszystkie zadania z PLAN_1.7.md (K1–W4). README „Nowości 1.7” musi zawierać instrukcję rejestracji aplikacji w Entra ID i instalacji rozszerzenia przeglądarki.',
+    scope: 'Wydanie obejmuje wszystkie zadania z PLAN_1.7.md (K1–W4 i J1). README „Nowości 1.7” musi zawierać instrukcję rejestracji aplikacji w Entra ID i instalacji rozszerzenia przeglądarki.',
     done: '',
   },
 ]

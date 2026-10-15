@@ -16,6 +16,7 @@ Stan wyjściowy: 1.6.0 (15 października 2026), gałąź `release/1.0`. 135 test
 | 9, 10 | Rozproszenie i przegląd tygodnia | M | W2 |
 | 11 | Podpowiedzi z aktywnego okna (opt-in) | M | W3 |
 | — | Rozszerzenie Chrome/Edge: „Pracujesz przy WMS-123?” | M | W4 |
+| — | Pytanie o przesunięcie zgłoszenia w Jirze do „In Progress” przy starcie | S | J1 |
 
 Odłożone: worklogi do Jiry (7) — do osobnego zaplanowania. Panel PM: osobna koncepcja w `PANEL_PM.md`.
 
@@ -132,6 +133,20 @@ Tytuł okna z W3 nie zawsze ma klucz (np. tablica Jiry z otwartym zgłoszeniem `
 - Ustawienia → Czas pracy: „Rozszerzenie przeglądarki” (wyłącznik, stan „połączone / ostatni sygnał”, link do instrukcji). README: instalacja rozszerzenia (Tryb dewelopera → „Załaduj rozpakowane” albo zasady grupy w firmie).
 
 Testy: Rust — rozpoznanie adresów (Jira Cloud, tablica z `selectedIssue`, filtr, inne domeny odrzucone), ramka native messaging (4 bajty długości little-endian + JSON, limit 1 MB), wygasanie sygnału, rejestracja i usunięcie wpisów (na gałęzi rejestru testowej). JS — czysta funkcja filtra domen i wyciągania danych z karty, testowana w Playwright jako moduł.
+
+## Etap 4 — Jira
+
+### J1 — Przesunięcie zgłoszenia przy starcie pracy
+
+Pierwszy zapis do Jiry; worklogi (odłożone) skorzystają później z tej samej ścieżki.
+
+- Start pomiaru zadania z kluczem Jiry, każdą drogą (przycisk, szybkie przełączanie, skrót, powiadomienie, „Przełącz” z propozycji agenta, okna lub przeglądarki), gdy zgłoszenie jest w kategorii statusu „Do zrobienia” (`statusCategory.key = new`): aplikacja pyta „Przesunąć WMS-123 do „In Progress”?” z przyciskami „Przesuń”, „Nie teraz” i „Nie pytaj dla tego zadania”. Pytanie pojawia się jako baner w głównym oknie, linia w widgecie, a przy schowanym oknie jako powiadomienie z przyciskiem „Przesuń” (w trybie skupienia czeka w kolejce). Pomiar startuje od razu, bez czekania na odpowiedź. Nic nie przesuwa się samo.
+- Przejście z `GET /rest/api/3/issue/{key}/transitions`: to, którego status docelowy ma kategorię `indeterminate`. Przy kilku wygrywa nazwa z ustawienia (domyślnie „In Progress”); bez dopasowania baner pokazuje listę do wyboru. Wykonanie przez `POST …/transitions`, potem odświeżenie statusu w `jira_issues` i na kafelku. Błąd (brak uprawnień, przejście wymaga ekranu z polami) pokazuje komunikat z linkiem do zgłoszenia.
+- Rozwinięty kafelek zadania z kluczem: przycisk „Przesuń w Jirze…” z listą dostępnych przejść, także przy ukończeniu zadania („Ukończone. Przesunąć WMS-123 dalej?” z listą przejść, bez domyślnego wyboru).
+- Ustawienia → Jira: „Pytaj o przesunięcie zgłoszenia przy starcie pracy” (domyślnie włączone) i nazwa docelowego statusu. Lista „Nie pytaj dla tego zadania” w `task_details` (pole z `serde(default)`), z odwróceniem w kafelku.
+- Odpowiednik w `store.ts` z symulowanymi przejściami.
+
+Testy: Rust — wybór przejścia (jedno, kilka z preferowaną nazwą, brak dopasowania), brak pytania dla statusu w toku/zrobione, „Nie pytaj”, obsługa błędu 400/403, parsowanie odpowiedzi `transitions`. e2e z symulowaną Jirą: start → baner → „Przesuń” zmienia status na kafelku; „Nie pytaj” wycisza; przesunięcie przy ukończeniu.
 
 ## Wydanie 1.7.0 (R17)
 
