@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { duration, type Snapshot } from "./store";
+import { duration, meetingTitle, type Snapshot } from "./store";
 import { dayKey, dayBounds, inDay } from "./time";
 import { compareTasks } from "./order";
 import { atRisk, percent } from "./estimates";
@@ -8,6 +8,8 @@ import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
 import { useFocus } from "./focus";
+import { dayGoal, offDayEvent } from "./capacity";
+import { useMeetings } from "./composables/useMeetings";
 import {
   daysTarget,
   dayTarget,
@@ -25,7 +27,18 @@ const focus = useFocus();
 const today = computed(() => dayKey(props.now));
 const dayTotal = (key: string) =>
   props.data.sessions.reduce((sum, s) => sum + inDay(s, key, props.now), 0);
-const todayTarget = computed(() => dayTarget(settings.value, today.value));
+/** Spotkania dziś pomniejszają cel dnia (bez tych już zapisanych jako czas). */
+const calendar = useMeetings(() => dayBounds(today.value));
+const todayTarget = computed(() =>
+  dayGoal(
+    dayTarget(settings.value, today.value),
+    calendar.events.value,
+    props.data.sessions,
+    today.value,
+    props.now,
+  ),
+);
+const todayOff = computed(() => offDayEvent(calendar.events.value, today.value));
 /** Bieżący tydzień kalendarzowy, poniedziałek–niedziela. */
 const thisWeek = computed(() => weekDays(today.value));
 const thisWeekTotal = computed(() =>
@@ -136,7 +149,12 @@ const topTasks = computed(() =>
         >
       </template>
       <span v-else class="target-note">{{
-        targetHoliday(settings, today) ?? "Dzień wolny"
+        targetHoliday(settings, today) ??
+        (todayOff
+          ? "Poza biurem: " + meetingTitle(todayOff, settings.calendarShowTitles)
+          : dayTarget(settings, today) > 0
+            ? "Spotkania wypełniają cały cel dnia"
+            : "Dzień wolny")
       }}</span>
     </section>
     <section class="dashboard-card">

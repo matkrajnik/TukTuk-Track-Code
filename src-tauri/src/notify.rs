@@ -476,9 +476,9 @@ impl NotifyClock {
         }
 
         // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem, bez świąt).
-        let target_minutes = crate::holidays::day_target_minutes(&s, today);
-        if s.notify_target && target_minutes > 0 {
-            let target = i64::from(target_minutes) * 60_000;
+        // Cel pomniejszają spotkania niepokryte pomiarem; urlop całodniowy = brak celu.
+        let target = crate::capacity::goal_ms_in(db, tz, &s, today, now)?;
+        if s.notify_target && target > 0 {
             let total = stats::day_total_ms_in(db, tz, today, now)?;
             let key = format!("target:{today}");
             if total >= target && claim(db, &key, now)? {
@@ -1035,6 +1035,63 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(!AppSettings::default().notify_target);
+    }
+
+    #[test]
+    fn target_is_reduced_by_meetings_and_all_day_out_of_office() {
+        let mut db = setup();
+        let s = AppSettings {
+            target_day_minutes: 180,
+            ..only("target")
+        };
+        let event = |id: &str, start: i64, end: i64, show_as: &str, all_day: bool| {
+            crate::calendar::CalendarEvent {
+                id: id.into(),
+                start,
+                end,
+                subject: id.into(),
+                show_as: show_as.into(),
+                all_day,
+                cancelled: false,
+                response: "accepted".into(),
+            }
+        };
+        let (fri_from, fri_to) = crate::stats::day_bounds(
+            &Warsaw,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 16).unwrap(),
+        );
+        crate::calendar::replace_range(
+            &mut db,
+            at("2026-10-12 00:00"),
+            at("2026-10-19 00:00"),
+            &[
+                event(
+                    "m",
+                    at("2026-10-14 12:00"),
+                    at("2026-10-14 13:00"),
+                    "tentative",
+                    false,
+                ),
+                event("u", fri_from, fri_to, "oof", true),
+            ],
+            at("2026-10-14 07:00"),
+        )
+        .unwrap();
+        crate::calendar::set_test_email(&db, "jan@firma.example");
+        let mut clock = NotifyClock::default();
+        session(&db, 1, at("2026-10-14 08:00"), Some(at("2026-10-14 10:00")));
+        // Cel 3:00 minus spotkanie 1:00 = 2:00 mierzonego czasu.
+        let m = clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 10:01"))
+            .unwrap();
+        assert_eq!(keys(&m), ["target:2026-10-14"]);
+        assert_eq!(m[0].body, "Dzisiaj 2:00 / 2:00");
+        // Urlop całodniowy: brak celu, brak powiadomienia.
+        session(&db, 1, at("2026-10-16 08:00"), Some(at("2026-10-16 12:00")));
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-16 13:00"))
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

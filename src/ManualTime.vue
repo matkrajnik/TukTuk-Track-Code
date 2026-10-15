@@ -1,7 +1,22 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { nextTick, ref, watch } from "vue";
 import { addSession, type Task, type Snapshot } from "./store";
-const props = defineProps<{ tasks: Task[]; day: string }>();
+import { localInput } from "./time";
+
+/** Wstępne godziny z zewnątrz, np. „Dodaj jako czas” przy spotkaniu. */
+interface ManualPreset {
+  start: number;
+  end: number;
+  /** Nowy obiekt = nowe żądanie, nawet z tymi samymi godzinami. */
+  key: string;
+}
+const props = defineProps<{
+  tasks: Task[];
+  day: string;
+  preset?: ManualPreset | null;
+  /** Klucz localStorage zapamiętujący ostatnio wybrane zadanie. */
+  rememberKey?: string;
+}>();
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
 const opened = ref(false),
   busy = ref(false),
@@ -9,12 +24,44 @@ const opened = ref(false),
 const taskId = ref(0),
   start = ref(props.day + "T09:00"),
   end = ref(props.day + "T10:00");
+const form = ref<HTMLFormElement | null>(null);
 watch(
   () => props.day,
   (day) => {
     start.value = day + "T09:00";
     end.value = day + "T10:00";
   },
+);
+function remembered(): number {
+  if (!props.rememberKey) return 0;
+  try {
+    const id = Number(localStorage.getItem(props.rememberKey));
+    return props.tasks.some((t) => t.id === id) ? id : 0;
+  } catch {
+    return 0;
+  }
+}
+function remember(id: number) {
+  if (!props.rememberKey) return;
+  try {
+    localStorage.setItem(props.rememberKey, String(id));
+  } catch {
+    // Bez pamięci wyboru formularz działa dalej.
+  }
+}
+watch(
+  () => props.preset,
+  async (preset) => {
+    if (!preset) return;
+    start.value = localInput(preset.start);
+    end.value = localInput(preset.end);
+    taskId.value = remembered() || taskId.value;
+    error.value = "";
+    opened.value = true;
+    await nextTick();
+    form.value?.scrollIntoView?.({ block: "nearest" });
+  },
+  { immediate: true },
 );
 async function save() {
   busy.value = true;
@@ -28,6 +75,7 @@ async function save() {
         +new Date(end.value),
       ),
     );
+    remember(taskId.value);
     opened.value = false;
   } catch (e) {
     error.value = String(e);
@@ -45,7 +93,12 @@ async function save() {
     >
       Dodaj czas ręcznie
     </button>
-    <form v-if="opened" class="planning-form" @submit.prevent="save">
+    <form
+      v-if="opened"
+      ref="form"
+      class="planning-form"
+      @submit.prevent="save"
+    >
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <div class="planning-fields">
         <label

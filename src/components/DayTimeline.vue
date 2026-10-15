@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import type { Session, Task } from "../store";
+import { meetingOccupies, meetingTitle, type Session, type Task } from "../store";
 import {
   axisRange,
   colorVar,
@@ -9,8 +9,10 @@ import {
   planBlocks,
   workBlocks,
 } from "../dayplan";
-import { hhmm, signedDiff, targetDiffMinutes } from "../target";
-import { dayKey } from "../time";
+import { meetingSpans } from "../capacity";
+import { hhmm, signedDiff, targetDiffMinutes, useSettings } from "../target";
+import { dayBounds, dayKey } from "../time";
+import { useMeetings } from "../composables/useMeetings";
 
 const props = defineProps<{
   tasks: Task[];
@@ -26,13 +28,44 @@ const emit = defineEmits<{
   plan: [taskId: number];
 }>();
 
+const settings = useSettings();
+/** Spotkania dnia; tor „Spotkania” tylko przy połączonym kalendarzu. */
+const calendar = useMeetings(() => dayBounds(props.day));
+const showMeetings = computed(() => calendar.connected.value);
+const meetings = computed(() => {
+  const [from, to] = dayBounds(props.day);
+  return calendar.events.value
+    .filter((e) => meetingOccupies(e) && e.start < to && e.end > from)
+    .map((e) => ({
+      event: e,
+      start: Math.max(from, e.start),
+      end: Math.min(to, e.end),
+    }));
+});
+/** Przedziały spotkań, które omijają bloki planu (bez całodniowych). */
+const busy = computed(() =>
+  meetingSpans(
+    calendar.events.value.filter((e) => !e.allDay),
+    props.day,
+  ),
+);
 const titles = computed(() => new Map(props.tasks.map((t) => [t.id, t.title])));
 const title = (id: number) => titles.value.get(id) ?? "Zadanie";
-const plan = computed(() => planBlocks(props.tasks, props.day, props.dayStart));
+const plan = computed(() =>
+  planBlocks(props.tasks, props.day, props.dayStart, busy.value),
+);
 const work = computed(() => workBlocks(props.sessions, props.day, props.now));
 const range = computed(() =>
-  axisRange(props.day, props.dayStart, plan.value, work.value),
+  axisRange(
+    props.day,
+    props.dayStart,
+    plan.value,
+    work.value,
+    meetings.value.filter((m) => !m.event.allDay),
+  ),
 );
+/** Przesunięcie torów Plan i Rzeczywistość w dół, gdy jest tor Spotkania. */
+const top = computed(() => (showMeetings.value ? 38 : 0));
 const ticks = computed(() => hourTicks(...range.value));
 // Przy długiej osi etykieta co drugą godzinę, żeby mieściła się w 760 px.
 const labelEvery = computed(() => (ticks.value.length > 13 ? 2 : 1));
@@ -86,28 +119,42 @@ function show(text: string, start: number, end: number) {
   tip.value = { text, x: (pct(start) + pct(end)) / 2 };
 }
 const planText = (b: (typeof plan.value)[number]) =>
-  `Plan: ${b.task.title} · ${span(b.start, b.end)}${b.estimated ? "" : " · bez szacunku"}`;
+  `Plan: ${b.task.title} · ${span(b.start, b.end)}${b.parts > 1 ? ` · część ${b.part} z ${b.parts}` : ""}${b.estimated ? "" : " · bez szacunku"}`;
 const workText = (b: (typeof work.value)[number]) =>
   `Praca: ${title(b.session.taskId)} · ${clock(b.start)}–${b.running ? "trwa" : clock(b.end)}`;
+const meetingText = (m: (typeof meetings.value)[number]) =>
+  `Spotkanie: ${meetingTitle(m.event, settings.value.calendarShowTitles)} · ${
+    m.event.allDay ? "cały dzień" : span(m.event.start, m.event.end)
+  }${m.event.showAs === "tentative" ? " · wstępnie" : ""}`;
 </script>
 <template>
   <div class="day-timeline">
     <div class="dtl-chart">
-      <div class="dtl-labels" aria-hidden="true">
-        <span>Plan</span><span>Rzeczywistość</span>
+      <div
+        class="dtl-labels"
+        :class="{ meetings: showMeetings }"
+        aria-hidden="true"
+      >
+        <span v-if="showMeetings">Spotkania</span><span>Plan</span
+        ><span>Rzeczywistość</span>
       </div>
       <div class="dtl-plot">
         <svg
           class="dtl-svg"
           role="group"
           aria-label="Oś planu i rzeczywistości"
-          height="96"
+          :height="96 + top"
           width="100%"
           @mouseleave="tip = null"
         >
           <g class="dtl-grid">
             <template v-for="(t, i) in ticks" :key="t">
-              <line :x1="pct(t) + '%'" :x2="pct(t) + '%'" y1="17" y2="92" />
+              <line
+                :x1="pct(t) + '%'"
+                :x2="pct(t) + '%'"
+                y1="17"
+                :y2="92 + top"
+              />
               <text
                 v-if="i % labelEvery === 0"
                 :x="pct(t) + '%'"
@@ -120,15 +167,55 @@ const workText = (b: (typeof work.value)[number]) =>
               </text>
             </template>
           </g>
-          <rect class="dtl-track" x="0" y="22" width="100%" height="28" />
-          <rect class="dtl-track" x="0" y="60" width="100%" height="28" />
+          <rect
+            v-if="showMeetings"
+            class="dtl-track"
+            x="0"
+            y="22"
+            width="100%"
+            height="28"
+          />
+          <rect
+            v-for="m in meetings"
+            :key="'m' + m.event.id"
+            class="dtl-block dtl-meeting"
+            :class="{
+              tentative: m.event.showAs === 'tentative',
+              allday: m.event.allDay,
+            }"
+            :x="pct(m.start) + '%'"
+            y="23"
+            :width="width(m.start, m.end) + '%'"
+            height="26"
+            rx="4"
+            tabindex="0"
+            role="img"
+            :aria-label="meetingText(m)"
+            @mouseenter="show(meetingText(m), m.start, m.end)"
+            @focus="show(meetingText(m), m.start, m.end)"
+            @blur="tip = null"
+          />
+          <rect
+            class="dtl-track"
+            x="0"
+            :y="22 + top"
+            width="100%"
+            height="28"
+          />
+          <rect
+            class="dtl-track"
+            x="0"
+            :y="60 + top"
+            width="100%"
+            height="28"
+          />
           <rect
             v-for="b in plan"
-            :key="'p' + b.task.id"
+            :key="'p' + b.task.id + '-' + b.part"
             class="dtl-block dtl-plan"
             :class="{ dashed: !b.estimated, done: b.task.done }"
             :x="pct(b.start) + '%'"
-            y="23"
+            :y="23 + top"
             :width="width(b.start, b.end) + '%'"
             height="26"
             rx="4"
@@ -149,7 +236,7 @@ const workText = (b: (typeof work.value)[number]) =>
             class="dtl-block dtl-work"
             :class="{ running: b.running }"
             :x="pct(b.start) + '%'"
-            y="61"
+            :y="61 + top"
             :width="width(b.start, b.end) + '%'"
             height="26"
             rx="4"
@@ -170,8 +257,8 @@ const workText = (b: (typeof work.value)[number]) =>
               class="dtl-live"
               :x1="pct(b.end) + '%'"
               :x2="pct(b.end) + '%'"
-              y1="58"
-              y2="90"
+              :y1="58 + top"
+              :y2="90 + top"
             />
           </template>
           <line
@@ -180,7 +267,7 @@ const workText = (b: (typeof work.value)[number]) =>
             :x1="pct(now) + '%'"
             :x2="pct(now) + '%'"
             y1="17"
-            y2="92"
+            :y2="92 + top"
           />
         </svg>
         <div
@@ -193,11 +280,19 @@ const workText = (b: (typeof work.value)[number]) =>
         </div>
       </div>
     </div>
-    <ul v-if="legend.length" class="dtl-legend" aria-label="Legenda osi dnia">
+    <ul
+      v-if="legend.length || meetings.length"
+      class="dtl-legend"
+      aria-label="Legenda osi dnia"
+    >
       <li v-for="item in legend" :key="item.id">
         <span class="dtl-swatch" :style="{ background: colorVar(item.id) }" />{{
           item.title
         }}
+      </li>
+      <li v-if="meetings.length" class="dtl-legend-meetings">
+        <span class="dtl-swatch" style="background: var(--meeting)" />Spotkania
+        ({{ meetings.length }})
       </li>
     </ul>
     <p v-else class="report-note">Brak planu i pracy w tym dniu.</p>

@@ -422,3 +422,42 @@ h3.details-heading {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+/* Zadania → „Dzisiaj”: nadchodzące spotkania z kalendarza. */
+.today-meetings {
+  margin: 0 0 18px;
+}
+.today-meetings ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.today-meetings li {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 6px 10px;
+  border-left: 3px solid var(--meeting);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  font-size: var(--fs-base);
+}
+.today-meetings li.tentative {
+  border-left-style: dashed;
+}
+.today-meetings li .mono {
+  color: var(--muted);
+  flex: none;
+}
+.today-meeting-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.today-meetings small {
+  color: var(--muted);
+}
+.today-meetings li.now small {
+  color: var(--accent);
+}

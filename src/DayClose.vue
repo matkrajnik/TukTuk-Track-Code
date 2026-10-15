@@ -6,11 +6,16 @@ import {
   detailsOf,
   duration,
   saveDetails,
+  meetingOccupies,
+  meetingTitle,
   type Snapshot,
 } from "./store";
 import { dayBounds, dayKey, dayText, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 import { copyReport } from "./clipboard";
+import { dayGoal } from "./capacity";
+import { useMeetings } from "./composables/useMeetings";
+import ManualTime from "./ManualTime.vue";
 import {
   dayTarget,
   targetDiffMinutes,
@@ -49,7 +54,53 @@ const rows = computed(() =>
 );
 const total = computed(() => rowsTotal(rows.value));
 const settings = useSettings();
-const target = computed(() => dayTarget(settings.value, props.day));
+/** Spotkania dnia: sekcja „Spotkania” i cel dnia pomniejszony o spotkania. */
+const calendar = useMeetings(() => dayBounds(props.day));
+/** Cel mierzonego czasu: cel dnia minus spotkania niepokryte pomiarem. */
+const target = computed(() =>
+  dayGoal(
+    dayTarget(settings.value, props.day),
+    calendar.events.value,
+    props.data.sessions,
+    props.day,
+    props.now,
+  ),
+);
+const meetingClock = (at: number) =>
+  new Intl.DateTimeFormat("pl-PL", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(at);
+/**
+ * Spotkania dnia, które zajmują czas (bez całodniowych). Przy każdym albo
+ * „Dodaj jako czas”, albo ostrzeżenie o nakładaniu na pomiar (także w koszu
+ * i trwający), albo informacja, że spotkanie jeszcze się nie skończyło.
+ */
+const meetings = computed(() => {
+  const [from, to] = dayBounds(props.day);
+  const all = [...props.data.sessions, ...(props.data.trashSessions ?? [])];
+  return calendar.events.value
+    .filter((e) => meetingOccupies(e) && !e.allDay && e.start < to && e.end > from)
+    .map((e) => ({
+      event: e,
+      title: meetingTitle(e, settings.value.calendarShowTitles),
+      time: `${meetingClock(e.start)}–${meetingClock(e.end)}`,
+      overlaps: all.some(
+        (s) => s.startedAt < e.end && (s.endedAt === null || s.endedAt > e.start),
+      ),
+      future: e.end > props.now,
+    }));
+});
+/** Żądanie otwarcia „Dodaj czas ręcznie” z godzinami spotkania. */
+const preset = ref<{ start: number; end: number; key: string } | null>(null);
+function addMeeting(m: (typeof meetings.value)[number]) {
+  preset.value = {
+    start: m.event.start,
+    end: m.event.end,
+    key: m.event.id + ":" + Date.now(),
+  };
+}
+const activeTasks = computed(() => props.data.tasks.filter((t) => !t.archived));
 /** Informacja o celu dnia; nie blokuje zamknięcia. */
 const targetText = computed(() => targetMessage(total.value, target.value));
 const unfinished = computed(() =>
@@ -193,6 +244,40 @@ async function move() {
     <button class="today-button" @click="emit('report', day)">
       Otwórz raport i popraw czas
     </button>
+    <template v-if="meetings.length">
+      <h3>Spotkania</h3>
+      <ul class="close-meetings" aria-label="Spotkania dnia">
+        <li v-for="m in meetings" :key="m.event.id">
+          <span class="mono">{{ m.time }}</span
+          ><span class="close-meeting-title">{{ m.title }}</span>
+          <span v-if="m.future" class="hint">Jeszcze się nie skończyło</span
+          ><span
+            v-else-if="m.overlaps"
+            class="close-meeting-warning"
+            role="note"
+            >Nakłada się na zapisany pomiar</span
+          ><button
+            v-else
+            class="today-button"
+            :aria-label="'Dodaj jako czas: ' + m.title + ' ' + m.time"
+            @click="addMeeting(m)"
+          >
+            Dodaj jako czas
+          </button>
+        </li>
+      </ul>
+      <p class="hint">
+        Spotkanie nie dodaje się samo. „Dodaj jako czas” otwiera ręczne dodanie
+        czasu z godzinami spotkania; zadanie wybierasz sam.
+      </p>
+      <ManualTime
+        :tasks="activeTasks"
+        :day="day"
+        :preset="preset"
+        remember-key="todo-track-meeting-task"
+        @updated="emit('updated', $event)"
+      />
+    </template>
     <h3>Niedokończony plan</h3>
     <p>{{ unfinished.length }} zadań do przeniesienia na następny dzień.</p>
     <button

@@ -3,6 +3,7 @@ mod agents;
 mod autostart;
 mod backup;
 mod calendar;
+mod capacity;
 mod db;
 mod export;
 mod focus;

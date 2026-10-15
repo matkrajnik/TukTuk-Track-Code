@@ -725,6 +725,36 @@
 .close-target.over {
   color: var(--warning);
 }
+/* Zamknięcie dnia: spotkania z kalendarza. */
+.close-meetings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.close-meetings li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 6px 10px;
+  border-left: 3px solid var(--meeting);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.close-meetings li .mono {
+  color: var(--muted);
+}
+.close-meeting-title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.close-meeting-warning {
+  color: var(--warning);
+  font-size: var(--fs-sm);
+}
 /* Pole przechwytujące skrót klawiszowy. */
 .shortcut-field {
   display: flex;
@@ -881,6 +911,30 @@ html.widget-root body {
 }
 .dtl-labels span:last-child {
   grid-row: 4;
+}
+.dtl-labels.meetings {
+  grid-template-rows: 22px 28px 10px 28px 10px 28px;
+}
+.dtl-labels.meetings span:nth-child(2) {
+  grid-row: 4;
+}
+.dtl-labels.meetings span:last-child {
+  grid-row: 6;
+}
+/* Spotkania z kalendarza: wstępne (tentative) kreskowane, całodniowe bledsze. */
+.dtl-meeting {
+  fill: var(--meeting);
+  fill-opacity: 0.55;
+  stroke: var(--meeting);
+  stroke-width: 1.5;
+  cursor: default;
+}
+.dtl-meeting.tentative {
+  fill-opacity: 0.18;
+  stroke-dasharray: 5 3;
+}
+.dtl-meeting.allday {
+  fill-opacity: 0.25;
 }
 .dtl-plot {
   position: relative;
@@ -1092,7 +1146,17 @@ html.widget-root body {
 .week-capacity.over > span {
   background: var(--danger);
 }
-.week-actual {
+.week-capacity {
+  display: flex;
+}
+.week-capacity > span {
+  flex: none;
+}
+.week-capacity > span.week-capacity-meetings {
+  background: var(--meeting);
+}
+.week-actual,
+.week-meetings {
   margin: 0;
   font-size: var(--fs-sm);
 }

@@ -42,6 +42,8 @@
   --tl-5: #d9c65f;
   --tl-6: #6cc7c9;
   --tl-7: #b3bb84;
+  /* Spotkania z kalendarza (tor osi dnia, pasek pojemności). */
+  --meeting: #8e9bbd;
   background: var(--bg);
   color: var(--text);
   font-size: var(--fs-md);
@@ -71,6 +73,7 @@
   --tl-5: #8c7a12;
   --tl-6: #1f8385;
   --tl-7: #69712f;
+  --meeting: #56628a;
 }
 * {
   box-sizing: border-box;

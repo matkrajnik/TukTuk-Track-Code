@@ -134,7 +134,9 @@ pub fn read_status(
     Ok(Status {
         active,
         today_ms: stats::day_total_ms(db, today, now)?,
-        target_minutes: crate::holidays::day_target_minutes(&s, today),
+        // Cel dnia minus spotkania niepokryte pomiarem (`capacity::goal_ms_in`).
+        target_minutes: (crate::capacity::goal_ms_in(db, &chrono::Local, &s, today, now)? / 60_000)
+            as u32,
     })
 }
 

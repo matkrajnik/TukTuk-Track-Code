@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
-import { planTask, type Snapshot, type Task } from "../store";
+import { meetingTitle, planTask, type Snapshot, type Task } from "../store";
 import { dayBounds, dayKey, dayText, inDay } from "../time";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
-import { dayTarget, hhmm, targetHoliday, useSettings } from "../target";
+import { dayTarget, hhmm, hm, targetHoliday, useSettings } from "../target";
+import { dayCapacity } from "../capacity";
+import { useMeetings } from "../composables/useMeetings";
 import { useReorder } from "../composables/useReorder";
 import WeekCard from "./WeekCard.vue";
 
@@ -17,6 +19,14 @@ import WeekCard from "./WeekCard.vue";
 const props = defineProps<{ data: Snapshot; now: number; day: string }>();
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
 const settings = useSettings();
+/** Spotkania widocznego tygodnia (pojemność dni). */
+const calendar = useMeetings(() => {
+  const monday = new Date(dayBounds(props.day)[0]);
+  monday.setDate(monday.getDate() - ((monday.getDay() + 6) % 7));
+  const next = new Date(monday);
+  next.setDate(monday.getDate() + 7);
+  return [+monday, +next];
+});
 const busy = ref(false);
 const error = ref("");
 const search = ref("");
@@ -55,7 +65,13 @@ const days = computed(() => {
       (sum, t) => sum + (t.details?.estimateMinutes ?? 0) * 60_000,
       0,
     );
-    const target = dayTarget(settings.value, key);
+    const goal = dayTarget(settings.value, key);
+    // Pojemność dnia: cel minus spotkania; urlop całodniowy = dzień wolny.
+    const cap = dayCapacity(goal, calendar.events.value, key);
+    const target = cap.capacity;
+    const meetingsWidth =
+      goal > 0 && !cap.off ? Math.min(100, (cap.meetings / goal) * 100) : 0;
+    const scale = goal > 0 && !cap.off ? goal : target;
     return {
       key,
       short: shortNames[i],
@@ -65,10 +81,30 @@ const days = computed(() => {
       estimate,
       target,
       holiday: targetHoliday(settings.value, key),
-      capacity: target ? hhmm(target) : "wolne",
-      width:
+      off: cap.off
+        ? meetingTitle(cap.off, settings.value.calendarShowTitles)
+        : null,
+      free: cap.off !== null || goal <= 0,
+      capacity: cap.off || goal <= 0 ? "wolne" : hhmm(target),
+      meetings: cap.meetings,
+      meetingsWidth,
+      // Podpowiedź przy spotkaniach: „Cel 8:00 · spotkania 2:30 · zostaje 5:30”.
+      capacityTitle: cap.off
+        ? `Poza biurem: ${meetingTitle(cap.off, settings.value.calendarShowTitles)} · dzień wolny`
+        : cap.meetings > 0 && goal > 0
+          ? `Cel ${hm(goal)} · spotkania ${hm(cap.meetings)} · zostaje ${hm(target)}`
+          : "",
+      // Szacunki względem pojemności (aria-valuenow).
+      load:
         target > 0
           ? Math.min(100, (estimate / target) * 100)
+          : estimate
+            ? 100
+            : 0,
+      // Pasek: cała długość to cel dnia; spotkania z lewej, szacunki za nimi.
+      width:
+        scale > 0
+          ? Math.min(100 - meetingsWidth, (estimate / scale) * 100)
           : estimate
             ? 100
             : 0,
@@ -316,7 +352,7 @@ function columnProps(id: string, lists: string[], day: string) {
         v-for="d in days"
         :key="d.key"
         class="week-column"
-        :class="{ today: d.today, free: !d.target }"
+        :class="{ today: d.today, free: d.free }"
         :aria-label="d.long + ' ' + d.key"
         v-bind="columnProps(d.key, [d.key], d.key)"
       >
@@ -327,9 +363,14 @@ function columnProps(id: string, lists: string[], day: string) {
           <span v-if="d.holiday" class="week-holiday" :title="d.holiday"
             >{{ d.holiday }}</span
           >
+          <span v-else-if="d.off" class="week-holiday" :title="d.capacityTitle"
+            >{{ d.off }}</span
+          >
           <span
             class="week-estimate mono"
-            title="Suma szacunków względem pojemności dnia"
+            :title="
+              d.capacityTitle || 'Suma szacunków względem pojemności dnia'
+            "
             >{{ hhmm(d.estimate) }} / {{ d.capacity }}</span
           >
         </header>
@@ -340,11 +381,21 @@ function columnProps(id: string, lists: string[], day: string) {
           :aria-label="'Pojemność: ' + d.long + ' ' + d.key"
           aria-valuemin="0"
           aria-valuemax="100"
-          :aria-valuenow="Math.round(d.width)"
+          :aria-valuenow="Math.round(d.load)"
           :aria-valuetext="hhmm(d.estimate) + ' / ' + d.capacity"
+          :aria-description="d.capacityTitle || undefined"
+          :title="d.capacityTitle || undefined"
         >
-          <span :style="{ width: d.width + '%' }"></span>
+          <span
+            v-if="d.meetingsWidth > 0"
+            class="week-capacity-meetings"
+            :style="{ width: d.meetingsWidth + '%' }"
+          ></span
+          ><span :style="{ width: d.width + '%' }"></span>
         </div>
+        <p v-if="d.meetings > 0 && !d.off" class="week-meetings hint">
+          Spotkania <span class="mono">{{ hhmm(d.meetings) }}</span>
+        </p>
         <p class="week-actual hint">
           Praca <span class="mono">{{ hhmm(d.actual) }}</span>
         </p>

@@ -7,6 +7,8 @@ import {
   change,
   duration,
   jiraConnected,
+  meetingOccupies,
+  meetingTitle,
   loadTemplates,
   onTemplatesChanged,
   quickAdd,
@@ -19,7 +21,9 @@ import {
   type Snapshot,
   type Task,
 } from "../store";
-import { dayKey, inDay } from "../time";
+import { dayBounds, dayKey, inDay } from "../time";
+import { dayGoal } from "../capacity";
+import { useMeetings } from "../composables/useMeetings";
 import { taskSessions } from "../report";
 import { sortTasks } from "../order";
 import TargetBar from "../components/TargetBar.vue";
@@ -96,7 +100,36 @@ const today = computed(() =>
   ),
 );
 const settings = useSettings();
-const todayTarget = computed(() => dayTarget(settings.value, todayKey.value));
+const clockText = (at: number) =>
+  new Intl.DateTimeFormat("pl-PL", { hour: "2-digit", minute: "2-digit" }).format(
+    at,
+  );
+/** Spotkania dziś: lista nadchodzących i cel dnia pomniejszony o spotkania. */
+const calendar = useMeetings(() => dayBounds(todayKey.value));
+/** Cel mierzonego czasu: cel dnia minus spotkania niepokryte pomiarem. */
+const todayTarget = computed(() =>
+  dayGoal(
+    dayTarget(settings.value, todayKey.value),
+    calendar.events.value,
+    props.data.sessions,
+    todayKey.value,
+    props.now,
+  ),
+);
+/** Nadchodzące (i trwające) spotkania dziś, które zajmują czas. */
+const upcomingMeetings = computed(() => {
+  const [, end] = dayBounds(todayKey.value);
+  return calendar.events.value
+    .filter((e) => meetingOccupies(e) && e.end > props.now && e.start < end)
+    .map((e) => ({
+      event: e,
+      time: e.allDay
+        ? "Cały dzień"
+        : clockText(e.start) + "–" + clockText(e.end),
+      title: meetingTitle(e, settings.value.calendarShowTitles),
+      now: e.start <= props.now,
+    }));
+});
 const visible = computed(() =>
   props.data.tasks.filter(
     (t) =>
@@ -438,6 +471,28 @@ async function priority(task: Task, e: Event) {
       </select></label
     >
   </div>
+  <section
+    v-if="todayOnly && calendar.connected.value"
+    class="today-meetings"
+    aria-label="Spotkania dziś"
+  >
+    <h2 class="task-group-heading">
+      Spotkania dziś <span>{{ upcomingMeetings.length }}</span>
+    </h2>
+    <ul v-if="upcomingMeetings.length">
+      <li
+        v-for="m in upcomingMeetings"
+        :key="m.event.id"
+        :class="{ tentative: m.event.showAs === 'tentative', now: m.now }"
+      >
+        <span class="mono">{{ m.time }}</span
+        ><span class="today-meeting-title">{{ m.title }}</span
+        ><small v-if="m.now">trwa</small
+        ><small v-else-if="m.event.showAs === 'tentative'">wstępnie</small>
+      </li>
+    </ul>
+    <p v-else class="hint">Brak nadchodzących spotkań dziś.</p>
+  </section>
   <div class="task-list" :aria-busy="busy || loading">
     <section
       v-for="group in taskGroups"

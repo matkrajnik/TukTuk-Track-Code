@@ -1,12 +1,19 @@
 import { test, expect, type Page } from "@playwright/test";
-import { ids, jiraFixture, openPreview, seed } from "./fixtures/seed";
+import {
+  calendarFixture,
+  ids,
+  jiraFixture,
+  openPreview,
+  seed,
+} from "./fixtures/seed";
 import { openDesktop } from "./fixtures/tauri";
 
 /**
  * Zrzuty wzorcowe widoków (`npm run test:visual:update` odświeża wzorce).
  * Dane z `fixtures/seed.ts` z trwającym pomiarem, zegar zatrzymany na
  * `NOW` (setFixedTime), więc liczniki i daty nie zmieniają się między
- * przebiegami. Animacje, przejścia i kursor tekstowy wyłącza konfiguracja
+ * przebiegami. Widoki planu i Zamknięcia dnia mają połączony kalendarz
+ * z przykładowymi spotkaniami (`calendarFixture`). Animacje, przejścia i kursor tekstowy wyłącza konfiguracja
  * `expect.toHaveScreenshot` w playwright.config.ts; mysz po nawigacji trafia
  * w róg okna, żeby żaden przycisk nie miał stanu :hover.
  *
@@ -46,6 +53,8 @@ const views: {
   name: string;
   open: (page: Page) => Promise<void>;
   ready: (page: Page) => Promise<void>;
+  /** Połączony kalendarz z przykładowymi spotkaniami (tor, pojemność, sekcja). */
+  calendar?: boolean;
 }[] = [
   {
     name: "zadania",
@@ -63,6 +72,7 @@ const views: {
   },
   {
     name: "plan-dzien",
+    calendar: true,
     open: async (page) => {
       await nav(page, "Plan i historia");
       await nav(page, "Dzień");
@@ -72,6 +82,7 @@ const views: {
   },
   {
     name: "plan-tablica-tygodnia",
+    calendar: true,
     open: async (page) => {
       await nav(page, "Plan i historia");
       await nav(page, "Tydzień");
@@ -82,6 +93,7 @@ const views: {
   },
   {
     name: "zamkniecie-dnia",
+    calendar: true,
     open: async (page) => {
       await nav(page, "Plan i historia");
       await nav(page, "Zamknięcie dnia");
@@ -112,9 +124,17 @@ for (const theme of themes)
           await useTheme(page, theme);
           await openPreview(page, {
             active: { task: ids.analysis, from: "11:00" },
+            calendar: view.calendar ? calendarFixture() : undefined,
           });
           await view.open(page);
           await view.ready(page);
+          // Spotkania wczytują się osobno od danych zadań.
+          if (view.calendar)
+            await expect(
+              page
+                .locator(".dtl-meeting, .week-capacity-meetings, .close-meetings")
+                .first(),
+            ).toBeVisible();
           await settle(page);
           await expect(page).toHaveScreenshot(
             `${view.name}-${theme}-${width}.png`,

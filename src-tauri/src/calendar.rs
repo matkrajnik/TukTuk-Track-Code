@@ -300,6 +300,17 @@ fn store(db: &Connection, config: &Config) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     Ok(())
 }
+/// Czy konto Microsoft jest połączone; bez niego spotkania nie obowiązują
+/// (pojemność dnia w trayu i powiadomieniu o celu).
+pub fn connected(db: &Connection) -> bool {
+    !load(db).email.is_empty()
+}
+#[cfg(test)]
+pub fn set_test_email(db: &Connection, email: &str) {
+    let mut c = load(db);
+    c.email = email.into();
+    store(db, &c).unwrap();
+}
 fn config(app: &tauri::AppHandle) -> Result<Config, String> {
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
