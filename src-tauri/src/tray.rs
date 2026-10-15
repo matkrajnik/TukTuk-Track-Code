@@ -1,7 +1,6 @@
 //! Ikona w zasobniku: menu, tooltip z bieżącym pomiarem i celem dnia oraz
 //! ikona z kropką, gdy pomiar trwa. Odświeżanie co 5 s i po `data-changed`.
 use crate::{db, reminder, settings, stats, Database};
-use chrono::Datelike;
 use rusqlite::{Connection, OptionalExtension};
 use std::{
     sync::{mpsc, Mutex},
@@ -132,15 +131,10 @@ pub fn read_status(
         .optional()?
         .map(|(title, started)| (title, (now - started).max(0)));
     let s = settings::load(db);
-    let weekday = today.weekday().number_from_monday() as u8;
     Ok(Status {
         active,
         today_ms: stats::day_total_ms(db, today, now)?,
-        target_minutes: if s.work_days.contains(&weekday) {
-            s.target_day_minutes
-        } else {
-            0
-        },
+        target_minutes: crate::holidays::day_target_minutes(&s, today),
     })
 }
 

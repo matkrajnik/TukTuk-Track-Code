@@ -8,11 +8,12 @@ import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
 import {
+  daysTarget,
   dayTarget,
   hhmm,
-  isoWeekday,
+  targetHoliday,
   useSettings,
-  weekTarget,
+  weekDays,
 } from "./target";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
@@ -23,19 +24,13 @@ const dayTotal = (key: string) =>
   props.data.sessions.reduce((sum, s) => sum + inDay(s, key, props.now), 0);
 const todayTarget = computed(() => dayTarget(settings.value, today.value));
 /** Bieżący tydzień kalendarzowy, poniedziałek–niedziela. */
-const thisWeek = computed(() => {
-  const monday = new Date(dayBounds(today.value)[0]);
-  monday.setDate(monday.getDate() - isoWeekday(today.value) + 1);
-  return Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(monday);
-    date.setDate(monday.getDate() + i);
-    return dayKey(+date);
-  });
-});
+const thisWeek = computed(() => weekDays(today.value));
 const thisWeekTotal = computed(() =>
   thisWeek.value.reduce((sum, key) => sum + dayTotal(key), 0),
 );
-const thisWeekTarget = computed(() => weekTarget(settings.value));
+const thisWeekTarget = computed(() =>
+  daysTarget(settings.value, thisWeek.value),
+);
 const days = computed(() =>
   Array.from({ length: 7 }, (_, index) => {
     const date = new Date(dayBounds(today.value)[0]);
@@ -137,7 +132,9 @@ const topTasks = computed(() =>
           >{{ hhmm(days[6].total) }} / {{ hhmm(todayTarget) }}</span
         >
       </template>
-      <span v-else class="target-note">Dzień wolny</span>
+      <span v-else class="target-note">{{
+        targetHoliday(settings, today) ?? "Dzień wolny"
+      }}</span>
     </section>
     <section class="dashboard-card">
       <h2>Ten tydzień</h2>

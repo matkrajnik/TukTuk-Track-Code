@@ -12,6 +12,7 @@ import { dayBounds, dayKey, inDay, stamp } from "../time";
 import { byTotal, dayRows, rowsTotal, tsText } from "../report";
 import { copyReport } from "../clipboard";
 import MultiDayReport from "../components/MultiDayReport.vue";
+import MonthReport from "../components/MonthReport.vue";
 
 const props = defineProps<{
   data: Snapshot;
@@ -31,8 +32,8 @@ const tsVisible = ref(false);
 const tsTextArea = ref<HTMLTextAreaElement | null>(null);
 const tsCopyStatus = ref("");
 const tsIncludeNotes = ref(true);
-/** Tryb: raport jednego dnia albo TS z dowolnie wybranych dni. */
-const mode = ref<"single" | "multi">("single");
+/** Tryb: raport jednego dnia, TS z dowolnie wybranych dni albo miesiąc. */
+const mode = ref<"single" | "multi" | "month">("single");
 
 const todayKey = computed(() => dayKey(props.now));
 const report = computed(() =>
@@ -134,11 +135,23 @@ function toggle(id: number) {
       :aria-pressed="mode === 'multi'"
       @click="mode = 'multi'"
     >
-      Wybrane dni
+      Wybrane dni</button
+    ><button
+      :class="{ selected: mode === 'month' }"
+      :aria-pressed="mode === 'month'"
+      @click="mode = 'month'"
+    >
+      Miesiąc
     </button>
   </div>
+  <MonthReport
+    v-if="mode === 'month'"
+    :data="data"
+    :now="now"
+    @open="openDay"
+  />
   <MultiDayReport
-    v-if="mode === 'multi'"
+    v-else-if="mode === 'multi'"
     :data="data"
     :now="now"
     @open="openDay"

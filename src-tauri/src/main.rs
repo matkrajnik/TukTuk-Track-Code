@@ -3,6 +3,7 @@ mod agents;
 mod autostart;
 mod backup;
 mod db;
+mod holidays;
 mod idle;
 mod jira;
 mod maintenance;

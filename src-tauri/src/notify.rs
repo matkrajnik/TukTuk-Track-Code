@@ -18,7 +18,7 @@
 //! sterują zegarem. Klucz trafia do bazy przed wysłaniem (`INSERT OR IGNORE`), dlatego
 //! ponowne uruchomienie aplikacji nie powtarza wiadomości.
 use crate::{settings::AppSettings, stats, tray, Database};
-use chrono::{Datelike, NaiveDate, NaiveTime, TimeZone};
+use chrono::{NaiveDate, NaiveTime, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use std::sync::{mpsc, Mutex};
@@ -454,10 +454,10 @@ impl NotifyClock {
             }
         }
 
-        // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem).
-        let weekday = today.weekday().number_from_monday() as u8;
-        if s.notify_target && s.target_day_minutes > 0 && s.work_days.contains(&weekday) {
-            let target = i64::from(s.target_day_minutes) * 60_000;
+        // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem, bez świąt).
+        let target_minutes = crate::holidays::day_target_minutes(&s, today);
+        if s.notify_target && target_minutes > 0 {
+            let target = i64::from(target_minutes) * 60_000;
             let total = stats::day_total_ms_in(db, tz, today, now)?;
             let key = format!("target:{today}");
             if total >= target && claim(db, &key, now)? {

@@ -17,6 +17,8 @@ pub struct AppSettings {
     pub agent_muted_folders: Vec<String>,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
+    /// Polskie święta ustawowe nie są dniami roboczymi w celu dnia, tygodnia i miesiąca.
+    pub holidays_in_target: bool,
     pub day_start: String,
     pub widget_enabled: bool,
     pub widget_background_only: bool,
@@ -41,6 +43,7 @@ impl Default for AppSettings {
             agent_muted_folders: Vec::new(),
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
+            holidays_in_target: true,
             day_start: "08:00".into(),
             widget_enabled: false,
             widget_background_only: false,

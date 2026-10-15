@@ -12,6 +12,8 @@ export interface AppSettings {
   agentMutedFolders: string[];
   targetDayMinutes: number;
   workDays: number[];
+  /** Święta ustawowe nie są dniami roboczymi w celu. */
+  holidaysInTarget: boolean;
   dayStart: string;
   widgetEnabled: boolean;
   widgetBackgroundOnly: boolean;
@@ -41,6 +43,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   agentMutedFolders: [],
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
+  holidaysInTarget: true,
   dayStart: "08:00",
   widgetEnabled: false,
   widgetBackgroundOnly: false,

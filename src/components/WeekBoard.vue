@@ -4,7 +4,7 @@ import { planTask, type Snapshot, type Task } from "../store";
 import { dayBounds, dayKey, dayText, inDay } from "../time";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
-import { dayTarget, hhmm, useSettings } from "../target";
+import { dayTarget, hhmm, targetHoliday, useSettings } from "../target";
 import { useReorder } from "../composables/useReorder";
 import WeekCard from "./WeekCard.vue";
 
@@ -64,6 +64,7 @@ const days = computed(() => {
       tasks,
       estimate,
       target,
+      holiday: targetHoliday(settings.value, key),
       capacity: target ? hhmm(target) : "wolne",
       width:
         target > 0
@@ -323,6 +324,9 @@ function columnProps(id: string, lists: string[], day: string) {
           <h3>
             {{ d.short }} <span class="mono">{{ d.date }}</span>
           </h3>
+          <span v-if="d.holiday" class="week-holiday" :title="d.holiday"
+            >{{ d.holiday }}</span
+          >
           <span
             class="week-estimate mono"
             title="Suma szacunków względem pojemności dnia"

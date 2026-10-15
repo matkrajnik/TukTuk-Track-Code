@@ -5,7 +5,8 @@ import {
   readSettings,
   type AppSettings,
 } from "./settings";
-import { dayBounds } from "./time";
+import { dayBounds, dayKey } from "./time";
+import { holidayName } from "./holidays";
 
 /** Czas jako G:MM, np. „8:00”, „12:05”. Minuty w dół, jak w trayu. */
 export function hm(ms: number): string {
@@ -23,18 +24,53 @@ export function isoWeekday(day: string): number {
 interface TargetSettings {
   readonly targetDayMinutes: number;
   readonly workDays: readonly number[];
+  /** Święta ustawowe nie są dniami roboczymi (domyślnie tak). */
+  readonly holidaysInTarget?: boolean;
 }
 
-export const isWorkDay = (settings: TargetSettings, day: string) =>
-  settings.workDays.includes(isoWeekday(day));
+/** Święto, które zwalnia dzień z celu (null, gdy święta nie są uwzględniane). */
+export const targetHoliday = (settings: TargetSettings, day: string) =>
+  settings.holidaysInTarget === false ? null : holidayName(day);
 
-/** Cel dnia w ms; 0 dla dnia wolnego. */
+/** Dzień roboczy: dzień tygodnia z ustawień, który nie jest uwzględnianym świętem. */
+export const isWorkDay = (settings: TargetSettings, day: string) =>
+  settings.workDays.includes(isoWeekday(day)) && !targetHoliday(settings, day);
+
+/** Cel dnia w ms; 0 dla dnia wolnego i święta. */
 export const dayTarget = (settings: TargetSettings, day: string) =>
   isWorkDay(settings, day) ? settings.targetDayMinutes * 60_000 : 0;
 
-/** Cel tygodnia = cel dnia × liczba dni roboczych. */
-export const weekTarget = (settings: TargetSettings) =>
-  settings.targetDayMinutes * settings.workDays.length * 60_000;
+/** Cel kilku dni (tygodnia, miesiąca) = suma celów dni roboczych. */
+export const daysTarget = (settings: TargetSettings, days: readonly string[]) =>
+  days.reduce((sum, day) => sum + dayTarget(settings, day), 0);
+
+/** Klucze dni tygodnia Pon–Nd zawierającego `day`. */
+export function weekDays(day: string): string[] {
+  const monday = new Date(dayBounds(day)[0]);
+  monday.setDate(monday.getDate() - isoWeekday(day) + 1);
+  return Array.from({ length: 7 }, (_, i) =>
+    dayKey(
+      new Date(
+        monday.getFullYear(),
+        monday.getMonth(),
+        monday.getDate() + i,
+      ).getTime(),
+    ),
+  );
+}
+
+/** Klucze wszystkich dni miesiąca „RRRR-MM” (odporne na zmianę czasu). */
+export function monthDays(month: string): string[] {
+  const [y, m] = month.split("-").map(Number);
+  const count = new Date(y, m, 0).getDate();
+  return Array.from({ length: count }, (_, i) =>
+    dayKey(new Date(y, m - 1, i + 1).getTime()),
+  );
+}
+
+/** Cel tygodnia zawierającego `day`: dni robocze bez świąt × cel dnia. */
+export const weekTarget = (settings: TargetSettings, day: string) =>
+  daysTarget(settings, weekDays(day));
 
 /** Postęp 0–100 do paska; po przekroczeniu pasek jest pełny. */
 export const progress = (total: number, target: number) =>

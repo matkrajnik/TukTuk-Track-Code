@@ -223,9 +223,21 @@ onUnmounted(() => {
         />{{ d.name }}</label
       >
     </fieldset>
+    <label class="inline-check"
+      ><input
+        :checked="settings.holidaysInTarget"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ holidaysInTarget: checked($event) })"
+      />Uwzględniaj święta w celu</label
+    >
     <p class="hint">
       Cel dnia {{ hm(settings.targetDayMinutes) }}, cel tygodnia
       {{ weekTarget }}.
+    </p>
+    <p v-if="settings.holidaysInTarget" class="hint">
+      Polskie święta ustawowe, także Wielkanoc i Boże Ciało, nie są dniami
+      roboczymi: cel tygodnia i miesiąca jest wtedy niższy.
     </p>
 
     <h2>Okna</h2>

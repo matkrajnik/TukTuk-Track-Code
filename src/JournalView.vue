@@ -202,7 +202,7 @@ const week = computed(() => {
     };
   });
 });
-const weekGoal = computed(() => weekTarget(settings.value));
+const weekGoal = computed(() => weekTarget(settings.value, day.value));
 const weekTasks = computed(() =>
   props.data.tasks
     .map((task) => ({

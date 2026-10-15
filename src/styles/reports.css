@@ -226,3 +226,89 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Raport miesięczny: cel miesiąca, tabele i wykres dni z linią celu. */
+.monthly-report {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+.monthly-summary {
+  align-items: flex-start;
+}
+.monthly-summary-text {
+  flex: 1;
+  min-width: 0;
+}
+.monthly-label::first-letter {
+  text-transform: uppercase;
+}
+.monthly-split {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 28px;
+  margin: 14px 0 12px;
+  font-size: var(--fs-sm);
+}
+.monthly-split dt {
+  color: var(--muted);
+}
+.monthly-split dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-md);
+}
+.monthly-target-note {
+  margin: 10px 0 0;
+}
+.monthly-holiday {
+  white-space: nowrap;
+}
+.monthly-tables {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 18px;
+}
+.monthly-table tfoot th,
+.monthly-table tfoot td {
+  border-bottom: 0;
+  font-weight: 600;
+}
+.monthly-day {
+  display: grid;
+  grid-template-columns: 170px minmax(20px, 1fr) 60px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  font-size: var(--fs-sm);
+  padding: 4px 0;
+}
+.monthly-day > .mono {
+  text-align: right;
+}
+.monthly-day-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.monthly-day.free .monthly-day-label {
+  color: var(--muted);
+}
+.monthly-day-holiday {
+  color: var(--warning);
+}
+.week-holiday {
+  overflow: hidden;
+  color: var(--warning);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 850px) {
+  .monthly-tables {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .monthly-day {
+    grid-template-columns: 110px minmax(20px, 1fr) 52px;
+  }
+}
