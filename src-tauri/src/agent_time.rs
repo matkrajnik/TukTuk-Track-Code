@@ -14,7 +14,7 @@
 //!
 //! Czas agentów nie wchodzi do celu dnia, raportu TS ani eksportu: to osobna
 //! informacja na osi dnia, w rozwiniętym kafelku i w zakładce Miesiąc.
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -75,14 +75,32 @@ pub fn record(db: &Connection, observations: &[Observation], now: i64) -> rusqli
     tx.commit()
 }
 
+/// Ostatni okres tego agenta w tym samym folderze. Foldery porównujemy po
+/// normalizacji (`agents::norm_folder`: wielkość liter, separatory, ukośnik na
+/// końcu), bo sesje w jednym folderze potrafią podawać ścieżkę różnie. Okresy
+/// zakończone wcześniej niż `START_LIMIT` przed `now` nie wpływają ani na
+/// łączenie (`GAP` < `START_LIMIT`), ani na początek nowego okresu, więc ich nie czytamy.
+fn latest_period(
+    db: &Connection,
+    o: &Observation,
+    now: i64,
+) -> rusqlite::Result<Option<(i64, Option<i64>, i64)>> {
+    let folder = crate::agents::norm_folder(&o.folder);
+    let mut stmt = db.prepare_cached(
+        "SELECT id,task_id,\"end\",folder FROM agent_sessions WHERE agent=?1 AND \"end\">=?2 ORDER BY \"end\" DESC, id DESC",
+    )?;
+    let mut rows = stmt.query(params![o.agent, now - START_LIMIT])?;
+    while let Some(r) = rows.next()? {
+        let stored: String = r.get(3)?;
+        if crate::agents::norm_folder(&stored) == folder {
+            return Ok(Some((r.get(0)?, r.get(1)?, r.get(2)?)));
+        }
+    }
+    Ok(None)
+}
+
 fn record_one(db: &Connection, o: &Observation, now: i64) -> rusqlite::Result<()> {
-    let last: Option<(i64, Option<i64>, i64)> = db
-        .query_row(
-            "SELECT id,task_id,\"end\" FROM agent_sessions WHERE agent=?1 AND folder=?2 ORDER BY \"end\" DESC, id DESC LIMIT 1",
-            params![o.agent, o.folder],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
+    let last = latest_period(db, o, now)?;
     if let Some((id, task, end)) = last {
         if now >= end && now - end < GAP {
             let same = task.is_none() || o.task_id.is_none() || task == o.task_id;
@@ -365,6 +383,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rows(&db).len(), 3);
+    }
+
+    #[test]
+    fn folder_spelled_differently_in_next_observation_extends_same_period() {
+        let db = open();
+        record(&db, &[obs("claude", "C:\\Projekty\\x", Some(1), T)], T).unwrap();
+        // Kolejne odczyty: inna wielkość litery dysku, ukośnik na końcu, inne separatory.
+        record(
+            &db,
+            &[obs("claude", "c:\\Projekty\\x\\", Some(1), T)],
+            T + 5 * S,
+        )
+        .unwrap();
+        record(&db, &[obs("claude", "c:/projekty/X", None, T)], T + 10 * S).unwrap();
+        assert_eq!(rows(&db), vec![("claude".into(), Some(1), T, T + 10 * S)]);
+        // Po przerwie nowy okres zaczyna się nie wcześniej niż koniec poprzedniego,
+        // także gdy folder zapisano inaczej.
+        record(
+            &db,
+            &[obs("claude", "C:/Projekty/x/", Some(1), T - 3_600 * S)],
+            T + 10 * S + GAP,
+        )
+        .unwrap();
+        assert_eq!(
+            rows(&db),
+            vec![
+                ("claude".into(), Some(1), T, T + 10 * S),
+                ("claude".into(), Some(1), T + 10 * S, T + 10 * S + GAP),
+            ]
+        );
     }
 
     #[test]
