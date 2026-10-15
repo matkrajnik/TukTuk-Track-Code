@@ -3,6 +3,14 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import { renderTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
+import {
+  emptyRule,
+  isRecurring,
+  normalizeRule,
+  occurs,
+  ruleUsesWeekdays,
+  type RepeatRule,
+} from "./recurrence";
 export interface Task {
   id: number;
   title: string;
@@ -30,6 +38,16 @@ export interface TaskDetails {
   order: number;
   /** Własna godzina startu bloku planu: pusta albo „HH:MM”. */
   plannedStart: string;
+  /** Reguła cyklu (P3); brak albo pusty rodzaj = co tydzień w `repeatDays`. */
+  repeatRule?: RepeatRule;
+  /** Chwila zapisania blokady „Czekam na” (ms, 0 = brak albo stary zapis). */
+  waitingSince?: number;
+  /** Status Jiry w chwili blokady (propozycja „odblokować?”). */
+  waitingStatus?: string;
+  /** Status Jiry, dla którego propozycja została odrzucona albo obsłużona. */
+  waitingDismissed?: string;
+  /** „Przypomnij jutro” z powiadomienia: dzień kolejnego przypomnienia. */
+  waitingRemindDay?: string;
 }
 const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 export const detailsOf = (task: Task): TaskDetails => ({
@@ -42,11 +60,32 @@ export const detailsOf = (task: Task): TaskDetails => ({
   repeatFrom: "",
   order: 0,
   plannedStart: "",
+  waitingSince: 0,
+  waitingStatus: "",
+  waitingDismissed: "",
+  waitingRemindDay: "",
   ...task.details,
   notes: { ...task.details?.notes },
   checklist: (task.details?.checklist ?? []).map((item) => ({ ...item })),
   repeatDays: [...(task.details?.repeatDays ?? [])],
+  repeatRule: { ...emptyRule(), ...task.details?.repeatRule },
 });
+/**
+ * Szczegóły po zdjęciu blokady przy starcie pomiaru (`planner::clear_waiting`):
+ * bieżący status Jiry trafia do `waitingDismissed`.
+ */
+function unblocked(task: Task): TaskDetails {
+  const d = detailsOf(task);
+  if (!d.waiting) return d;
+  return {
+    ...d,
+    waiting: "",
+    waitingSince: 0,
+    waitingStatus: "",
+    waitingRemindDay: "",
+    waitingDismissed: task.jiraStatus ?? "",
+  };
+}
 export interface Session {
   id: number;
   taskId: number;
@@ -121,7 +160,7 @@ export async function change(
       });
   } else if (action === "start" && task) {
     if (task.done) throw new Error("Najpierw przywróć zadanie do zrobienia.");
-    task.details = { ...detailsOf(task), waiting: "" };
+    task.details = unblocked(task);
     task.archived = false;
     if (!data.sessions.some((s) => s.taskId === id && s.endedAt === null)) {
       stop();
@@ -619,7 +658,7 @@ export async function splitSession(
     if (target.done)
       throw new Error("Najpierw przywróć zadanie docelowe do zrobienia.");
     target.archived = false;
-    target.details = { ...detailsOf(target), waiting: "" };
+    target.details = unblocked(target);
   }
   const second: Session = {
     id:
@@ -661,9 +700,29 @@ export async function saveDetails(
   const saved: TaskDetails = JSON.parse(JSON.stringify(details));
   saved.project = details.project.trim();
   saved.waiting = details.waiting.trim();
-  if (saved.repeatDays.length && !saved.repeatFrom)
+  // Jak planner::validate: reguła cyklu i dane blokady.
+  const rule = normalizeRule(saved.repeatRule);
+  if (!rule) throw new Error("Niepoprawna reguła cyklu.");
+  saved.repeatRule = rule;
+  if (!ruleUsesWeekdays(rule.kind)) saved.repeatDays = [];
+  if (
+    saved.waitingRemindDay &&
+    !/^\d{4}-\d{2}-\d{2}$/.test(saved.waitingRemindDay)
+  )
+    throw new Error("Niepoprawne dane blokady „Czekam na”.");
+  const wasWaiting = !!task.details?.waiting;
+  if (!saved.waiting) {
+    saved.waitingSince = 0;
+    saved.waitingStatus = "";
+    saved.waitingRemindDay = "";
+    if (wasWaiting) saved.waitingDismissed = task.jiraStatus ?? "";
+  } else {
+    if (!saved.waitingSince) saved.waitingSince = Date.now();
+    if (!saved.waitingStatus) saved.waitingStatus = task.jiraStatus ?? "";
+  }
+  if (isRecurring(saved) && !saved.repeatFrom)
     saved.repeatFrom = localDay(Date.now());
-  if (saved.repeatDays.length && !saved.plannedDay)
+  if (isRecurring(saved) && !saved.plannedDay)
     saved.plannedDay = saved.repeatFrom;
   task.details = saved;
   if (saved.waiting)
@@ -671,6 +730,60 @@ export async function saveDetails(
       if (s.taskId === id && s.endedAt === null)
         s.endedAt = Math.max(s.startedAt, Date.now());
     });
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
+
+/** Zmiana blokady „Czekam na” (`planner::WaitingChange`). */
+export interface WaitingChange {
+  action: "block" | "unblock" | "dismiss" | "remind";
+  text?: string;
+}
+/**
+ * Blokada z kafelka: „Odblokuj”, propozycje z Jiry („Oznacz jako czekam na”,
+ * „Nie teraz”). Zmienia tylko pola blokady (`set_waiting`); odpowiednik w podglądzie.
+ */
+export async function setWaiting(
+  id: number,
+  change: WaitingChange,
+): Promise<Snapshot> {
+  if (desktop) return invoke("set_waiting", { id, change });
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task) throw new Error("Nie znaleziono zadania.");
+  const text = (change.text ?? "").trim();
+  const status = task.jiraStatus ?? "";
+  const now = Date.now();
+  const d = detailsOf(task);
+  if (change.action === "block") {
+    if (!text || [...text].length > 300)
+      throw new Error("Opis blokady musi mieć od 1 do 300 znaków.");
+    Object.assign(d, {
+      waiting: text,
+      waitingSince: now,
+      waitingStatus: status,
+      waitingRemindDay: "",
+      waitingDismissed: "",
+    });
+    data.sessions.forEach((s) => {
+      if (s.taskId === id && s.endedAt === null)
+        s.endedAt = Math.max(s.startedAt, now);
+    });
+  } else if (change.action === "unblock")
+    Object.assign(d, {
+      waiting: "",
+      waitingSince: 0,
+      waitingStatus: "",
+      waitingRemindDay: "",
+      waitingDismissed: status,
+    });
+  else if (change.action === "dismiss") d.waitingDismissed = status;
+  else if (change.action === "remind") {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text))
+      throw new Error("Niepoprawny dzień przypomnienia.");
+    d.waitingRemindDay = text;
+  } else throw new Error("Nieznana zmiana blokady.");
+  task.details = d;
   localStorage.setItem(key, JSON.stringify(data));
   return data;
 }
@@ -838,14 +951,41 @@ function localDay(at: number) {
   const d = new Date(at);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
+/**
+ * Dni robocze i święta z ustawień podglądu (klucz jak w `settings.ts`, bez
+ * importu, który zamknąłby cykl modułów) dla reguły „ostatni dzień roboczy”.
+ */
+function previewWorkSettings(): {
+  workDays: number[];
+  holidaysInTarget: boolean;
+} {
+  let stored: Record<string, unknown> = {};
+  try {
+    stored =
+      JSON.parse(
+        localStorage.getItem("todo-track-preview-settings-v1") ?? "{}",
+      ) ?? {};
+  } catch {
+    stored = {};
+  }
+  const days = stored.workDays;
+  return {
+    workDays:
+      Array.isArray(days) && days.every((d) => Number.isInteger(d))
+        ? (days as number[])
+        : [1, 2, 3, 4, 5],
+    holidaysInTarget: stored.holidaysInTarget !== false,
+  };
+}
 function generateRecurring(data: Snapshot): boolean {
   let changed = false;
   const today = localDay(Date.now());
+  const work = previewWorkSettings();
   const earliest = new Date();
   earliest.setDate(earliest.getDate() - 365);
   for (const source of [...data.tasks]) {
     const rule = source.details;
-    if (!rule?.repeatDays?.length || !rule.repeatFrom || source.archived)
+    if (!rule || !isRecurring(rule) || !rule.repeatFrom || source.archived)
       continue;
     const last = data.recurrenceState?.[source.id];
     const cursor = new Date((last || rule.repeatFrom) + "T12:00:00");
@@ -856,7 +996,7 @@ function generateRecurring(data: Snapshot): boolean {
     while (Number.isFinite(+cursor) && localDay(+cursor) <= today) {
       const day = localDay(+cursor);
       if (
-        rule.repeatDays.includes(((cursor.getDay() + 6) % 7) + 1) &&
+        occurs(rule, rule.repeatFrom, day, work) &&
         rule.plannedDay !== day
       ) {
         data.tasks.unshift({
@@ -877,6 +1017,11 @@ function generateRecurring(data: Snapshot): boolean {
             dueDay: "",
             repeatDays: [],
             repeatFrom: "",
+            repeatRule: emptyRule(),
+            waitingSince: 0,
+            waitingStatus: "",
+            waitingDismissed: "",
+            waitingRemindDay: "",
             checklist: (rule.checklist ?? []).map((i) => ({
               ...i,
               done: false,

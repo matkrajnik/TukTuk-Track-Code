@@ -14,7 +14,10 @@
 //! - `evening:<dzień>`: o `notify_evening` pomiar nadal trwa;
 //! - `target:<dzień>`: suma dnia osiągnęła cel (domyślnie wyłączone);
 //! - `morning:<dzień>`: dzień roboczy po godzinie początku dnia, a poranny przegląd
-//!   jeszcze nie zrobiony (`morning_review`, osobno od `tick`).
+//!   jeszcze nie zrobiony (`morning_review`, osobno od `tick`);
+//! - `waiting:<zadanie>:<od kiedy>[:<dzień>]`: blokada „Czekam na” trwa
+//!   `waiting_notify_days` dni roboczych albo nadszedł dzień „Przypomnij jutro”
+//!   (`waiting_reminders`, osobno od `tick`).
 //!
 //! Logika siedzi w `NotifyClock` z czasem i strefą podawanymi z zewnątrz, więc testy
 //! sterują zegarem. Klucz trafia do bazy przed wysłaniem (`INSERT OR IGNORE`), dlatego
@@ -92,6 +95,10 @@ pub const FOCUS_BREAK: &str = "focus-break";
 pub const FOCUS_NEXT: &str = "focus-next";
 /// „Rozpocznij” po przerwie: start pomiaru zadania o podanym id.
 pub const FOCUS_RESUME: &str = "focus-resume";
+/// „Odblokuj” z przypomnienia o blokadzie „Czekam na” (id zadania).
+pub const WAITING_UNBLOCK: &str = "waiting-unblock";
+/// „Przypomnij jutro” z przypomnienia o blokadzie (id zadania).
+pub const WAITING_REMIND: &str = "waiting-remind";
 
 /// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
 #[derive(Clone, Debug, PartialEq)]
@@ -148,6 +155,10 @@ pub enum Command {
     FocusNext(i64),
     /// „Rozpocznij” po przerwie: start pomiaru zadania (poprzedni staje).
     FocusResume(i64),
+    /// Zdejmij blokadę „Czekam na” z zadania (timer bez zmian).
+    WaitingUnblock(i64),
+    /// Przypomnij o blokadzie zadania jutro.
+    WaitingRemind(i64),
     /// Pokaż główne okno z widokiem.
     Open(View),
 }
@@ -169,6 +180,8 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         FOCUS_BREAK => number.map(Command::FocusBreak),
         FOCUS_NEXT => number.map(Command::FocusNext),
         FOCUS_RESUME => number.map(Command::FocusResume),
+        WAITING_UNBLOCK => number.map(Command::WaitingUnblock),
+        WAITING_REMIND => number.map(Command::WaitingRemind),
         PLAN_TODAY => arg
             .split(',')
             .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
@@ -266,6 +279,32 @@ pub fn perform(
         Command::AgentSwitch(task) | Command::FocusResume(task) => {
             crate::db::change(db, "start", Some(task), None, now)?;
             Ok(changed(true))
+        }
+        Command::WaitingUnblock(task) | Command::WaitingRemind(task) => {
+            let change = match command {
+                Command::WaitingUnblock(_) => crate::planner::WaitingChange {
+                    action: "unblock".into(),
+                    text: String::new(),
+                },
+                _ => {
+                    let tomorrow = NaiveDate::parse_from_str(today, "%Y-%m-%d")
+                        .ok()
+                        .and_then(|d| d.succ_opt())
+                        .ok_or("Niepoprawny dzień.")?;
+                    crate::planner::WaitingChange {
+                        action: "remind".into(),
+                        text: tomorrow.format("%Y-%m-%d").to_string(),
+                    }
+                }
+            };
+            // Zadanie usunięte w międzyczasie: tylko lista zadań.
+            match crate::planner::set_waiting(db, task, &change, now) {
+                Ok(_) => Ok(changed(true)),
+                Err(_) => Ok(Outcome {
+                    changed: false,
+                    navigate: Some(View::tasks()),
+                }),
+            }
         }
         // Wymagają stanu trybu skupienia: `focus::Focus::perform` (z `activate`).
         // Bez niego tylko pokazujemy listę zadań.
@@ -517,7 +556,9 @@ fn unfinished_before(db: &Connection, day: NaiveDate) -> rusqlite::Result<usize>
          WHERE t.done = 0 AND COALESCE(l.archived, 0) = 0 AND l.deleted_at IS NULL
            AND COALESCE(json_extract(d.json, '$.plannedDay'), '') <> ''
            AND json_extract(d.json, '$.plannedDay') < ?1
-           AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0",
+           AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0
+           AND COALESCE(json_extract(d.json, '$.repeatRule.kind'), '')
+               NOT IN ('monthDay', 'lastWorkday', 'nthWeekday')",
         [day.format("%Y-%m-%d").to_string()],
         |r| r.get::<_, i64>(0),
     )
@@ -537,7 +578,9 @@ fn due_after_unfinished(db: &Connection, day: NaiveDate) -> rusqlite::Result<usi
            AND json_extract(d.json, '$.dueDay') <= ?1
            AND NOT (COALESCE(json_extract(d.json, '$.plannedDay'), '') <> ''
                 AND json_extract(d.json, '$.plannedDay') < ?1
-                AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0)",
+                AND COALESCE(json_array_length(json_extract(d.json, '$.repeatDays')), 0) = 0
+           AND COALESCE(json_extract(d.json, '$.repeatRule.kind'), '')
+               NOT IN ('monthDay', 'lastWorkday', 'nthWeekday'))",
         [day.format("%Y-%m-%d").to_string()],
         |r| r.get::<_, i64>(0),
     )
@@ -605,15 +648,138 @@ pub fn morning_review<Tz: TimeZone>(
     Ok(claim(db, &message.key, now)?.then_some(message))
 }
 
-/// Usuwa wpisy dedupe starsze niż 7 dni. Klucz trwającej sesji zostaje, żeby
-/// wielodniowy pomiar nie dostał drugiego powiadomienia o długim przedziale.
+/// Liczba dni roboczych po dniu `since` aż do `today` włącznie (dzień blokady
+/// się nie liczy). Najwyżej 400 dni wstecz.
+pub fn work_days_between(s: &AppSettings, since: NaiveDate, today: NaiveDate) -> u32 {
+    let mut count = 0;
+    let mut date = since.max(today - chrono::Duration::days(400));
+    while date < today {
+        let Some(next) = date.succ_opt() else { break };
+        date = next;
+        if crate::holidays::is_work_day(s, date) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// „1 dzień”, „3 dni”.
+fn days_word(n: u32) -> String {
+    if n == 1 {
+        "1 dzień".into()
+    } else {
+        format!("{n} dni")
+    }
+}
+
+/// Treść przypomnienia o blokadzie: „Czekasz na: klient — X (3 dni)”.
+pub fn waiting_message(key: String, task: i64, title: &str, waiting: &str, days: u32) -> Message {
+    Message {
+        key,
+        title: "Czekam na".into(),
+        body: format!(
+            "Czekasz na: {} — {} ({})",
+            short(waiting),
+            short(title),
+            days_word(days)
+        ),
+        actions: vec![
+            Action::new(WAITING_UNBLOCK, "Odblokuj", task),
+            Action::new(WAITING_REMIND, "Przypomnij jutro", task),
+        ],
+        open: View {
+            task: Some(task),
+            section: Some("Czekam na…"),
+            ..View::tasks()
+        },
+    }
+}
+
+/// Reguła „Czekam na” w chwili `now`: w dzień roboczy, gdy blokada trwa co
+/// najmniej `waiting_notify_days` dni roboczych (0 wyłącza), raz na blokadę
+/// (klucz `waiting:<zadanie>:<od kiedy>`). „Przypomnij jutro” ustawia dzień
+/// kolejnego przypomnienia; wtedy przychodzi ono raz w tym dniu albo w
+/// pierwszym dniu roboczym po nim (klucz z tym dniem). Nic nie zmienia się samo.
+pub fn waiting_reminders<Tz: TimeZone>(
+    db: &Connection,
+    s: &AppSettings,
+    tz: &Tz,
+    now: i64,
+) -> rusqlite::Result<Vec<Message>> {
+    let Some(local) = tz.timestamp_millis_opt(now).earliest() else {
+        return Ok(Vec::new());
+    };
+    let today = local.date_naive();
+    if s.waiting_notify_days == 0 || !crate::holidays::is_work_day(s, today) {
+        return Ok(Vec::new());
+    }
+    let blocked = db
+        .prepare(
+            "SELECT t.id, t.title, d.json FROM tasks t JOIN task_details d ON d.task_id = t.id
+             LEFT JOIN task_lifecycle l ON l.task_id = t.id
+             WHERE t.done = 0 AND l.deleted_at IS NULL AND COALESCE(l.archived, 0) = 0
+               AND COALESCE(json_extract(d.json, '$.waiting'), '') <> ''
+             ORDER BY t.id",
+        )?
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut messages = Vec::new();
+    for (id, title, json) in blocked {
+        let Ok(details) = serde_json::from_str::<crate::planner::Details>(&json) else {
+            continue;
+        };
+        // Stara blokada bez `waitingSince` nie wie, od kiedy trwa.
+        let Some(since) = tz
+            .timestamp_millis_opt(details.waiting_since)
+            .earliest()
+            .filter(|_| details.waiting_since > 0)
+        else {
+            continue;
+        };
+        let since_day = since.date_naive();
+        let days = work_days_between(s, since_day, today);
+        let key = if details.waiting_remind_day.is_empty() {
+            if days < s.waiting_notify_days {
+                continue;
+            }
+            format!("waiting:{id}:{}", details.waiting_since)
+        } else {
+            match NaiveDate::parse_from_str(&details.waiting_remind_day, "%Y-%m-%d") {
+                Ok(day) if day <= today => format!(
+                    "waiting:{id}:{}:{}",
+                    details.waiting_since, details.waiting_remind_day
+                ),
+                _ => continue,
+            }
+        };
+        if claim(db, &key, now)? {
+            messages.push(waiting_message(key, id, &title, &details.waiting, days));
+        }
+    }
+    Ok(messages)
+}
+
+/// Dedupe przypomnień o blokadzie trwa dłużej, bo blokada może trwać tygodniami.
+const WAITING_KEEP_MS: i64 = 400 * 24 * 3_600_000;
+
+/// Usuwa wpisy dedupe starsze niż 7 dni (przypomnienia o blokadzie: 400 dni).
+/// Klucz trwającej sesji zostaje, żeby wielodniowy pomiar nie dostał drugiego
+/// powiadomienia o długim przedziale.
 pub fn cleanup(db: &Connection, now: i64) -> rusqlite::Result<usize> {
     let keep = active(db)?
         .map(|(id, ..)| format!("long:{id}"))
         .unwrap_or_default();
     db.execute(
-        "DELETE FROM notifications_sent WHERE COALESCE(at, 0) < ?1 AND key <> ?2",
-        params![now - KEEP_MS, keep],
+        "DELETE FROM notifications_sent WHERE key <> ?2 AND (
+            (key NOT LIKE 'waiting:%' AND COALESCE(at, 0) < ?1)
+            OR (key LIKE 'waiting:%' AND COALESCE(at, 0) < ?3))",
+        params![now - KEEP_MS, keep, now - WAITING_KEEP_MS],
     )
 }
 
@@ -783,6 +949,9 @@ pub fn start(app: &tauri::AppHandle) {
                     let mut messages = clock.tick(&db, &s, &chrono::Local, now).unwrap_or_default();
                     if let Ok(Some(m)) = morning_review(&db, &s, &chrono::Local, now) {
                         messages.push(m);
+                    }
+                    if let Ok(waiting) = waiting_reminders(&db, &s, &chrono::Local, now) {
+                        messages.extend(waiting);
                     }
                     messages
                 }
@@ -1586,6 +1755,12 @@ mod tests {
         details(&db, 4, json!({"plannedDay": "2026-10-14"}));
         db.execute("UPDATE tasks SET done=1 WHERE id=4", [])
             .unwrap();
+        // Wzorzec reguły miesięcznej (P3) też nie jest niedokończonym planem.
+        details(
+            &db,
+            5,
+            json!({"plannedDay": "2026-10-01", "repeatRule": {"kind": "monthDay", "day": 1}}),
+        );
         // Przed początkiem dnia (08:00): nic i bez klucza.
         assert!(morning(&db, &s, "2026-10-15 07:59").is_none());
         assert!(!sent(&db).contains(&"morning:2026-10-15".to_owned()));
@@ -1717,6 +1892,160 @@ mod tests {
         );
         assert_eq!(morning_message(day, 3, 0).body, "Niedokończone: 3 zadania");
         assert_eq!(morning_message(day, 0, 5).body, "Terminy: 5 zadań");
+    }
+
+    fn waiting(db: &Connection, s: &AppSettings, when: &str) -> Vec<Message> {
+        waiting_reminders(db, s, &Warsaw, at(when)).unwrap()
+    }
+
+    #[test]
+    fn waiting_reminder_after_work_days_once_per_block() {
+        let db = setup();
+        let s = AppSettings::default();
+        // Blokada od czwartku 15.10.2026 10:00. Dni robocze po niej: pt 16,
+        // pn 19, wt 20 (weekend się nie liczy), więc po 3 dniach we wtorek.
+        let since = at("2026-10-15 10:00");
+        details(&db, 1, json!({"waiting": "klient", "waitingSince": since}));
+        // Stara blokada bez `waitingSince`, ukończone i zablokowane bez czasu: pomijane.
+        details(&db, 2, json!({"waiting": "dostawca"}));
+        details(&db, 3, json!({"waiting": "x", "waitingSince": since}));
+        db.execute("UPDATE tasks SET done=1 WHERE id=3", [])
+            .unwrap();
+        assert!(waiting(&db, &s, "2026-10-19 12:00").is_empty());
+        // Sobota i niedziela: nie dni robocze.
+        assert!(waiting(&db, &s, "2026-10-18 12:00").is_empty());
+        let m = waiting(&db, &s, "2026-10-20 09:00");
+        assert_eq!(keys(&m), [format!("waiting:1:{since}").as_str()]);
+        assert_eq!(m[0].title, "Czekam na");
+        assert_eq!(m[0].body, "Czekasz na: klient — A (3 dni)");
+        assert_eq!(
+            m[0].actions,
+            [
+                Action::new(WAITING_UNBLOCK, "Odblokuj", 1),
+                Action::new(WAITING_REMIND, "Przypomnij jutro", 1)
+            ]
+        );
+        assert_eq!(
+            m[0].actions
+                .iter()
+                .map(Action::argument)
+                .collect::<Vec<_>>(),
+            ["waiting-unblock:1", "waiting-remind:1"]
+        );
+        assert_eq!(m[0].open.task, Some(1));
+        assert_eq!(m[0].open.section, Some("Czekam na…"));
+        // Raz na blokadę, także po restarcie i po 7-dniowym sprzątaniu.
+        assert!(waiting(&db, &s, "2026-10-21 09:00").is_empty());
+        cleanup(&db, at("2026-11-30 09:00")).unwrap();
+        assert!(waiting(&db, &s, "2026-12-01 09:00").is_empty());
+        // Wyłączone (0) albo wyższy próg.
+        let db = setup();
+        details(&db, 1, json!({"waiting": "klient", "waitingSince": since}));
+        let off = AppSettings {
+            waiting_notify_days: 0,
+            ..AppSettings::default()
+        };
+        assert!(waiting(&db, &off, "2026-10-30 09:00").is_empty());
+        let five = AppSettings {
+            waiting_notify_days: 5,
+            ..AppSettings::default()
+        };
+        assert!(waiting(&db, &five, "2026-10-21 09:00").is_empty());
+        assert_eq!(waiting(&db, &five, "2026-10-22 09:00").len(), 1);
+    }
+
+    #[test]
+    fn waiting_reminder_counts_holidays_from_settings() {
+        // Blokada od piątku 6.11.2026: pn 9, wt 10, (śr 11.11 święto), czw 12,
+        // więc trzeci dzień roboczy to czwartek.
+        let db = setup();
+        let since = at("2026-11-06 10:00");
+        details(&db, 1, json!({"waiting": "klient", "waitingSince": since}));
+        let s = AppSettings::default();
+        // Święto: dzień wolny, brak przypomnienia.
+        assert!(waiting(&db, &s, "2026-11-11 10:00").is_empty());
+        assert_eq!(waiting(&db, &s, "2026-11-12 10:00").len(), 1);
+        let db = setup();
+        details(&db, 1, json!({"waiting": "klient", "waitingSince": since}));
+        let no_holidays = AppSettings {
+            holidays_in_target: false,
+            ..AppSettings::default()
+        };
+        assert_eq!(waiting(&db, &no_holidays, "2026-11-11 10:00").len(), 1);
+        assert_eq!(
+            work_days_between(
+                &s,
+                NaiveDate::from_ymd_opt(2026, 11, 6).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 11, 12).unwrap()
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn waiting_actions_unblock_and_remind_tomorrow() {
+        let mut db = setup();
+        let s = AppSettings::default();
+        let since = at("2026-10-12 10:00");
+        details(&db, 1, json!({"waiting": "klient", "waitingSince": since}));
+        details(
+            &db,
+            2,
+            json!({"waiting": "dostawca", "waitingSince": since}),
+        );
+        assert_eq!(waiting(&db, &s, "2026-10-15 09:00").len(), 2);
+        // „Przypomnij jutro” z toastu zadania 1 w czwartek → piątek.
+        let out = perform(
+            &mut db,
+            command(Some("waiting-remind:1"), &View::default()),
+            "2026-10-15",
+            at("2026-10-15 09:01"),
+        )
+        .unwrap();
+        assert!(out.changed && out.navigate.is_none());
+        assert!(waiting(&db, &s, "2026-10-15 15:00").is_empty());
+        let m = waiting(&db, &s, "2026-10-16 09:00");
+        assert_eq!(keys(&m), [format!("waiting:1:{since}:2026-10-16").as_str()]);
+        assert_eq!(m[0].body, "Czekasz na: klient — A (4 dni)");
+        // Ponownie „Przypomnij jutro” w piątek → sobota; przychodzi w poniedziałek.
+        perform(
+            &mut db,
+            command(Some("waiting-remind:1"), &View::default()),
+            "2026-10-16",
+            at("2026-10-16 09:01"),
+        )
+        .unwrap();
+        assert!(waiting(&db, &s, "2026-10-17 09:00").is_empty());
+        assert_eq!(waiting(&db, &s, "2026-10-19 09:00").len(), 1);
+        // „Odblokuj” zdejmuje blokadę zadania 2, timer bez zmian.
+        let out = perform(
+            &mut db,
+            command(Some("waiting-unblock:2"), &View::default()),
+            "2026-10-19",
+            at("2026-10-19 09:02"),
+        )
+        .unwrap();
+        assert!(out.changed);
+        let snap = db::snapshot(&db).unwrap();
+        let two = snap.tasks.iter().find(|t| t.id == 2).unwrap();
+        assert_eq!(two.details.waiting, "");
+        assert_eq!(two.details.waiting_since, 0);
+        assert!(snap.sessions.is_empty());
+        // Zadanie, którego już nie ma: tylko lista zadań.
+        let out = perform(
+            &mut db,
+            command(Some("waiting-unblock:99"), &View::default()),
+            "2026-10-19",
+            at("2026-10-19 09:03"),
+        )
+        .unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: false,
+                navigate: Some(View::tasks())
+            }
+        );
     }
 
     #[test]

@@ -1,5 +1,6 @@
 import type { Task } from "./store";
 import { compareTasks } from "./order";
+import { isRecurring } from "./recurrence";
 
 /**
  * „Rozłóż” na tablicy tygodnia (PLAN_1.7.md, P1). Funkcje czyste: dostają
@@ -55,7 +56,7 @@ export interface SpreadResult {
 
 /** Zadanie, którego „Rozłóż” nie rusza: zablokowane albo cykliczne. */
 export const spreadSkips = (task: Task) =>
-  !!task.details?.waiting?.trim() || !!task.details?.repeatDays?.length;
+  !!task.details?.waiting?.trim() || isRecurring(task.details);
 
 /** Kolejność układania: termin, priorytet, ręczna kolejność. */
 export function spreadOrder(a: Task, b: Task): number {

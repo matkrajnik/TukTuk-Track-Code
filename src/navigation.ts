@@ -79,6 +79,9 @@ export const settingsSections = [
       "tablice",
       "Dodawaj nowe zgłoszenia przypisane do mnie",
       "Połączenie z Jirą",
+      "Czekam na",
+      "statusy",
+      "Statusy oznaczające „Czekam na” (jeden w wierszu)",
     ],
   },
   {
@@ -99,6 +102,9 @@ export const settingsSections = [
       "przegląd dnia",
       "poranny przegląd",
       "Przypominaj o porannym przeglądzie dnia",
+      "Czekam na",
+      "blokada",
+      "Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)",
     ],
   },
   {

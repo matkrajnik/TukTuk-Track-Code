@@ -10,7 +10,8 @@ import { JIRA_SITE, NOW, seed } from "./seed";
  * Logika z Rust, od której zależą testy, jest tu przeniesiona jeden do jednego
  * i opisana odwołaniem do funkcji źródłowej:
  * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`),
- * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`).
+ * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
+ * - `planner::set_waiting` (`set_waiting`: blokada „Czekam na” z kafelka).
  * Same reguły są pokryte testami Rust; tutaj sprawdzamy, że interfejs reaguje na
  * zdarzenia backendu i pokazuje skutki.
  *
@@ -405,6 +406,40 @@ function install(init: {
               });
             }
           } else throw "Nieobsługiwana akcja w teście: " + args.action;
+          return clone(snapshot);
+        }
+        case "set_waiting": {
+          // planner::set_waiting: tylko pola blokady; status Jiry z jira_issues.
+          const task = snapshot.tasks.find((t: any) => t.id === args.id);
+          if (!task) throw "Nie znaleziono zadania.";
+          const status = task.jiraStatus ?? "";
+          const text = String(args.change.text ?? "").trim();
+          const d = (task.details ??= {});
+          if (args.change.action === "block") {
+            if (!text) throw "Opis blokady musi mieć od 1 do 300 znaków.";
+            Object.assign(d, {
+              waiting: text,
+              waitingSince: now,
+              waitingStatus: status,
+              waitingRemindDay: "",
+              waitingDismissed: "",
+            });
+            snapshot.sessions.forEach((s: any) => {
+              if (s.taskId === task.id && s.endedAt === null)
+                s.endedAt = Math.max(s.startedAt, now);
+            });
+          } else if (args.change.action === "unblock")
+            Object.assign(d, {
+              waiting: "",
+              waitingSince: 0,
+              waitingStatus: "",
+              waitingRemindDay: "",
+              waitingDismissed: status,
+            });
+          else if (args.change.action === "dismiss")
+            d.waitingDismissed = status;
+          else throw "Nieobsługiwana zmiana blokady w teście.";
+          emit("data-changed");
           return clone(snapshot);
         }
         case "templates_list":

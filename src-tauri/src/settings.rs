@@ -49,6 +49,23 @@ pub struct AppSettings {
     /// Chwila ostatniego „Zaczynam dzień” (Unix ms, 0 = nigdy): od niej liczą się
     /// „Nowe z Jiry” w następnym przeglądzie.
     pub morning_review_at: i64,
+    /// Powiadomienie „Czekasz na…” po tylu dniach roboczych blokady (0 wyłącza, P3).
+    pub waiting_notify_days: u32,
+    /// Statusy Jiry oznaczające czekanie (propozycje „Czekam na” na kafelku).
+    pub waiting_jira_statuses: Vec<String>,
+}
+
+/// Domyślne statusy Jiry oznaczające czekanie.
+pub fn default_waiting_statuses() -> Vec<String> {
+    [
+        "Code review",
+        "Review",
+        "Blocked",
+        "Waiting for customer",
+        "Oczekuje",
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 impl Default for AppSettings {
@@ -81,6 +98,8 @@ impl Default for AppSettings {
             notify_morning_review: true,
             morning_review_day: String::new(),
             morning_review_at: 0,
+            waiting_notify_days: 3,
+            waiting_jira_statuses: default_waiting_statuses(),
         }
     }
 }
@@ -208,6 +227,27 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
         return Err("Za dużo wyciszonych folderów agentów.".into());
     }
     s.agent_muted_folders = folders;
+    if s.waiting_notify_days > 30 {
+        return Err("Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.".into());
+    }
+    // Statusy czekania: bez pustych i bez powtórek (wielkość liter bez znaczenia).
+    let mut statuses: Vec<String> = Vec::new();
+    for status in s.waiting_jira_statuses.iter().map(|v| v.trim()) {
+        if status.chars().count() > 80 {
+            return Err("Status Jiry może mieć najwyżej 80 znaków.".into());
+        }
+        if !status.is_empty()
+            && !statuses
+                .iter()
+                .any(|v| v.to_lowercase() == status.to_lowercase())
+        {
+            statuses.push(status.to_string());
+        }
+    }
+    if statuses.len() > 50 {
+        return Err("Za dużo statusów Jiry oznaczających czekanie.".into());
+    }
+    s.waiting_jira_statuses = statuses;
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());
     }

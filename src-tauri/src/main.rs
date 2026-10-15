@@ -193,6 +193,24 @@ fn save_details(
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+/// Blokada „Czekam na” z kafelka: zablokuj, odblokuj, odrzuć propozycję z Jiry.
+#[tauri::command]
+fn set_waiting(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    id: i64,
+    change: planner::WaitingChange,
+) -> Result<db::Snapshot, String> {
+    let result = {
+        let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+        planner::set_waiting(&mut connection, id, &change, db::now())?
+    };
+    reminder::reset(&app);
+    let _ = app.emit("data-changed", ());
+    // Blokada mogła zatrzymać pomiar w czasie bloku skupienia.
+    focus::sync(&app);
+    Ok(result)
+}
 /// Szybkie dodawanie ze składnią (pole „Nowe zadanie” i szybkie przełączanie).
 #[tauri::command]
 fn quick_add(
@@ -378,6 +396,7 @@ fn main() {
             edit_session,
             split_session,
             save_details,
+            set_waiting,
             add_session,
             quick_add,
             quick_open,

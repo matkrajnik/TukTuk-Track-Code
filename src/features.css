@@ -1766,3 +1766,40 @@ html.widget-root body {
 .dashboard-heading-actions {
   margin-top: 0;
 }
+
+/* P3: „Czekam na” na kafelku i propozycje ze statusu Jiry */
+.row-unblock {
+  padding: 7px 11px;
+  font-size: var(--fs-sm);
+}
+.waiting-proposal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 16px 12px;
+  padding: 8px 12px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  font-size: var(--fs-sm);
+}
+.waiting-proposal span {
+  flex: 1;
+  min-width: 200px;
+}
+.repeat-rule select,
+.repeat-rule input {
+  min-width: 0;
+}
+.settings-statuses {
+  display: grid;
+  gap: 4px;
+  max-width: 420px;
+  margin-top: 12px;
+}
+.settings-statuses textarea {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}

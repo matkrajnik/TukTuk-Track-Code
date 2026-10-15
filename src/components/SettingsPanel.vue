@@ -356,6 +356,25 @@ onUnmounted(() => {
       zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
       sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
     </p>
+    <label class="settings-statuses"
+      >Statusy oznaczające „Czekam na” (jeden w wierszu)<textarea
+        :value="settings.waitingJiraStatuses.join('\n')"
+        rows="5"
+        :disabled="busy"
+        @change="
+          save({
+            waitingJiraStatuses: ($event.target as HTMLTextAreaElement).value.split(
+              '\n',
+            ),
+          })
+        "
+      />
+    </label>
+    <p class="hint">
+      Gdy zgłoszenie zadania wejdzie w taki status, kafelek proponuje
+      oznaczenie „Czekam na”, a gdy z niego wyjdzie — odblokowanie. Nic nie
+      zmienia się samo. Wielkość liter nie ma znaczenia.
+    </p>
     <p class="hint">
       Konto Jiry (adres, e-mail, token API) i tablice ustawiasz w widoku Jira.
     </p>
@@ -432,11 +451,24 @@ onUnmounted(() => {
         @change="save({ notifyMorningReview: checked($event) })"
       />Przypominaj o porannym przeglądzie dnia</label
     >
+    <div class="planning-fields settings-fields">
+      <label
+        >Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)<input
+          :value="settings.waitingNotifyDays"
+          type="number"
+          min="0"
+          max="30"
+          step="1"
+          :disabled="busy"
+          @change="save({ waitingNotifyDays: number($event) })"
+      /></label>
+    </div>
     <p class="hint">
       Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz na
       przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd dnia
-      w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam dzień”.
-      Każde pojawia się
+      w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam dzień”,
+      „Czekam na” raz na blokadę po wybranej liczbie dni roboczych (z
+      „Odblokuj” i „Przypomnij jutro”). Każde pojawia się
       najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
       Start/Stop pokazuje się, gdy widget jest schowany.
     </p>

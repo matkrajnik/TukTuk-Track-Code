@@ -18,7 +18,9 @@ import {
   desktop,
   duration,
   saveTemplate,
+  setWaiting,
   templateFromTask,
+  type WaitingChange,
   type Session,
   type Snapshot,
   type Task,
@@ -27,6 +29,8 @@ import { dayText, stamp } from "../time";
 import { hhmm } from "../target";
 import { openSettings } from "../navigation";
 import { estimateMs, overEstimate, percent, type CorrectionOf } from "../estimates";
+import { useSettings } from "../target";
+import { waitingAge, waitingProposal } from "../recurrence";
 
 const props = defineProps<{
   task: Task;
@@ -94,6 +98,29 @@ async function saveAsTemplate() {
     emit("error", String(e instanceof Error ? e.message : e));
   } finally {
     templateBusy.value = false;
+  }
+}
+/** „Czekam na”: od kiedy trwa blokada i propozycja ze statusu Jiry. */
+const settings = useSettings();
+const waitingSince = computed(() =>
+  props.task.details?.waiting && !props.task.done
+    ? waitingAge(props.task.details.waitingSince, props.now)
+    : "",
+);
+const proposal = computed(() =>
+  waitingProposal(props.task, settings.value.waitingJiraStatuses ?? []),
+);
+const waitingBusy = ref(false);
+async function changeWaiting(change: WaitingChange) {
+  if (waitingBusy.value) return;
+  waitingBusy.value = true;
+  emit("error", "");
+  try {
+    emit("updated", await setWaiting(props.task.id, change));
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    waitingBusy.value = false;
   }
 }
 async function openJira(url: string) {
@@ -172,7 +199,8 @@ async function openJira(url: string) {
               >{{ task.jiraStatus }}</span
             >
             <span v-if="task.details?.waiting && !task.done" class="task-status"
-              >Czekam na: {{ task.details.waiting }}</span
+              >Czekam na: {{ task.details.waiting
+              }}<template v-if="waitingSince"> · {{ waitingSince }}</template></span
             >
           </span>
           <span v-if="task.details?.estimateMinutes" class="task-status"
@@ -208,6 +236,16 @@ async function openJira(url: string) {
         <option :value="-1">↓ Niski</option>
       </select>
       <button
+        v-if="task.details?.waiting && !task.done"
+        class="action-button row-unblock"
+        :aria-label="'Odblokuj: ' + task.title"
+        title="Zdejmij blokadę „Czekam na” bez startu pomiaru"
+        :disabled="busy || waitingBusy"
+        @click="changeWaiting({ action: 'unblock' })"
+      >
+        Odblokuj
+      </button>
+      <button
         v-if="!task.done"
         class="row-timer"
         :class="{ stop: running }"
@@ -220,6 +258,41 @@ async function openJira(url: string) {
         }}
       </button>
       <span v-else class="done-label">Gotowe</span>
+    </div>
+    <div
+      v-if="proposal"
+      class="waiting-proposal"
+      role="group"
+      :aria-label="'Propozycja z Jiry: ' + task.title"
+    >
+      <span
+        >Jira: {{ proposal.status }} —
+        {{
+          proposal.action === "block"
+            ? "oznaczyć jako czekam na?"
+            : "odblokować?"
+        }}</span
+      >
+      <button
+        class="action-button"
+        :disabled="busy || waitingBusy"
+        @click="
+          changeWaiting(
+            proposal.action === 'block'
+              ? { action: 'block', text: 'Jira: ' + proposal.status }
+              : { action: 'unblock' },
+          )
+        "
+      >
+        {{ proposal.action === "block" ? "Oznacz jako czekam na" : "Odblokuj" }}
+      </button>
+      <button
+        class="action-button"
+        :disabled="busy || waitingBusy"
+        @click="changeWaiting({ action: 'dismiss' })"
+      >
+        Nie teraz
+      </button>
     </div>
     <div v-if="expanded" :id="'sessions-' + task.id" class="task-details">
       <div class="details-actions" role="group" aria-label="Akcje zadania">

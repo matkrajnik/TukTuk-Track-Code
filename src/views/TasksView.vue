@@ -166,16 +166,17 @@ const taskGroups = computed(() =>
         (t) => !t.done && !t.details?.waiting && startedTaskIds.value.has(t.id),
       ),
     },
+    // „Czekam na” zaraz pod rozpoczętymi (P3): zablokowane widać od razu.
+    {
+      name: "Czekam na…",
+      tasks: visible.value.filter((t) => !t.done && t.details?.waiting),
+    },
     {
       name: "Nierozpoczęte",
       tasks: visible.value.filter(
         (t) =>
           !t.done && !t.details?.waiting && !startedTaskIds.value.has(t.id),
       ),
-    },
-    {
-      name: "Czekam na…",
-      tasks: visible.value.filter((t) => !t.done && t.details?.waiting),
     },
     { name: "Ukończone", tasks: visible.value.filter((t) => t.done) },
   ]

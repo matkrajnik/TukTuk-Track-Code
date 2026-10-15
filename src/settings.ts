@@ -42,6 +42,10 @@ export interface AppSettings {
   morningReviewDay: string;
   /** Chwila ostatniego „Zaczynam dzień” (ms, 0 = nigdy). */
   morningReviewAt: number;
+  /** Przypomnienie o blokadzie „Czekam na” po tylu dniach roboczych (0 wyłącza). */
+  waitingNotifyDays: number;
+  /** Statusy Jiry oznaczające czekanie (propozycje na kafelku). */
+  waitingJiraStatuses: string[];
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -80,6 +84,14 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyMorningReview: true,
   morningReviewDay: "",
   morningReviewAt: 0,
+  waitingNotifyDays: 3,
+  waitingJiraStatuses: [
+    "Code review",
+    "Review",
+    "Blocked",
+    "Waiting for customer",
+    "Oczekuje",
+  ],
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -179,6 +191,7 @@ const fresh = (): AppSettings => ({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
   agentMutedFolders: [],
+  waitingJiraStatuses: [...defaultSettings.waitingJiraStatuses],
 });
 /** Folder do porównań jak `agents::norm_folder`. */
 export const normFolder = (folder: string) =>
@@ -243,6 +256,25 @@ function applyFields(
   if (folders.length > 200)
     throw new Error("Za dużo wyciszonych folderów agentów.");
   s.agentMutedFolders = folders;
+  if (!range(s.waitingNotifyDays, 0, 30))
+    throw new Error(
+      "Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.",
+    );
+  // Jak w Rust: bez pustych i bez powtórek (wielkość liter bez znaczenia).
+  const statuses: string[] = [];
+  for (const raw of s.waitingJiraStatuses) {
+    const status = typeof raw === "string" ? raw.trim() : "";
+    if ([...status].length > 80)
+      throw new Error("Status Jiry może mieć najwyżej 80 znaków.");
+    if (
+      status &&
+      !statuses.some((v) => v.toLowerCase() === status.toLowerCase())
+    )
+      statuses.push(status);
+  }
+  if (statuses.length > 50)
+    throw new Error("Za dużo statusów Jiry oznaczających czekanie.");
+  s.waitingJiraStatuses = statuses;
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
   if (s.morningReviewDay !== "" && !validDay(s.morningReviewDay))

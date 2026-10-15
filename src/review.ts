@@ -1,5 +1,6 @@
 import type { PlanEntry, Task } from "./store";
 import { compareTasks } from "./order";
+import { isRecurring } from "./recurrence";
 import { dayBounds, dayKey } from "./time";
 import { isWorkDay } from "./target";
 
@@ -40,7 +41,7 @@ export const nextWorkDay = (settings: WorkDaySettings, day: string) =>
 
 const open = (t: Task) => !t.done && !t.archived;
 /** Wzorzec cyklu: `plannedDay` to tylko początek cyklu, nie plan. */
-const recurringSource = (t: Task) => (t.details?.repeatDays?.length ?? 0) > 0;
+const recurringSource = (t: Task) => isRecurring(t.details);
 
 /**
  * Krok 1: niedokończone zadania z planów przed dniem `today` (poprzedni dzień

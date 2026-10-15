@@ -3,6 +3,13 @@ import { computed, ref, watch } from "vue";
 import { detailsOf, saveDetails, type Task, type Snapshot } from "./store";
 import { correctionTitle, usuallyText, type CorrectionOf } from "./estimates";
 import { dayKey } from "./time";
+import {
+  emptyRule,
+  isRecurring,
+  ruleText,
+  ruleUsesWeekdays,
+  type RepeatRule,
+} from "./recurrence";
 const props = withDefaults(
   defineProps<{
     task: Task;
@@ -37,6 +44,28 @@ const usual = computed(() => {
     : { text: "", title: "" };
 });
 const weekdays = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Niedz"];
+const weekdayNames = [
+  "poniedziałek",
+  "wtorek",
+  "środa",
+  "czwartek",
+  "piątek",
+  "sobota",
+  "niedziela",
+];
+/** Reguła cyklu szkicu (detailsOf zawsze ją uzupełnia). */
+const rule = computed<RepeatRule>(() => draft.value.repeatRule ?? emptyRule());
+/** Nowy rodzaj cyklu dostaje rozsądne wartości startowe. */
+function ruleKindChanged() {
+  const r = rule.value;
+  const from = draft.value.repeatFrom || dayKey(Date.now());
+  if (r.kind === "weeks" && !r.interval) r.interval = 2;
+  if (r.kind === "monthDay" && !r.day) r.day = Number(from.slice(8, 10)) || 1;
+  if (r.kind === "nthWeekday") {
+    if (!r.nth) r.nth = 1;
+    if (!r.weekday) r.weekday = 1;
+  }
+}
 watch(
   () => props.task.details?.priority,
   (value) => {
@@ -148,7 +177,64 @@ async function save() {
     >
       Szacunek {{ Number(draft.estimateMinutes) }} min · {{ usual.text }}
     </p>
-    <fieldset class="repeat-options">
+    <div class="planning-fields repeat-rule">
+      <label
+        >Cykl<select
+          v-model="rule.kind"
+          aria-label="Rodzaj cyklu"
+          @change="ruleKindChanged"
+        >
+          <option value="">W wybrane dni tygodnia</option>
+          <option value="weeks">Co N tygodni</option>
+          <option value="monthDay">Miesięcznie w dniu</option>
+          <option value="lastWorkday">Ostatni dzień roboczy miesiąca</option>
+          <option value="nthWeekday">N-ty dzień tygodnia w miesiącu</option>
+        </select></label
+      >
+      <label v-if="rule.kind === 'weeks'"
+        >Co ile tygodni<input
+          v-model.number="rule.interval"
+          type="number"
+          min="1"
+          max="8"
+          step="1"
+      /></label>
+      <label v-if="rule.kind === 'monthDay'"
+        >Dzień miesiąca<input
+          v-model.number="rule.day"
+          type="number"
+          min="1"
+          max="31"
+          step="1"
+          title="W krótszym miesiącu zadanie wypada w jego ostatnim dniu."
+      /></label>
+      <template v-if="rule.kind === 'nthWeekday'">
+        <label
+          >Który<select v-model.number="rule.nth" aria-label="Który w miesiącu">
+            <option :value="1">1.</option>
+            <option :value="2">2.</option>
+            <option :value="3">3.</option>
+            <option :value="4">4.</option>
+            <option :value="-1">Ostatni</option>
+          </select></label
+        >
+        <label
+          >Dzień tygodnia<select
+            v-model.number="rule.weekday"
+            aria-label="Dzień tygodnia cyklu"
+          >
+            <option
+              v-for="(name, index) in weekdayNames"
+              :key="name"
+              :value="index + 1"
+            >
+              {{ name }}
+            </option>
+          </select></label
+        >
+      </template>
+    </div>
+    <fieldset v-if="ruleUsesWeekdays(rule.kind)" class="repeat-options">
       <legend>Powtarzaj w wybrane dni</legend>
       <label v-for="(name, index) in weekdays" :key="name" class="inline-check"
         ><input
@@ -158,10 +244,11 @@ async function save() {
         />{{ name }}</label
       >
     </fieldset>
-    <p v-if="draft.repeatDays.length" class="hint">
-      Każda data tworzy osobne zadanie. Kopie mają wyzerowaną checklistę. Po
-      przerwie uzupełniane są maksymalnie ostatnie 366 dni. Odznacz dni, aby
-      wyłączyć cykl; archiwizacja też go wstrzymuje.
+    <p v-if="isRecurring(draft)" class="hint">
+      Każda data tworzy osobne zadanie ({{ ruleText(draft) }}). Kopie mają
+      wyzerowaną checklistę. Po przerwie uzupełniane są maksymalnie ostatnie 366
+      dni. Aby wyłączyć cykl, wybierz „W wybrane dni tygodnia” i odznacz dni;
+      archiwizacja też go wstrzymuje.
     </p>
     <div class="task-checklist">
       <h3>Lista kroków</h3>
