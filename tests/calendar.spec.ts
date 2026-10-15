@@ -6,11 +6,12 @@ import {
   calendarFixture,
   openPreview,
 } from "./fixtures/seed";
+import { openSettings as openSection } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 
 const openSettings = async (page: Page) => {
-  await page.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await openSection(page, "Kalendarz");
   await expect(
     page.getByRole("heading", { name: "Kalendarz", exact: true }),
   ).toBeVisible();

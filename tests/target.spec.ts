@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openSettings } from "./fixtures/settings";
 const key = "todo-track-preview-v1";
 const settingsKey = "todo-track-preview-settings-v1";
 
@@ -83,10 +84,7 @@ test("tasks show progress to the daily target and turn amber after exceeding it"
   await expect(page.getByText("Cel tygodnia 40:00 · −36:48")).toBeVisible();
 
   // Niższy cel w ustawieniach od razu zmienia pasek na bursztynowy.
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   const target = page.getByLabel("Cel dzienny (minuty)");
   await target.fill("120");
   await target.press("Tab");

@@ -641,6 +641,88 @@
   }
 }
 /* Ustawienia */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 1fr);
+  gap: var(--space-6);
+  align-items: start;
+}
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  position: sticky;
+  top: var(--space-4);
+}
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+}
+.settings-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding-left: 0;
+  padding-right: 0;
+  background: transparent;
+}
+.settings-search input:focus {
+  outline: none;
+}
+.settings-search:focus-within {
+  border-color: var(--accent);
+}
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-sections button {
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--muted);
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+.settings-sections button.selected {
+  color: var(--text);
+  background: var(--raised);
+  border-left-color: var(--accent);
+}
+.settings-select {
+  display: none;
+}
+.settings-content > .settings-panel {
+  margin: 0;
+}
+@media (max-width: 850px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+  }
+  .settings-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .settings-search {
+    flex: 1 1 220px;
+  }
+  .settings-sections {
+    display: none;
+  }
+  .settings-select {
+    display: block;
+    flex: 1 1 220px;
+  }
+}
 .settings-panel h2 {
   margin: 26px 0 10px;
 }
@@ -1564,4 +1646,11 @@ html.widget-root body {
 }
 .widget-focus {
   color: var(--accent);
+}
+/* Błąd wskazujący „Ustawienia → X”: przycisk do tej sekcji przed zamknięciem. */
+.error .error-link {
+  margin-left: auto;
+  white-space: nowrap;
+  color: inherit;
+  text-decoration: underline;
 }

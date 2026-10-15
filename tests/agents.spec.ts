@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { ids, NOW, openPreview } from "./fixtures/seed";
+import { openSettings } from "./fixtures/settings";
 
 const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
 
@@ -42,10 +43,7 @@ test("dashboard lists working AI agents and the setting toggles agent activity",
   ]);
   await expect(card).not.toContainText("Żaden agent");
 
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   const agents = page.getByLabel(
     "Praca agentów AI (Claude Code, Codex) liczy się jako aktywność",
   );

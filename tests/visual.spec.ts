@@ -105,11 +105,11 @@ const views: {
   },
   {
     name: "ustawienia",
-    open: (page) =>
-      page.getByRole("button", { name: "Otwórz ustawienia" }).click(),
+    // Pierwsza sekcja (Czas pracy); openPreview czyści zapamiętaną sekcję.
+    open: (page) => nav(page, "Ustawienia"),
     ready: (page) =>
       expect(
-        page.getByRole("button", { name: "Ustawienia", exact: true }),
+        page.getByRole("heading", { name: "Czas pracy", exact: true }),
       ).toBeVisible(),
   },
 ];

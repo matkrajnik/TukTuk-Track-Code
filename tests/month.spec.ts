@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { test, expect, type Page } from "@playwright/test";
 import { easter, holidayName, holidays } from "../src/holidays";
+import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 
@@ -157,10 +158,7 @@ test("month target counts holidays again when the setting is off", async ({
   page,
 }) => {
   await seed(page, "2026-11-20T12:00:00+01:00");
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   const box = page.getByRole("checkbox", { name: "Uwzględniaj święta w celu" });
   await expect(box).toBeChecked();
   await box.uncheck();

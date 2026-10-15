@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openSettings } from "./fixtures/settings";
 
 test("Jira status is shown on the task card and auto-import can be switched off", async ({
   page,
@@ -30,19 +31,13 @@ test("Jira status is shown on the task card and auto-import can be switched off"
   await expect(status).toHaveText("Code review");
   await expect(status).toHaveAttribute("title", "Status w Jirze: Code review");
 
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Jira");
   await expect(page.getByRole("heading", { name: "Jira", exact: true })).toBeVisible();
   const auto = page.getByLabel("Dodawaj nowe zgłoszenia przypisane do mnie");
   await expect(auto).toBeChecked();
   await auto.uncheck();
   await page.reload();
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Jira");
   await expect(
     page.getByLabel("Dodawaj nowe zgłoszenia przypisane do mnie"),
   ).not.toBeChecked();

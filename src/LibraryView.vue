@@ -3,13 +3,12 @@ import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { change, desktop, duration, type Snapshot } from "./store";
 import { dayKey, dayText, inDay } from "./time";
-import SettingsPanel from "./components/SettingsPanel.vue";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
   report: [day: string];
 }>();
-/** Zakładka; App otwiera tu Ustawienia z przycisku w pasku. */
+/** Zakładka; App pamięta ją między wejściami do widoku. */
 const tab = defineModel<string>("tab", { default: "history" });
 const query = ref(""),
   from = ref(""),
@@ -106,7 +105,6 @@ async function restore() {
         { id: 'archive', name: 'Archiwum' },
         { id: 'trash', name: 'Kosz' },
         { id: 'backup', name: 'Kopie' },
-        { id: 'settings', name: 'Ustawienia' },
       ]"
       :key="item.id"
       :class="{ selected: tab === item.id }"
@@ -184,7 +182,6 @@ async function restore() {
       Tutaj jest pusto.
     </p>
   </section>
-  <SettingsPanel v-else-if="tab === 'settings'" />
   <section v-else class="dashboard-card">
     <h2>Kopie zapasowe</h2>
     <p class="hint">

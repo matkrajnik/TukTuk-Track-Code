@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
+import { openView, type SettingsSection } from "../navigation";
 import {
   defaultSettings,
   onSettingsChanged,
@@ -20,6 +21,8 @@ import {
   writeAutostart,
   type Autostart,
 } from "../store";
+/** Widoczna sekcja; zakładka Ustawienia pokazuje jedną naraz. */
+defineProps<{ section: SettingsSection }>();
 /** Formularz nowego szablonu w sekcji Szablony. */
 const addingTemplate = ref(false);
 const settings = ref<AppSettings>({
@@ -138,6 +141,7 @@ onUnmounted(() => {
 <template>
   <section class="dashboard-card settings-panel">
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <template v-if="section === 'work'">
     <h2>Czas pracy</h2>
     <label class="inline-check"
       ><input
@@ -240,7 +244,8 @@ onUnmounted(() => {
       Polskie święta ustawowe, także Wielkanoc i Boże Ciało, nie są dniami
       roboczymi: cel tygodnia i miesiąca jest wtedy niższy.
     </p>
-
+    </template>
+    <template v-if="section === 'focus'">
     <h2>Skupienie</h2>
     <div class="planning-fields settings-fields">
       <label
@@ -297,7 +302,8 @@ onUnmounted(() => {
       propozycje agentów czekają i przychodzą po bloku w jednym zbiorczym. Stop
       albo inne zadanie kończy blok jako nieukończony.
     </p>
-
+    </template>
+    <template v-if="section === 'windows'">
     <h2>Okna</h2>
     <label class="inline-check"
       ><input
@@ -320,7 +326,8 @@ onUnmounted(() => {
       widgecie chowa go do końca sesji; przywrócisz go przełącznikiem w
       nagłówku.
     </p>
-
+    </template>
+    <template v-if="section === 'jira'">
     <h2>Jira</h2>
     <label class="inline-check"
       ><input
@@ -335,7 +342,14 @@ onUnmounted(() => {
       zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
       sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
     </p>
-
+    <p class="hint">
+      Konto Jiry (adres, e-mail, token API) i tablice ustawiasz w widoku Jira.
+    </p>
+    <button class="action-button" @click="openView({ view: 'jira' })">
+      Połączenie z Jirą
+    </button>
+    </template>
+    <template v-if="section === 'calendar'">
     <h2>Kalendarz</h2>
     <CalendarSettings />
     <label class="inline-check"
@@ -350,7 +364,8 @@ onUnmounted(() => {
       Wyłączone: zamiast tytułu widać „Spotkanie”, np. przy udostępnianiu
       ekranu. Spotkania są tylko do odczytu; czas spotkania dodajesz sam.
     </p>
-
+    </template>
+    <template v-if="section === 'notifications'">
     <h2>Powiadomienia</h2>
     <label class="inline-check"
       ><input
@@ -401,7 +416,8 @@ onUnmounted(() => {
       najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
       Start/Stop pokazuje się, gdy widget jest schowany.
     </p>
-
+    </template>
+    <template v-if="section === 'templates'">
     <h2>Szablony</h2>
     <p class="hint">
       Wpisz /nazwa w polu „Nowe zadanie” albo w szybkim przełączaniu, np.
@@ -427,7 +443,8 @@ onUnmounted(() => {
     >
       Nowy szablon
     </button>
-
+    </template>
+    <template v-if="section === 'shortcuts'">
     <h2>Skróty</h2>
     <p>
       Ctrl+K — szybkie przełączanie w aplikacji.<br />{{
@@ -459,7 +476,8 @@ onUnmounted(() => {
       :disabled="busy"
       @update:model-value="saveShortcut('toggle', $event)"
     />
-
+    </template>
+    <template v-if="section === 'startup'">
     <h2>Uruchamianie</h2>
     <label class="inline-check"
       ><input
@@ -481,6 +499,7 @@ onUnmounted(() => {
       Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
       trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
     </p>
+    </template>
     <small v-if="info.version">Todo Track {{ info.version }}</small>
   </section>
 </template>

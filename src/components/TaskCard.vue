@@ -25,6 +25,7 @@ import {
 } from "../store";
 import { dayText, stamp } from "../time";
 import { hhmm } from "../target";
+import { openSettings } from "../navigation";
 import { estimateMs, overEstimate, percent } from "../estimates";
 
 const props = defineProps<{
@@ -86,7 +87,7 @@ async function saveAsTemplate() {
   try {
     await saveTemplate(null, name, templateFromTask(props.task));
     templateName.value = null;
-    templateSaved.value = `Zapisano szablon „${name}”. Użyj go, wpisując /${name} w polu „Nowe zadanie”; zmienisz go w Ustawieniach → Szablony.`;
+    templateSaved.value = `Zapisano szablon „${name}”. Użyj go, wpisując /${name} w polu „Nowe zadanie”; zmienisz go w`;
   } catch (e) {
     emit("error", String(e instanceof Error ? e.message : e));
   } finally {
@@ -291,6 +292,13 @@ async function openJira(url: string) {
       </form>
       <p v-if="templateSaved" class="hint template-saved" role="status">
         {{ templateSaved }}
+        <button
+          type="button"
+          class="text-link"
+          @click="openSettings('templates')"
+        >
+          Ustawieniach → Szablony</button
+        >.
       </p>
       <h3 class="details-heading">Przedziały pracy</h3>
       <div v-for="session in sessions" :key="session.id" class="session-row">

@@ -45,7 +45,8 @@ pub struct View {
     pub task: Option<i64>,
     /// Przedział do otwarcia w edytorze na zakładce Podziel.
     pub split: Option<i64>,
-    /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć.
+    /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć, albo przy
+    /// `view: "settings"` sekcja Ustawień (np. `notifications`).
     pub section: Option<&'static str>,
     /// Plan i historia → Zamknięcie dnia (dzisiaj).
     pub day_close: bool,
@@ -1201,6 +1202,17 @@ mod tests {
         assert_eq!(
             serde_json::to_value(View::day_close()).unwrap()["dayClose"],
             json!(true)
+        );
+        // Zakładka Ustawienia na wybranej sekcji: `section` to identyfikator sekcji.
+        let settings = View {
+            view: Some("settings"),
+            section: Some("notifications"),
+            ..View::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&settings).unwrap(),
+            json!({"view": "settings", "filter": null, "task": null, "split": null,
+                   "section": "notifications", "dayClose": false})
         );
     }
 

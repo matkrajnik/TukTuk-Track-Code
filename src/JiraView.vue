@@ -10,6 +10,7 @@ import {
   Square,
 } from "lucide-vue-next";
 import { desktop, jiraConnected, type Snapshot } from "./store";
+import { openSettings } from "./navigation";
 interface Board {
   id: number;
   name: string;
@@ -203,6 +204,8 @@ onMounted(async () => {
       <h1>Jira</h1>
       <div v-if="settings.connected" class="jira-actions">
         <span class="hint account-name">{{ settings.config.displayName }}</span
+        ><button class="text-link" @click="openSettings('jira')">
+          Ustawienia → Jira</button
         ><button
           class="icon-button"
           aria-label="Ustawienia połączenia Jiry"

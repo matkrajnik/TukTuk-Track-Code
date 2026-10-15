@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 const dataKey = "todo-track-preview-v1";
@@ -164,8 +165,7 @@ test("header switch enables the widget and hides it for the session only", async
   expect(await settings()).toEqual({ widgetEnabled: true });
 
   // Ustawienia pokazują włączony widget; przełącznik go przywraca.
-  await page.getByRole("button", { name: "Historia i kopie", exact: true }).click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Okna");
   await expect(
     page.getByLabel("Pokazuj mini-widget zawsze na wierzchu"),
   ).toBeChecked();
@@ -189,8 +189,7 @@ test("re-enabling the widget in settings clears the session dismissal", async ({
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
-  await page.getByRole("button", { name: "Historia i kopie", exact: true }).click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Okna");
   const checkbox = page.getByLabel("Pokazuj mini-widget zawsze na wierzchu");
   await expect(checkbox).toBeChecked();
   await checkbox.uncheck();

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { jiraFixture, openPreview, stored } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
+import { openSettings } from "./fixtures/settings";
 test.use({ timezoneId: "Europe/Warsaw" });
 
 const TEMPLATES_KEY = "todo-track-preview-templates-v1";
@@ -22,7 +23,7 @@ async function saveFromTile(page: Page, title: string, name: string) {
 
 /** Ustawienia → Szablony: nowy tytuł i kroki szablonu. */
 async function editInSettings(page: Page, name: string) {
-  await page.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await openSettings(page, "Szablony");
   const form = page.getByRole("form", { name: `Szablon ${name}` });
   await form
     .getByLabel(`Tytuł: ${name}`, { exact: true })
@@ -159,7 +160,7 @@ test("templates: editing the estimate in settings saves minutes", async ({
 }) => {
   await openPreview(page);
   await saveFromTile(page, "Code review", "review");
-  await page.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await openSettings(page, "Szablony");
   const form = page.getByRole("form", { name: "Szablon review" });
   const estimate = form.getByLabel("Szacunek: review", { exact: true });
   await estimate.fill("45");

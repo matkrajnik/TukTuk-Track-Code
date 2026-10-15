@@ -5,7 +5,8 @@ export type View =
   | "jira"
   | "dashboard"
   | "journal"
-  | "library";
+  | "library"
+  | "settings";
 </script>
 
 <script setup lang="ts">
@@ -38,7 +39,6 @@ import { onSettingsChanged, writeSettings } from "../settings";
 const view = defineModel<View>("view", { required: true });
 const emit = defineEmits<{
   quick: [];
-  settings: [];
   error: [message: string];
 }>();
 
@@ -180,6 +180,14 @@ async function hide() {
       >
         <History :size="16" />Historia i kopie
       </button>
+      <button
+        :class="{ selected: view === 'settings' }"
+        :aria-pressed="view === 'settings'"
+        title="Ustawienia (Ctrl+,)"
+        @click="view = 'settings'"
+      >
+        <Settings :size="16" />Ustawienia
+      </button>
     </nav>
     <div class="header-actions">
       <span
@@ -214,14 +222,6 @@ async function hide() {
         @click="theme = theme === 'dark' ? 'light' : 'dark'"
       >
         <Sun v-if="theme === 'dark'" :size="18" /><Moon v-else :size="18" />
-      </button>
-      <button
-        class="icon-button"
-        aria-label="Otwórz ustawienia"
-        title="Ustawienia"
-        @click="emit('settings')"
-      >
-        <Settings :size="18" />
       </button>
       <button
         v-if="desktop"

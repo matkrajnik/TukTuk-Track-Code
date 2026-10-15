@@ -10,6 +10,7 @@ import {
   TODAY,
 } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
+import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 
@@ -178,10 +179,7 @@ test("„Nie proponuj dla tego folderu” zapisuje folder, odwracalnie w Ustawie
   expect(await activeTask(page)).toBe(null);
 
   // Ustawienia → Czas pracy: lista folderów i przywrócenie propozycji.
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   const list = page.getByRole("list", {
     name: "Foldery bez propozycji agentów",
   });

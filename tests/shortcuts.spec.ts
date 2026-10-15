@@ -1,11 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
+import { openSettings as openSection } from "./fixtures/settings";
 const key = "todo-track-preview-settings-v1";
-async function openSettings(page: Page) {
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
-}
+const openSettings = (page: Page) => openSection(page, "Skróty");
 const stored = (page: Page) =>
   page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "{}"), key);
 

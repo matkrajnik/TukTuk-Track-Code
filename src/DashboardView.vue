@@ -8,6 +8,7 @@ import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
 import { useFocus } from "./focus";
+import { openSettings } from "./navigation";
 import { dayGoal, offDayEvent } from "./capacity";
 import { useMeetings } from "./composables/useMeetings";
 import {
@@ -255,6 +256,9 @@ const topTasks = computed(() =>
             <dd><strong>{{ focus.week }}</strong></dd>
           </div>
         </dl>
+        <button class="text-link" @click="openSettings('focus')">
+          Długość bloku i przerwy
+        </button>
       </section>
     </div>
   </div>

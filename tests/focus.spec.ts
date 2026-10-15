@@ -8,6 +8,7 @@ import {
   stored,
   type SeedOptions,
 } from "./fixtures/seed";
+import { openSettings } from "./fixtures/settings";
 
 /**
  * Tryb skupienia na podglądzie (PLAN_1.3.md, etap 6) ze sterowanym zegarem.
@@ -223,7 +224,7 @@ test("settings set block and break length; break can keep measuring", async ({
   page,
 }) => {
   await open(page, "/", { active: { task: ids.analysis, from: "11:00" } });
-  await page.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  await openSettings(page, "Skupienie");
   await page.getByRole("button", { name: "Blok 50 min" }).click();
   await expect(page.getByLabel("Blok skupienia (minuty)")).toHaveValue("50");
   await page.getByLabel("Przerwa (minuty)").fill("7");

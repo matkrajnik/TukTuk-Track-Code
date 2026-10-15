@@ -16,6 +16,14 @@ import QuickSwitch from "./QuickSwitch.vue";
 import LibraryView from "./LibraryView.vue";
 import DashboardView from "./DashboardView.vue";
 import JournalView from "./JournalView.vue";
+import SettingsView from "./views/SettingsView.vue";
+import {
+  isSettingsSection,
+  readSettingsSection,
+  sectionInMessage,
+  setNavigator,
+  type SettingsSection,
+} from "./navigation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
@@ -36,11 +44,16 @@ const busy = ref(false);
 const loading = ref(true);
 const error = ref("");
 const view = ref<View>("tasks");
-/** Zakładka „Historia i kopie”; przycisk ustawień w pasku otwiera „settings”. */
+/** Zakładka „Historia i kopie”. */
 const libraryTab = ref("history");
-function openSettings() {
-  libraryTab.value = "settings";
-  view.value = "library";
+/** Sekcja zakładki Ustawienia; zapamiętana między uruchomieniami. */
+const settingsSection = ref<SettingsSection>(readSettingsSection());
+/** Komunikat błędu wskazujący „Ustawienia → X” dostaje przycisk do tej sekcji. */
+const errorSection = computed(() => sectionInMessage(error.value));
+function openErrorSection() {
+  if (!errorSection.value) return;
+  void navigate({ view: "settings", section: errorSection.value });
+  error.value = "";
 }
 const selectedDay = ref(dayKey(now.value));
 const editing = ref<Task | null>(null);
@@ -108,6 +121,7 @@ const views: View[] = [
   "dashboard",
   "journal",
   "library",
+  "settings",
 ];
 /**
  * Kliknięcie treści powiadomienia lub „Podziel…”: Rust już pokazał okno, tu
@@ -121,6 +135,8 @@ async function navigate(request: NavigateRequest) {
   // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
   // wtedy, gdy żadne okno nie jest otwarte.
   view.value = target;
+  if (target === "settings" && isSettingsSection(request.section))
+    settingsSection.value = request.section;
   if (target === "tasks") tasksRequest.value = { ...request };
   if (target === "journal" && request.dayClose) journalDayClose.value = true;
   if (request.split != null && !modalOpen.value) {
@@ -177,6 +193,9 @@ function shortcut(e: KeyboardEvent) {
   if (e.ctrlKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
     void openQuick();
+  } else if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === ",") {
+    e.preventDefault();
+    void navigate({ view: "settings" });
   }
 }
 
@@ -184,6 +203,7 @@ const unsubscribers: UnlistenFn[] = [];
 let tick: ReturnType<typeof setInterval>;
 onMounted(async () => {
   window.addEventListener("keydown", shortcut);
+  setNavigator((request) => void navigate(request));
   tick = setInterval(() => {
     now.value = Date.now();
   }, 1000);
@@ -219,6 +239,7 @@ onMounted(async () => {
 onUnmounted(() => {
   clearInterval(tick);
   window.removeEventListener("keydown", shortcut);
+  setNavigator(null);
   unsubscribers.forEach((fn) => fn());
 });
 </script>
@@ -229,7 +250,6 @@ onUnmounted(() => {
     <AppNav
       v-model:view="view"
       @quick="openQuick"
-      @settings="openSettings"
       @error="error = $event"
     />
     <main>
@@ -251,7 +271,13 @@ onUnmounted(() => {
       />
       <div v-if="error && !modalOpen" class="error" role="alert">
         {{ error
-        }}<button aria-label="Zamknij komunikat" @click="error = ''">
+        }}<button
+          v-if="errorSection"
+          class="text-link error-link"
+          @click="openErrorSection"
+        >
+          Otwórz ustawienia</button
+        ><button aria-label="Zamknij komunikat" @click="error = ''">
           <X :size="16" />
         </button>
       </div>
@@ -306,8 +332,12 @@ onUnmounted(() => {
           @session="openSession"
         />
       </KeepAlive>
+      <SettingsView
+        v-if="view === 'settings'"
+        v-model:section="settingsSection"
+      />
       <JiraView
-        v-if="view === 'jira'"
+        v-else-if="view === 'jira'"
         :active-url="activeTask?.jiraUrl"
         @updated="updated"
         @stop="act('stop')"

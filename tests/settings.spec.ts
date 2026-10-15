@@ -1,19 +1,21 @@
 import { test, expect } from "@playwright/test";
+import { openSettings } from "./fixtures/settings";
 const key = "todo-track-preview-settings-v1";
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
 });
 test("settings tab saves through the preview store, validates ranges and survives reload", async ({
   page,
 }) => {
+  // Kopie zostają w „Historia i kopie”, Ustawienia są osobną zakładką.
+  await page
+    .getByRole("button", { name: "Historia i kopie", exact: true })
+    .click();
   await page.getByRole("button", { name: "Kopie", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Eksportuj kopię", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   for (const name of [
     "Czas pracy",
     "Okna",
@@ -21,7 +23,10 @@ test("settings tab saves through the preview store, validates ranges and survive
     "Skróty",
     "Uruchamianie",
   ])
-    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
+    await expect(page.getByRole("tab", { name, exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Czas pracy", exact: true }),
+  ).toBeVisible();
   const idle = page.getByLabel(
     "Zapytaj o czas po co najmniej 10 minutach bezczynności",
   );
@@ -51,10 +56,7 @@ test("settings tab saves through the preview store, validates ranges and survive
     dayStart: "07:45",
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Czas pracy");
   await expect(
     page.getByLabel("Zapytaj o czas po co najmniej 10 minutach bezczynności"),
   ).not.toBeChecked();
@@ -63,17 +65,15 @@ test("settings tab saves through the preview store, validates ranges and survive
   await expect(
     page.getByLabel("Dzień roboczy: Pt", { exact: true }),
   ).not.toBeChecked();
+  await page.getByRole("tab", { name: "Skróty", exact: true }).click();
   await expect(page.getByText("Control+Shift+Space")).toBeVisible();
 });
 test("preview reads a swapped shortcut pair together and resets a colliding pair", async ({
   page,
 }) => {
-  const open = async () => {
+  const open = async (section = "Skróty") => {
     await page.reload();
-    await page
-      .getByRole("button", { name: "Historia i kopie", exact: true })
-      .click();
-    await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+    await openSettings(page, section);
   };
   await page.evaluate(
     (k) =>
@@ -102,8 +102,9 @@ test("preview reads a swapped shortcut pair together and resets a colliding pair
       ),
     key,
   );
-  await open();
+  await open("Czas pracy");
   await expect(page.getByLabel("Początek dnia")).toHaveValue("09:00");
+  await page.getByRole("tab", { name: "Skróty", exact: true }).click();
   await expect(
     page.getByText(
       "Control+Shift+Space — szybkie przełączanie z dowolnego okna.",
@@ -113,7 +114,7 @@ test("preview reads a swapped shortcut pair together and resets a colliding pair
 test("startup toggles save autostart state to localStorage in preview", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Uruchamianie");
   const withWindows = page.getByLabel("Uruchamiaj z Windows", { exact: true });
   const hidden = page.getByLabel("Uruchamiaj schowane do traya", {
     exact: true,
@@ -137,10 +138,7 @@ test("startup toggles save autostart state to localStorage in preview", async ({
     settings: { autostartHidden: true },
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Uruchamianie");
   await expect(withWindows).toBeChecked();
   await expect(hidden).toBeChecked();
   // Wyłączenie autostartu zachowuje wybór „schowane” na następne włączenie.
@@ -155,7 +153,7 @@ test("startup toggles save autostart state to localStorage in preview", async ({
 test("failed autostart save reverts the clicked checkbox and shows the error", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Uruchamianie");
   const withWindows = page.getByLabel("Uruchamiaj z Windows", { exact: true });
   const hidden = page.getByLabel("Uruchamiaj schowane do traya", {
     exact: true,
@@ -178,7 +176,7 @@ test("failed autostart save reverts the clicked checkbox and shows the error", a
 test("notification switches save to localStorage in preview and survive reload", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Powiadomienia");
   const due = page.getByLabel("Przypominaj o terminach na dziś i przekroczonych");
   const evening = page.getByLabel(
     "Przypominaj wieczorem, że pomiar nadal trwa",
@@ -204,10 +202,7 @@ test("notification switches save to localStorage in preview and survive reload",
     notifyLongMinutes: 0,
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Historia i kopie", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Ustawienia", exact: true }).click();
+  await openSettings(page, "Powiadomienia");
   await expect(evening).not.toBeChecked();
   await expect(target).toBeChecked();
   await expect(due).not.toBeChecked();
