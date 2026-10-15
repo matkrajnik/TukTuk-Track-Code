@@ -21,5 +21,15 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: false,
   },
-  reporter: "list",
+  expect: {
+    // Zrzuty wzorcowe (tests/visual.spec.ts): animacje i przejścia zatrzymane,
+    // kursor tekstowy ukryty, do 1% pikseli może się różnić (wygładzanie).
+    toHaveScreenshot: {
+      maxDiffPixelRatio: 0.01,
+      animations: "disabled",
+      caret: "hide",
+    },
+  },
+  // W CI dodatkowo raport HTML z różnicami zrzutów (artefakt playwright-report).
+  reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
 });

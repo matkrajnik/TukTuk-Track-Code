@@ -22,6 +22,19 @@ export interface TauriOptions {
   now?: string | number;
   /** Wynik `inspect_backup` (null = anulowany wybór pliku) i dane po przywróceniu. */
   backup?: { preview: unknown; snapshot: unknown } | null;
+  /**
+   * Połączona Jira (widok Jira): tablice i zgłoszenia zwracane przez
+   * `jira_boards` i `jira_issues`. Domyślnie Jira nie jest połączona.
+   */
+  jira?: {
+    boards: { id: number; name: string }[];
+    issues: {
+      key: string;
+      summary: string;
+      status: string;
+      boards: string[];
+    }[];
+  };
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -30,6 +43,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     data: options.data ?? seed(),
     settings: { ...defaultSettings, ...options.settings },
     backup: options.backup ?? null,
+    jira: options.jira ?? null,
     site: JIRA_SITE,
   });
   await page.goto("/");
@@ -41,16 +55,17 @@ export function backend<T = unknown>(
   name: "idleTick" | "jiraCheck" | "snapshot" | "calls",
   arg?: unknown,
 ) {
-  return page.evaluate(
-    ([n, a]) => (window as any).__tauriMock[n](a),
-    [name, arg] as const,
-  ) as Promise<T>;
+  return page.evaluate(([n, a]) => (window as any).__tauriMock[n](a), [
+    name,
+    arg,
+  ] as const) as Promise<T>;
 }
 
 function install(init: {
   data: any;
   settings: any;
   backup: { preview: any; snapshot: any } | null;
+  jira: { boards: any[]; issues: any[] } | null;
   site: string;
 }) {
   const w = window as any;
@@ -257,11 +272,21 @@ function install(init: {
           return {
             config: {
               site: init.site,
-              email: "",
-              displayName: "",
-              boards: [],
+              email: init.jira ? "test@example.invalid" : "",
+              displayName: init.jira ? "Użytkownik testowy" : "",
+              boards: init.jira ? clone(init.jira.boards) : [],
             },
-            connected: false,
+            connected: !!init.jira,
+          };
+        case "jira_boards":
+          return { values: clone(init.jira?.boards ?? []), nextStart: null };
+        case "jira_issues":
+          return {
+            issues: (init.jira?.issues ?? []).map((i: any) => ({
+              ...i,
+              url: `${init.site}/browse/${i.key}`,
+            })),
+            warnings: [],
           };
         case "idle_notice":
           return clone(idle.pending);
