@@ -4,6 +4,13 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
+### Nowości 1.3
+
+- **Akcje w powiadomieniach Windows**: powiadomienia idą bezpośrednio przez `tauri-winrt-notification`, więc kliknięcie i przyciski trafiają do aplikacji. Termin otwiera Zadania z filtrem „Dzisiaj: plan i praca”, długi pomiar rozwija bieżące zadanie i ma przyciski „Zatrzymaj” i „Podziel…”, wieczór otwiera Zamknięcie dnia i ma „Zatrzymaj teraz”, cel otwiera Zamknięcie dnia, nowe zgłoszenia z Jiry mają „Rozpocznij” (przy jednym zgłoszeniu) i „Zaplanuj na dziś”. Timer zmieniają tylko przyciski, które klikniesz; nic nie przełącza się samo. Szczegóły w sekcji „Powiadomienia”. Przyciski sprawdzono testami Rust i Playwright; na zainstalowanym pakiecie NSIS nie były jeszcze klikane.
+- **Siatka testów**: zrzuty wzorcowe głównych widoków, Jiry i widgetu (oba motywy, 760 i 1280 px) na stałych danych `tests/fixtures/seed.ts` i stałym zegarze; odświeżanie przez `npm run test:visual:update`. Nowe testy e2e: import nowych zgłoszeń z Jiry, szybkie przełączanie, baner bezczynności, przywracanie kopii, nawigacja z powiadomień. CI uruchamia zrzuty osobnym krokiem i zapisuje różnice jako artefakt `playwright-report`.
+- **`npm run check`**: build, Playwright, `cargo fmt --check` i `cargo test --locked` jednym poleceniem.
+- Bez zmian w bazie danych.
+
 ### Nowości 1.1
 
 - **Nowe zgłoszenia z Jiry**: co 5 minut aplikacja sprawdza zgłoszenia przypisane do Ciebie (`assignee = currentUser()`, wszystkie projekty, nie tylko wybrane tablice). Każde nowe otwarte przypisanie staje się zadaniem w „Do zaplanowania” (bez dnia w planie, bez uruchamiania timera), a Windows pokazuje powiadomienie. Przy pierwszym sprawdzeniu dla konta obecne przypisania są tylko zapamiętywane, więc istniejący backlog nie jest importowany. Zgłoszenie powiązane już z lokalnym zadaniem (także w archiwum lub koszu) nie jest dublowane; zgłoszenie zdjęte z Ciebie i przypisane ponownie wraca jako nowe. Opcję wyłącza **Ustawienia → Jira → „Dodawaj nowe zgłoszenia przypisane do mnie”**.
@@ -115,7 +122,7 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Wersja w repozytorium: 1.2.0 (odświeżony interfejs: niebieska paleta, ujednolicone formaty czasu i dat, uporządkowana karta zadania i dashboard; bez zmian w bazie). Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.2.0_x64-setup.exe`; gotowy instalator leży w repozytorium w `releases/`. Instalator 1.2.0 nie był jeszcze instalowany. Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
+Wersja w repozytorium: 1.3.0 (akcje w powiadomieniach Windows, zrzuty wzorcowe i nowe testy; bez zmian w bazie). Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.3.0_x64-setup.exe`; gotowe instalatory (1.2.0 i 1.3.0) leżą w repozytorium w `releases/`. Instalatory 1.2.0 i 1.3.0 nie były jeszcze instalowane, więc przyciski w powiadomieniach nie są sprawdzone natywnie. Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
 
 Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
@@ -190,6 +197,8 @@ Usunięcie zadania usuwa też jego sesje (z potwierdzeniem). Ukończenie zadania
 Raporty dzielą sesję przez lokalną północ i uwzględniają zmianę czasu (doby 23- i 25-godzinne). W rozwiniętym raporcie wyświetlany jest pełny przedział, a obok czas przypadający wyłącznie na wybrany dzień. Usunięte zadania i ich sesje znikają również z raportów. Edycja przedziałów korzysta z dotychczasowej bazy; aktualizacja aplikacji nie wymaga migracji danych.
 
 ## Sprawdzenie
+
+Weryfikacja 1.3.0 (15 października 2026, gałąź `release/1.0`): `npm run build`, 101 testów Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 79 testów Rust (`cargo test --locked`) i `npm run tauri build -- -- --locked` przechodzą. Workflow CI z krokiem zrzutów nie był jeszcze uruchomiony na windows-latest.
 
 Weryfikacja 1.0.0 (14 października 2026, gałąź `release/1.0`): `npm run build`, 55 testów Playwright i 63 testy Rust (`cargo test --locked`) przechodzą. Testy Playwright działają na podglądzie z localStorage (`src/store.ts`, `src/settings.ts`), bez backendu Rust; widget renderują pod adresem `#widget`. Testy Rust obejmują m.in. podział przedziału, `stats::day_total_ms` z dobą zmiany czasu, tooltip traya, wybór zadania dla Start/Stop, walidację ustawień, argumenty autostartu, logikę widoczności widgetu, reguły i deduplikację powiadomień z kontrolowanym zegarem oraz `plan_task`/`reorder` bez nadpisywania innych pól.
 

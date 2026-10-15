@@ -1,19 +1,35 @@
-﻿# Todo Track — stan po 1.0
+﻿# Todo Track — stan po 1.3.0
 
-## 1.3 w toku: zrzuty wzorcowe (T2)
+## Stan po 1.3.0 (15 października 2026)
 
-Otwarty punkt: wzorce w `tests/visual.spec.ts-snapshots` powstały lokalnie na Windows 11, a plan (Etap 1, pkt 1) każe generować je na windows-latest. Gałąź nie była pushowana, więc warunek „zrzuty zielone w CI dwa razy z rzędu” nie jest sprawdzony. Po pierwszym pushu: jeśli krok „Zrzuty wzorcowe” w workflow Check padnie na różnicach renderowania, uruchomić Check ręcznie (workflow_dispatch) z `update_snapshots` = true, pobrać artefakt `visual-snapshots`, podmienić nim katalog wzorców, zacommitować i potwierdzić dwa kolejne zielone przebiegi.
+Gałąź `release/1.0`, lokalnie, bez pusha. Wydanie 1.3.0 obejmuje etapy 1 i 2 z PLAN_1.3.md: T1 (wspólny fixture `tests/fixtures/seed.ts`, zastępcze IPC `tests/fixtures/tauri.ts`, testy e2e importu z Jiry, szybkiego przełączania, banera bezczynności i przywracania kopii, `npm run check`), T2 (zrzuty wzorcowe i osobny krok CI) oraz N1 (akcje w powiadomieniach Windows przez `tauri-winrt-notification`). Wersja 1.3.0 w pięciu plikach, instalator `releases/Todo Track_1.3.0_x64-setup.exe` (nie instalowany), lokalny tag `v1.3.0` (niewypchnięty). Bez zmian w bazie.
 
-## 1.3 w toku: akcje w powiadomieniach (N1) — etap niezamknięty
+Weryfikacja: `npm run build`, 101 testów Playwright (w tym zrzuty wzorcowe), `cargo fmt --check` i 79 testów Rust (`cargo test --locked`), uruchomione razem przez `npm run check` w Git Bash, oraz `npm run tauri build -- -- --locked` przechodzą.
 
-Plan (Etap 2, Testy) wymaga sprawdzenia natywnie po instalacji każdego przycisku z tabeli; tego nie zrobiono, są tylko testy Rust i Playwright. Do czasu tej walidacji N1 nie jest „gotowe” w rozumieniu planu. Niepotwierdzone: czy `on_activated` z `tauri-winrt-notification` 0.8.1 dociera do kanału przy zainstalowanym AUMID, także po przeniesieniu toastu do Centrum akcji i po zakończeniu wątku, który wywołał `show()`.
+Odstępstwa od planu:
+- Etap 1 nie jest „gotowy” w rozumieniu planu: wzorce zrzutów powstały lokalnie na Windows 11, nie na windows-latest, a warunek „zielone w CI dwa razy z rzędu” nie jest sprawdzony (gałąź nie była pushowana; lokalnie sprawdzono trzy przebiegi). Składnię `check.yml` sprawdzono tylko na oko, bez actionlint.
+- Etap 2 nie jest „gotowy” w rozumieniu planu: brak natywnej walidacji przycisków po instalacji NSIS, są tylko testy Rust i Playwright. Niepotwierdzone, czy `on_activated` z `tauri-winrt-notification` 0.8.1 dociera do kanału przy zainstalowanym AUMID, także po przeniesieniu toastu do Centrum akcji i po zakończeniu wątku, który wywołał `show()`.
+- Etap 0 (instalacja 1.2.0, tagi `v1.0.0` i `v1.2.0`, push tagów; lokalnie istnieje tylko `v1.1.0`) nadal otwarty; wydanie 1.3.0 powstało bez niego.
 
-Do sprawdzenia na zainstalowanym pakiecie NSIS (osobny identyfikator walidacyjny, nie instalacja użytkownika), ze zrzutami w `test-results/`:
-- „Zatrzymaj” i „Podziel…” na toaście długiego pomiaru, także z Centrum akcji i po podziale pomiaru (Zatrzymaj ma zatrzymać dalszy ciąg; Podziel… otwiera bieżący wiersz);
-- „Zatrzymaj teraz” na toaście wieczornym;
-- „Rozpocznij” i „Zaplanuj na dziś” na toaście nowych zgłoszeń Jiry;
-- kliknięcie treści każdego powiadomienia (termin → Zadania z filtrem „Dzisiaj” + terminy, długi pomiar, wieczór, cel, Jira, skrót Start/Stop);
-- kliknięcie starego toastu po restarcie aplikacji (tylko główne okno).
+Do ręcznego sprawdzenia:
+
+T1 (bez sprawdzeń w aplikacji; kod aplikacji i Rust bez zmian):
+- `npm run check` w zwykłym oknie cmd.exe i w terminalu, w którym `cargo` już jest w PATH (uruchamiano w PowerShell bez cargo w PATH i w Git Bash).
+- Nadal niesprawdzone natywnie, jak wcześniej: prawdziwy baner bezczynności po powrocie agenta i automatyczny import z Jiry na prawdziwym koncie.
+
+T2 (bez sprawdzeń w aplikacji ani po instalacji NSIS):
+- Pierwszy przebieg `check.yml` na windows-latest. Obraz Windows Server może inaczej wygładzać czcionki (Segoe UI, Cascadia/Consolas). Jeśli krok „Zrzuty wzorcowe” przekroczy próg 1%, pobrać artefakt `playwright-report`, obejrzeć różnice i zregenerować wzorce w CI (Check ręcznie przez workflow_dispatch z `update_snapshots` = true, artefakt `visual-snapshots`, podmiana katalogu wzorców, commit) albo podnieść próg. Potem potwierdzić dwa zielone przebiegi z rzędu.
+
+N1 — po instalacji pakietu NSIS (zarejestrowany AUMID; osobny identyfikator walidacyjny albo właściwa instalacja przy zamkniętej aplikacji), przy działającej aplikacji, ze zrzutami do `test-results/`:
+- Termin (start albo 09:00): kliknięcie treści otwiera Zadania z zaznaczonym „Dzisiaj: plan i praca” i widocznymi zadaniami z terminem dziś lub zaległymi.
+- Długi pomiar (ustawić np. 1 min): kliknięcie treści otwiera Zadania z rozwiniętym bieżącym zadaniem. „Zatrzymaj” zatrzymuje pomiar bez wyciągania okna, a tray i widget się odświeżają. „Podziel…” otwiera okno z edytorem „Edytuj przedział” na zakładce Podziel dla trwającego pomiaru. Po przełączeniu na inne zadanie „Zatrzymaj” na starym toaście nie może zatrzymać nowego pomiaru.
+- Wieczór (godzina za minutę): kliknięcie otwiera Plan i historia → Zamknięcie dnia na dziś. „Zatrzymaj teraz” zatrzymuje pomiar.
+- Cel dnia (włączony, niski cel): kliknięcie otwiera Zamknięcie dnia.
+- Nowe zgłoszenia z Jiry: przy jednym zgłoszeniu przyciski „Rozpocznij” (uruchamia zadanie i zatrzymuje poprzednie; także gdy zadanie przeniesiono wcześniej do kosza, ma wrócić) i „Zaplanuj na dziś” (zadanie dostaje dziś jako dzień w planie, timer nie startuje). Przy 2+ zgłoszeniach tylko „Zaplanuj na dziś”, dla wszystkich. Kliknięcie treści otwiera Zadania przy grupie „Nierozpoczęte”.
+- Potwierdzenie skrótu Start/Stop przy schowanym widgecie: kliknięcie pokazuje główne okno.
+- Kliknięcia działają też z Centrum akcji po zniknięciu toastu i gdy okno było schowane w trayu. Biblioteka rejestruje `on_activated` na obiekcie `ToastNotification`, który wychodzi z zakresu po `show`; założenie planu: działa, dopóki aplikacja jest uruchomiona.
+- Po restarcie aplikacji kliknięcie starego toastu z Centrum akcji tylko uruchamia aplikację albo pokazuje główne okno.
+- Dźwięk toastu jak dotąd (cichy, `sound(None)`), tytuł i treść wyglądają poprawnie.
 
 ## Stan po 1.0 (14 października 2026)
 
