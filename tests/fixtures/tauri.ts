@@ -22,6 +22,8 @@ export interface TauriOptions {
   now?: string | number;
   /** Wynik `inspect_backup` (null = anulowany wybór pliku) i dane po przywróceniu. */
   backup?: { preview: unknown; snapshot: unknown } | null;
+  /** Szablony zadań (`task_templates`) na starcie. */
+  templates?: unknown[];
   /**
    * Połączona Jira (widok Jira): tablice i zgłoszenia zwracane przez
    * `jira_boards` i `jira_issues`. Domyślnie Jira nie jest połączona.
@@ -44,6 +46,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     settings: { ...defaultSettings, ...options.settings },
     backup: options.backup ?? null,
     jira: options.jira ?? null,
+    templates: options.templates ?? [],
     site: JIRA_SITE,
   });
   await page.goto("/");
@@ -66,6 +69,7 @@ function install(init: {
   settings: any;
   backup: { preview: any; snapshot: any } | null;
   jira: { boards: any[]; issues: any[] } | null;
+  templates: any[];
   site: string;
 }) {
   const w = window as any;
@@ -75,6 +79,14 @@ function install(init: {
   snapshot.trashSessions ??= [];
   const settings = structuredClone(init.settings);
   const calls: { cmd: string; args: any }[] = [];
+  // templates::list (kolejność po nazwie) i find (bez względu na wielkość liter).
+  let templates: any[] = structuredClone(init.templates);
+  const sortedTemplates = () =>
+    [...templates].sort((a, b) =>
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase(), "pl"),
+    );
+  const findTemplate = (name: string) =>
+    templates.find((t) => t.name.toLowerCase() === name.trim().toLowerCase());
   const clone = <T>(v: T): T => structuredClone(v);
 
   // Zdarzenia: `listen` rejestruje callback przez transformCallback.
@@ -322,6 +334,121 @@ function install(init: {
               });
             }
           } else throw "Nieobsługiwana akcja w teście: " + args.action;
+          return clone(snapshot);
+        }
+        case "templates_list":
+          return clone(sortedTemplates());
+        case "template_save": {
+          // templates::save (walidację nazwy i pól sprawdzają testy Rust).
+          const name = String(args.name).trim();
+          const other = findTemplate(name);
+          if (other && other.id !== args.id)
+            throw `Szablon „${other.name}” już istnieje.`;
+          const body = {
+            ...args.template,
+            steps: args.template.steps
+              .map((s: string) => s.trim())
+              .filter(Boolean),
+          };
+          if (args.id != null) {
+            const t = templates.find((x: any) => x.id === args.id);
+            if (!t) throw "Nie znaleziono szablonu.";
+            Object.assign(t, body, { name });
+          } else
+            templates.push({
+              id: Math.max(0, ...templates.map((t: any) => t.id)) + 1,
+              name,
+              ...body,
+            });
+          emit("templates-changed");
+          return clone(sortedTemplates());
+        }
+        case "template_delete":
+          templates = templates.filter((t: any) => t.id !== args.id);
+          emit("templates-changed");
+          return clone(sortedTemplates());
+        case "quick_add": {
+          // quickadd::create z szablonem: templates::render_title i merge_details,
+          // tytuł zgłoszenia z listy Jiry (jira::cached_summary).
+          const task = args.task;
+          const key = task.jiraKey || null;
+          if (key && !init.jira)
+            throw `Jira nie jest połączona, więc ${key} nie zostanie powiązane.`;
+          const summary = (k: string) =>
+            init.jira?.issues.find((i: any) => i.key === k)?.summary ?? null;
+          const template = task.template ? findTemplate(task.template) : null;
+          if (task.template && !template)
+            throw `Nie ma szablonu „${task.template}”. Dodaj go w Ustawieniach → Szablony.`;
+          let title = String(task.title).trim();
+          if (template) {
+            const wants = /\{tytu[łl]\}/.test(template.title);
+            let value = title;
+            if (!title && wants && key) {
+              value = summary(key) ?? "";
+              if (!value) throw `Nie znam tytułu ${key}.`;
+            }
+            title = template.title
+              .replaceAll("{klucz}", key ?? "")
+              .replace(/\{tytu[łl]\}/g, value);
+            if (template.title.trim() && !wants && value)
+              title = `${title} ${value}`;
+            if (!template.title.trim()) title = value;
+            title = title
+              .split(/\s+/)
+              .filter(Boolean)
+              .join(" ")
+              .replace(/ ([:,.])/g, "$1")
+              .replace(/^[:,\-–— ]+|[:,\-–— ]+$/g, "");
+          }
+          if (!title && key) title = summary(key) ?? "";
+          if (!title) throw "Tytuł musi mieć od 1 do 240 znaków.";
+          let details = task.details ? clone(task.details) : null;
+          if (template) {
+            const d = details ?? {
+              priority: 0,
+              plannedDay: "",
+              dueDay: "",
+              project: "",
+              waiting: "",
+              notes: {},
+              estimateMinutes: 0,
+              checklist: [],
+              repeatDays: [],
+              repeatFrom: "",
+              order: 0,
+              plannedStart: "",
+            };
+            d.estimateMinutes ||= template.estimateMinutes;
+            d.project ||= template.project;
+            d.priority ||= template.priority;
+            if (!d.checklist.length)
+              d.checklist = template.steps.map((text: string) => ({
+                text,
+                done: false,
+              }));
+            details = d;
+          }
+          const id = nextTaskId();
+          snapshot.tasks.unshift({
+            id,
+            title,
+            done: false,
+            createdAt: now,
+            ...(key
+              ? { jiraKey: key, jiraUrl: `${init.site}/browse/${key}` }
+              : {}),
+            ...(details ? { details } : {}),
+          });
+          if (task.start) {
+            stopAll(now);
+            snapshot.sessions.unshift({
+              id: nextSessionId(),
+              taskId: id,
+              startedAt: now,
+              endedAt: null,
+            });
+          }
+          emit("data-changed");
           return clone(snapshot);
         }
         case "inspect_backup":

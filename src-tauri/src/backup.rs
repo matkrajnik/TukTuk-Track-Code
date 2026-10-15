@@ -225,4 +225,60 @@ mod tests {
             .starts_with(std::env::temp_dir().canonicalize().unwrap()));
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    /// Kopia niesie szablony, a przywrócenie (`copy` jak w `restore_backup`)
+    /// zastępuje bieżące szablony szablonami z kopii.
+    #[test]
+    fn backup_carries_templates_and_restore_replaces_them() {
+        use crate::templates;
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-templates-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        let mut source = Connection::open(&path).unwrap();
+        db::init(&source).unwrap();
+        templates::save(
+            &mut source,
+            None,
+            "review",
+            templates::Body {
+                title: "Code review {klucz}: {tytuł}".into(),
+                steps: vec!["Sprawdź testy".into()],
+                ..templates::Body::default()
+            },
+        )
+        .unwrap();
+        drop(source);
+
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        templates::save(&mut current, None, "lokalny", templates::Body::default()).unwrap();
+        let staged = stage(&path).unwrap();
+        copy(&staged, &mut current).unwrap();
+        let restored = templates::list(&current).unwrap();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].name, "review");
+        assert_eq!(restored[0].body.steps, ["Sprawdź testy"]);
+        drop(staged);
+
+        // Kopia sprzed szablonów: po przywróceniu tabela istnieje i jest pusta.
+        let old = root.join("old.sqlite");
+        let legacy = Connection::open(&old).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+                 CREATE TABLE sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, started_at INTEGER NOT NULL, ended_at INTEGER);",
+            )
+            .unwrap();
+        drop(legacy);
+        let staged = stage(&old).unwrap();
+        copy(&staged, &mut current).unwrap();
+        assert!(templates::list(&current).unwrap().is_empty());
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

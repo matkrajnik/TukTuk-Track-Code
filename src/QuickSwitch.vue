@@ -9,7 +9,9 @@ import {
   jiraConnected,
   quickAdd,
   quickTask,
+  loadTemplates,
   refreshJiraConnected,
+  templates,
   type Snapshot,
 } from "./store";
 import { compareTasks } from "./order";
@@ -55,6 +57,7 @@ const projects = computed(() =>
 const parsed = computed(() =>
   parse(query.value, dayKey(Date.now()), {
     projects: projects.value,
+    templates: templates.value.map((t) => t.name),
     jiraEnabled: jiraConnected.value,
   }),
 );
@@ -63,7 +66,9 @@ const creatable = computed(
   () =>
     !matches.value.length &&
     !!query.value.trim() &&
-    (!!parsed.value.title.trim() || !!parsed.value.fields.jiraKey),
+    (!!parsed.value.title.trim() ||
+      !!parsed.value.fields.jiraKey ||
+      !!parsed.value.fields.template),
 );
 async function create(start: boolean) {
   if (busy.value) return;
@@ -91,6 +96,8 @@ async function refresh() {
   try {
     data.value = await read();
     await refreshJiraConnected();
+    // Bez listy szablonów przełączanie nadal działa (szablon byłby nieznany).
+    await loadTemplates().catch(() => []);
     query.value = "";
     index.value = 0;
     error.value = "";
@@ -138,6 +145,7 @@ function keys(e: KeyboardEvent) {
     if (el.selectionStart !== el.selectionEnd) return;
     const done = complete(el.value, el.selectionStart ?? 0, {
       projects: projects.value,
+      templates: templates.value.map((t) => t.name),
     });
     if (!done) return;
     e.preventDefault();

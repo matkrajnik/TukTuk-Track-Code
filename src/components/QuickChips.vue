@@ -20,7 +20,7 @@ const blocking = computed(() => blockingError(props.parsed));
       :key="`${token.start}-${token.text}`"
       type="button"
       class="quick-chip"
-      :class="[token.kind, { invalid: token.kind === 'error' || token.kind === 'template' }]"
+      :class="[token.kind, { invalid: token.kind === 'error' }]"
       :title="token.error ?? `Usuń ${token.text}`"
       :aria-label="`Usuń: ${token.label}`"
       @mousedown.prevent

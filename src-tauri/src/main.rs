@@ -14,6 +14,7 @@ mod reminder;
 mod settings;
 mod shortcuts;
 mod stats;
+mod templates;
 mod tray;
 mod widget;
 mod window_state;
@@ -385,7 +386,10 @@ fn main() {
             jira::jira_select_boards,
             jira::jira_issues,
             jira::jira_start,
-            jira::jira_open
+            jira::jira_open,
+            templates::templates_list,
+            templates::template_save,
+            templates::template_delete
         ])
         .run(tauri::generate_context!())
         .expect("Nie udało się uruchomić Todo Track");

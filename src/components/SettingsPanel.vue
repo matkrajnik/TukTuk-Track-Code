@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
+import TemplateEditor from "./TemplateEditor.vue";
 import {
   defaultSettings,
   onSettingsChanged,
@@ -11,7 +12,15 @@ import {
   type AppInfo,
   type AppSettings,
 } from "../settings";
-import { readAutostart, writeAutostart, type Autostart } from "../store";
+import {
+  loadTemplates,
+  readAutostart,
+  templates,
+  writeAutostart,
+  type Autostart,
+} from "../store";
+/** Formularz nowego szablonu w sekcji Szablony. */
+const addingTemplate = ref(false);
 const settings = ref<AppSettings>({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
@@ -114,6 +123,7 @@ onMounted(async () => {
     settings.value = await readSettings();
     info.value = await readAppInfo();
     autostart.value = await readAutostart();
+    await loadTemplates();
   } catch (e) {
     if (alive) error.value = String(e);
   }
@@ -272,6 +282,32 @@ onUnmounted(() => {
       najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
       Start/Stop pokazuje się, gdy widget jest schowany.
     </p>
+
+    <h2>Szablony</h2>
+    <p class="hint">
+      Wpisz /nazwa w polu „Nowe zadanie” albo w szybkim przełączaniu, np.
+      /review WMS-123. W tytule {klucz} to klucz Jiry, a {tytuł} to tytuł z
+      linii albo zgłoszenia. Pola wpisane w linii (~, #, !) wygrywają z
+      szablonem. Szablon zapiszesz też z rozwiniętego zadania.
+    </p>
+    <div class="template-list" aria-label="Szablony zadań">
+      <TemplateEditor v-for="t in templates" :key="t.id" :template="t" />
+      <p v-if="!templates.length && !addingTemplate" class="empty-detail">
+        Brak szablonów.
+      </p>
+      <TemplateEditor
+        v-if="addingTemplate"
+        :template="null"
+        @done="addingTemplate = false"
+      />
+    </div>
+    <button
+      v-if="!addingTemplate"
+      class="action-button"
+      @click="addingTemplate = true"
+    >
+      Nowy szablon
+    </button>
 
     <h2>Skróty</h2>
     <p>

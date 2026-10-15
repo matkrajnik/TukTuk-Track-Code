@@ -105,7 +105,7 @@ test("quick add: impossible date blocks adding and plain titles stay untouched",
   expect(task.jiraKey).toBeUndefined();
 });
 
-test("quick add: /template blocks adding instead of vanishing from the title", async ({
+test("quick add: unknown /template blocks adding instead of vanishing from the title", async ({
   page,
 }) => {
   await openPreview(page);
@@ -116,7 +116,7 @@ test("quick add: /template blocks adding instead of vanishing from the title", a
   });
   await input.fill("/review Popraw raport");
   await expect(
-    page.getByText("Szablony będą dostępne wkrótce.", { exact: false }),
+    page.getByText("Nie ma szablonu „review”.", { exact: false }),
   ).toBeVisible();
   await expect(addButton).toBeDisabled();
   await input.press("Enter");
@@ -133,7 +133,7 @@ test("quick add: /template blocks adding instead of vanishing from the title", a
   await page.keyboard.press("Shift+Enter");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("alert").first()).toContainText(
-    "Szablony będą dostępne wkrótce.",
+    "Nie ma szablonu „review”.",
   );
   expect(
     (await stored(page)).tasks.some((t: any) => t.title.includes("Popraw raport")),

@@ -4,7 +4,7 @@ import {
   complete,
   parse,
   removeToken,
-  TEMPLATE_UNAVAILABLE,
+  renderTitle,
 } from "../src/quickadd";
 
 // Testy jednostkowe parsera składni szybkiego dodawania (bez przeglądarki).
@@ -46,7 +46,7 @@ test("parser: every token at once", () => {
     "Termin: wt 20.10",
     "Priorytet: wysoki",
     "Projekt: WMS",
-    "Szablon: review (jeszcze niedostępne)",
+    "Szablon: review",
   ]);
 });
 
@@ -189,17 +189,56 @@ test("parser: without connected Jira a key-like word stays in the title", () => 
   ).toEqual({ jiraKey: "ISO-9001" });
 });
 
-test("parser: /template blocks adding until templates exist", () => {
-  const r = parse("/review Popraw raport", TODAY, settings);
+test("parser: /template uses known names and blocks unknown ones", () => {
+  const known = { ...settings, templates: ["review", "Daily"] };
+  const r = parse("/Review Popraw raport", TODAY, known);
+  // Pisownia z listy szablonów, bez błędu.
   expect(r.fields.template).toBe("review");
-  expect(blockingError(r)).toBe(TEMPLATE_UNAVAILABLE);
+  expect(r.title).toBe("Popraw raport");
+  expect(r.tokens.map((t) => t.label)).toEqual(["Szablon: review"]);
+  expect(blockingError(r)).toBeUndefined();
+  // Nieznana nazwa blokuje dodanie zamiast znikać z tytułu.
+  const unknown = parse("/brak Popraw raport", TODAY, known);
+  expect(unknown.fields.template).toBeUndefined();
+  expect(blockingError(unknown)).toContain("Nie ma szablonu „brak”");
+  // Bez listy (`templates` nie podano) nazwa jest przyjmowana jak wpisana.
+  expect(parse("/review", TODAY, settings).fields.template).toBe("review");
   // Poprzedzone `\` zostaje w tytule i nie blokuje.
-  const literal = parse("\\/review Popraw raport", TODAY, settings);
-  expect(literal.title).toBe("/review Popraw raport");
+  const literal = parse("\\/brak Popraw raport", TODAY, known);
+  expect(literal.title).toBe("/brak Popraw raport");
   expect(blockingError(literal)).toBeUndefined();
   // Błąd składni ma pierwszeństwo.
-  expect(blockingError(parse("Raport @31.02 /review", TODAY))).toBe(
+  expect(blockingError(parse("Raport @31.02 /brak", TODAY, known))).toBe(
     "Nie ma dnia 31.02.2027.",
+  );
+  // Tab uzupełnia nazwę szablonu.
+  expect(complete("/re", 3, known)).toEqual({ text: "/review ", caret: 8 });
+  expect(complete("WMS-1 /d", 8, known)).toEqual({
+    text: "WMS-1 /Daily ",
+    caret: 13,
+  });
+});
+
+test("template title: {klucz}, {tytuł}, line title and Jira summary", () => {
+  const jira = (key: string) =>
+    key === "WMS-123" ? "Eksport etykiet" : undefined;
+  const t = "Code review {klucz}: {tytuł}";
+  expect(renderTitle(t, "WMS-123", "", jira)).toBe(
+    "Code review WMS-123: Eksport etykiet",
+  );
+  // Tytuł z linii wygrywa z tytułem z Jiry.
+  expect(renderTitle(t, "WMS-123", " Poprawki ", jira)).toBe(
+    "Code review WMS-123: Poprawki",
+  );
+  expect(renderTitle(t, null, "", jira)).toBe("Code review");
+  expect(renderTitle(t, null, "Raport", jira)).toBe("Code review: Raport");
+  expect(() => renderTitle(t, "WMS-9", "", jira)).toThrow("WMS-9");
+  expect(renderTitle("Daily", null, "z zespołem", jira)).toBe(
+    "Daily z zespołem",
+  );
+  expect(renderTitle("", null, "Raport", jira)).toBe("Raport");
+  expect(renderTitle("{klucz} – {tytul}", "WMS-123", "", jira)).toBe(
+    "WMS-123 – Eksport etykiet",
   );
 });
 

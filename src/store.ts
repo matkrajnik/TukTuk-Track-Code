@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
-import type { Parsed } from "./quickadd";
+import { renderTitle, type Parsed } from "./quickadd";
 export interface Task {
   id: number;
   title: string;
@@ -183,6 +183,8 @@ export interface NewTask {
   details?: TaskDetails | null;
   /** Utwórz i rozpocznij: poprzedni pomiar staje. */
   start?: boolean;
+  /** `/nazwa`: szablon; jawne pola z linii wygrywają z szablonem. */
+  template?: string | null;
 }
 /** Ładunek `quick_add` z wyniku parsera: szczegóły tylko, gdy podano pola planu. */
 export function quickTask(parsed: Parsed, start = false): NewTask {
@@ -207,6 +209,7 @@ export function quickTask(parsed: Parsed, start = false): NewTask {
         }
       : null,
     start,
+    template: f.template ?? null,
   };
 }
 /** Adres Jiry w podglądzie (domyślny z `jira::Config`). */
@@ -222,18 +225,32 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
   const jiraKey = task.jiraKey?.trim() || null;
   if (jiraKey && !/^[A-Z0-9_]+-\d+$/.test(jiraKey))
     throw new Error("Niepoprawny klucz zgłoszenia Jiry.");
-  const title = task.title.trim();
+  const name = task.template?.trim();
+  const template = name ? findTemplate(previewTemplates(), name) : undefined;
+  if (name && !template)
+    throw new Error(
+      `Nie ma szablonu „${name}”. Dodaj go w Ustawieniach → Szablony.`,
+    );
+  // W podglądzie nie ma listy zgłoszeń, więc {tytuł} z samym kluczem daje błąd.
+  const title = template
+    ? [...renderTitle(template.title, jiraKey, task.title, () => null)]
+        .slice(0, 240)
+        .join("")
+    : task.title.trim();
   if (!title && jiraKey)
     throw new Error(
       `Nie znam tytułu ${jiraKey}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
     );
   if (!title || [...title].length > 240)
     throw new Error("Tytuł musi mieć od 1 do 240 znaków.");
-  const details = task.details
+  const lineDetails = template
+    ? mergeTemplate(task.details ?? null, template)
+    : task.details;
+  const details = lineDetails
     ? {
-        ...JSON.parse(JSON.stringify(task.details)),
-        project: task.details.project.trim(),
-        waiting: task.details.waiting.trim(),
+        ...JSON.parse(JSON.stringify(lineDetails)),
+        project: lineDetails.project.trim(),
+        waiting: lineDetails.waiting.trim(),
       }
     : undefined;
   if (
@@ -293,6 +310,172 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
   }
   localStorage.setItem(key, JSON.stringify(data));
   return data;
+}
+/** Szablon zadania (`templates::Template` w Rust). */
+export interface TaskTemplate {
+  id: number;
+  /** `/nazwa` w szybkim dodawaniu: litery, cyfry, `-` i `_`, bez spacji. */
+  name: string;
+  /** Tytuł z polami `{klucz}` i `{tytuł}`. */
+  title: string;
+  estimateMinutes: number;
+  steps: string[];
+  project: string;
+  priority: number;
+}
+export type TemplateBody = Omit<TaskTemplate, "id" | "name">;
+/** Szablony do podpowiedzi i parsera; odświeżane po każdej zmianie. */
+export const templates = ref<TaskTemplate[]>([]);
+const templatesKey = "todo-track-preview-templates-v1";
+const templateEvent = "templates-changed";
+const TEMPLATE_NAME = /^[\p{L}\p{N}_-]{1,60}$/u;
+const sortTemplates = (list: TaskTemplate[]) =>
+  [...list].sort((a, b) =>
+    a.name.toLocaleLowerCase("pl").localeCompare(b.name.toLocaleLowerCase("pl"), "pl"),
+  );
+function previewTemplates(): TaskTemplate[] {
+  try {
+    return JSON.parse(localStorage.getItem(templatesKey) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+const findTemplate = (list: TaskTemplate[], name: string) =>
+  list.find(
+    (t) =>
+      t.name.toLocaleLowerCase("pl") === name.trim().toLocaleLowerCase("pl"),
+  );
+/**
+ * Pola szablonu pod pola z linii (`templates::merge_details`): niezerowe pola
+ * z linii wygrywają, kroki szablonu stają się listą kontrolną.
+ */
+export function mergeTemplate(
+  line: TaskDetails | null,
+  template: TemplateBody,
+): TaskDetails | null {
+  const has =
+    template.estimateMinutes > 0 ||
+    !!template.project ||
+    template.priority !== 0 ||
+    template.steps.length > 0;
+  if (!line && !has) return null;
+  const details =
+    line ?? detailsOf({ id: 0, title: "", done: false, createdAt: 0 });
+  return {
+    ...details,
+    estimateMinutes: details.estimateMinutes || template.estimateMinutes,
+    project: details.project.trim() || template.project,
+    priority: details.priority || template.priority,
+    checklist: details.checklist.length
+      ? details.checklist
+      : template.steps.map((text) => ({ text, done: false })),
+  };
+}
+/** Szablon z zadania („Zapisz jako szablon” w rozwiniętym kafelku). */
+export function templateFromTask(task: Task): TemplateBody {
+  const d = detailsOf(task);
+  return {
+    // Klucz w tytule zadania z Jiry zamienia się w pole {klucz}.
+    title: task.jiraKey
+      ? task.title.replaceAll(task.jiraKey, "{klucz}")
+      : task.title,
+    estimateMinutes: d.estimateMinutes,
+    steps: d.checklist.map((item) => item.text),
+    project: d.project,
+    priority: d.priority,
+  };
+}
+/** Walidacja jak `templates::validate`; zwraca oczyszczoną treść. */
+function validTemplate(name: string, body: TemplateBody): TemplateBody {
+  if (!TEMPLATE_NAME.test(name))
+    throw new Error(
+      "Nazwa szablonu może mieć od 1 do 60 liter, cyfr, „-” lub „_” (bez spacji).",
+    );
+  const clean = {
+    title: body.title.trim(),
+    estimateMinutes: body.estimateMinutes,
+    steps: body.steps.map((s) => s.trim()).filter(Boolean),
+    project: body.project.trim(),
+    priority: body.priority,
+  };
+  if ([...clean.title].length > 240)
+    throw new Error("Tytuł szablonu może mieć najwyżej 240 znaków.");
+  if ([...clean.project].length > 80)
+    throw new Error("Nazwa projektu może mieć najwyżej 80 znaków.");
+  if (
+    ![-1, 0, 1].includes(clean.priority) ||
+    !Number.isInteger(clean.estimateMinutes) ||
+    clean.estimateMinutes < 0 ||
+    clean.estimateMinutes > 600_000
+  )
+    throw new Error("Niepoprawny priorytet lub szacunek szablonu.");
+  if (clean.steps.length > 100 || clean.steps.some((s) => [...s].length > 240))
+    throw new Error("Szablon może mieć najwyżej 100 kroków po 240 znaków.");
+  return clean;
+}
+function previewTemplatesChanged(list: TaskTemplate[]) {
+  localStorage.setItem(templatesKey, JSON.stringify(list));
+  window.dispatchEvent(new CustomEvent(templateEvent));
+}
+/** Lista szablonów (`templates_list`); odświeża też `templates`. */
+export async function loadTemplates(): Promise<TaskTemplate[]> {
+  const list = desktop
+    ? await invoke<TaskTemplate[]>("templates_list")
+    : sortTemplates(previewTemplates());
+  templates.value = list;
+  return list;
+}
+/** Tworzy (`id` = null) albo zmienia szablon, także nazwę (`template_save`). */
+export async function saveTemplate(
+  id: number | null,
+  name: string,
+  body: TemplateBody,
+): Promise<TaskTemplate[]> {
+  name = name.trim();
+  if (desktop) {
+    templates.value = await invoke<TaskTemplate[]>("template_save", {
+      id,
+      name,
+      template: body,
+    });
+    return templates.value;
+  }
+  const clean = validTemplate(name, body);
+  const list = previewTemplates();
+  const other = findTemplate(list, name);
+  if (other && other.id !== id)
+    throw new Error(`Szablon „${other.name}” już istnieje.`);
+  if (id !== null) {
+    const current = list.find((t) => t.id === id);
+    if (!current) throw new Error("Nie znaleziono szablonu.");
+    Object.assign(current, clean, { name });
+  } else
+    list.push({
+      id: Math.max(0, ...list.map((t) => t.id)) + 1,
+      name,
+      ...clean,
+    });
+  previewTemplatesChanged(list);
+  return loadTemplates();
+}
+/** Usuwa szablon (`template_delete`). */
+export async function deleteTemplate(id: number): Promise<TaskTemplate[]> {
+  if (desktop) {
+    templates.value = await invoke<TaskTemplate[]>("template_delete", { id });
+    return templates.value;
+  }
+  const list = previewTemplates();
+  if (!list.some((t) => t.id === id))
+    throw new Error("Nie znaleziono szablonu.");
+  previewTemplatesChanged(list.filter((t) => t.id !== id));
+  return loadTemplates();
+}
+/** Odświeża `templates` po zmianie w innym oknie (np. szybkie przełączanie). */
+export async function onTemplatesChanged(): Promise<() => void> {
+  const reload = () => void loadTemplates().catch(() => {});
+  if (desktop) return listen(templateEvent, reload);
+  window.addEventListener(templateEvent, reload);
+  return () => window.removeEventListener(templateEvent, reload);
 }
 export async function editSession(
   id: number,

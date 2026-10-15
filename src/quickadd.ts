@@ -9,7 +9,7 @@
  * - `do:pt`, `do:20.10` — termin;
  * - `!` / `!wysoki` i `!niski` — priorytet;
  * - `#nazwa` — projekt (także wielowyrazowa nazwa istniejącego projektu);
- * - `/szablon` — szablon (rozpoznany, jeszcze bez działania);
+ * - `/szablon` — szablon z Ustawień → Szablony (nieznana nazwa to błąd);
  * - `\` przed znakiem specjalnym — zapis dosłowny (`C\#` → „C#”, `\#wms` → „#wms”).
  *
  * Tekst bez zapisów i bez `\` daje tytuł identyczny z wpisanym, więc zwykłe
@@ -61,7 +61,7 @@ export interface Parsed {
 export interface QuickSettings {
   /** Istniejące projekty: podpowiedzi i zachowanie pisowni. */
   projects?: string[];
-  /** Nazwy szablonów (etap Q2); na razie tylko do podpowiedzi. */
+  /** Nazwy szablonów: podpowiedzi Tab, pisownia i błąd przy nieznanej nazwie. */
   templates?: string[];
   /**
    * Czy Jira jest połączona. `false`: słowo wyglądające jak klucz (np.
@@ -348,8 +348,20 @@ export function parse(
       continue;
     }
     if (w.length > 1 && w[0] === "/" && TEMPLATE.test(w.slice(1))) {
-      const name = w.slice(1);
-      set("template", word, `Szablon: ${name} (jeszcze niedostępne)`, () => (fields.template = name), fields.template != null);
+      // Znana lista szablonów: pisownia z listy, nieznana nazwa to błąd.
+      // Bez listy (`templates` nie podano) nazwa jest przyjmowana, jak wpisana.
+      const known = settings.templates?.find(
+        (t) => t.toLocaleLowerCase("pl") === w.slice(1).toLocaleLowerCase("pl"),
+      );
+      if (settings.templates && !known)
+        fail(
+          word,
+          `Nie ma szablonu „${w.slice(1)}”. Dodaj go w Ustawieniach → Szablony albo poprzedź / znakiem \\, by zostawić w tytule.`,
+        );
+      else {
+        const name = known ?? w.slice(1);
+        set("template", word, `Szablon: ${name}`, () => (fields.template = name), fields.template != null);
+      }
       continue;
     }
     literal();
@@ -420,14 +432,51 @@ export function complete(
   };
 }
 
-/** Szablony (etap Q2) jeszcze nie działają: `/szablon` blokuje dodanie. */
-export const TEMPLATE_UNAVAILABLE =
-  "Szablony będą dostępne wkrótce. Usuń /szablon albo poprzedź go znakiem \, by zostawić w tytule.";
-
-/** Błąd blokujący dodanie (pierwszy błąd składni albo niedostępny szablon). */
+/** Błąd blokujący dodanie: pierwszy błąd składni (także nieznany szablon). */
 export function blockingError(parsed: Parsed): string | undefined {
-  return (
-    parsed.errors[0] ??
-    (parsed.fields.template != null ? TEMPLATE_UNAVAILABLE : undefined)
-  );
+  return parsed.errors[0];
+}
+
+/**
+ * Tytuł zadania z szablonu; ta sama reguła co `templates::render_title` w Rust.
+ * - `{klucz}` → klucz Jiry (pusty, gdy go nie podano);
+ * - `{tytuł}` (także `{tytul}`) → tytuł z linii, a bez niego tytuł zgłoszenia (`summary`);
+ * - tytuł z linii bez pola `{tytuł}` jest dopisywany na końcu;
+ * - pusty tytuł szablonu zostawia tytuł z linii.
+ * Rzuca błąd, gdy potrzebny tytuł zgłoszenia jest nieznany.
+ */
+export function renderTitle(
+  template: string,
+  key: string | null | undefined,
+  line: string,
+  summary: (key: string) => string | null | undefined,
+): string {
+  line = line.trim();
+  template = template.trim();
+  if (!template) return line;
+  const wantsTitle = template.includes("{tytuł}") || template.includes("{tytul}");
+  let value = line;
+  if (!line && wantsTitle && key) {
+    value = summary(key)?.trim() ?? "";
+    if (!value)
+      throw new Error(
+        `Nie znam tytułu ${key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
+      );
+  }
+  let title = template
+    .replaceAll("{klucz}", key ?? "")
+    .replaceAll("{tytuł}", value)
+    .replaceAll("{tytul}", value);
+  if (!wantsTitle && line) title = `${title} ${line}`;
+  return tidyTitle(title);
+}
+
+/** Sprząta tytuł po pustych polach (jak `templates::tidy`). */
+function tidyTitle(title: string) {
+  return title
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ")
+    .replace(/ ([:,.])/g, "$1")
+    .replace(/^[:,\-–— ]+|[:,\-–— ]+$/g, "");
 }

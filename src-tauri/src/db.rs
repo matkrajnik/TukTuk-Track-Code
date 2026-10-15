@@ -54,7 +54,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS jira_issues (site TEXT NOT NULL, issue_key TEXT NOT NULL, status TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site,issue_key));
         CREATE INDEX IF NOT EXISTS sessions_task ON sessions(task_id);
         CREATE INDEX IF NOT EXISTS sessions_started ON sessions(started_at);
-        CREATE TABLE IF NOT EXISTS notifications_sent (key TEXT PRIMARY KEY, at INTEGER);")
+        CREATE TABLE IF NOT EXISTS notifications_sent (key TEXT PRIMARY KEY, at INTEGER);
+        CREATE TABLE IF NOT EXISTS task_templates (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE COLLATE NOCASE, json TEXT NOT NULL);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db

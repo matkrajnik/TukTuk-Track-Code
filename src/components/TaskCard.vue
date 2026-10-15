@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, nextTick, ref } from "vue";
 import {
   Archive,
+  BookmarkPlus,
   Check,
   ChevronDown,
   ExternalLink,
@@ -16,6 +17,8 @@ import ReorderHandle from "./ReorderHandle.vue";
 import {
   desktop,
   duration,
+  saveTemplate,
+  templateFromTask,
   type Session,
   type Snapshot,
   type Task,
@@ -64,6 +67,32 @@ const plannedLabel = computed(() => {
     d.plannedDay === props.todayKey ? "Dziś" : dayText(d.plannedDay);
   return d.plannedStart ? `${day} ${d.plannedStart}` : day;
 });
+/** „Zapisz jako szablon”: nazwa wpisywana w kafelku, reszta z zadania. */
+const templateName = ref<string | null>(null);
+const templateSaved = ref("");
+const templateBusy = ref(false);
+const templateInput = ref<HTMLInputElement | null>(null);
+async function openTemplateForm() {
+  templateSaved.value = "";
+  templateName.value = "";
+  await nextTick();
+  templateInput.value?.focus();
+}
+async function saveAsTemplate() {
+  const name = templateName.value?.trim() ?? "";
+  if (!name || templateBusy.value) return;
+  templateBusy.value = true;
+  emit("error", "");
+  try {
+    await saveTemplate(null, name, templateFromTask(props.task));
+    templateName.value = null;
+    templateSaved.value = `Zapisano szablon „${name}”. Użyj go, wpisując /${name} w polu „Nowe zadanie”; zmienisz go w Ustawieniach → Szablony.`;
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    templateBusy.value = false;
+  }
+}
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
@@ -202,6 +231,15 @@ async function openJira(url: string) {
         <span class="details-actions-spacer" />
         <button
           class="action-button"
+          :aria-label="'Zapisz jako szablon: ' + task.title"
+          title="Tytuł, szacunek, kroki listy, projekt i priorytet jako szablon /nazwa"
+          :aria-expanded="templateName !== null"
+          @click="templateName === null ? openTemplateForm() : (templateName = null)"
+        >
+          <BookmarkPlus :size="14" />Zapisz jako szablon
+        </button>
+        <button
+          class="action-button"
           :disabled="busy"
           @click="emit('act', 'archive')"
         >
@@ -225,6 +263,35 @@ async function openJira(url: string) {
             <Trash2 :size="14" />Usuń
           </button>
       </div>
+      <form
+        v-if="templateName !== null"
+        class="template-save"
+        @submit.prevent="saveAsTemplate"
+        @keydown.esc.stop="templateName = null"
+      >
+        <label
+          >Nazwa szablonu
+          <span class="template-slash">/</span
+          ><input
+            ref="templateInput"
+            v-model="templateName"
+            :aria-label="'Nazwa szablonu: ' + task.title"
+            placeholder="np. review"
+            maxlength="60"
+        /></label>
+        <button
+          class="primary-button"
+          :disabled="templateBusy || !templateName.trim()"
+        >
+          Zapisz szablon
+        </button>
+        <button type="button" class="action-button" @click="templateName = null">
+          Anuluj
+        </button>
+      </form>
+      <p v-if="templateSaved" class="hint template-saved" role="status">
+        {{ templateSaved }}
+      </p>
       <h3 class="details-heading">Przedziały pracy</h3>
       <div v-for="session in sessions" :key="session.id" class="session-row">
         <div class="interval">

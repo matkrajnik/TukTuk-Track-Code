@@ -2,6 +2,7 @@
 //! powiązaniem z Jirą i startem pomiaru w jednej transakcji.
 use crate::db::{self, Snapshot};
 use crate::planner::{self, Details};
+use crate::templates;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 
@@ -15,6 +16,8 @@ pub struct NewTask {
     pub details: Option<Details>,
     /// „Utwórz i rozpocznij” z szybkiego przełączania: poprzedni pomiar staje.
     pub start: bool,
+    /// `/nazwa`: szablon z `task_templates`; jawne pola z linii wygrywają.
+    pub template: Option<String>,
 }
 
 /// Tworzy zadanie. `summary` podaje tytuł zgłoszenia znanego z listy Jiry.
@@ -44,10 +47,28 @@ pub fn create(
         }
         (_, site) => site.unwrap_or_default(),
     };
-    let mut title = task.title.trim().to_owned();
+    let template = match task.template.as_deref().map(str::trim) {
+        Some(name) if !name.is_empty() => Some(templates::find(db, name)?.ok_or(format!(
+            "Nie ma szablonu „{name}”. Dodaj go w Ustawieniach → Szablony."
+        ))?),
+        _ => None,
+    };
+    let mut summary = Some(summary);
+    let mut title = match &template {
+        Some(t) => templates::render_title(&t.body.title, key.as_deref(), &task.title, |k| {
+            summary.take().and_then(|f| f(k))
+        })?
+        // Długi tytuł zgłoszenia nie blokuje szablonu, jak przy samym kluczu.
+        .chars()
+        .take(240)
+        .collect(),
+        None => task.title.trim().to_owned(),
+    };
+    let summary = summary.take();
     if title.is_empty() {
         if let Some(key) = &key {
-            title = summary(key)
+            title = summary
+                .and_then(|f| f(key))
                 .map(|s| s.trim().chars().take(240).collect())
                 .filter(|s: &String| !s.is_empty())
                 .ok_or(format!(
@@ -58,7 +79,11 @@ pub fn create(
     if title.is_empty() || title.chars().count() > 240 {
         return Err("Tytuł musi mieć od 1 do 240 znaków.".into());
     }
-    let details = match task.details {
+    let line_details = match &template {
+        Some(t) => templates::merge_details(task.details, &t.body),
+        None => task.details,
+    };
+    let details = match line_details {
         Some(mut details) => {
             planner::validate(&mut details)?;
             Some(details)
@@ -299,5 +324,111 @@ mod tests {
         .unwrap();
         assert_eq!(snap.tasks[0].title, "COVID-19 raport");
         assert_eq!(snap.tasks[0].jira_key, None);
+    }
+
+    fn review(db: &mut Connection) {
+        templates::save(
+            db,
+            None,
+            "review",
+            templates::Body {
+                title: "Code review {klucz}: {tytuł}".into(),
+                estimate_minutes: 45,
+                steps: vec!["Przeczytaj opis".into(), "Sprawdź testy".into()],
+                project: "WMS".into(),
+                priority: 1,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn template_with_jira_key_takes_issue_title_steps_and_estimate() {
+        let mut db = open();
+        review(&mut db);
+        let snap = create(
+            &mut db,
+            Some(SITE),
+            |key| (key == "WMS-123").then(|| "Eksport etykiet".to_owned()),
+            NewTask {
+                jira_key: Some("WMS-123".into()),
+                template: Some("Review".into()),
+                ..NewTask::default()
+            },
+            100,
+        )
+        .unwrap();
+        let task = &snap.tasks[0];
+        assert_eq!(task.title, "Code review WMS-123: Eksport etykiet");
+        assert_eq!(task.jira_key.as_deref(), Some("WMS-123"));
+        assert_eq!(task.details.estimate_minutes, 45);
+        assert_eq!(task.details.project, "WMS");
+        assert_eq!(task.details.priority, 1);
+        let steps: Vec<_> = task
+            .details
+            .checklist
+            .iter()
+            .map(|c| (c.text.as_str(), c.done))
+            .collect();
+        assert_eq!(
+            steps,
+            [("Przeczytaj opis", false), ("Sprawdź testy", false)]
+        );
+        // Szablon nie uruchamia pomiaru.
+        assert!(snap.sessions.is_empty());
+    }
+
+    #[test]
+    fn explicit_line_fields_win_over_template() {
+        let mut db = open();
+        review(&mut db);
+        let snap = create(
+            &mut db,
+            Some(SITE),
+            |_| Some("Z Jiry".into()),
+            NewTask {
+                title: "Poprawki".into(),
+                jira_key: Some("WMS-5".into()),
+                template: Some("review".into()),
+                details: Some(Details {
+                    estimate_minutes: 90,
+                    priority: -1,
+                    project: "Foundation".into(),
+                    planned_day: "2026-10-16".into(),
+                    ..Details::default()
+                }),
+                ..NewTask::default()
+            },
+            100,
+        )
+        .unwrap();
+        let task = &snap.tasks[0];
+        assert_eq!(task.title, "Code review WMS-5: Poprawki");
+        assert_eq!(task.details.estimate_minutes, 90);
+        assert_eq!(task.details.priority, -1);
+        assert_eq!(task.details.project, "Foundation");
+        assert_eq!(task.details.planned_day, "2026-10-16");
+        assert_eq!(task.details.checklist.len(), 2);
+    }
+
+    #[test]
+    fn unknown_template_or_issue_creates_nothing() {
+        let mut db = open();
+        review(&mut db);
+        for task in [
+            NewTask {
+                title: "Raport".into(),
+                template: Some("brak".into()),
+                ..NewTask::default()
+            },
+            NewTask {
+                jira_key: Some("WMS-9".into()),
+                template: Some("review".into()),
+                ..NewTask::default()
+            },
+        ] {
+            assert!(create(&mut db, Some(SITE), |_| None, task, 1).is_err());
+        }
+        assert!(db::snapshot(&db).unwrap().tasks.is_empty());
     }
 }

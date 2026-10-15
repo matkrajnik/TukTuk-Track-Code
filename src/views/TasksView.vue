@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Plus, Scissors, Search, Square } from "lucide-vue-next";
 import TaskCard from "../components/TaskCard.vue";
 import {
   change,
   duration,
   jiraConnected,
+  loadTemplates,
+  onTemplatesChanged,
   quickAdd,
   quickTask,
   refreshJiraConnected,
+  templates,
   setPriority,
   type NavigateRequest,
   type Session,
@@ -207,11 +210,30 @@ async function act(
     working.value = false;
   }
 }
-onMounted(refreshJiraConnected);
+const templateNames = computed(() => templates.value.map((t) => t.name));
+let stopTemplates: (() => void) | undefined;
+let mounted = true;
+onMounted(async () => {
+  void refreshJiraConnected();
+  try {
+    const stop = await onTemplatesChanged();
+    if (!mounted) return stop();
+    stopTemplates = stop;
+    await loadTemplates();
+  } catch {
+    // Bez listy szablonów dodawanie działa dalej; `/nazwa` pokaże wtedy błąd
+    // w chipie, a lista wróci przy następnym otwarciu widoku.
+  }
+});
+onUnmounted(() => {
+  mounted = false;
+  stopTemplates?.();
+});
 const newInput = ref<HTMLInputElement | null>(null);
 const parsed = computed(() =>
   parse(newTitle.value, todayKey.value, {
     projects: projects.value,
+    templates: templateNames.value,
     jiraEnabled: jiraConnected.value,
   }),
 );
@@ -219,7 +241,9 @@ const parsed = computed(() =>
 const canAdd = computed(
   () =>
     !blockingError(parsed.value) &&
-    (!!parsed.value.title.trim() || !!parsed.value.fields.jiraKey),
+    (!!parsed.value.title.trim() ||
+      !!parsed.value.fields.jiraKey ||
+      !!parsed.value.fields.template),
 );
 async function add() {
   const result = parsed.value;
@@ -255,6 +279,7 @@ function tab(e: KeyboardEvent) {
   if (e.shiftKey || input.selectionStart !== input.selectionEnd) return;
   const done = complete(input.value, input.selectionStart ?? 0, {
     projects: projects.value,
+    templates: templateNames.value,
   });
   if (!done) return;
   e.preventDefault();
@@ -316,7 +341,7 @@ async function priority(task: Task, e: Event) {
       v-model="newTitle"
       aria-label="Nowe zadanie"
       placeholder="Nowe zadanie…"
-      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · \ dosłownie"
+      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · /szablon · \ dosłownie"
       maxlength="240"
       :disabled="loading"
       @keydown.tab="tab"
