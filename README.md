@@ -113,7 +113,7 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Wersja w repozytorium: 1.1.0. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.1.0_x64-setup.exe`. Instalator 1.1.0 jest zbudowany, ale nie był instalowany. Nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
+Wersja w repozytorium: 1.2.0 (odświeżony interfejs: niebieska paleta, ujednolicone formaty czasu i dat, uporządkowana karta zadania i dashboard; bez zmian w bazie). Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.2.0_x64-setup.exe`; gotowy instalator leży w repozytorium w `releases/`. Instalator 1.2.0 nie był jeszcze instalowany. Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
 
 Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
