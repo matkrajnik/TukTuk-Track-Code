@@ -153,3 +153,24 @@ test("templates: /review WMS-31 takes the title from Jira in the app", async ({
     template: "review",
   });
 });
+
+test("templates: editing the estimate in settings saves minutes", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await saveFromTile(page, "Code review", "review");
+  await page.getByRole("button", { name: "Otwórz ustawienia" }).click();
+  const form = page.getByRole("form", { name: "Szablon review" });
+  const estimate = form.getByLabel("Szacunek: review", { exact: true });
+  await estimate.fill("45");
+  await form.getByRole("button", { name: "Zapisz szablon" }).click();
+  await expect(form.getByRole("status")).toHaveText("Zapisano.");
+  await expect(form.getByRole("alert")).toHaveCount(0);
+  expect((await storedTemplates(page))[0].estimateMinutes).toBe(45);
+
+  // Puste pole oznacza brak szacunku.
+  await estimate.fill("");
+  await form.getByRole("button", { name: "Zapisz szablon" }).click();
+  await expect(form.getByRole("status")).toHaveText("Zapisano.");
+  expect((await storedTemplates(page))[0].estimateMinutes).toBe(0);
+});

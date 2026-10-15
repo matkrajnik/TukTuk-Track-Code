@@ -39,7 +39,8 @@ async function save() {
   error.value = "";
   saved.value = "";
   try {
-    const estimate = draft.value.estimate.trim();
+    // v-model na <input type="number"> zamienia wpisaną wartość na liczbę.
+    const estimate = String(draft.value.estimate ?? "").trim();
     const minutes = estimate === "" ? 0 : Number(estimate);
     if (!Number.isInteger(minutes) || minutes < 0)
       throw new Error("Szacunek podaj w pełnych minutach.");
