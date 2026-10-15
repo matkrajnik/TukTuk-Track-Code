@@ -34,6 +34,8 @@ export interface AppSettings {
   focusBreakStops: boolean;
   /** Tytuły spotkań z kalendarza; wyłączone = „Spotkanie”. */
   calendarShowTitles: boolean;
+  /** Szacunki z poprawką z historii w pojemności, osi planu i „Rozłóż”. */
+  planWithCorrection: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -68,6 +70,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   focusBreakMinutes: 5,
   focusBreakStops: true,
   calendarShowTitles: true,
+  planWithCorrection: false,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";

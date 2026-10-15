@@ -25,6 +25,7 @@ import {
   type Token,
 } from "./quickadd";
 import QuickChips from "./components/QuickChips.vue";
+import { corrections } from "./estimates";
 import { setNavigator } from "./navigation";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
@@ -33,6 +34,8 @@ const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   busy = ref(false),
   index = ref(0);
 const input = ref<HTMLInputElement | null>(null);
+/** Poprawka szacunków z wczytanych danych (podpowiedź „zwykle ~…”). */
+const correctionOf = computed(() => corrections(data.value, Date.now()));
 let off: UnlistenFn | undefined;
 const matches = computed(() =>
   data.value.tasks
@@ -184,6 +187,7 @@ onUnmounted(() => off?.());
     />
     <QuickChips
       :parsed="parsed"
+      :correction="correctionOf"
       @remove="removeChip"
       @settings="close"
     />

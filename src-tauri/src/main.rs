@@ -170,6 +170,17 @@ fn plan_task(
     Ok(result)
 }
 #[tauri::command]
+fn plan_tasks(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    entries: Vec<planner::PlanEntry>,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = planner::plan_tasks(&mut connection, &entries)?;
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
+#[tauri::command]
 fn save_details(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
@@ -380,6 +391,7 @@ fn main() {
             set_priority,
             reorder_tasks,
             plan_task,
+            plan_tasks,
             idle::idle_notice,
             idle::idle_resolve,
             agents::agents_status,

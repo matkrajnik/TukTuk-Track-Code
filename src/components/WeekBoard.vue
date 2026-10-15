@@ -1,11 +1,26 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
-import { meetingTitle, planTask, type Snapshot, type Task } from "../store";
+import { computed, nextTick, ref, watch } from "vue";
+import {
+  detailsOf,
+  meetingTitle,
+  planTask,
+  planTasks,
+  type PlanEntry,
+  type Snapshot,
+  type Task,
+} from "../store";
 import { dayBounds, dayKey, dayText, inDay } from "../time";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
 import { dayTarget, hhmm, hm, targetHoliday, useSettings } from "../target";
 import { dayCapacity } from "../capacity";
+import {
+  correctionTitle,
+  corrections,
+  plannedMs,
+  usuallyText,
+} from "../estimates";
+import { spread, type SpreadResult } from "../spread";
 import { useMeetings } from "../composables/useMeetings";
 import { useReorder } from "../composables/useReorder";
 import WeekCard from "./WeekCard.vue";
@@ -30,6 +45,15 @@ const calendar = useMeetings(() => {
 const busy = ref(false);
 const error = ref("");
 const search = ref("");
+/** Mnożniki poprawki szacunków; liczone raz na minutę, nie co sekundę. */
+const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
+const correctionOf = computed(() => corrections(props.data, minute.value));
+/** Czas zadania w planie: szacunek, z poprawką przy „Planuj z poprawką”. */
+const planned = (task: Task) =>
+  plannedMs(
+    task,
+    settings.value.planWithCorrection ? correctionOf.value : undefined,
+  );
 
 const shortNames = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"];
 const longNames = [
@@ -61,10 +85,7 @@ const days = computed(() => {
     date.setDate(monday.getDate() + i);
     const key = dayKey(+date);
     const tasks = plannedTasks(props.data.tasks, key);
-    const estimate = tasks.reduce(
-      (sum, t) => sum + (t.details?.estimateMinutes ?? 0) * 60_000,
-      0,
-    );
+    const estimate = tasks.reduce((sum, t) => sum + planned(t), 0);
     const goal = dayTarget(settings.value, key);
     // Pojemność dnia: cel minus spotkania; urlop całodniowy = dzień wolny.
     const cap = dayCapacity(goal, calendar.events.value, key);
@@ -176,6 +197,91 @@ function percent(task: Task) {
     : null;
 }
 
+/** Podpowiedź „zwykle ~…” dla karty z szacunkiem (bez danych pusta). */
+function usual(task: Task) {
+  const c = correctionOf.value(task.details?.project);
+  return {
+    text: usuallyText(task.details?.estimateMinutes ?? 0, c),
+    title: correctionTitle(c),
+  };
+}
+
+// „Rozłóż”: podgląd zachłannego planu od dziś do końca widocznego tygodnia.
+// Nic nie zapisuje się bez „Zastosuj”.
+const preview = ref<SpreadResult | null>(null);
+/** Dni tygodnia od dziś (tydzień w przeszłości nie ma takich dni). */
+const spreadDays = computed(() =>
+  days.value.filter((d) => d.key >= dayKey(props.now)),
+);
+function openSpread() {
+  error.value = "";
+  const candidates = [
+    ...backlogAll.value,
+    ...props.data.tasks.filter(
+      (t) =>
+        isOpen(t) &&
+        !!t.details?.plannedDay &&
+        t.details.plannedDay < weekStart.value,
+    ),
+  ];
+  preview.value = spread(
+    candidates,
+    spreadDays.value.map((d) => ({
+      day: d.key,
+      capacity: d.free ? 0 : d.target,
+      load: d.estimate,
+    })),
+    planned,
+  );
+}
+const dayInfo = (key: string) => days.value.find((d) => d.key === key)!;
+watch(
+  () => props.day,
+  () => (preview.value = null),
+);
+
+/**
+ * Kolejność dołożonych zadań: na koniec pasma priorytetu w dniu, jak przy
+ * przeniesieniu; kolejne zadania z tego samego pasma stają za poprzednimi.
+ */
+function spreadEntries(result: SpreadResult): PlanEntry[] {
+  const added = new Map<string, Task[]>();
+  return result.placed.map(({ task, day }) => {
+    const priority = task.details?.priority ?? 0;
+    const column = [...plannedTasks(props.data.tasks, day), ...(added.get(day) ?? [])];
+    const band = column.filter(
+      (t) => t.id !== task.id && (t.details?.priority ?? 0) === priority,
+    );
+    const order = Math.min(
+      1_000_000,
+      Math.max(
+        0,
+        band.length
+          ? Math.max(...band.map((t) => t.details?.order ?? 0)) + 1
+          : (task.details?.order ?? 0),
+      ),
+    );
+    added.set(day, [
+      ...(added.get(day) ?? []),
+      { ...task, details: { ...detailsOf(task), priority, order } },
+    ]);
+    return { id: task.id, day, order };
+  });
+}
+async function applySpread() {
+  if (!preview.value || busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    emit("updated", await planTasks(spreadEntries(preview.value)));
+    preview.value = null;
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
 const reorder = useReorder({
   scope: "week",
   all: () => props.data.tasks,
@@ -285,11 +391,109 @@ function columnProps(id: string, lists: string[], day: string) {
 
 <template>
   <section class="week-board-wrap" aria-label="Tablica tygodnia">
-    <p class="hint">
-      {{ dayText(weekStart) }} — {{ dayText(weekEnd) }} · Przeciągnij kartę za uchwyt ⋮⋮ do innego
-      dnia albo użyj „Przenieś na…”.
-    </p>
+    <div class="week-board-head">
+      <p class="hint">
+        {{ dayText(weekStart) }} — {{ dayText(weekEnd) }} · Przeciągnij kartę za uchwyt ⋮⋮ do innego
+        dnia albo użyj „Przenieś na…”.
+      </p>
+      <button
+        type="button"
+        class="secondary-button"
+        :disabled="busy || !spreadDays.length"
+        :title="
+          spreadDays.length
+            ? 'Rozłóż zadania z „Do zaplanowania” i „Zaległych” na dni od dziś do końca tygodnia (podgląd przed zapisem)'
+            : 'Ten tydzień już minął'
+        "
+        :aria-expanded="!!preview"
+        @click="openSpread"
+      >
+        Rozłóż
+      </button>
+    </div>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
+    <section
+      v-if="preview"
+      class="spread-preview dashboard-card"
+      aria-label="Podgląd: Rozłóż"
+    >
+      <h3>Podgląd: Rozłóż</h3>
+      <p class="hint">
+        Zadania z „Do zaplanowania” i „Zaległych” według terminu, priorytetu i
+        kolejności, na dni od dziś do końca tygodnia<template
+          v-if="settings.planWithCorrection"
+        >
+          (szacunki z poprawką)</template
+        >; bez szacunku 30 min. Nic nie zmieni się bez „Zastosuj”.
+        <template v-if="preview.skipped.length">
+          Pominięte (czekam na, cykliczne): {{ preview.skipped.length }}.
+        </template>
+      </p>
+      <ul class="spread-days">
+        <li
+          v-for="d in preview.days"
+          :key="d.day"
+          :aria-label="'Rozłóż: ' + dayInfo(d.day).long + ' ' + d.day"
+        >
+          <div class="spread-day-head">
+            <strong
+              >{{ dayInfo(d.day).short }}
+              <span class="mono">{{ dayInfo(d.day).date }}</span></strong
+            >
+            <span
+              v-if="d.capacity > 0"
+              class="mono"
+              :title="'Przed / po rozłożeniu względem pojemności dnia'"
+              >{{ hhmm(d.load) }} → {{ hhmm(d.after) }} /
+              {{ hhmm(d.capacity) }}</span
+            >
+            <span v-else class="hint">wolne</span>
+          </div>
+          <ul v-if="d.tasks.length" class="spread-tasks">
+            <li v-for="p in d.tasks" :key="p.task.id">
+              {{ p.task.title }}
+              <span class="mono hint">{{ hhmm(p.duration) }}</span>
+            </li>
+          </ul>
+          <p v-else-if="d.capacity > 0" class="hint">Bez nowych zadań.</p>
+        </li>
+      </ul>
+      <section
+        v-if="preview.missed.length"
+        class="spread-missed"
+        aria-label="Nie zmieściło się"
+      >
+        <h4>Nie zmieściło się</h4>
+        <ul>
+          <li v-for="m in preview.missed" :key="m.task.id">
+            {{ m.task.title }}
+            <span class="mono hint">{{ hhmm(m.duration) }}</span> —
+            {{ m.reason }}
+          </li>
+        </ul>
+      </section>
+      <p v-if="!preview.placed.length && !preview.missed.length" class="hint">
+        Nie ma czego rozłożyć.
+      </p>
+      <div class="spread-actions">
+        <button
+          type="button"
+          class="primary-button"
+          :disabled="busy || !preview.placed.length"
+          @click="applySpread"
+        >
+          Zastosuj
+        </button>
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="busy"
+          @click="preview = null"
+        >
+          Anuluj
+        </button>
+      </div>
+    </section>
     <div class="week-board">
       <section
         class="week-column week-backlog"
@@ -318,6 +522,7 @@ function columnProps(id: string, lists: string[], day: string) {
               :days="menuDays"
               :next-monday="nextMonday"
               :percent="percent(task)"
+              :usual="usual(task)"
               :busy="busy"
               @move="moveTo(task, $event, true)"
               @reorder="reorder.move(backlog, task.id, $event)"
@@ -335,6 +540,7 @@ function columnProps(id: string, lists: string[], day: string) {
                 :days="menuDays"
                 :next-monday="nextMonday"
                 :percent="percent(task)"
+              :usual="usual(task)"
                 :busy="busy"
                 show-planned-day
                 @move="moveTo(task, $event, true)"
@@ -410,6 +616,7 @@ function columnProps(id: string, lists: string[], day: string) {
               :days="menuDays"
               :next-monday="nextMonday"
               :percent="percent(task)"
+              :usual="usual(task)"
               :busy="busy"
               @move="moveTo(task, $event, true)"
               @reorder="reorder.move(part(d.tasks, task), task.id, $event)"

@@ -244,6 +244,20 @@ onUnmounted(() => {
       Polskie święta ustawowe, także Wielkanoc i Boże Ciało, nie są dniami
       roboczymi: cel tygodnia i miesiąca jest wtedy niższy.
     </p>
+    <label class="inline-check"
+      ><input
+        :checked="settings.planWithCorrection"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ planWithCorrection: checked($event) })"
+      />Planuj z poprawką szacunków</label
+    >
+    <p class="hint">
+      Poprawka to mediana stosunku czasu rzeczywistego do szacunku ukończonych
+      zadań z 90 dni (projektu albo wszystkich, co najmniej 5 zadań). Bez tej
+      opcji jest tylko podpowiedzią „zwykle ~…”; włączona liczy się w
+      pojemności tablicy tygodnia, osi planu i „Rozłóż”.
+    </p>
     </template>
     <template v-if="section === 'focus'">
     <h2>Skupienie</h2>

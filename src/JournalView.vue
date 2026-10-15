@@ -12,6 +12,7 @@ import {
 } from "./store";
 import { dayKey, dayBounds, dayText, inDay } from "./time";
 import { plannedTasks } from "./dayplan";
+import { corrections } from "./estimates";
 import {
   dayTarget,
   hhmm,
@@ -41,6 +42,9 @@ const emit = defineEmits<{
   dayCloseShown: [];
 }>();
 const day = ref(dayKey(props.now));
+/** Poprawka szacunków (podpowiedź w rozwiniętym planie); przeliczana co minutę. */
+const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
+const correctionOf = computed(() => corrections(props.data, minute.value));
 const closing = ref(false);
 const weekly = ref(false),
   busy = ref(false),
@@ -403,6 +407,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           v-if="expanded === task.id"
           :task="task"
           :projects="projects"
+          :correction="correctionOf"
           @updated="emit('updated', $event)"
         />
       </article>

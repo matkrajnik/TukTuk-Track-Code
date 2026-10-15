@@ -1657,3 +1657,66 @@ html.widget-root body {
   color: inherit;
   text-decoration: underline;
 }
+
+/* „Rozłóż” na tablicy tygodnia (P1). */
+.week-board-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.week-board-head .hint {
+  margin: 0;
+}
+.spread-preview {
+  margin-bottom: 16px;
+}
+.spread-preview h3,
+.spread-preview h4 {
+  margin: 0 0 6px;
+}
+.spread-days {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+}
+.spread-days > li {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px;
+}
+.spread-day-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--fs-sm);
+}
+.spread-tasks,
+.spread-missed ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+}
+.spread-days p {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+}
+.spread-missed {
+  margin: 8px 0;
+}
+.spread-actions {
+  display: flex;
+  gap: 8px;
+}
+.week-usual,
+.estimate-hint,
+.quick-chip-hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.estimate-hint {
+  margin: -4px 0 8px;
+}

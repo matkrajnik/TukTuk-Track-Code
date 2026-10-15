@@ -10,6 +10,7 @@ import {
   workBlocks,
 } from "../dayplan";
 import { meetingSpans } from "../capacity";
+import { corrections, plannedMs } from "../estimates";
 import { hhmm, signedDiff, targetDiffMinutes, useSettings } from "../target";
 import { dayBounds, dayKey } from "../time";
 import { useMeetings } from "../composables/useMeetings";
@@ -46,8 +47,24 @@ const meetings = computed(() => {
 const busy = computed(() => meetingSpans(calendar.events.value, props.day));
 const titles = computed(() => new Map(props.tasks.map((t) => [t.id, t.title])));
 const title = (id: number) => titles.value.get(id) ?? "Zadanie";
+/** „Planuj z poprawką szacunków”: bloki planu mają długość szacunku z poprawką. */
+const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
+const minutesOf = computed(() => {
+  if (!settings.value.planWithCorrection) return undefined;
+  const of = corrections(
+    { tasks: props.tasks, sessions: props.sessions },
+    minute.value,
+  );
+  return (task: Task) => plannedMs(task, of) / 60_000;
+});
 const plan = computed(() =>
-  planBlocks(props.tasks, props.day, props.dayStart, busy.value),
+  planBlocks(
+    props.tasks,
+    props.day,
+    props.dayStart,
+    busy.value,
+    minutesOf.value,
+  ),
 );
 const work = computed(() => workBlocks(props.sessions, props.day, props.now));
 const range = computed(() =>

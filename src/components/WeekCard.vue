@@ -18,6 +18,8 @@ const props = defineProps<{
   busy: boolean;
   /** Pokazuje dzień planu (zaległe plany sprzed tygodnia). */
   showPlannedDay?: boolean;
+  /** Podpowiedź poprawki szacunku („zwykle ~…”); pusty tekst = brak. */
+  usual?: { text: string; title: string };
 }>();
 const emit = defineEmits<{
   move: [day: string];
@@ -100,6 +102,12 @@ function arrows(event: KeyboardEvent) {
         class="mono"
         :class="{ 'week-over-estimate': (percent ?? 0) > 100 }"
         >{{ hhmm(task.details.estimateMinutes * 60_000) }} · {{ percent }}%</span
+      >
+      <span
+        v-if="task.details?.estimateMinutes && usual?.text"
+        class="week-usual"
+        :title="usual.title"
+        >{{ usual.text }}</span
       >
       <span v-if="task.done" class="task-status">Ukończone</span>
       <span v-else-if="task.details?.waiting" class="task-status"

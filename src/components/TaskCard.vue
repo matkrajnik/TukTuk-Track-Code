@@ -26,7 +26,7 @@ import {
 import { dayText, stamp } from "../time";
 import { hhmm } from "../target";
 import { openSettings } from "../navigation";
-import { estimateMs, overEstimate, percent } from "../estimates";
+import { estimateMs, overEstimate, percent, type CorrectionOf } from "../estimates";
 
 const props = defineProps<{
   task: Task;
@@ -39,6 +39,8 @@ const props = defineProps<{
   now: number;
   todayKey: string;
   projects: string[];
+  /** Poprawka szacunków dla podpowiedzi w rozwiniętym kafelku. */
+  correction?: CorrectionOf;
 }>();
 const emit = defineEmits<{
   toggle: [];
@@ -340,6 +342,7 @@ async function openJira(url: string) {
         :task="task"
         :projects="projects"
         :show-priority="false"
+        :correction="correction"
         @updated="emit('updated', $event)"
       />
     </div>

@@ -40,6 +40,8 @@ pub struct AppSettings {
     pub focus_break_stops: bool,
     /// Tytuły spotkań z kalendarza w interfejsie; wyłączone = „Spotkanie”.
     pub calendar_show_titles: bool,
+    /// Szacunki z poprawką z historii (P1) w pojemności, osi planu i „Rozłóż”.
+    pub plan_with_correction: bool,
 }
 
 impl Default for AppSettings {
@@ -68,6 +70,7 @@ impl Default for AppSettings {
             focus_break_minutes: 5,
             focus_break_stops: true,
             calendar_show_titles: true,
+            plan_with_correction: false,
         }
     }
 }

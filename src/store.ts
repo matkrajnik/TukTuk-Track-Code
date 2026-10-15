@@ -787,6 +787,42 @@ export async function planTask(
   localStorage.setItem(key, JSON.stringify(data));
   return data;
 }
+/** Wpis `plan_tasks`: dzień planu i kolejność jednego zadania. */
+export interface PlanEntry {
+  id: number;
+  day: string;
+  order: number;
+}
+/**
+ * Odpowiednik `plan_tasks` (`planner::plan_tasks`): „Zastosuj” z „Rozłóż”
+ * zapisuje dni wielu zadań naraz; jak `planTask` zmienia tylko `plannedDay`
+ * i `order`, a przy błędzie nie zmienia niczego.
+ */
+export async function planTasks(entries: PlanEntry[]): Promise<Snapshot> {
+  if (desktop) return invoke("plan_tasks", { entries });
+  if (
+    entries.length > 10000 ||
+    entries.some(
+      (e) =>
+        (e.day !== "" &&
+          (!/^\d{4}-\d{2}-\d{2}$/.test(e.day) ||
+            localDay(+new Date(e.day + "T12:00:00")) !== e.day)) ||
+        !Number.isSafeInteger(e.order) ||
+        e.order < 0 ||
+        e.order > 1_000_000,
+    )
+  )
+    throw new Error("Niepoprawny dzień planu.");
+  const data = await read();
+  const tasks = entries.map((e) => data.tasks.find((t) => t.id === e.id));
+  if (tasks.some((t) => !t)) throw new Error("Nie znaleziono zadania.");
+  entries.forEach((e, i) => {
+    const task = tasks[i]!;
+    task.details = { ...detailsOf(task), plannedDay: e.day, order: e.order };
+  });
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
 export async function closeDay(
   day: string,
   closed: boolean,

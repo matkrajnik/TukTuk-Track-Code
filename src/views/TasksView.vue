@@ -23,6 +23,7 @@ import {
 } from "../store";
 import { dayBounds, dayKey, inDay } from "../time";
 import { dayGoal } from "../capacity";
+import { corrections } from "../estimates";
 import { useMeetings } from "../composables/useMeetings";
 import { taskSessions } from "../report";
 import { sortTasks } from "../order";
@@ -282,6 +283,9 @@ onUnmounted(() => {
   mounted = false;
   stopTemplates?.();
 });
+/** Poprawka szacunków (podpowiedzi „zwykle ~…”); przeliczana co minutę. */
+const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
+const correctionOf = computed(() => corrections(props.data, minute.value));
 const newInput = ref<HTMLInputElement | null>(null);
 const parsed = computed(() =>
   parse(newTitle.value, todayKey.value, {
@@ -429,7 +433,11 @@ async function priority(task: Task, e: Event) {
       Dodaj zadanie
     </button>
   </form>
-  <QuickChips :parsed="parsed" @remove="removeChip" />
+  <QuickChips
+    :parsed="parsed"
+    :correction="correctionOf"
+    @remove="removeChip"
+  />
   <div class="list-toolbar">
     <div class="tabs" aria-label="Filtr zadań">
       <button
@@ -515,6 +523,7 @@ async function priority(task: Task, e: Event) {
         :now="now"
         :today-key="todayKey"
         :projects="projects"
+        :correction="correctionOf"
         v-bind="reorder.dropProps(group.tasks, task, group.name)"
         @move="!busy && reorder.move(group.tasks, task.id, $event)"
         @dragstart="reorder.start($event, task.id, group.name)"

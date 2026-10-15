@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { detailsOf, saveDetails, type Task, type Snapshot } from "./store";
+import { correctionTitle, usuallyText, type CorrectionOf } from "./estimates";
 import { dayKey } from "./time";
 const props = withDefaults(
   defineProps<{
@@ -8,6 +9,8 @@ const props = withDefaults(
     projects: string[];
     /** Karta zadania ma własny wybór priorytetu w wierszu. */
     showPriority?: boolean;
+    /** Poprawka szacunków (podpowiedź „zwykle ~…” przy szacunku). */
+    correction?: CorrectionOf;
   }>(),
   { showPriority: true },
 );
@@ -25,6 +28,14 @@ function addCheck() {
     dirty.value = true;
   }
 }
+/** Podpowiedź z bieżącego szkicu: szacunek i projekt przed zapisem. */
+const usual = computed(() => {
+  const c = props.correction?.(draft.value.project);
+  const minutes = Number(draft.value.estimateMinutes) || 0;
+  return c
+    ? { text: usuallyText(minutes, c), title: correctionTitle(c) }
+    : { text: "", title: "" };
+});
 const weekdays = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Niedz"];
 watch(
   () => props.task.details?.priority,
@@ -116,6 +127,7 @@ async function save() {
           min="0"
           max="600000"
           step="1"
+          :aria-describedby="usual.text ? 'estimate-usual-' + task.id : undefined"
       /></label>
       <label
         >Godzina startu w planie<input
@@ -128,6 +140,14 @@ async function save() {
         >Początek cyklu<input v-model="draft.repeatFrom" type="date"
       /></label>
     </div>
+    <p
+      v-if="usual.text"
+      :id="'estimate-usual-' + task.id"
+      class="estimate-hint"
+      :title="usual.title"
+    >
+      Szacunek {{ Number(draft.estimateMinutes) }} min · {{ usual.text }}
+    </p>
     <fieldset class="repeat-options">
       <legend>Powtarzaj w wybrane dni</legend>
       <label v-for="(name, index) in weekdays" :key="name" class="inline-check"

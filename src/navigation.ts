@@ -41,6 +41,9 @@ export const settingsSections = [
       "Proponuj znowu",
       "Cel dzienny (minuty)",
       "Uwzględniaj święta w celu",
+      "szacunki",
+      "poprawka szacunków",
+      "Planuj z poprawką szacunków",
     ],
   },
   {

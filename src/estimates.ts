@@ -195,3 +195,124 @@ export function atRisk(
 export const ratioText = (ratio: number) => `${Math.round(ratio * 100)}%`;
 /** Odsetek jako procent, np. „40%”. */
 export const shareText = (share: number) => `${Math.round(share * 100)}%`;
+
+/**
+ * Poprawka szacunków (PLAN_1.7.md, P1): mnożnik z mediany stosunku
+ * rzeczywistość/plan ukończonych zadań z szacunkiem z ostatnich 90 dni.
+ * Najpierw zadania projektu (co najmniej `CORRECTION_MIN`), inaczej wszystkie
+ * (co najmniej `CORRECTION_MIN`), inaczej 1. Mnożnik obcięty do 0,5–3.
+ */
+export const CORRECTION_MIN = 5;
+export const CORRECTION_PERIOD: EstimatePeriod = "90";
+export const CORRECTION_LOW = 0.5;
+export const CORRECTION_HIGH = 3;
+
+export interface Correction {
+  /** Mnożnik szacunku (1, gdy brak danych). */
+  factor: number;
+  /** Liczba ukończonych zadań, z których pochodzi mnożnik (0 bez danych). */
+  count: number;
+  /** Źródło: projekt zadania, wszystkie projekty albo brak danych. */
+  scope: "project" | "all" | "none";
+  /** Nazwa projektu, gdy `scope === "project"`. */
+  project: string;
+}
+export type CorrectionOf = (project?: string | null) => Correction;
+
+const NO_CORRECTION: Correction = {
+  factor: 1,
+  count: 0,
+  scope: "none",
+  project: "",
+};
+const clampFactor = (value: number) =>
+  Math.min(CORRECTION_HIGH, Math.max(CORRECTION_LOW, value));
+const projectKey = (project?: string | null) =>
+  (project ?? "").trim().toLocaleLowerCase("pl");
+
+/**
+ * Mnożniki dla wszystkich projektów z jednego przejścia po danych; wynik to
+ * funkcja `correction(project)`. Puste `project` = od razu „wszystkie”.
+ */
+export function corrections(data: Snapshot, now: number): CorrectionOf {
+  const rows = estimateRows(data, now, CORRECTION_PERIOD);
+  const all: Correction =
+    rows.length >= CORRECTION_MIN
+      ? {
+          factor: clampFactor(median(rows.map((r) => r.ratio))),
+          count: rows.length,
+          scope: "all",
+          project: "",
+        }
+      : NO_CORRECTION;
+  const groups = new Map<string, { name: string; ratios: number[] }>();
+  for (const row of rows) {
+    const key = projectKey(row.task.details?.project);
+    if (!key) continue;
+    const group = groups.get(key) ?? {
+      name: row.task.details!.project.trim(),
+      ratios: [],
+    };
+    group.ratios.push(row.ratio);
+    groups.set(key, group);
+  }
+  const byProject = new Map<string, Correction>();
+  for (const [key, group] of groups)
+    if (group.ratios.length >= CORRECTION_MIN)
+      byProject.set(key, {
+        factor: clampFactor(median(group.ratios)),
+        count: group.ratios.length,
+        scope: "project",
+        project: group.name,
+      });
+  return (project) => byProject.get(projectKey(project)) ?? all;
+}
+
+/** Mnożnik dla projektu (jedno miejsce reguły; `corrections` dla wielu zadań). */
+export const correction = (
+  project: string | null | undefined,
+  data: Snapshot,
+  now: number,
+): Correction => corrections(data, now)(project);
+
+/** Brak poprawki: każdy projekt ma mnożnik 1. */
+export const noCorrection: CorrectionOf = () => NO_CORRECTION;
+
+/** Szacunek z poprawką w minutach, zaokrąglony do 5 min (co najmniej 5). */
+export function correctedMinutes(minutes: number, c: Correction): number {
+  if (minutes <= 0) return 0;
+  return Math.max(5, Math.round((minutes * c.factor) / 5) * 5);
+}
+
+/** Czas zadania w planie (ms): szacunek, z poprawką gdy podano `of`; 0 bez szacunku. */
+export function plannedMs(task: Task, of?: CorrectionOf): number {
+  const minutes = Math.max(0, task.details?.estimateMinutes ?? 0);
+  if (!minutes) return 0;
+  const factor = of ? of(task.details?.project).factor : 1;
+  return Math.round(minutes * factor) * 60_000;
+}
+
+const durationLabel = (minutes: number) => {
+  const h = Math.floor(minutes / 60),
+    m = minutes % 60;
+  return [h ? `${h} h` : "", m ? `${m} min` : ""].filter(Boolean).join(" ");
+};
+
+/** Podpowiedź „zwykle ~2 h 40 min”; pusta bez szacunku albo bez danych. */
+export function usuallyText(minutes: number, c: Correction): string {
+  if (minutes <= 0 || c.scope === "none") return "";
+  return `zwykle ~${durationLabel(correctedMinutes(minutes, c))}`;
+}
+
+/** Opis źródła poprawki (podpowiedź po najechaniu). */
+export function correctionTitle(c: Correction): string {
+  if (c.scope === "none") return "";
+  const factor = c.factor.toLocaleString("pl-PL", {
+    maximumFractionDigits: 2,
+  });
+  const source =
+    c.scope === "project"
+      ? `projektu ${c.project}`
+      : "wszystkich projektów";
+  return `Poprawka ×${factor}: mediana rzeczywistość/plan z ${c.count} ukończonych zadań ${source} z 90 dni.`;
+}

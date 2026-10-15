@@ -191,6 +191,46 @@ pub fn plan_task(db: &mut Connection, id: i64, day: &str, order: i64) -> Result<
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Entry of `plan_tasks`: new plan day (empty = "Do zaplanowania") and order of a task.
+#[derive(Clone, Debug, Deserialize)]
+pub struct PlanEntry {
+    pub id: i64,
+    pub day: String,
+    pub order: i64,
+}
+
+/// "Zastosuj" of "Rozłóż" on the week board: like `plan_task` for many tasks
+/// in one transaction; any invalid entry or missing task rolls back everything.
+pub fn plan_tasks(db: &mut Connection, entries: &[PlanEntry]) -> Result<Snapshot, String> {
+    if entries.len() > 10_000
+        || entries.iter().any(|e| {
+            (!e.day.is_empty() && !date_valid(&e.day)) || !(0..=1_000_000).contains(&e.order)
+        })
+    {
+        return Err("Niepoprawny dzień planu.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    for entry in entries {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND id NOT IN (SELECT task_id FROM task_lifecycle WHERE deleted_at IS NOT NULL))",
+                [entry.id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("Nie znaleziono zadania.".into());
+        }
+        tx.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('plannedDay',?2,'order',?3)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.plannedDay',?2,'$.order',?3)",
+            params![entry.id, entry.day, entry.order],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 pub fn clear_waiting(db: &Connection, id: i64) -> rusqlite::Result<()> {
     db.execute(
         "UPDATE task_details SET json=json_set(json,'$.waiting','') WHERE task_id=?1",
@@ -452,5 +492,60 @@ mod tests {
             )
             .unwrap();
         assert_eq!(day, "2026-10-15");
+    }
+
+    #[test]
+    fn plan_tasks_writes_all_entries_or_nothing() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["A", "B", "C"] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        save(
+            &mut db,
+            1,
+            Details {
+                project: "WMS".into(),
+                estimate_minutes: 90,
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        let entry = |id: i64, day: &str, order: i64| PlanEntry {
+            id,
+            day: day.into(),
+            order,
+        };
+        let snap = plan_tasks(
+            &mut db,
+            &[entry(1, "2026-10-15", 4), entry(2, "2026-10-16", 1)],
+        )
+        .unwrap();
+        let get = |snap: &Snapshot, id: i64| {
+            snap.tasks
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .details
+                .clone()
+        };
+        let one = get(&snap, 1);
+        assert_eq!((one.planned_day.as_str(), one.order), ("2026-10-15", 4));
+        assert_eq!((one.project.as_str(), one.estimate_minutes), ("WMS", 90));
+        assert_eq!(get(&snap, 2).planned_day, "2026-10-16");
+        // One bad entry (invalid day or missing task) rolls back the whole batch.
+        assert!(plan_tasks(
+            &mut db,
+            &[entry(3, "2026-10-14", 1), entry(2, "2026-02-30", 1)]
+        )
+        .is_err());
+        assert!(plan_tasks(
+            &mut db,
+            &[entry(3, "2026-10-14", 1), entry(99, "2026-10-14", 1)]
+        )
+        .is_err());
+        let snap = db::snapshot(&db).unwrap();
+        assert_eq!(get(&snap, 3).planned_day, "");
+        assert_eq!(get(&snap, 2).planned_day, "2026-10-16");
     }
 }

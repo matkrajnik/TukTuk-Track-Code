@@ -72,13 +72,16 @@ export function planBlocks(
   day: string,
   dayStart: string,
   meetings: readonly (readonly [number, number])[] = [],
+  /** Długość zadania w minutach (np. szacunek z poprawką); domyślnie szacunek. */
+  minutesOf: (task: Task) => number = (task) =>
+    task.details?.estimateMinutes ?? 0,
 ): PlanBlock[] {
   const [, dayEnd] = dayBounds(day);
   let cursor = atTime(day, dayStart) ?? atTime(day, "08:00")!;
   const blocks: PlanBlock[] = [];
   for (const task of plannedTasks(tasks, day)) {
     const pinnedAt = atTime(day, task.details?.plannedStart ?? "");
-    const minutes = task.details?.estimateMinutes ?? 0;
+    const minutes = minutesOf(task);
     const busy =
       pinnedAt === null ? meetings : meetings.filter(([a]) => a > pinnedAt);
     let start = pinnedAt ?? cursor;
