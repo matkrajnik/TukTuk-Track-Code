@@ -493,6 +493,51 @@ pub fn jira_start(app: tauri::AppHandle, key: String) -> Result<db::Snapshot, St
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+/// Tytuł jednego zgłoszenia wprost z Jiry (`/rest/api/3/issue/{klucz}`).
+async fn issue_summary(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    key: &str,
+) -> Result<String, String> {
+    if !valid_key(key) {
+        return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
+    }
+    let value = get(
+        client,
+        c,
+        secret,
+        &format!("/rest/api/3/issue/{key}"),
+        &[("fields", "summary".to_string())],
+    )
+    .await?;
+    value["fields"]["summary"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Jira zwróciła niepoprawną odpowiedź.".into())
+}
+/// „Przełącz” z propozycji agenta dla zgłoszenia bez lokalnego zadania: jak
+/// `jira_start`, a gdy zgłoszenia nie ma w pobranej liście (np. tuż po starcie
+/// aplikacji, zanim ktoś otworzył widok Jira), tytuł pobiera wprost z Jiry.
+pub async fn start_by_key(app: &tauri::AppHandle, key: &str) -> Result<db::Snapshot, String> {
+    if cached_summary(app, key).is_some() {
+        return jira_start(app.clone(), key.to_string());
+    }
+    let c = config(app)?;
+    if c.email.is_empty() {
+        return Err("Połącz konto Jiry, żeby rozpocząć zgłoszenie.".into());
+    }
+    let secret = token(app, &c)?;
+    let summary = issue_summary(&client()?, &c, &secret, key).await?;
+    let state = app.state::<Database>();
+    let result = {
+        let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+        start_issue(&mut connection, &c.site, key, &summary, db::now())?
+    };
+    crate::reminder::reset(app);
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
 /// „Rozpocznij” z powiadomienia o nowym zgłoszeniu: ta sama ścieżka co widok Jira
 /// (`start_issue`), więc zadanie z kosza lub archiwum wraca, a poprzedni pomiar staje.
 pub fn start_task(
@@ -932,6 +977,61 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(rows.len(), 2);
+        server.join().unwrap();
+    }
+    #[test]
+    fn issue_summary_reads_single_issue_for_agent_switch() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            let request = String::from_utf8(request).unwrap();
+            assert!(request.starts_with("GET /rest/api/3/issue/WMS-9?fields=summary "));
+            let body = serde_json::json!({"key":"WMS-9","fields":{"summary":"Eksport faktur"}})
+                .to_string();
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+        });
+        let c = Config {
+            site: format!("http://{address}"),
+            email: "test@example.invalid".into(),
+            ..Config::default()
+        };
+        let summary = tauri::async_runtime::block_on(issue_summary(
+            &client().unwrap(),
+            &c,
+            "test-only",
+            "WMS-9",
+        ))
+        .unwrap();
+        assert_eq!(summary, "Eksport faktur");
+        // Niepoprawny klucz nie wychodzi do sieci.
+        assert!(tauri::async_runtime::block_on(issue_summary(
+            &client().unwrap(),
+            &c,
+            "test-only",
+            "wms-9/../x"
+        ))
+        .is_err());
+        // Zadanie powstaje z tytułu pobranego wprost z Jiry (ścieżka „Rozpocznij”).
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        let snap = start_issue(&mut conn, &c.site, "WMS-9", &summary, 1_000).unwrap();
+        assert_eq!(snap.tasks[0].title, "Eksport faktur");
+        assert!(snap.sessions.iter().any(|s| s.ended_at.is_none()));
         server.join().unwrap();
     }
     fn row(key: &str, status: &str, open: bool) -> Assigned {

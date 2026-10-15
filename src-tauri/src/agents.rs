@@ -69,6 +69,9 @@ pub struct Match {
     pub key: Option<String>,
     /// `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`.
     pub source: String,
+    /// Lokalne zadanie jest ukończone: bez propozycji przełączenia i przypisania
+    /// przerwy (start wymagałby przywrócenia go do zrobienia).
+    pub done: bool,
 }
 
 /// HEAD repozytorium.
@@ -179,7 +182,7 @@ fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
     }
     let rows = db
         .prepare(
-            "SELECT b.folder,t.id,t.title,j.issue_key FROM agent_bindings b JOIN tasks t ON t.id=b.task_id
+            "SELECT b.folder,t.id,t.title,j.issue_key,t.done FROM agent_bindings b JOIN tasks t ON t.id=b.task_id
              LEFT JOIN task_lifecycle l ON l.task_id=t.id LEFT JOIN jira_tasks j ON j.task_id=t.id
              WHERE l.deleted_at IS NULL",
         )?
@@ -191,6 +194,7 @@ fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
                     title: r.get(2)?,
                     key: r.get(3)?,
                     source: "folder".into(),
+                    done: r.get(4)?,
                 },
             ))
         })?
@@ -213,19 +217,26 @@ pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Resul
     };
     let local = db
         .query_row(
-            "SELECT t.id,t.title FROM jira_tasks j JOIN tasks t ON t.id=j.task_id
+            "SELECT t.id,t.title,t.done FROM jira_tasks j JOIN tasks t ON t.id=j.task_id
              LEFT JOIN task_lifecycle l ON l.task_id=t.id
              WHERE j.issue_key=?1 AND l.deleted_at IS NULL ORDER BY t.done, t.id DESC LIMIT 1",
             [key],
-            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, bool>(2)?,
+                ))
+            },
         )
         .optional()?;
-    if let Some((id, title)) = local {
+    if let Some((id, title, done)) = local {
         return Ok(Some(Match {
             task_id: Some(id),
             title,
             key: Some(key.into()),
             source: "task".into(),
+            done,
         }));
     }
     let known: bool = db.query_row(
@@ -238,6 +249,7 @@ pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Resul
         title: String::new(),
         key: Some(key.into()),
         source: "jira".into(),
+        done: false,
     }))
 }
 

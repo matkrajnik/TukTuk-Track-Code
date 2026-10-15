@@ -1470,3 +1470,22 @@ html.widget-root body {
 .agent-work code {
   font-size: inherit;
 }
+/* Przypisanie folderu agenta do zadania („Zapamiętaj dla tego folderu”) */
+.agent-bind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 6px 0 0 16px;
+  min-width: 0;
+}
+.agent-bind select {
+  flex: 1 1 180px;
+  min-width: 0;
+  max-width: 100%;
+}
+.agent-bind-error {
+  flex-basis: 100%;
+  color: var(--danger, #c62828);
+  font-size: var(--fs-sm);
+}

@@ -11,6 +11,10 @@ pub struct Notice {
     pub session_id: i64,
     pub task_id: i64,
     pub idle_at: i64,
+    /// Ostatnie wejście użytkownika (nie wcześniej niż początek pomiaru). Przy
+    /// pracy agentów liczonej jako aktywność bywa wcześniejsze niż `idle_at`:
+    /// od tej chwili liczy się „Przypisz przerwę do X”.
+    pub away_since: i64,
     pub returned_at: i64,
     /// Zadania (inne niż mierzone), nad którymi agenci pracowali podczas
     /// nieobecności: trzecia odpowiedź „Przypisz przerwę do X”. Najpierw ostatnie.
@@ -32,7 +36,12 @@ impl Clock {
     fn see(&mut self, working: &[Match], active: Option<i64>, now: i64) {
         self.seen.retain(|(at, _)| now - at <= SEEN_KEEP);
         for m in working {
-            let Some(id) = m.task_id.filter(|id| Some(*id) != active) else {
+            // Ukończonemu zadaniu nie da się przypisać trwającej części pomiaru.
+            let Some(id) = m
+                .task_id
+                .filter(|id| Some(*id) != active)
+                .filter(|_| !m.done)
+            else {
                 continue;
             };
             self.seen.retain(|(_, s)| s.task_id != Some(id));
@@ -69,7 +78,7 @@ impl Clock {
         if idle_ms >= 600_000 {
             if self.candidate.as_ref().map(|v| v.0) != Some(id) {
                 self.candidate = Some((id, task, (now - i64::from(idle_ms)).max(start)));
-                self.away_since = Some(now - i64::from(user_idle));
+                self.away_since = Some((now - i64::from(user_idle)).max(start));
             }
         } else if user_idle >= 600_000 {
             self.candidate = None;
@@ -80,6 +89,7 @@ impl Clock {
                     session_id: id,
                     task_id: task,
                     idle_at: at,
+                    away_since: since,
                     returned_at: now,
                     agent_tasks: self.agent_tasks(since, task),
                 });
@@ -201,9 +211,12 @@ pub fn clear(app: &tauri::AppHandle) {
     }
     let _ = app.emit("idle-notice", ());
 }
-/// „Przypisz przerwę do X”: podział pomiaru z banera w chwili początku przerwy,
-/// druga część (do końca albo dalej trwająca) należy do X. Ten sam mechanizm co
-/// zakładka Podziel (`db::split_session`). X musi być zadaniem agenta z banera.
+/// „Przypisz przerwę do X”: podział pomiaru z banera w chwili wyjścia użytkownika
+/// (`away_since`, a nie `idle_at`: praca agenta nad X podczas nieobecności też
+/// należy do X), druga część (do końca albo dalej trwająca) należy do X. Ten sam
+/// mechanizm co zakładka Podziel (`db::split_session`). Gdy użytkownik wyszedł
+/// zaraz po starcie, cały pomiar przechodzi na X (`db::move_session`). X musi
+/// być zadaniem agenta z banera.
 pub fn assign_break(
     conn: &mut rusqlite::Connection,
     notice: &Notice,
@@ -213,7 +226,18 @@ pub fn assign_break(
     if !notice.agent_tasks.iter().any(|m| m.task_id == Some(task)) {
         return Err("To zadanie nie jest pracą agenta z tej przerwy.".into());
     }
-    db::split_session(conn, notice.session_id, notice.idle_at, Some(task), now)
+    let started_at: i64 = conn
+        .query_row(
+            "SELECT started_at FROM sessions WHERE id=?1",
+            [notice.session_id],
+            |r| r.get(0),
+        )
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if notice.away_since <= started_at {
+        db::move_session(conn, notice.session_id, task)
+    } else {
+        db::split_session(conn, notice.session_id, notice.away_since, Some(task), now)
+    }
 }
 #[tauri::command]
 pub fn idle_resolve(
@@ -294,6 +318,7 @@ mod tests {
             title: format!("Zadanie {id}"),
             key: None,
             source: "task".into(),
+            done: false,
         }
     }
     #[test]
@@ -310,6 +335,8 @@ mod tests {
         assert!(c.observe(Some((1, 2, 0)), 1_200_000, 0, 700_000));
         let notice = c.pending.clone().unwrap();
         assert_eq!(notice.idle_at, 500_000);
+        // Przypisanie liczy się od wyjścia użytkownika, nie od końca pracy agenta.
+        assert_eq!(notice.away_since, 100_000);
         let ids: Vec<_> = notice.agent_tasks.iter().map(|m| m.task_id).collect();
         assert_eq!(ids, vec![Some(3)]);
         // Bez pracy agentów trzeciej odpowiedzi nie ma.
@@ -334,6 +361,7 @@ mod tests {
             session_id: session,
             task_id: 1,
             idle_at: 5_000,
+            away_since: 5_000,
             returned_at: 9_000,
             agent_tasks: vec![task(2)],
         };
@@ -346,5 +374,82 @@ mod tests {
             .collect();
         rows.sort();
         assert_eq!(rows, vec![(1, 1_000, Some(5_000)), (2, 5_000, None)]);
+    }
+    #[test]
+    fn agent_work_on_x_during_absence_goes_to_x() {
+        // Użytkownik wychodzi o 10:00 (0), agent pracuje nad X do 10:30, powrót 11:00.
+        const MIN: i64 = 60_000;
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        for title in ["Mierzone", "Agent"] {
+            conn.execute("INSERT INTO tasks(title,created_at) VALUES(?1,0)", [title])
+                .unwrap();
+        }
+        db::change(&mut conn, "start", Some(1), None, -30 * MIN).unwrap();
+        let session: i64 = conn
+            .query_row("SELECT id FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        let mut c = Clock::default();
+        let s = Some((session, 1, -30 * MIN));
+        c.see(&[task(2)], Some(1), 20 * MIN);
+        assert!(!c.observe(s, 20 * MIN, (20 * MIN) as u32, 0));
+        c.see(&[task(2)], Some(1), 30 * MIN);
+        assert!(!c.observe(s, 45 * MIN, (45 * MIN) as u32, (15 * MIN) as u32));
+        assert!(c.observe(s, 60 * MIN, 0, (30 * MIN) as u32));
+        let notice = c.pending.clone().unwrap();
+        assert_eq!((notice.idle_at, notice.away_since), (30 * MIN, 0));
+        let snap = assign_break(&mut conn, &notice, 2, 60 * MIN).unwrap();
+        let mut rows: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|s| (s.task_id, s.started_at, s.ended_at))
+            .collect();
+        rows.sort();
+        assert_eq!(rows, vec![(1, -30 * MIN, Some(0)), (2, 0, None)]);
+    }
+    #[test]
+    fn break_from_measurement_start_moves_whole_measurement() {
+        // Start i od razu wyjście: początek przerwy (przycięty do startu) = start pomiaru.
+        let mut c = Clock::default();
+        assert!(!c.observe(Some((1, 1, 100_000)), 800_000, 750_000, N));
+        assert!(c.observe(Some((1, 1, 100_000)), 900_000, 0, N));
+        let notice = c.pending.clone().unwrap();
+        assert_eq!((notice.idle_at, notice.away_since), (100_000, 100_000));
+
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        for title in ["Mierzone", "Agent", "Ukończone"] {
+            conn.execute("INSERT INTO tasks(title,created_at) VALUES(?1,0)", [title])
+                .unwrap();
+        }
+        conn.execute("UPDATE tasks SET done=1 WHERE id=3", [])
+            .unwrap();
+        db::change(&mut conn, "start", Some(1), None, 100_000).unwrap();
+        let session: i64 = conn
+            .query_row("SELECT id FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        let notice = Notice {
+            session_id: session,
+            agent_tasks: vec![task(2), task(3)],
+            ..notice
+        };
+        // Ukończone zadanie nie przejmuje trwającego pomiaru.
+        assert!(assign_break(&mut conn, &notice, 3, 900_000).is_err());
+        let snap = assign_break(&mut conn, &notice, 2, 900_000).unwrap();
+        let rows: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|s| (s.task_id, s.started_at, s.ended_at))
+            .collect();
+        assert_eq!(rows, vec![(2, 100_000, None)]);
+    }
+    #[test]
+    fn done_agent_tasks_are_not_offered_for_the_break() {
+        let mut c = Clock::default();
+        let mut done = task(3);
+        done.done = true;
+        c.see(&[done, task(4)], Some(2), 100_000);
+        let ids: Vec<_> = c.agent_tasks(0, 2).iter().map(|m| m.task_id).collect();
+        assert_eq!(ids, vec![Some(4)]);
     }
 }

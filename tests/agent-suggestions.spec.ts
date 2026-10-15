@@ -283,3 +283,172 @@ test("baner bezczynności: „Przypisz przerwę do X” dzieli pomiar w chwili p
     { cmd: "idle_resolve", args: { trim: false, assign: ids.review } },
   ]);
 });
+
+test("„Zapamiętaj dla tego folderu” w banerze przypisuje folder agenta do zadania", async ({
+  page,
+}) => {
+  await open(page, [importAgent]);
+  const remember = banner(page).getByRole("button", {
+    name: "Zapamiętaj dla tego folderu",
+  });
+  await expect(remember).toBeVisible();
+  await remember.click();
+  // Dopasowanie pochodzi teraz z przypisania folderu, więc przycisk znika.
+  await expect(remember).toHaveCount(0);
+  await expect(banner(page)).toContainText("„Analiza importu”");
+  const bindings = await page.evaluate(
+    (k) => JSON.parse(localStorage.getItem(k)!),
+    BINDINGS_KEY,
+  );
+  expect(bindings).toContainEqual({
+    folder: importAgent.cwd,
+    taskId: ids.analysis,
+  });
+  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  await expect(page.getByLabel("Praca agenta Import")).toContainText(
+    "zadanie „Analiza importu” (folder)",
+  );
+  // Timer nadal stoi: zapamiętanie niczego nie uruchamia.
+  expect(await activeTask(page)).toBe(null);
+});
+
+test("kafelek Agenci AI: wybór zadania dla folderu agenta bez dopasowania", async ({
+  page,
+}) => {
+  const cwd = "D:/repo/nowy";
+  await open(page, [
+    { kind: "claude", name: "Nowy", cwd, since: now - 5 * MIN, branch: "main" },
+  ]);
+  await expect(banner(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  const card = page.getByRole("region", { name: "Agenci AI" });
+  const save = card.getByRole("button", {
+    name: `Zapamiętaj dla folderu ${cwd}`,
+  });
+  await expect(save).toBeDisabled();
+  const select = card.getByLabel(`Zadanie dla folderu ${cwd}`);
+  // Ukończone i zarchiwizowane zadania nie są do wyboru.
+  await expect(
+    select.locator("option", { hasText: "Dokumentacja API" }),
+  ).toHaveCount(0);
+  await expect(
+    select.locator("option", { hasText: "Stary raport" }),
+  ).toHaveCount(0);
+  await select.selectOption({ label: "Code review" });
+  await save.click();
+  await expect(card.getByLabel("Praca agenta Nowy")).toContainText(
+    "zadanie „Code review” (folder)",
+  );
+  await expect(select).toHaveCount(0);
+  // Teraz agent ma zadanie, więc pojawia się propozycja.
+  await expect(banner(page)).toContainText("„Code review”");
+});
+
+test("ukończone zadanie dopasowane po kluczu nie dostaje propozycji", async ({
+  page,
+}) => {
+  const data = seed();
+  data.tasks.find((t: any) => t.id === ids.analysis)!.done = true;
+  await open(page, [importAgent, reviewAgent], { data });
+  await expect(banner(page)).toContainText("„Code review”");
+  await expect(banner(page)).not.toContainText("Analiza importu");
+  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  await expect(page.getByLabel("Praca agenta Import")).toContainText(
+    "zadanie „Analiza importu” (ukończone)",
+  );
+});
+
+test.describe("przypisanie przerwy z pracą agentów jako aktywnością", () => {
+  const review = {
+    taskId: ids.review,
+    title: "Code review",
+    key: null,
+    source: "folder",
+    done: false,
+  };
+  const tickAt =
+    (page: Page) =>
+    async (
+      time: string,
+      userIdle: number,
+      agentIdle: number,
+      working: unknown[],
+    ) => {
+      await page.clock.setFixedTime(at(TODAY, time));
+      return backend<boolean>(page, "idleTick", {
+        userIdle,
+        agentIdle,
+        working,
+      });
+    };
+  const idleBanner = (page: Page) =>
+    page.getByRole("alert").filter({ hasText: "Wracasz po przerwie?" });
+
+  test("podział w chwili wyjścia użytkownika, nie końca pracy agenta", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      data: seed({ active: { task: ids.analysis, from: "11:00" } }),
+      now: at(TODAY, "11:30"),
+    });
+    await expect(
+      page.getByLabel("Stop: Analiza importu", { exact: true }),
+    ).toBeVisible();
+    const tick = tickAt(page);
+    // Użytkownik wychodzi o 11:30, agent pracuje nad „Code review” do 12:00.
+    expect(await tick("11:30", 0, 0, [])).toBe(false);
+    expect(await tick("11:45", 15 * MIN, 0, [review])).toBe(false);
+    expect(await tick("12:00", 30 * MIN, 0, [review])).toBe(false);
+    expect(await tick("12:15", 45 * MIN, 15 * MIN, [])).toBe(false);
+    expect(await tick("12:30", 0, 30 * MIN, [])).toBe(true);
+    const idle = idleBanner(page);
+    await expect(idle).toContainText("brak aktywności od 12:00:00");
+    await expect(idle).toContainText("pomiar zostanie podzielony o 11:30:00");
+    await idle
+      .getByRole("button", { name: "Przypisz przerwę do „Code review”" })
+      .click();
+    await expect(idle).toHaveCount(0);
+    const snap = await backend<any>(page, "snapshot");
+    expect(
+      snap.sessions.find((s: any) => s.startedAt === at(TODAY, "11:00")),
+    ).toMatchObject({ taskId: ids.analysis, endedAt: at(TODAY, "11:30") });
+    expect(
+      snap.sessions.find((s: any) => s.startedAt === at(TODAY, "11:30")),
+    ).toMatchObject({ taskId: ids.review, endedAt: null });
+  });
+
+  test("wyjście zaraz po starcie przenosi cały pomiar na X", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      data: seed({ active: { task: ids.analysis, from: "11:30" } }),
+      now: at(TODAY, "11:30"),
+      settings: { idleAgents: false },
+    });
+    await expect(
+      page.getByLabel("Stop: Analiza importu", { exact: true }),
+    ).toBeVisible();
+    const tick = tickAt(page);
+    expect(await tick("11:45", 20 * MIN, 0, [review])).toBe(false);
+    expect(await tick("12:00", 0, 0, [])).toBe(true);
+    await idleBanner(page)
+      .getByRole("button", { name: "Przypisz przerwę do „Code review”" })
+      .click();
+    await expect(idleBanner(page)).toHaveCount(0);
+    await expect(
+      page.getByLabel("Stop: Code review", { exact: true }),
+    ).toBeVisible();
+    const snap = await backend<any>(page, "snapshot");
+    const fromStart = snap.sessions.filter(
+      (s: any) => s.startedAt === at(TODAY, "11:30"),
+    );
+    expect(fromStart).toEqual([
+      expect.objectContaining({ taskId: ids.review, endedAt: null }),
+    ]);
+    expect(
+      snap.sessions.some(
+        (s: any) => s.taskId === ids.analysis && s.endedAt === null,
+      ),
+    ).toBe(false);
+  });
+});

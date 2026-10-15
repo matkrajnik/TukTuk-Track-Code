@@ -145,7 +145,8 @@ function install(init: {
     const active = snapshot.sessions.find((s: any) => s.endedAt === null);
     idle.seen = idle.seen.filter((x) => now - x.at <= 24 * 3_600_000);
     for (const task of working) {
-      if (task.taskId == null || task.taskId === active?.taskId) continue;
+      if (task.taskId == null || task.done || task.taskId === active?.taskId)
+        continue;
       idle.seen = idle.seen.filter((x) => x.task.taskId !== task.taskId);
       idle.seen.push({ at: now, task: clone(task) });
     }
@@ -162,7 +163,7 @@ function install(init: {
           active.taskId,
           Math.max(now - idleMs, active.startedAt),
         ];
-        idle.awaySince = now - userIdle;
+        idle.awaySince = Math.max(now - userIdle, active.startedAt);
       }
     } else if (userIdle >= MIN10) {
       idle.candidate = null;
@@ -175,6 +176,7 @@ function install(init: {
           sessionId: id,
           taskId: task,
           idleAt: at,
+          awaySince: since,
           returnedAt: now,
           agentTasks: idle.seen
             .filter((x) => x.at >= since && x.task.taskId !== task)
@@ -328,22 +330,28 @@ function install(init: {
           const notice = idle.pending;
           if (!notice) throw "Brak zgłoszonej bezczynności.";
           if (args.assign != null) {
-            // idle::assign_break → db::split_session w chwili początku przerwy.
+            // idle::assign_break → db::split_session w chwili wyjścia użytkownika
+            // (`awaySince`), a gdy to start pomiaru, db::move_session.
             if (!notice.agentTasks.some((t: any) => t.taskId === args.assign))
               throw "To zadanie nie jest pracą agenta z tej przerwy.";
             const s = snapshot.sessions.find(
               (x: any) => x.id === notice.sessionId,
             );
-            const end = s?.endedAt ?? now;
-            if (!s || !(s.startedAt < notice.idleAt && notice.idleAt < end))
-              throw "Moment podziału musi leżeć wewnątrz przedziału.";
-            snapshot.sessions.unshift({
-              id: nextSessionId(),
-              taskId: args.assign,
-              startedAt: notice.idleAt,
-              endedAt: s.endedAt,
-            });
-            s.endedAt = notice.idleAt;
+            if (!s) throw "Nie znaleziono przedziału.";
+            const split = notice.awaySince;
+            const end = s.endedAt ?? now;
+            if (split <= s.startedAt) s.taskId = args.assign;
+            else {
+              if (!(split < end))
+                throw "Moment podziału musi leżeć wewnątrz przedziału.";
+              snapshot.sessions.unshift({
+                id: nextSessionId(),
+                taskId: args.assign,
+                startedAt: split,
+                endedAt: s.endedAt,
+              });
+              s.endedAt = split;
+            }
           } else if (args.trim) {
             const s = snapshot.sessions.find(
               (x: any) => x.id === notice.sessionId,

@@ -120,7 +120,9 @@ impl Memory {
                 continue;
             };
             let goal = target_of(m);
+            // Ukończone zadanie: „Przełącz” wymagałoby najpierw przywrócenia go.
             if goal.is_empty()
+                || m.done
                 || now - agent.since < MIN_WORK
                 || (m.task_id.is_some() && m.task_id == active)
                 || muted(&s.agent_muted_folders, &agent.cwd)
@@ -309,9 +311,11 @@ pub fn agent_suggestions(app: tauri::AppHandle) -> Vec<Suggestion> {
 }
 
 /// „Przełącz”: start X (poprzedni pomiar staje). Zgłoszenie bez zadania przechodzi
-/// ścieżką „Rozpocznij” z widoku Jira, więc zadanie powstaje dopiero teraz.
+/// ścieżką „Rozpocznij” z widoku Jira, więc zadanie powstaje dopiero teraz; gdy
+/// listy zgłoszeń nie pobrano od startu aplikacji, tytuł przychodzi wprost z Jiry
+/// (`jira::start_by_key`). Asynchroniczne, bo może czekać na sieć.
 #[tauri::command]
-pub fn agent_switch(
+pub async fn agent_switch(
     app: tauri::AppHandle,
     task_id: Option<i64>,
     key: Option<String>,
@@ -327,7 +331,7 @@ pub fn agent_switch(
             let _ = app.emit("data-changed", ());
             result
         }
-        (None, Some(key)) => crate::jira::jira_start(app.clone(), key)?,
+        (None, Some(key)) => crate::jira::start_by_key(&app, &key).await?,
         (None, None) => return Err("Brak zadania do przełączenia.".into()),
     };
     refresh(&app, db::now());
@@ -368,6 +372,7 @@ mod tests {
                 title: task.map(|t| format!("Zadanie {t}")).unwrap_or_default(),
                 key: key.map(str::to_string),
                 source: if task.is_some() { "task" } else { "jira" }.into(),
+                done: false,
             }),
             ..Agent::default()
         }
@@ -530,6 +535,38 @@ mod tests {
         assert_eq!(msg.title, "Agenci AI: 2 zadania do przełączenia");
         assert_eq!(msg.body, "• Zadanie 1\n• Zadanie 2");
         assert!(message(&[]).is_none());
+    }
+
+    #[test]
+    fn done_task_matched_by_key_is_not_proposed() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO tasks(title,created_at,done) VALUES('Gotowe',0,1);
+             INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(1,'https://x.atlassian.net','WMS-5');",
+        )
+        .unwrap();
+        // Jedyne zadanie z kluczem jest ukończone: dopasowanie zna ten stan.
+        let m = agents::resolve(&conn, "C:\\wms", Some("WMS-5"))
+            .unwrap()
+            .unwrap();
+        assert_eq!((m.task_id, m.done), (Some(1), true));
+        let a = Agent {
+            kind: "claude".into(),
+            name: "wms".into(),
+            cwd: "C:\\wms".into(),
+            since: NOW - 5 * MIN,
+            task: Some(m),
+            ..Agent::default()
+        };
+        let mut memory = Memory::default();
+        let s = AppSettings::default();
+        assert!(memory.pending(&[a.clone()], None, &s, NOW).is_empty());
+        // Po przywróceniu do zrobienia propozycja wraca.
+        conn.execute("UPDATE tasks SET done=0", []).unwrap();
+        let mut back = a;
+        back.task = agents::resolve(&conn, "C:\\wms", Some("WMS-5")).unwrap();
+        assert_eq!(targets(&memory.pending(&[back], None, &s, NOW)), ["t:1"]);
     }
 
     #[test]

@@ -238,7 +238,7 @@ const topTasks = computed(() =>
       Brak zarejestrowanej pracy dzisiaj.
     </p>
   </section>
-  <AgentsCard :now="now" />
+  <AgentsCard :now="now" :tasks="data.tasks" />
   </div>
   <EstimateAccuracy
     :data="data"

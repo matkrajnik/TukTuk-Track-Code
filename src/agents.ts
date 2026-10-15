@@ -24,6 +24,8 @@ export interface AgentTask {
   key: string | null;
   /** `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`. */
   source: "folder" | "task" | "jira";
+  /** Lokalne zadanie jest ukończone: bez propozycji i przypisania przerwy. */
+  done?: boolean;
 }
 
 /** Odpowiednik `Agent` z src-tauri/src/agents.rs: agent AI, który teraz pracuje. */
@@ -87,13 +89,20 @@ export function matchAgentTask(
       title: bound.task.title,
       key: bound.task.jiraKey ?? null,
       source: "folder",
+      done: bound.task.done,
     };
   if (!jiraKey) return null;
   const local = data.tasks
     .filter((t) => t.jiraKey === jiraKey)
     .sort((a, b) => Number(a.done) - Number(b.done) || b.id - a.id)[0];
   return local
-    ? { taskId: local.id, title: local.title, key: jiraKey, source: "task" }
+    ? {
+        taskId: local.id,
+        title: local.title,
+        key: jiraKey,
+        source: "task",
+        done: local.done,
+      }
     : null;
 }
 
@@ -199,6 +208,7 @@ export function pendingSuggestions(
     const target = suggestionTarget(task);
     if (
       !target ||
+      task.done ||
       now - agent.since < MIN_WORK ||
       (task.taskId != null && task.taskId === activeTaskId) ||
       mutedFolder(settings.agentMutedFolders, agent.cwd) ||

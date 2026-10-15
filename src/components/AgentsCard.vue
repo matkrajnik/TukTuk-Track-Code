@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import {
   onAgentsChanged,
   readAgents,
   type Agent,
   type AgentTask,
 } from "../agents";
-import { duration } from "../store";
+import { bindAgentFolder, duration, type Task } from "../store";
 
-defineProps<{ now: number }>();
+const props = defineProps<{ now: number; tasks: Task[] }>();
 const agents = ref<Agent[]>([]);
 const labels: Record<Agent["kind"], string> = {
   claude: "Claude",
@@ -20,8 +20,31 @@ function taskLabel(agent: Agent): string {
   if (!task) return agent.key ? `${agent.key}: brak zadania` : "";
   if (task.source === "jira")
     return `Jira ${task.key}${task.title ? `: ${task.title}` : ""} (bez zadania)`;
-  const title = `zadanie „${task.title}”`;
-  return task.source === "folder" ? `${title} (folder)` : title;
+  const title = `zadanie „${task.title}”${task.source === "folder" ? " (folder)" : ""}`;
+  return task.done ? `${title} (ukończone)` : title;
+}
+/** Zadania do wyboru przy przypisaniu folderu: do zrobienia, poza archiwum. */
+const choices = computed(() =>
+  props.tasks
+    .filter((t) => !t.done && !t.archived)
+    .sort((a, b) => a.title.localeCompare(b.title, "pl")),
+);
+/** Agent bez lokalnego zadania: można zapamiętać zadanie dla jego folderu. */
+const unbound = (agent: Agent) => agent.task?.taskId == null && !!agent.cwd;
+/** Wybór zadania i błąd przypisania dla folderu agenta. */
+const picked = reactive<Record<string, number | "">>({});
+const bindError = reactive<Record<string, string>>({});
+async function bind(agent: Agent) {
+  const taskId = picked[agent.cwd];
+  if (!taskId) return;
+  bindError[agent.cwd] = "";
+  try {
+    await bindAgentFolder(agent.cwd, taskId);
+    delete picked[agent.cwd];
+    agents.value = await readAgents();
+  } catch (e) {
+    bindError[agent.cwd] = String(e instanceof Error ? e.message : e);
+  }
 }
 let alive = true;
 let unlisten: (() => void) | undefined;
@@ -68,6 +91,36 @@ onUnmounted(() => {
           taskLabel(agent)
         }}</span>
       </p>
+      <form
+        v-if="unbound(agent) && choices.length"
+        class="agent-bind"
+        @submit.prevent="bind(agent)"
+      >
+        <select
+          v-model="picked[agent.cwd]"
+          :aria-label="`Zadanie dla folderu ${agent.cwd}`"
+          :title="agent.cwd"
+        >
+          <option value="">Wybierz zadanie dla tego folderu…</option>
+          <option v-for="t in choices" :key="t.id" :value="t.id">
+            {{ t.title }}
+          </option>
+        </select>
+        <button
+          class="today-button"
+          type="submit"
+          :disabled="!picked[agent.cwd]"
+          :aria-label="`Zapamiętaj dla folderu ${agent.cwd}`"
+        >
+          Zapamiętaj dla tego folderu
+        </button>
+        <span
+          v-if="bindError[agent.cwd]"
+          class="agent-bind-error"
+          role="alert"
+          >{{ bindError[agent.cwd] }}</span
+        >
+      </form>
     </template>
     <p v-if="!agents.length" class="report-note">
       Żaden agent teraz nie pracuje.

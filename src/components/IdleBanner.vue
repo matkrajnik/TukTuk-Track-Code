@@ -13,6 +13,8 @@ const emit = defineEmits<{
 const idleNotice = ref<{
   taskId: number;
   idleAt: number;
+  /** Ostatnie wejście użytkownika: od tej chwili liczy się „Przypisz przerwę do X”. */
+  awaySince?: number;
   returnedAt: number;
   /** Zadania, nad którymi agenci pracowali podczas nieobecności (`idle::Notice`). */
   agentTasks?: AgentTask[];
@@ -63,7 +65,13 @@ onUnmounted(() => unlisten?.());
     </p>
     <p v-if="idleNotice.agentTasks?.length" class="hint">
       W tym czasie agent AI pracował nad innym zadaniem. Przerwę możesz
-      przypisać do niego: pomiar zostanie podzielony w chwili jej początku.
+      przypisać do niego: pomiar zostanie podzielony o
+      {{
+        new Date(idleNotice.awaySince ?? idleNotice.idleAt).toLocaleTimeString(
+          "pl-PL",
+        )
+      }}
+      (ostatnia aktywność przy komputerze).
     </p>
     <div class="planning-actions">
       <button class="today-button" @click="resolveIdle(false)">

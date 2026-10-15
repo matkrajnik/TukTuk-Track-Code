@@ -327,6 +327,51 @@ pub fn split_session(
     snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Przenosi cały przedział na zadanie `target` (np. „Przypisz przerwę do X”, gdy
+/// przerwa zaczęła się razem z pomiarem i nie ma czego dzielić). Reguły celu jak
+/// w `split_session`: zadanie poza koszem, a dla trwającego pomiaru do zrobienia.
+pub fn move_session(db: &mut Connection, id: i64, target: i64) -> Result<Snapshot, String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let (ended_at, deleted): (Option<i64>, bool) = tx
+        .query_row(
+            "SELECT s.ended_at,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=s.task_id AND l.deleted_at IS NOT NULL) FROM sessions s WHERE s.id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if deleted {
+        return Err("Przedział należy do zadania w koszu.".into());
+    }
+    let (done, target_deleted): (bool, bool) = tx
+        .query_row(
+            "SELECT t.done,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=t.id AND l.deleted_at IS NOT NULL) FROM tasks t WHERE t.id=?1",
+            [target],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|_| "Nie znaleziono zadania docelowego.".to_owned())?;
+    if target_deleted {
+        return Err("Zadanie docelowe jest w koszu. Najpierw je przywróć.".into());
+    }
+    if ended_at.is_none() {
+        if done {
+            return Err("Najpierw przywróć zadanie docelowe do zrobienia.".into());
+        }
+        tx.execute(
+            "UPDATE task_lifecycle SET archived=0 WHERE task_id=?1",
+            [target],
+        )
+        .map_err(|e| e.to_string())?;
+        crate::planner::clear_waiting(&tx, target).map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "UPDATE sessions SET task_id=?1 WHERE id=?2",
+        params![target, id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    snapshot(db).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

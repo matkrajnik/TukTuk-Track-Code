@@ -9,7 +9,7 @@ import {
   type AgentTask,
   type Suggestion,
 } from "../agents";
-import type { Snapshot, Task } from "../store";
+import { bindAgentFolder, type Snapshot, type Task } from "../store";
 
 /**
  * Baner propozycji przełączenia (wzór: baner bezczynności). Timer zmienia się
@@ -71,6 +71,16 @@ const dismiss = (s: Suggestion) =>
     suggestions.value = await dismissSuggestion(s);
   });
 const mute = (s: Suggestion) => run(() => muteSuggestionFolders(s));
+/** „Zapamiętaj dla tego folderu”: przypisuje foldery agentów do zadania X. */
+const canRemember = (s: Suggestion) =>
+  s.task.taskId != null && s.task.source !== "folder";
+const remember = (s: Suggestion) =>
+  run(async () => {
+    const taskId = s.task.taskId;
+    if (taskId == null) return;
+    for (const cwd of new Set(s.agents.map((a) => a.cwd)))
+      await bindAgentFolder(cwd, taskId);
+  });
 
 watch(() => props.activeTaskId, reload);
 let stop: (() => void) | undefined;
@@ -124,7 +134,15 @@ onUnmounted(() => {
           :title="folders(visible[0])"
           @click="mute(visible[0])"
         >
-          Nie proponuj dla tego folderu
+          Nie proponuj dla tego folderu</button
+        ><button
+          v-if="canRemember(visible[0])"
+          class="today-button"
+          :disabled="busy"
+          :title="folders(visible[0])"
+          @click="remember(visible[0])"
+        >
+          Zapamiętaj dla tego folderu
         </button>
       </div>
     </template>
@@ -162,7 +180,16 @@ onUnmounted(() => {
               :aria-label="`Nie proponuj dla folderu: ${folders(s)}`"
               @click="mute(s)"
             >
-              Nie proponuj
+              Nie proponuj</button
+            ><button
+              v-if="canRemember(s)"
+              class="today-button"
+              :disabled="busy"
+              :title="folders(s)"
+              :aria-label="`Zapamiętaj folder dla: ${name(s.task)}`"
+              @click="remember(s)"
+            >
+              Zapamiętaj
             </button>
           </span>
         </li>
