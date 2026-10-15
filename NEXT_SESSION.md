@@ -1,25 +1,48 @@
-# Todo Track — stan po 1.5.0 (etapy 5 i 6 w toku wydania 1.6)
+# Todo Track — stan po 1.6.0
 
-## Etapy 5 i 6 z PLAN_1.3.md (15 października 2026)
+## Stan po 1.6.0 (15 października 2026)
 
-Gałąź `release/1.0`, lokalnie, bez pusha. Etap 5 (raport miesięczny i eksport) jest zaimplementowany i przeszedł przegląd, ale nie jest jeszcze wydany: wersja nadal 1.5.0, bez instalatora i tagu (wydanie 1.6.0 obejmie etapy 5 i 6).
-- M1: `src-tauri/src/holidays.rs` i `src/holidays.ts` (polskie święta z jednej listy wzorcowej `tests/fixtures/holidays-pl-2024-2030.json`), ustawienie `holidaysInTarget` w celu dnia, tygodnia, tablicy tygodnia, trayu i powiadomieniu o celu; zakładka Raporty → Miesiąc (`MonthReport.vue`). Wzorce `ustawienia-*-win32.png` zregenerowano lokalnie.
-- M2: `src-tauri/src/export.rs` (komenda `export_report`, CSV pod polski Excel, XLSX przez `rust_xlsxwriter` 0.99.1, test odczytu przez `calamine` 0.36.1), `ExportButtons.vue` w zakładce Miesiąc i „Wybranych dniach”, odpowiednik CSV w podglądzie `src/export.ts`. Po przeglądzie część przedziału kończąca się o północy ma w XLSX koniec 24:00 (format `[hh]:mm`, czas jako ułamek doby), tak jak w CSV.
+Gałąź `release/1.0`, lokalnie, bez pusha. Wydanie 1.6.0 obejmuje etapy 5 i 6 z PLAN_1.3.md:
+- M1 (święta i zakładka Miesiąc): `src-tauri/src/holidays.rs` i `src/holidays.ts` (polskie święta z jednej listy wzorcowej `tests/fixtures/holidays-pl-2024-2030.json`), ustawienie `holidaysInTarget` (domyślnie włączone) w celu dnia, tygodnia, miesiąca, tablicy tygodnia, trayu i powiadomieniu o celu; zakładka Raporty → Miesiąc (`MonthReport.vue`). Po przeglądzie skrót „Dni robocze tego miesiąca” zachowuje święta w dniu roboczym tygodnia, w które zapisano czas.
+- M2 (eksport): `src-tauri/src/export.rs` (komenda `export_report`, CSV pod polski Excel, XLSX przez `rust_xlsxwriter` 0.99.1, test odczytu przez `calamine` 0.36.1), `ExportButtons.vue` w zakładce Miesiąc i „Wybranych dniach”, odpowiednik CSV w podglądzie `src/export.ts`. Po przeglądzie część przedziału kończąca się o północy ma w XLSX koniec 24:00 (format `[hh]:mm`, czas jako ułamek doby), tak jak w CSV.
+- F1 (tryb skupienia): `src-tauri/src/focus.rs` (tabele `focus_blocks` i `focus_queue` przez `CREATE TABLE IF NOT EXISTS`, komendy `focus_status` i `focus_action`, wątek co 2 s, kolejka powiadomień: `notify::show` odkłada w czasie bloku, `notify::display` wysyła od razu), akcje toastów `focus-break`, `focus-next`, `focus-resume`, ustawienia `focusBlockMinutes`, `focusBreakMinutes`, `focusBreakStops`; frontend `src/focus.ts` (odpowiednik w podglądzie), `FocusBanner.vue`, przycisk na pasku pomiaru i w widgecie, karta na Dashboardzie. Po przeglądzie kolejka jest też w tabeli `focus_queue`, więc odłożone powiadomienia przeżywają zamknięcie aplikacji w trakcie bloku (wracają bez przycisków).
 
-- F1 (etap 6, tryb skupienia): `src-tauri/src/focus.rs` (tabela `focus_blocks` przez `CREATE TABLE IF NOT EXISTS`, komendy `focus_status` i `focus_action`, wątek co 2 s, kolejka powiadomień: `notify::show` odkłada w czasie bloku, `notify::display` wysyła od razu), akcje toastów `focus-break`, `focus-next`, `focus-resume`, ustawienia `focusBlockMinutes`, `focusBreakMinutes`, `focusBreakStops`; frontend `src/focus.ts` (odpowiednik w podglądzie), `FocusBanner.vue`, przycisk na pasku pomiaru i w widgecie, karta na Dashboardzie. Wzorce `zadania-*`, `dashboard-*`, `ustawienia-*` i `widget-*` zregenerowano lokalnie.
+Wersja 1.6.0 w pięciu plikach, instalator `releases/Todo Track_1.6.0_x64-setup.exe` (nie instalowany), lokalny tag `v1.6.0` (niewypchnięty).
 
-Do ręcznego sprawdzenia F1 (natywnie, po instalacji NSIS z AUMID):
-- Toast „Koniec bloku skupienia” z „Przerwa” i „Kolejny blok”, potem „Wracasz do X?” z „Rozpocznij”; zbiorcze „Podczas skupienia: N powiadomień” po bloku (np. długi pomiar ustawiony na 1 min w czasie bloku).
-- Uśpienie komputera w trakcie bloku: po wybudzeniu blok kończy się w ciągu około 2 s, z końcem równym planowanemu.
-- Stop z traya, skrótu globalnego i toastu w czasie bloku: blok przerwany, kolejka wysłana od razu.
-- Widget 320×64 w obu motywach z przyciskami „Przerwa” i „Kolejny blok”; baner propozycji agentów znika w czasie bloku i wraca po nim.
-- Start na istniejącej bazie: tabela `focus_blocks` powstaje bez utraty danych.
+Weryfikacja: `npm run build`, 149 testów Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 135 testów Rust (`cargo test --locked`) oraz `npm run tauri build -- -- --locked` przechodzą (Git Bash, cargo dodane do PATH).
 
-Do ręcznego sprawdzenia M1–M2 (natywna aplikacja albo NSIS):
-- Okno zapisu dla CSV i XLSX, anulowanie okna, nadpisanie istniejącego pliku.
-- CSV otwarty dwuklikiem w polskim Excelu: polskie znaki, kolumny po średniku, godziny z przecinkiem jako liczby.
-- XLSX w Excelu: arkusze „Przedziały” i „Podsumowanie”, daty, czasy (w tym 24:00), zamrożony wiersz, sumy.
-- Cel miesiąca i dnia w miesiącu ze świętem (np. listopad) na prawdziwej bazie; wyłączenie świąt w ustawieniach.
+Odstępstwa od planu:
+- Etapy 5 i 6 nie są sprawdzone w natywnej aplikacji ani po instalacji NSIS; e2e działają na podglądzie (XLSX w podglądzie niedostępny), testy Rust tabel `focus_blocks` i `focus_queue` używają tylko bazy w pamięci.
+- M1 świadomie zmienił wygląd Ustawień: 4 wzorce `ustawienia-*-win32.png` zregenerowano lokalnie. F1 zregenerował lokalnie 14 wzorców (`zadania-*`, `dashboard-*`, `ustawienia-*`, `widget-*`). Żaden nie był potwierdzony na windows-latest.
+- README (Nowości 1.6) przy wydaniu poprawiono: wcześniej mówił, że kolejka skupienia żyje tylko w pamięci, a po przeglądzie F1 jest zapisywana w `focus_queue`.
+- Otwarte jak po 1.5.0: etap 0 (instalacja 1.2.0, tagi `v1.0.0` i `v1.2.0`, push tagów), dwa zielone przebiegi CI, natywna walidacja przycisków w powiadomieniach.
+
+Do ręcznego sprawdzenia:
+
+M1 — w natywnej aplikacji (`tauri dev` albo po instalacji NSIS):
+- Start na istniejącej bazie użytkownika dodaje klucz `holidays_in_target` z wartością domyślną (włączone). Wyłączenie w Ustawieniach → Czas pracy zapisuje się w SQLite i przeżywa restart.
+- W święto wypadające w dzień roboczy tooltip traya nie pokazuje celu dnia, a powiadomienie „Cel dnia osiągnięty” się nie pojawia. Rust sprawdza to tylko przez `day_target_minutes`; ścieżek traya i powiadomień nie testowano z datą święta.
+- Zakładka Miesiąc w obu motywach przy szerokości 760 i 1280: podsumowanie, obie tabele, wykres 28–31 dni i pole miesiąca (`input type=month`) w WebView2.
+- 4 wzorce Ustawień potwierdzić na windows-latest w CI.
+
+M2 — w natywnej aplikacji (`tauri dev` albo po instalacji NSIS):
+- Okno zapisu ma podpowiedzianą nazwę (`Todo-Track-RRRR-MM` albo `Todo-Track-od_do`) i filtr csv lub xlsx. Anulowanie nie pokazuje komunikatu.
+- Plik CSV otwarty dwuklikiem w polskim Excelu: polskie znaki, kolumny rozdzielone średnikiem, godziny z przecinkiem.
+- Plik XLSX w Excelu: arkusze „Przedziały” i „Podsumowanie”, formaty dat, godzin (w tym 24:00) i liczb, zamrożony pierwszy wiersz, sumy.
+- Zapis do pliku otwartego w Excelu kończy się czytelnym błędem.
+- Eksport przy trwającym pomiarze ma dopisek „trwa”, a koniec przedziału to chwila zamknięcia okna zapisu.
+- Układ przycisków i komunikatu w podsumowaniu zakładki Miesiąc i pod listą „Wybrane dni” w obu motywach i przy szerokości 760 px (nie oglądane zrzutem ekranu).
+
+F1 — nic nie było uruchamiane w natywnej aplikacji ani po instalacji NSIS. Do sprawdzenia natywnie, z zarejestrowanym AUMID:
+- Toast „Koniec bloku skupienia” z przyciskami „Przerwa” i „Kolejny blok”, potem toast „Wracasz do X?” z „Rozpocznij”.
+- Zbiorczy toast „Podczas skupienia: N powiadomień” po bloku, np. przy długim pomiarze ustawionym na 1 min w czasie bloku.
+- Zamknięcie aplikacji w trakcie bloku z odłożonymi powiadomieniami: po starcie blok trwa, a powiadomienia przychodzą po nim.
+- Uśpienie komputera w trakcie bloku: po wybudzeniu blok ma się zakończyć w ciągu około 2 s, z końcem równym planowanemu.
+- Stop z traya, ze skrótu globalnego i z toastu w czasie bloku: blok przerwany, kolejka wysłana od razu.
+- Baner propozycji agentów i linia „Agent: …” w widgecie znikają w czasie bloku i wracają po nim.
+- Wygląd widgetu 320×64 w obu motywach z przyciskami „Przerwa” i „Kolejny blok”.
+- Start na istniejącej bazie użytkownika: tabele `focus_blocks` i `focus_queue` powstają bez utraty danych.
+- 14 zregenerowanych zrzutów wzorcowych do potwierdzenia na windows-latest.
 
 ## Stan po 1.5.0 (15 października 2026)
 
