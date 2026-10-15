@@ -10,7 +10,10 @@
 //! - Stop albo pomiar innego zadania kończy blok jako nieukończony (`completed = 0`,
 //!   `end` = chwila przerwania), bez pytań.
 //! - W czasie bloku powiadomienia inne niż „koniec bloku” trafiają do kolejki
-//!   (`notify::show` → `hold`) i przychodzą po bloku jako jedno zbiorcze.
+//!   (`notify::show` → `hold`) i przychodzą po bloku jako jedno zbiorcze. Kolejka
+//!   jest też w tabeli `focus_queue` (klucz, tytuł, treść), bo `notifications_sent`
+//!   oznacza je jako wysłane już przy odkładaniu: po zamknięciu aplikacji w trakcie
+//!   bloku wracają po starcie (bez przycisków) i przychodzą po bloku.
 //! - Koniec bloku: powiadomienie z „Przerwa” i „Kolejny blok”. Przerwa domyślnie
 //!   zatrzymuje pomiar (`focus_break_stops`), a po niej przychodzi „Wracasz do X?”
 //!   z „Rozpocznij”.
@@ -149,6 +152,21 @@ fn last_end(db: &Connection, task: i64, since: i64) -> rusqlite::Result<Option<i
     )
 }
 
+/// Kolejka zapisana w `focus_queue` (bez przycisków: zostają klucz, tytuł i treść).
+fn saved_queue(db: &Connection) -> rusqlite::Result<Vec<Message>> {
+    db.prepare("SELECT key, title, body FROM focus_queue ORDER BY id")?
+        .query_map([], |r| {
+            Ok(Message {
+                key: r.get(0)?,
+                title: r.get(1)?,
+                body: r.get(2)?,
+                actions: Vec::new(),
+                open: View::default(),
+            })
+        })?
+        .collect()
+}
+
 /// Zamyka blok: ukończony z planowanym końcem albo przerwany w chwili `at`.
 fn close(db: &Connection, block: &Block, at: i64, completed: bool) -> rusqlite::Result<()> {
     let end = if completed {
@@ -247,10 +265,11 @@ pub fn pause_message(pause: &Pause, measuring: bool) -> Message {
 }
 
 impl Focus {
-    /// Stan po starcie aplikacji: trwający blok z bazy.
+    /// Stan po starcie aplikacji: trwający blok i kolejka z bazy.
     pub fn load(db: &Connection) -> Self {
         Focus {
             running: running(db).ok().flatten(),
+            queue: saved_queue(db).unwrap_or_default(),
             ..Focus::default()
         }
     }
@@ -265,12 +284,25 @@ impl Focus {
         self.running.is_some() || self.pause.is_some()
     }
 
+    /// Odkłada powiadomienie tylko w pamięci.
     pub fn enqueue(&mut self, message: Message) {
         self.queue.push(message);
     }
 
-    fn flush(&mut self) -> Vec<Message> {
-        summary(std::mem::take(&mut self.queue))
+    /// Odkłada powiadomienie w pamięci i w `focus_queue` (przeżywa restart).
+    pub fn enqueue_saved(&mut self, db: &Connection, message: Message) -> rusqlite::Result<()> {
+        db.execute(
+            "INSERT INTO focus_queue(key, title, body) VALUES(?1, ?2, ?3)",
+            params![message.key, message.title, message.body],
+        )?;
+        self.queue.push(message);
+        Ok(())
+    }
+
+    /// Opróżnia kolejkę (pamięć i tabelę) i zwraca ją jako zbiorcze powiadomienie.
+    fn flush(&mut self, db: &Connection) -> rusqlite::Result<Vec<Message>> {
+        db.execute("DELETE FROM focus_queue", [])?;
+        Ok(summary(std::mem::take(&mut self.queue)))
     }
 
     /// Start bloku na zadaniu `task` (domyślnie mierzonym). Pomiar startuje, jeśli
@@ -286,15 +318,20 @@ impl Focus {
         let task = task
             .or(current.map(|(t, _)| t))
             .ok_or("Uruchom pomiar albo wybierz zadanie, żeby zacząć blok skupienia.")?;
-        if let Some(block) = running(db).map_err(str_err)? {
+        let previous = running(db).map_err(str_err)?;
+        if let Some(block) = &previous {
             if block.task_id == task && current.is_some_and(|(t, _)| t == task) {
-                self.running = Some(block);
+                self.running = previous;
                 return Ok(());
             }
-            close(db, &block, now, false).map_err(str_err)?;
         }
+        // Najpierw pomiar: gdy zadania nie da się uruchomić (np. zrobione), trwający
+        // blok i pomiar zostają bez zmian.
         if current.map(|(t, _)| t) != Some(task) {
             db::change(db, "start", Some(task), None, now)?;
+        }
+        if let Some(block) = &previous {
+            close(db, block, now, false).map_err(str_err)?;
         }
         db.execute(
             r#"INSERT INTO focus_blocks(task_id, start, "end") VALUES(?1, ?2, ?3)"#,
@@ -318,7 +355,7 @@ impl Focus {
             close(db, &block, now, false).map_err(str_err)?;
         }
         self.running = None;
-        Ok(self.flush())
+        self.flush(db).map_err(str_err)
     }
 
     /// „Przerwa” po ukończonym bloku (`block`: id z powiadomienia; stary toast
@@ -430,7 +467,7 @@ impl Focus {
                     tick.messages.push(end_message(&block));
                     self.ended = Some(block);
                 }
-                tick.messages.extend(self.flush());
+                tick.messages.extend(self.flush(db)?);
             }
         }
         let still = running(db)?;
@@ -438,6 +475,12 @@ impl Focus {
             tick.changed = true;
         }
         self.running = still;
+        // Blok zniknął inaczej (przywrócenie kopii, usunięte zadanie) albo kolejka
+        // wróciła z bazy bez bloku: odłożone powiadomienia wychodzą teraz.
+        if self.running.is_none() && !self.queue.is_empty() {
+            tick.changed = true;
+            tick.messages.extend(self.flush(db)?);
+        }
         // Pytanie po bloku przestaje dotyczyć, gdy mierzymy inne zadanie.
         if let (Some(ended), Some((task, _))) = (&self.ended, current) {
             if ended.task_id != task {
@@ -560,20 +603,28 @@ pub fn setup(app: &tauri::AppHandle) {
     app.manage(State(Mutex::new(focus)));
 }
 
-/// W czasie bloku odkłada powiadomienie do kolejki (`true`); inaczej `false`.
-/// Bierze tylko blokadę stanu skupienia, nigdy bazy.
+/// W czasie bloku odkłada powiadomienie do kolejki i do `focus_queue` (`true`);
+/// inaczej `false`. Blokady jak w `with`: baza, potem stan skupienia; wołający
+/// (`notify::show`) nie trzyma żadnej z nich.
 pub fn hold(app: &tauri::AppHandle, message: &Message) -> bool {
-    app.try_state::<State>()
-        .and_then(|s| {
-            s.0.lock().ok().map(|mut f| {
-                let holds = f.holds();
-                if holds {
-                    f.enqueue(message.clone());
-                }
-                holds
-            })
-        })
-        .unwrap_or(false)
+    let Some(state) = app.try_state::<State>() else {
+        return false;
+    };
+    let database = app.try_state::<Database>();
+    let db = database.as_ref().and_then(|d| d.0.lock().ok());
+    let Ok(mut f) = state.0.lock() else {
+        return false;
+    };
+    if !f.holds() {
+        return false;
+    }
+    let saved = db
+        .as_deref()
+        .is_some_and(|db| f.enqueue_saved(db, message.clone()).is_ok());
+    if !saved {
+        f.enqueue(message.clone());
+    }
+    true
 }
 
 /// Czy trwa blok (propozycje agentów czekają).
@@ -1093,5 +1144,84 @@ mod tests {
         assert_eq!((status.today, status.week), (2, 3));
         let json = serde_json::to_value(&status).unwrap();
         assert!(json.get("today").is_some() && json.get("resume").is_some());
+    }
+
+    #[test]
+    fn queue_survives_restart_and_comes_after_block() {
+        let mut db = setup();
+        let mut f = Focus::default();
+        let s = AppSettings::default();
+        f.start(&mut db, Some(1), &s, at("2026-10-14 10:00"))
+            .unwrap();
+        for title in ["Termin dziś", "Cel"] {
+            f.enqueue_saved(&db, message(title)).unwrap();
+        }
+        // Zamknięcie aplikacji w trakcie bloku: stan w pamięci znika.
+        drop(f);
+        let mut f = Focus::load(&db);
+        assert!(f.holds());
+        assert_eq!(
+            f.status(&db, &Warsaw, at("2026-10-14 10:10"))
+                .unwrap()
+                .queued,
+            2
+        );
+        let t = f.tick(&db, at("2026-10-14 10:25")).unwrap();
+        assert_eq!(
+            t.messages
+                .iter()
+                .map(|m| m.title.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Koniec bloku skupienia",
+                "Podczas skupienia: 2 powiadomienia"
+            ]
+        );
+        // Kolejka wyszła: po kolejnym restarcie nic nie wraca.
+        assert_eq!(Focus::load(&db).queue.len(), 0);
+    }
+
+    #[test]
+    fn start_on_task_that_cannot_start_keeps_running_block() {
+        let mut db = setup();
+        let mut f = Focus::default();
+        let s = AppSettings::default();
+        db::change(&mut db, "toggle", Some(2), None, at("2026-10-14 09:00")).unwrap();
+        f.start(&mut db, Some(1), &s, at("2026-10-14 10:00"))
+            .unwrap();
+        // Stary toast „Kolejny blok” dla zrobionego zadania.
+        assert!(f
+            .start(&mut db, Some(2), &s, at("2026-10-14 10:05"))
+            .is_err());
+        assert_eq!(
+            blocks(&db),
+            [(1, at("2026-10-14 10:00"), at("2026-10-14 10:25"), None)]
+        );
+        assert_eq!(measuring(&db), Some(1));
+        assert!(f.holds());
+        assert!(!f.tick(&db, at("2026-10-14 10:06")).unwrap().changed);
+    }
+
+    #[test]
+    fn queue_comes_out_when_block_disappears() {
+        let mut db = setup();
+        let mut f = Focus::default();
+        let s = AppSettings::default();
+        f.start(&mut db, Some(1), &s, at("2026-10-14 10:00"))
+            .unwrap();
+        f.enqueue_saved(&db, message("Termin dziś")).unwrap();
+        // Np. przywrócenie kopii bez trwającego bloku.
+        db.execute("DELETE FROM focus_blocks", []).unwrap();
+        let t = f.tick(&db, at("2026-10-14 10:05")).unwrap();
+        assert!(t.changed);
+        assert_eq!(
+            t.messages
+                .iter()
+                .map(|m| m.title.as_str())
+                .collect::<Vec<_>>(),
+            ["Termin dziś"]
+        );
+        assert!(!f.holds());
+        assert_eq!(saved_queue(&db).unwrap().len(), 0);
     }
 }
