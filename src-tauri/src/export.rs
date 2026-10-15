@@ -164,12 +164,19 @@ fn excel_time(t: NaiveDateTime) -> Result<ExcelDateTime, XlsxError> {
     )
 }
 
+/// Godzina jako ułamek doby (format czasu Excela bez daty).
+fn day_fraction(t: NaiveDateTime) -> f64 {
+    use chrono::Timelike;
+    t.time().num_seconds_from_midnight() as f64 / 86_400.0
+}
+
 /// Skoroszyt z arkuszami „Przedziały” i „Podsumowanie” (dni × zadania, sumy w godzinach).
 pub fn xlsx(rows: &[Row], days: &[NaiveDate]) -> Result<Vec<u8>, XlsxError> {
     let mut book = Workbook::new();
     let bold = Format::new().set_bold();
     let date = Format::new().set_num_format("yyyy-mm-dd");
-    let time = Format::new().set_num_format("hh:mm");
+    // Czas doby jako ułamek dnia; „[hh]” pokazuje koniec doby jako 24:00, jak w CSV.
+    let time = Format::new().set_num_format("[hh]:mm");
     let whole = Format::new().set_num_format("0");
     let hundredths = Format::new().set_num_format("0.00");
     let hundredths_bold = Format::new().set_num_format("0.00").set_bold();
@@ -187,8 +194,13 @@ pub fn xlsx(rows: &[Row], days: &[NaiveDate]) -> Result<Vec<u8>, XlsxError> {
             excel_time(row.day.and_time(Default::default()))?,
             &date,
         )?;
-        sheet.write_datetime_with_format(r, 1, excel_time(row.start)?, &time)?;
-        sheet.write_datetime_with_format(r, 2, excel_time(row.end)?, &time)?;
+        sheet.write_number_with_format(r, 1, day_fraction(row.start), &time)?;
+        let end = if row.to_midnight {
+            1.0
+        } else {
+            day_fraction(row.end)
+        };
+        sheet.write_number_with_format(r, 2, end, &time)?;
         sheet.write_number_with_format(r, 3, row.ms as f64 / 60_000.0, &whole)?;
         sheet.write_number_with_format(r, 4, row.ms as f64 / 3_600_000.0, &hundredths)?;
         sheet.write_string(r, 5, &row.task)?;
@@ -472,6 +484,16 @@ mod tests {
             Data::Int(i) => *i as f64,
             other => panic!("oczekiwano liczby, jest {other:?}"),
         };
+        let time = |d: &Data| match d {
+            Data::Float(f) => *f,
+            Data::DateTime(t) => t.as_f64(),
+            other => panic!("oczekiwano czasu, jest {other:?}"),
+        };
+        // Część kończąca się o północy: 23:00–24:00 jak w CSV, nie 00:00.
+        assert!((time(&rows[1][1]) - 23.0 / 24.0).abs() < 1e-9);
+        assert!((time(&rows[1][2]) - 1.0).abs() < 1e-9);
+        assert!(time(&rows[2][1]).abs() < 1e-9);
+        assert!((time(&rows[2][2]) - 1.5 / 24.0).abs() < 1e-9);
         let minutes: f64 = rows[1..].iter().map(|r| num(&r[3])).sum();
         let hours: f64 = rows[1..].iter().map(|r| num(&r[4])).sum();
         assert!((minutes - 305.0).abs() < 1e-9);

@@ -1,4 +1,16 @@
-﻿# Todo Track — stan po 1.5.0
+﻿# Todo Track — stan po 1.5.0 (etap 5 w toku wydania 1.6)
+
+## Etap 5 z PLAN_1.3.md (15 października 2026)
+
+Gałąź `release/1.0`, lokalnie, bez pusha. Etap 5 (raport miesięczny i eksport) jest zaimplementowany i przeszedł przegląd, ale nie jest jeszcze wydany: wersja nadal 1.5.0, bez instalatora i tagu (wydanie 1.6.0 obejmie etapy 5 i 6).
+- M1: `src-tauri/src/holidays.rs` i `src/holidays.ts` (polskie święta z jednej listy wzorcowej `tests/fixtures/holidays-pl-2024-2030.json`), ustawienie `holidaysInTarget` w celu dnia, tygodnia, tablicy tygodnia, trayu i powiadomieniu o celu; zakładka Raporty → Miesiąc (`MonthReport.vue`). Wzorce `ustawienia-*-win32.png` zregenerowano lokalnie.
+- M2: `src-tauri/src/export.rs` (komenda `export_report`, CSV pod polski Excel, XLSX przez `rust_xlsxwriter` 0.99.1, test odczytu przez `calamine` 0.36.1), `ExportButtons.vue` w zakładce Miesiąc i „Wybranych dniach”, odpowiednik CSV w podglądzie `src/export.ts`. Po przeglądzie część przedziału kończąca się o północy ma w XLSX koniec 24:00 (format `[hh]:mm`, czas jako ułamek doby), tak jak w CSV.
+
+Do ręcznego sprawdzenia (natywna aplikacja albo NSIS):
+- Okno zapisu dla CSV i XLSX, anulowanie okna, nadpisanie istniejącego pliku.
+- CSV otwarty dwuklikiem w polskim Excelu: polskie znaki, kolumny po średniku, godziny z przecinkiem jako liczby.
+- XLSX w Excelu: arkusze „Przedziały” i „Podsumowanie”, daty, czasy (w tym 24:00), zamrożony wiersz, sumy.
+- Cel miesiąca i dnia w miesiącu ze świętem (np. listopad) na prawdziwej bazie; wyłączenie świąt w ustawieniach.
 
 ## Stan po 1.5.0 (15 października 2026)
 

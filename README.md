@@ -4,6 +4,13 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
+### Nowości 1.6
+
+- **Zakładka Miesiąc** w Raportach: wybór miesiąca, suma względem celu miesiąca (dni robocze minus święta) z rozbiciem „przepracowane / do celu”, tabele według projektu i według zadania z kluczem Jiry oraz wykres dni z linią celu.
+- **Polskie święta ustawowe** (stałe i ruchome od Wielkanocy, w tym Boże Ciało) wyliczane w `src-tauri/src/holidays.rs` i `src/holidays.ts` z jednej listy wzorcowej. Ustawienie „Uwzględniaj święta w celu” (domyślnie włączone) odejmuje je od dni roboczych w celu dnia, tygodnia, miesiąca, tablicy tygodnia, trayu i powiadomieniu o celu.
+- **Eksport CSV i XLSX** z zakładki Miesiąc i z „Wybranych dni” przez okno zapisu. Jeden wiersz na przedział (przedziały dzielone przez lokalną północ, część do północy kończy się o 24:00): data, start, koniec, minuty, godziny dziesiętne, zadanie, klucz Jiry, projekt, notatka dnia. CSV jest pod polski Excel (UTF-8 z BOM, średnik, przecinek dziesiętny). XLSX ma arkusze „Przedziały” i „Podsumowanie” (dni × zadania z sumami w godzinach) i zamrożony pierwszy wiersz. Trwający pomiar liczy się do chwili eksportu z dopiskiem „trwa”. Zadania w koszu nie trafiają do eksportu. XLSX działa tylko w aplikacji; w trybie podglądu eksport zwraca tekst CSV.
+- Bez nowych tabel; ustawienia dostają klucz `holidaysInTarget` z wartością domyślną. Sprawdzone testami Rust (święta 2024–2030, CSV, XLSX odczytany przez `calamine`) i Playwright na podglądzie; okno zapisu i otwarcie plików w Excelu nie były sprawdzane w natywnej aplikacji.
+
 ### Nowości 1.5
 
 - **Rozpoznanie zadania agenta**: dla każdego pracującego agenta (Claude Code, Codex) aplikacja czyta gałąź git wprost z pliku `HEAD`, bez uruchamiania `git` (także worktree i submoduł z plikiem `.git` zawierającym `gitdir:`; odłączony HEAD jako „odłączony HEAD <hash>”; wynik w cache na 30 s na katalog). Klucz Jiry pochodzi z nazwy gałęzi (np. `feature/WMS-123-eksport`), a gdy go tam nie ma, z nazwy sesji Claude Code. Zadanie dopasowuje się w kolejności: przypisanie folderu, lokalne zadanie z tym kluczem, zgłoszenie znane z `jira_issues`. Kafelek **Agenci AI** na Dashboardzie pokazuje gałąź i dopasowane zadanie, a dla folderu bez dopasowania pozwala wybrać zadanie.
