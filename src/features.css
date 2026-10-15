@@ -1326,3 +1326,42 @@ html.widget-root body {
   font-size: 12px;
   align-self: center;
 }
+/* Szybkie dodawanie: rozpoznane zapisy składni pod polem (usuwane kliknięciem). */
+.quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -12px 0 16px;
+}
+.quick-switch .quick-chips {
+  margin: 8px 0 0;
+}
+.quick-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.quick-chip.template {
+  background: var(--raised);
+  color: var(--muted);
+}
+.quick-chip.invalid {
+  background: transparent;
+  color: var(--danger);
+  outline: 1px solid currentColor;
+}
+.quick-chip-error {
+  font-size: var(--fs-xs);
+  color: var(--danger);
+}
+.quick-create {
+  display: grid;
+  gap: 5px;
+}

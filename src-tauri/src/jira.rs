@@ -66,7 +66,17 @@ pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(JiraState(Mutex::new(HashMap::new())));
     Ok(())
 }
-fn config(app: &tauri::AppHandle) -> Result<Config, String> {
+/// Tytuł zgłoszenia z ostatnio pobranej listy (`jira_issues`), np. dla szybkiego
+/// dodawania z samym kluczem.
+pub fn cached_summary(app: &tauri::AppHandle, key: &str) -> Option<String> {
+    app.state::<JiraState>()
+        .0
+        .lock()
+        .ok()?
+        .get(key)
+        .map(|issue| issue.summary.clone())
+}
+pub fn config(app: &tauri::AppHandle) -> Result<Config, String> {
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
     let raw: Option<String> = db
@@ -102,7 +112,7 @@ fn normalize_site(site: &str) -> Result<String, String> {
     }
     Ok(url.as_str().trim_end_matches('/').to_owned())
 }
-fn valid_key(key: &str) -> bool {
+pub fn valid_key(key: &str) -> bool {
     key.len() <= 100
         && key.split_once('-').is_some_and(|(project, number)| {
             !project.is_empty()

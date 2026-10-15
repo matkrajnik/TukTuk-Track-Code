@@ -8,6 +8,7 @@ mod jira;
 mod maintenance;
 mod notify;
 mod planner;
+mod quickadd;
 mod recurrence;
 mod reminder;
 mod settings;
@@ -174,6 +175,29 @@ fn save_details(
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
+/// Szybkie dodawanie ze składnią (pole „Nowe zadanie” i szybkie przełączanie).
+#[tauri::command]
+fn quick_add(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    task: quickadd::NewTask,
+) -> Result<db::Snapshot, String> {
+    let site = jira::config(&app)?.site;
+    let start = task.start;
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = quickadd::create(
+        &mut connection,
+        &site,
+        |key| jira::cached_summary(&app, key),
+        task,
+        db::now(),
+    )?;
+    if start {
+        reminder::reset(&app);
+    }
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
 #[tauri::command]
 fn add_session(
     state: tauri::State<Database>,
@@ -330,6 +354,7 @@ fn main() {
             split_session,
             save_details,
             add_session,
+            quick_add,
             quick_open,
             shortcuts::toggle_measurement,
             app_info,

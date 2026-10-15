@@ -2,8 +2,18 @@
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { change, read, desktop, type Snapshot } from "./store";
+import {
+  change,
+  read,
+  desktop,
+  quickAdd,
+  quickTask,
+  type Snapshot,
+} from "./store";
 import { compareTasks } from "./order";
+import { dayKey } from "./time";
+import { complete, parse, removeToken, type Token } from "./quickadd";
+import QuickChips from "./components/QuickChips.vue";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   query = ref(""),
@@ -25,6 +35,46 @@ const matches = computed(() =>
     .sort(compareTasks())
     .slice(0, 30),
 );
+const projects = computed(() =>
+  [
+    ...new Set(
+      data.value.tasks
+        .map((t) => t.details?.project)
+        .filter((p): p is string => Boolean(p)),
+    ),
+  ].sort((a, b) => a.localeCompare(b, "pl")),
+);
+const parsed = computed(() =>
+  parse(query.value, dayKey(Date.now()), { projects: projects.value }),
+);
+/** Brak wyników i jest co utworzyć: Enter tworzy i uruchamia, Shift+Enter tylko tworzy. */
+const creatable = computed(
+  () =>
+    !matches.value.length &&
+    !!query.value.trim() &&
+    (!!parsed.value.title.trim() || !!parsed.value.fields.jiraKey),
+);
+async function create(start: boolean) {
+  if (busy.value) return;
+  if (parsed.value.errors.length) {
+    error.value = parsed.value.errors[0];
+    return;
+  }
+  busy.value = true;
+  try {
+    emit("updated", await quickAdd(quickTask(parsed.value, start)));
+    await close();
+  } catch (e) {
+    error.value = String(e);
+  } finally {
+    busy.value = false;
+  }
+}
+function removeChip(token: Token) {
+  query.value = removeToken(query.value, token);
+  index.value = 0;
+  input.value?.focus();
+}
 async function refresh() {
   try {
     data.value = await read();
@@ -67,6 +117,19 @@ function keys(e: KeyboardEvent) {
   } else if (e.key === "Enter" && matches.value[index.value] && !busy.value) {
     e.preventDefault();
     void start(matches.value[index.value].id);
+  } else if (e.key === "Enter" && creatable.value && !busy.value) {
+    e.preventDefault();
+    void create(!e.shiftKey);
+  } else if (e.key === "Tab" && !e.shiftKey && e.target === input.value) {
+    const el = input.value!;
+    if (el.selectionStart !== el.selectionEnd) return;
+    const done = complete(el.value, el.selectionStart ?? 0, {
+      projects: projects.value,
+    });
+    if (!done) return;
+    e.preventDefault();
+    query.value = done.text;
+    void nextTick(() => el.setSelectionRange(done.caret, done.caret));
   }
 }
 onMounted(async () => {
@@ -94,6 +157,7 @@ onUnmounted(() => off?.());
       placeholder="Wpisz nazwę zadania…"
       @input="index = 0"
     />
+    <QuickChips :parsed="parsed" @remove="removeChip" />
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <div class="quick-results">
       <button
@@ -110,7 +174,23 @@ onUnmounted(() => off?.());
       <p v-if="!matches.length" class="report-note">
         Brak pasujących nieukończonych zadań.
       </p>
+      <div v-if="creatable" class="quick-create">
+        <button
+          class="quick-result selected"
+          :disabled="busy"
+          @click="create(true)"
+        >
+          <span>Utwórz i rozpocznij: {{ parsed.title || parsed.fields.jiraKey }}</span
+          ><small>Enter</small>
+        </button>
+        <button class="quick-result" :disabled="busy" @click="create(false)">
+          <span>Utwórz: {{ parsed.title || parsed.fields.jiraKey }}</span
+          ><small>Shift+Enter</small>
+        </button>
+      </div>
     </div>
-    <p class="hint">↑ ↓ wybór · Enter uruchamia · Esc zamyka</p>
+    <p class="hint">
+      ↑ ↓ wybór · Enter uruchamia{{ creatable ? " · Shift+Enter tylko tworzy" : "" }} · Esc zamyka
+    </p>
   </section>
 </template>

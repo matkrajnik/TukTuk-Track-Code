@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { Parsed } from "./quickadd";
 export interface Task {
   id: number;
   title: string;
@@ -153,6 +154,124 @@ export async function change(
         if (s.taskId === id && s.endedAt === null)
           s.endedAt = Math.max(now, s.startedAt);
       });
+  }
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
+/** Ładunek `quick_add` (`quickadd::NewTask` w Rust). */
+export interface NewTask {
+  title: string;
+  jiraKey?: string | null;
+  details?: TaskDetails | null;
+  /** Utwórz i rozpocznij: poprzedni pomiar staje. */
+  start?: boolean;
+}
+/** Ładunek `quick_add` z wyniku parsera: szczegóły tylko, gdy podano pola planu. */
+export function quickTask(parsed: Parsed, start = false): NewTask {
+  const f = parsed.fields;
+  const planned =
+    f.estimateMinutes != null ||
+    !!f.plannedDay ||
+    !!f.dueDay ||
+    f.priority != null ||
+    !!f.project;
+  return {
+    title: parsed.title,
+    jiraKey: f.jiraKey ?? null,
+    details: planned
+      ? {
+          ...detailsOf({ id: 0, title: "", done: false, createdAt: 0 }),
+          estimateMinutes: f.estimateMinutes ?? 0,
+          plannedDay: f.plannedDay ?? "",
+          dueDay: f.dueDay ?? "",
+          priority: f.priority ?? 0,
+          project: f.project ?? "",
+        }
+      : null,
+    start,
+  };
+}
+/** Adres Jiry w podglądzie (domyślny z `jira::Config`). */
+const previewJiraSite = "https://asistonwms.atlassian.net";
+/**
+ * Szybkie dodawanie ze składnią: zadanie z polami, kluczem Jiry i opcjonalnym
+ * startem w jednym kroku. Odpowiednik `quickadd::create`; w podglądzie nie ma listy
+ * zgłoszeń, więc pusty tytuł z kluczem bierze tytuł z danych `jira_issues` tylko
+ * w aplikacji.
+ */
+export async function quickAdd(task: NewTask): Promise<Snapshot> {
+  if (desktop) return invoke("quick_add", { task });
+  const jiraKey = task.jiraKey?.trim() || null;
+  if (jiraKey && !/^[A-Z0-9_]+-\d+$/.test(jiraKey))
+    throw new Error("Niepoprawny klucz zgłoszenia Jiry.");
+  const title = task.title.trim();
+  if (!title && jiraKey)
+    throw new Error(
+      `Nie znam tytułu ${jiraKey}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
+    );
+  if (!title || [...title].length > 240)
+    throw new Error("Tytuł musi mieć od 1 do 240 znaków.");
+  const details = task.details
+    ? {
+        ...JSON.parse(JSON.stringify(task.details)),
+        project: task.details.project.trim(),
+        waiting: task.details.waiting.trim(),
+      }
+    : undefined;
+  if (
+    details &&
+    ([details.plannedDay, details.dueDay].some(
+      (d: string) =>
+        d !== "" &&
+        (!/^\d{4}-\d{2}-\d{2}$/.test(d) ||
+          localDay(+new Date(d + "T12:00:00")) !== d),
+    ) ||
+      ![-1, 0, 1].includes(details.priority) ||
+      details.estimateMinutes < 0 ||
+      details.estimateMinutes > 600_000 ||
+      [...details.project].length > 80)
+  )
+    throw new Error("Niepoprawne daty lub zbyt długa treść planu/notatki.");
+  const data = await read();
+  if (jiraKey) {
+    const existing = [...data.tasks, ...(data.trash ?? [])].find(
+      (t) => t.jiraKey === jiraKey,
+    );
+    if (existing)
+      throw new Error(
+        `${jiraKey} ma już zadanie „${existing.title}”${data.trash?.includes(existing) ? " (w koszu)" : ""}.`,
+      );
+  }
+  const now = Date.now();
+  const id =
+    Math.max(
+      0,
+      ...data.tasks.map((t) => t.id),
+      ...(data.trash ?? []).map((t) => t.id),
+    ) + 1;
+  data.tasks.unshift({
+    id,
+    title,
+    done: false,
+    createdAt: now,
+    ...(jiraKey ? { jiraKey: jiraKey, jiraUrl: `${previewJiraSite}/browse/${jiraKey}` } : {}),
+    ...(details ? { details } : {}),
+  });
+  if (task.start) {
+    data.sessions.forEach((s) => {
+      if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
+    });
+    data.sessions.unshift({
+      id:
+        Math.max(
+          0,
+          ...data.sessions.map((s) => s.id),
+          ...(data.trashSessions ?? []).map((s) => s.id),
+        ) + 1,
+      taskId: id,
+      startedAt: now,
+      endedAt: null,
+    });
   }
   localStorage.setItem(key, JSON.stringify(data));
   return data;

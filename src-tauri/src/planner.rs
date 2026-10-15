@@ -60,7 +60,8 @@ pub fn date_valid(value: &str) -> bool {
     n[2] >= 1 && n[2] <= days[(n[1] - 1) as usize]
 }
 
-pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapshot, String> {
+/// Normalizes and validates details before saving (`save`, `quickadd::create`).
+pub fn validate(details: &mut Details) -> Result<(), String> {
     details.project = details.project.trim().into();
     details.waiting = details.waiting.trim().into();
     if !(-1..=1).contains(&details.priority)
@@ -93,6 +94,11 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
     if !details.repeat_days.is_empty() && details.planned_day.is_empty() {
         details.planned_day = details.repeat_from.clone();
     }
+    Ok(())
+}
+
+pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapshot, String> {
+    validate(&mut details)?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
     let exists: bool = tx
         .query_row(

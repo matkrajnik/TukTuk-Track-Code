@@ -5,6 +5,8 @@ import TaskCard from "../components/TaskCard.vue";
 import {
   change,
   duration,
+  quickAdd,
+  quickTask,
   setPriority,
   type NavigateRequest,
   type Session,
@@ -17,6 +19,14 @@ import { sortTasks } from "../order";
 import TargetBar from "../components/TargetBar.vue";
 import { dayTarget, hhmm, useSettings } from "../target";
 import { useReorder } from "../composables/useReorder";
+import QuickChips from "../components/QuickChips.vue";
+import {
+  complete,
+  hasFields,
+  parse,
+  removeToken,
+  type Token,
+} from "../quickadd";
 
 const props = defineProps<{
   data: Snapshot;
@@ -194,8 +204,54 @@ async function act(
     working.value = false;
   }
 }
+const newInput = ref<HTMLInputElement | null>(null);
+const parsed = computed(() =>
+  parse(newTitle.value, todayKey.value, { projects: projects.value }),
+);
+/** Bez zapisów składni dodanie działa dokładnie jak wcześniej (`mutate add`). */
+const canAdd = computed(
+  () =>
+    !parsed.value.errors.length &&
+    (!!parsed.value.title.trim() || !!parsed.value.fields.jiraKey),
+);
 async function add() {
-  if (await act("add", null, newTitle.value)) newTitle.value = "";
+  const result = parsed.value;
+  if (result.errors.length) {
+    emit("error", result.errors[0]);
+    return;
+  }
+  if (!hasFields(result)) {
+    const raw = result.title === newTitle.value.trim();
+    if (await act("add", null, raw ? newTitle.value : result.title))
+      newTitle.value = "";
+    return;
+  }
+  if (busy.value) return;
+  working.value = true;
+  emit("error", "");
+  try {
+    emit("updated", await quickAdd(quickTask(result)));
+    newTitle.value = "";
+  } catch (e) {
+    emit("error", String(e));
+  } finally {
+    working.value = false;
+  }
+}
+function removeChip(token: Token) {
+  newTitle.value = removeToken(newTitle.value, token);
+  newInput.value?.focus();
+}
+function tab(e: KeyboardEvent) {
+  const input = e.target as HTMLInputElement;
+  if (e.shiftKey || input.selectionStart !== input.selectionEnd) return;
+  const done = complete(input.value, input.selectionStart ?? 0, {
+    projects: projects.value,
+  });
+  if (!done) return;
+  e.preventDefault();
+  newTitle.value = done.text;
+  void nextTick(() => input.setSelectionRange(done.caret, done.caret));
 }
 async function priority(task: Task, e: Event) {
   working.value = true;
@@ -248,18 +304,22 @@ async function priority(task: Task, e: Event) {
   </div>
   <form class="add-task" @submit.prevent="add">
     <Plus :size="18" /><input
+      ref="newInput"
       v-model="newTitle"
       aria-label="Nowe zadanie"
       placeholder="Nowe zadanie…"
+      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · \ dosłownie"
       maxlength="240"
       :disabled="loading"
+      @keydown.tab="tab"
     /><button
       class="primary-button"
-      :disabled="busy || loading || !newTitle.trim()"
+      :disabled="busy || loading || !newTitle.trim() || !canAdd"
     >
       Dodaj zadanie
     </button>
   </form>
+  <QuickChips :parsed="parsed" @remove="removeChip" />
   <div class="list-toolbar">
     <div class="tabs" aria-label="Filtr zadań">
       <button

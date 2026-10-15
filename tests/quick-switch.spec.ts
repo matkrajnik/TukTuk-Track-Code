@@ -77,9 +77,10 @@ test("quick switch: Escape closes without touching the timer and finished tasks 
   await expect(
     dialog.getByText("Brak pasujących nieukończonych zadań."),
   ).toBeVisible();
-  // Enter bez wyników nic nie uruchamia.
-  await page.keyboard.press("Enter");
-  await expect(dialog).toBeVisible();
+  // Bez wyników lista proponuje utworzenie zadania (Enter), ale Esc nic nie zmienia.
+  await expect(
+    dialog.getByRole("button", { name: "Utwórz i rozpocznij: dokumentacja" }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   expect(await stored(page)).toEqual(before);
