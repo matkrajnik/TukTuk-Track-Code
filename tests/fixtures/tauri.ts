@@ -11,7 +11,9 @@ import { JIRA_SITE, NOW, seed } from "./seed";
  * i opisana odwołaniem do funkcji źródłowej:
  * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`),
  * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
- * - `planner::set_waiting` (`set_waiting`: blokada „Czekam na” z kafelka).
+ * - `planner::set_waiting` (`set_waiting`: blokada „Czekam na” z kafelka),
+ * - `suggest::refresh` jako gotowa lista propozycji (`suggest`: zdarzenie
+ *   `agent-suggestions`), `agent_switch` i `agent_dismiss`.
  * Same reguły są pokryte testami Rust; tutaj sprawdzamy, że interfejs reaguje na
  * zdarzenia backendu i pokazuje skutki.
  *
@@ -25,6 +27,10 @@ export interface TauriOptions {
   backup?: { preview: unknown; snapshot: unknown } | null;
   /** Szablony zadań (`task_templates`) na starcie. */
   templates?: unknown[];
+  /** Propozycje przełączenia (`agent_suggestions`) na starcie. */
+  suggestions?: unknown[];
+  /** Etykieta okna Tauri (`main`, `widget`); wybiera widok jak w `main.ts`. */
+  window?: string;
   /**
    * Połączona Jira (widok Jira): tablice i zgłoszenia zwracane przez
    * `jira_boards` i `jira_issues`. Domyślnie Jira nie jest połączona.
@@ -48,6 +54,8 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     backup: options.backup ?? null,
     jira: options.jira ?? null,
     templates: options.templates ?? [],
+    suggestions: options.suggestions ?? [],
+    window: options.window ?? "main",
     site: JIRA_SITE,
   });
   await page.goto("/");
@@ -56,7 +64,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
 /** Wywołuje funkcję zastępczego backendu w oknie strony. */
 export function backend<T = unknown>(
   page: Page,
-  name: "idleTick" | "jiraCheck" | "snapshot" | "calls",
+  name: "idleTick" | "jiraCheck" | "snapshot" | "calls" | "suggest",
   arg?: unknown,
 ) {
   return page.evaluate(([n, a]) => (window as any).__tauriMock[n](a), [
@@ -71,6 +79,8 @@ function install(init: {
   backup: { preview: any; snapshot: any } | null;
   jira: { boards: any[]; issues: any[] } | null;
   templates: any[];
+  suggestions: any[];
+  window: string;
   site: string;
 }) {
   const w = window as any;
@@ -245,8 +255,18 @@ function install(init: {
     return imported;
   }
 
+  // suggest::refresh: lista propozycji ustawiana z testu; zmiana wysyła zdarzenie.
+  let suggestions: any[] = structuredClone(init.suggestions);
+  const target = (t: any) =>
+    t.taskId != null ? `t:${t.taskId}` : t.key ? `k:${t.key}` : "";
+  function suggest(list: any[]) {
+    suggestions = clone(list);
+    emit("agent-suggestions", clone(suggestions));
+  }
+
   w.__tauriMock = {
     emit,
+    suggest,
     idleTick,
     jiraCheck,
     snapshot: () => clone(snapshot),
@@ -255,8 +275,8 @@ function install(init: {
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   w.__TAURI_INTERNALS__ = {
     metadata: {
-      currentWindow: { label: "main" },
-      currentWebview: { label: "main" },
+      currentWindow: { label: init.window },
+      currentWebview: { label: init.window },
     },
     transformCallback: (cb: (payload: any) => void) => {
       const id = nextId++;
@@ -304,7 +324,30 @@ function install(init: {
         case "agents_status":
           return [];
         case "agent_suggestions":
-          return [];
+          return clone(suggestions);
+        case "agent_dismiss": {
+          // suggest::agent_dismiss: „Nie teraz” wycisza cel do końca pracy.
+          const goal = target(args);
+          suggestions = suggestions.filter((s: any) => target(s.task) !== goal);
+          return clone(suggestions);
+        }
+        case "agent_switch": {
+          // suggest::agent_switch: start X (poprzedni pomiar staje).
+          const task = snapshot.tasks.find((t: any) => t.id === args.taskId);
+          if (!task) throw "Brak zadania do przełączenia.";
+          stopAll(now);
+          snapshot.sessions.unshift({
+            id: nextSessionId(),
+            taskId: task.id,
+            startedAt: now,
+            endedAt: null,
+          });
+          suggestions = suggestions.filter(
+            (s: any) => target(s.task) !== target(args),
+          );
+          emit("data-changed");
+          return clone(snapshot);
+        }
         // Czas agentów (W1): bez okresów; e2e toru i kolumn działa na podglądzie.
         case "agent_time":
           return { periods: [], totals: [], unmatchedMs: 0 };

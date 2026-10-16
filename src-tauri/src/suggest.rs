@@ -13,8 +13,14 @@
 //! Gdy główne okno jest schowane, nowa propozycja przychodzi raz jako powiadomienie
 //! z przyciskiem „Przełącz” (`notify::AGENT_SWITCH`).
 //!
+//! Sygnał z aktywnego okna (W3, `foreground`) wchodzi tu jako „pseudoagent”
+//! z `kind` równym źródłu (`window`, w W4 `browser`): ta sama reguła 2 minut,
+//! „Nie teraz”, wyciszone foldery i powiadomienie, ale własny wyłącznik
+//! (`window_suggest`) i treść ze źródłem „Okno”.
+//!
 //! Timer nigdy nie przełącza się sam: zmienia go tylko `agent_switch` (kliknięcie).
 use crate::agents::{self, Agent, Match};
+use crate::foreground;
 use crate::notify::{self, Action, Message, View};
 use crate::settings::AppSettings;
 use crate::{db, Database};
@@ -111,9 +117,6 @@ impl Memory {
         now: i64,
     ) -> Vec<Suggestion> {
         self.touch(agents, now);
-        if !s.agent_suggest {
-            return Vec::new();
-        }
         let mut out: Vec<Suggestion> = Vec::new();
         for agent in agents {
             let Some(m) = &agent.task else {
@@ -121,7 +124,10 @@ impl Memory {
             };
             let goal = target_of(m);
             // Ukończone zadanie: „Przełącz” wymagałoby najpierw przywrócenia go.
+            // Agenci AI (`agent_suggest`) i sygnały z okna (`window_suggest`, W3)
+            // mają osobne wyłączniki, ale tę samą regułę.
             if goal.is_empty()
+                || !foreground::enabled(&agent.kind, s)
                 || m.done
                 || now - agent.since < MIN_WORK
                 || (m.task_id.is_some() && m.task_id == active)
@@ -196,35 +202,79 @@ fn title(s: &Suggestion) -> String {
     }
 }
 
+/// Propozycja wyłącznie z sygnału okna albo przeglądarki (bez agenta AI).
+fn signal_only(s: &Suggestion) -> bool {
+    !s.agents.is_empty() && s.agents.iter().all(|w| foreground::is_signal(&w.kind))
+}
+
+/// Nazwa źródła sygnału w interfejsie.
+pub fn source_label(kind: &str) -> &'static str {
+    match kind {
+        foreground::WINDOW => "Okno",
+        foreground::BROWSER => "Przeglądarka",
+        _ => "Agent",
+    }
+}
+
+/// Agenci AI i sygnał z aktywnego okna (W3) dla jednej reguły propozycji.
+fn workers(app: &tauri::AppHandle, now: i64) -> Vec<Agent> {
+    let mut list = agents::current(app);
+    list.extend(foreground::current(app, now));
+    list
+}
+
 /// Powiadomienie o nowych propozycjach (główne okno schowane). Jedna propozycja
 /// z lokalnym zadaniem ma przycisk „Przełącz”; kliknięcie treści pokazuje główne
 /// okno z banerem.
 pub fn message(list: &[Suggestion]) -> Option<Message> {
+    let names = |s: &Suggestion| {
+        s.agents
+            .iter()
+            .map(|w| w.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let switch = |s: &Suggestion| {
+        s.task
+            .task_id
+            .map(|id| vec![Action::new(notify::AGENT_SWITCH, "Przełącz", id)])
+            .unwrap_or_default()
+    };
     match list {
         [] => None,
+        // Sam sygnał z okna albo przeglądarki (W3, W4): źródło w treści.
+        [one] if signal_only(one) => Some(Message {
+            key: String::new(),
+            title: "Pracujesz teraz przy innym zadaniu?".into(),
+            body: format!(
+                "{}: {} · {}",
+                source_label(&one.agents[0].kind),
+                names(one),
+                notify::short(&title(one))
+            ),
+            actions: switch(one),
+            open: View::default(),
+        }),
         [one] => Some(Message {
             key: String::new(),
             title: "Agent pracuje nad innym zadaniem".into(),
-            body: format!(
-                "{} · {}",
-                one.agents
-                    .iter()
-                    .map(|w| w.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                notify::short(&title(one))
-            ),
-            actions: one
-                .task
-                .task_id
-                .map(|id| vec![Action::new(notify::AGENT_SWITCH, "Przełącz", id)])
-                .unwrap_or_default(),
+            body: format!("{} · {}", names(one), notify::short(&title(one))),
+            actions: switch(one),
             open: View::default(),
         }),
         many => Some(Message {
             key: String::new(),
             title: format!(
-                "Agenci AI: {} do przełączenia",
+                "{}: {} do przełączenia",
+                if many
+                    .iter()
+                    .flat_map(|s| &s.agents)
+                    .any(|w| foreground::is_signal(&w.kind))
+                {
+                    "Propozycje"
+                } else {
+                    "Agenci AI"
+                },
                 notify::tasks_word(many.len())
             ),
             body: many
@@ -259,7 +309,7 @@ pub fn refresh(app: &tauri::AppHandle, now: i64) {
     let Some(state) = app.try_state::<State>() else {
         return;
     };
-    let agents = agents::current(app);
+    let agents = workers(app, now);
     let read = app.state::<Database>().0.lock().ok().and_then(|db| {
         let active: Option<i64> = db
             .query_row(
@@ -352,7 +402,7 @@ pub fn agent_dismiss(
     key: Option<String>,
 ) -> Vec<Suggestion> {
     let goal = target(task_id, key.as_deref());
-    let agents = agents::current(&app);
+    let agents = workers(&app, db::now());
     if let Ok(mut g) = app.state::<State>().0.lock() {
         g.0.dismiss(&agents, &goal, db::now());
     }

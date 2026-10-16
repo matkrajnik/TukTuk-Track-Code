@@ -10,6 +10,8 @@ export interface AppSettings {
   agentSuggest: boolean;
   /** Foldery (z podfolderami) z wyłączonymi propozycjami agentów. */
   agentMutedFolders: string[];
+  /** Podpowiadaj zadanie na podstawie aktywnego okna (tytuły tylko w pamięci). */
+  windowSuggest: boolean;
   targetDayMinutes: number;
   workDays: number[];
   /** Święta ustawowe nie są dniami roboczymi w celu. */
@@ -65,6 +67,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   idleAgents: true,
   agentSuggest: true,
   agentMutedFolders: [],
+  windowSuggest: false,
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   holidaysInTarget: true,

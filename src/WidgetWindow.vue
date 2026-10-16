@@ -22,6 +22,8 @@ import {
 import {
   onSuggestionsChanged,
   readSuggestions,
+  signalOnly,
+  sourceLabel,
   switchToSuggestion,
   type Suggestion,
 } from "./agents";
@@ -69,9 +71,9 @@ const tasksWord = (n: number) =>
 /** Linia propozycji: jedno zadanie z nazwy, kilka jako liczba. */
 const proposalLine = computed(() =>
   proposals.value.length === 1
-    ? `Agent: ${proposalName(proposals.value[0])}`
+    ? `${signalOnly(proposals.value[0]) ? sourceLabel(proposals.value[0].agents[0].kind) : "Agent"}: ${proposalName(proposals.value[0])}`
     : proposals.value.length
-      ? `Agenci: ${tasksWord(proposals.value.length)} do przełączenia`
+      ? `${proposals.value.every(signalOnly) ? "Propozycje" : "Agenci"}: ${tasksWord(proposals.value.length)} do przełączenia`
       : "",
 );
 async function loadSuggestions() {

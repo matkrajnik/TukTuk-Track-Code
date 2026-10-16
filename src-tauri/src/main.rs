@@ -8,6 +8,7 @@ mod capacity;
 mod db;
 mod export;
 mod focus;
+mod foreground;
 mod holidays;
 mod idle;
 mod jira;
@@ -328,6 +329,7 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             suggest::setup(app.handle());
+            foreground::setup(app.handle());
             notify::setup(app.handle());
             focus::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego

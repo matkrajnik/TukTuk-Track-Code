@@ -5,6 +5,8 @@ import {
   muteSuggestionFolders,
   onSuggestionsChanged,
   readSuggestions,
+  signalOnly,
+  sourceLabel,
   switchToSuggestion,
   type AgentTask,
   type Suggestion,
@@ -28,7 +30,12 @@ const visible = computed(() =>
     (s) => s.task.taskId == null || s.task.taskId !== props.activeTaskId,
   ),
 );
-const kinds = { claude: "Claude", codex: "Codex" } as const;
+const kinds: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  window: sourceLabel("window"),
+  browser: sourceLabel("browser"),
+};
 const who = (s: Suggestion) =>
   s.agents.map((a) => `${kinds[a.kind] ?? a.kind} · ${a.name}`).join(", ");
 /** Nazwa zadania do etykiet przycisków. */
@@ -39,7 +46,9 @@ const label = (task: AgentTask) =>
     ? `${task.key}${task.title ? `: ${task.title}` : ""} (zadanie powstanie z Jiry)`
     : `„${task.title}”`;
 const folders = (s: Suggestion) =>
-  [...new Set(s.agents.map((a) => a.cwd))].join(", ");
+  [...new Set(s.agents.map((a) => a.cwd).filter(Boolean))].join(", ");
+/** Sygnał z przeglądarki albo Teams nie ma folderu: bez wyciszania folderu. */
+const hasFolder = (s: Suggestion) => s.agents.some((a) => !!a.cwd);
 const timer = computed(() => {
   const task = props.tasks.find((t) => t.id === props.activeTaskId);
   return task ? `Timer mierzy „${task.title}”.` : "Timer stoi.";
@@ -71,14 +80,28 @@ const dismiss = (s: Suggestion) =>
     suggestions.value = await dismissSuggestion(s);
   });
 const mute = (s: Suggestion) => run(() => muteSuggestionFolders(s));
+/** Tekst banera dla jednej propozycji: agent AI albo sygnał z okna (W3). */
+const single = computed(() => {
+  const s = visible.value[0];
+  if (!s) return { title: "", text: "" };
+  return signalOnly(s)
+    ? {
+        title: "Pracujesz teraz przy innym zadaniu?",
+        text: `${who(s)} pokazuje ${label(s.task)}.`,
+      }
+    : {
+        title: "Agent pracuje nad innym zadaniem",
+        text: `${who(s)} pracuje nad ${label(s.task)}.`,
+      };
+});
 /** „Zapamiętaj dla tego folderu”: przypisuje foldery agentów do zadania X. */
 const canRemember = (s: Suggestion) =>
-  s.task.taskId != null && s.task.source !== "folder";
+  s.task.taskId != null && s.task.source !== "folder" && hasFolder(s);
 const remember = (s: Suggestion) =>
   run(async () => {
     const taskId = s.task.taskId;
     if (taskId == null) return;
-    for (const cwd of new Set(s.agents.map((a) => a.cwd)))
+    for (const cwd of new Set(s.agents.map((a) => a.cwd).filter(Boolean)))
       await bindAgentFolder(cwd, taskId);
   });
 
@@ -110,11 +133,8 @@ onUnmounted(() => {
     aria-label="Propozycja przełączenia"
   >
     <template v-if="visible.length === 1">
-      <h2>Agent pracuje nad innym zadaniem</h2>
-      <p>
-        {{ who(visible[0]) }} pracuje nad {{ label(visible[0].task) }}.
-        {{ timer }} Przełączyć pomiar?
-      </p>
+      <h2>{{ single.title }}</h2>
+      <p>{{ single.text }} {{ timer }} Przełączyć pomiar?</p>
       <div class="planning-actions">
         <button
           class="today-button"
@@ -129,6 +149,7 @@ onUnmounted(() => {
         >
           Nie teraz</button
         ><button
+          v-if="hasFolder(visible[0])"
           class="today-button"
           :disabled="busy"
           :title="folders(visible[0])"
@@ -147,7 +168,13 @@ onUnmounted(() => {
       </div>
     </template>
     <template v-else>
-      <h2>Agenci pracują nad innymi zadaniami</h2>
+      <h2>
+        {{
+          visible.every(signalOnly)
+            ? "Pracujesz nad innymi zadaniami?"
+            : "Agenci pracują nad innymi zadaniami"
+        }}
+      </h2>
       <p>{{ timer }} Wybierz zadanie, na które przełączyć pomiar.</p>
       <ul class="agent-suggestions">
         <li
@@ -174,6 +201,7 @@ onUnmounted(() => {
             >
               Nie teraz</button
             ><button
+              v-if="hasFolder(s)"
               class="today-button"
               :disabled="busy"
               :title="folders(s)"

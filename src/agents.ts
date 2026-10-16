@@ -154,9 +154,24 @@ export async function onAgentsChanged(
   };
 }
 
-/** Agent w propozycji (`suggest::Worker`). */
+/**
+ * Źródło sygnału zamiast agenta AI (`foreground::WINDOW`, `foreground::BROWSER`):
+ * aktywne okno (W3) albo rozszerzenie przeglądarki (W4).
+ */
+export type SignalKind = "window" | "browser";
+/** Czy `kind` to sygnał z okna albo przeglądarki (`foreground::is_signal`). */
+export const isSignal = (kind: string): kind is SignalKind =>
+  kind === "window" || kind === "browser";
+/** Nazwa źródła w interfejsie (`suggest::source_label`). */
+export const sourceLabel = (kind: string) =>
+  kind === "window" ? "Okno" : kind === "browser" ? "Przeglądarka" : "Agent";
+/** Propozycja tylko z sygnału okna albo przeglądarki (`suggest::signal_only`). */
+export const signalOnly = (s: Suggestion) =>
+  s.agents.length > 0 && s.agents.every((a) => isSignal(a.kind));
+
+/** Agent w propozycji (`suggest::Worker`); sygnał z okna ma `kind` źródła. */
 export interface Worker {
-  kind: Agent["kind"];
+  kind: Agent["kind"] | SignalKind;
   name: string;
   cwd: string;
   since: number;
@@ -197,18 +212,25 @@ export function mutedFolder(folders: string[], cwd: string): boolean {
 export function pendingSuggestions(
   agents: Agent[],
   activeTaskId: number | null,
-  settings: Pick<AppSettings, "agentSuggest" | "agentMutedFolders">,
+  settings: Pick<
+    AppSettings,
+    "agentSuggest" | "agentMutedFolders" | "windowSuggest"
+  >,
   dismissed: Set<string>,
   now: number,
 ): Suggestion[] {
-  if (!settings.agentSuggest) return [];
   const out: Suggestion[] = [];
   for (const agent of agents) {
     const task = agent.task;
     if (!task) continue;
     const target = suggestionTarget(task);
+    // Osobne wyłączniki agentów i okna (`foreground::enabled`), wspólna reguła.
+    const enabled = isSignal(agent.kind)
+      ? settings.windowSuggest
+      : settings.agentSuggest;
     if (
       !target ||
+      !enabled ||
       task.done ||
       now - agent.since < MIN_WORK ||
       (task.taskId != null && task.taskId === activeTaskId) ||
@@ -300,7 +322,7 @@ export async function muteSuggestionFolders(
   await writeSettings({
     agentMutedFolders: [
       ...settings.agentMutedFolders,
-      ...suggestion.agents.map((a) => a.cwd),
+      ...suggestion.agents.map((a) => a.cwd).filter(Boolean),
     ],
   });
 }

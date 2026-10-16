@@ -99,7 +99,10 @@ async function saveAutostart(field: keyof Autostart, e: Event) {
   error.value = "";
   try {
     autostart.value = await writeAutostart(next.enabled, next.hidden);
-    settings.value = { ...settings.value, autostartHidden: autostart.value.hidden };
+    settings.value = {
+      ...settings.value,
+      autostartHidden: autostart.value.hidden,
+    };
   } catch (err) {
     error.value = String(err instanceof Error ? err.message : err);
     autostart.value = await readAutostart().catch(() => autostart.value);
@@ -142,438 +145,452 @@ onUnmounted(() => {
   <section class="dashboard-card settings-panel">
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <template v-if="section === 'work'">
-    <h2>Czas pracy</h2>
-    <label class="inline-check"
-      ><input
-        :checked="settings.idleEnabled"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ idleEnabled: checked($event) })"
-      />Zapytaj o czas po co najmniej 10 minutach bezczynności</label
-    >
-    <p class="hint">
-      Decydujesz, czy zachować czas, czy zakończyć pomiar na początku przerwy.
-      Nic nie jest obcinane automatycznie.
-    </p>
-    <label class="inline-check"
-      ><input
-        :checked="settings.idleAgents"
-        type="checkbox"
-        :disabled="busy || !settings.idleEnabled"
-        @change="save({ idleAgents: checked($event) })"
-      />Praca agentów AI (Claude Code, Codex) liczy się jako aktywność</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="settings.agentSuggest"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ agentSuggest: checked($event) })"
-      />Proponuj przełączenie na zadanie, nad którym pracuje agent AI</label
-    >
-    <p class="hint">
-      Po 2 minutach pracy agenta nad innym zadaniem niż mierzone. Timer nigdy
-      nie przełącza się sam.
-    </p>
-    <template v-if="settings.agentMutedFolders.length">
-      <p class="hint">Bez propozycji dla folderów (z podfolderami):</p>
-      <ul class="muted-folders" aria-label="Foldery bez propozycji agentów">
-        <li v-for="folder in settings.agentMutedFolders" :key="folder">
-          <code class="mono">{{ folder }}</code
-          ><button
-            class="text-link"
-            :disabled="busy"
-            :aria-label="`Proponuj znowu dla ${folder}`"
-            @click="
-              save({
-                agentMutedFolders: settings.agentMutedFolders.filter(
-                  (f) => f !== folder,
-                ),
-              })
-            "
-          >
-            Proponuj znowu
-          </button>
-        </li>
-      </ul>
-    </template>
-    <div class="planning-fields settings-fields">
-      <label
-        >Cel dzienny (minuty)<input
-          :value="settings.targetDayMinutes"
-          type="number"
-          min="0"
-          max="1440"
-          step="15"
-          :disabled="busy"
-          @change="save({ targetDayMinutes: number($event) })"
-      /></label>
-      <label
-        >Początek dnia<input
-          :value="settings.dayStart"
-          type="time"
-          :disabled="busy"
-          @change="save({ dayStart: text($event) })"
-      /></label>
-    </div>
-    <fieldset class="settings-days">
-      <legend>Dni robocze</legend>
-      <label v-for="d in weekDays" :key="d.day" class="inline-check"
+      <h2>Czas pracy</h2>
+      <label class="inline-check"
         ><input
+          :checked="settings.idleEnabled"
           type="checkbox"
-          :checked="settings.workDays.includes(d.day)"
           :disabled="busy"
-          :aria-label="'Dzień roboczy: ' + d.name"
-          @change="toggleDay(d.day, checked($event))"
-        />{{ d.name }}</label
+          @change="save({ idleEnabled: checked($event) })"
+        />Zapytaj o czas po co najmniej 10 minutach bezczynności</label
       >
-    </fieldset>
-    <label class="inline-check"
-      ><input
-        :checked="settings.holidaysInTarget"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ holidaysInTarget: checked($event) })"
-      />Uwzględniaj święta w celu</label
-    >
-    <p class="hint">
-      Cel dnia {{ hm(settings.targetDayMinutes) }}, cel tygodnia
-      {{ weekTarget }}.
-    </p>
-    <p v-if="settings.holidaysInTarget" class="hint">
-      Polskie święta ustawowe, także Wielkanoc i Boże Ciało, nie są dniami
-      roboczymi: cel tygodnia i miesiąca jest wtedy niższy.
-    </p>
-    <label class="inline-check"
-      ><input
-        :checked="settings.planWithCorrection"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ planWithCorrection: checked($event) })"
-      />Planuj z poprawką szacunków</label
-    >
-    <p class="hint">
-      Poprawka to mediana stosunku czasu rzeczywistego do szacunku ukończonych
-      zadań z 90 dni (projektu albo wszystkich, co najmniej 5 zadań). Bez tej
-      opcji jest tylko podpowiedzią „zwykle ~…”; włączona liczy się w
-      pojemności tablicy tygodnia, osi planu i „Rozłóż”.
-    </p>
+      <p class="hint">
+        Decydujesz, czy zachować czas, czy zakończyć pomiar na początku przerwy.
+        Nic nie jest obcinane automatycznie.
+      </p>
+      <label class="inline-check"
+        ><input
+          :checked="settings.idleAgents"
+          type="checkbox"
+          :disabled="busy || !settings.idleEnabled"
+          @change="save({ idleAgents: checked($event) })"
+        />Praca agentów AI (Claude Code, Codex) liczy się jako aktywność</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="settings.agentSuggest"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ agentSuggest: checked($event) })"
+        />Proponuj przełączenie na zadanie, nad którym pracuje agent AI</label
+      >
+      <p class="hint">
+        Po 2 minutach pracy agenta nad innym zadaniem niż mierzone. Timer nigdy
+        nie przełącza się sam.
+      </p>
+      <label class="inline-check"
+        ><input
+          :checked="settings.windowSuggest"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ windowSuggest: checked($event) })"
+        />Podpowiadaj zadanie na podstawie aktywnego okna</label
+      >
+      <p class="hint">
+        Co 5 sekund aplikacja czyta tytuł i nazwę programu okna na pierwszym
+        planie: klucz Jiry z przeglądarki, Teams lub Outlooka i folder projektu
+        z VS Code, Cursora lub JetBrains. Tytuły zostają tylko w pamięci, nie
+        trafiają do bazy ani logów. Propozycja przychodzi po 2 minutach przy tym
+        samym zadaniu.
+      </p>
+      <template v-if="settings.agentMutedFolders.length">
+        <p class="hint">Bez propozycji dla folderów (z podfolderami):</p>
+        <ul class="muted-folders" aria-label="Foldery bez propozycji agentów">
+          <li v-for="folder in settings.agentMutedFolders" :key="folder">
+            <code class="mono">{{ folder }}</code
+            ><button
+              class="text-link"
+              :disabled="busy"
+              :aria-label="`Proponuj znowu dla ${folder}`"
+              @click="
+                save({
+                  agentMutedFolders: settings.agentMutedFolders.filter(
+                    (f) => f !== folder,
+                  ),
+                })
+              "
+            >
+              Proponuj znowu
+            </button>
+          </li>
+        </ul>
+      </template>
+      <div class="planning-fields settings-fields">
+        <label
+          >Cel dzienny (minuty)<input
+            :value="settings.targetDayMinutes"
+            type="number"
+            min="0"
+            max="1440"
+            step="15"
+            :disabled="busy"
+            @change="save({ targetDayMinutes: number($event) })"
+        /></label>
+        <label
+          >Początek dnia<input
+            :value="settings.dayStart"
+            type="time"
+            :disabled="busy"
+            @change="save({ dayStart: text($event) })"
+        /></label>
+      </div>
+      <fieldset class="settings-days">
+        <legend>Dni robocze</legend>
+        <label v-for="d in weekDays" :key="d.day" class="inline-check"
+          ><input
+            type="checkbox"
+            :checked="settings.workDays.includes(d.day)"
+            :disabled="busy"
+            :aria-label="'Dzień roboczy: ' + d.name"
+            @change="toggleDay(d.day, checked($event))"
+          />{{ d.name }}</label
+        >
+      </fieldset>
+      <label class="inline-check"
+        ><input
+          :checked="settings.holidaysInTarget"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ holidaysInTarget: checked($event) })"
+        />Uwzględniaj święta w celu</label
+      >
+      <p class="hint">
+        Cel dnia {{ hm(settings.targetDayMinutes) }}, cel tygodnia
+        {{ weekTarget }}.
+      </p>
+      <p v-if="settings.holidaysInTarget" class="hint">
+        Polskie święta ustawowe, także Wielkanoc i Boże Ciało, nie są dniami
+        roboczymi: cel tygodnia i miesiąca jest wtedy niższy.
+      </p>
+      <label class="inline-check"
+        ><input
+          :checked="settings.planWithCorrection"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ planWithCorrection: checked($event) })"
+        />Planuj z poprawką szacunków</label
+      >
+      <p class="hint">
+        Poprawka to mediana stosunku czasu rzeczywistego do szacunku ukończonych
+        zadań z 90 dni (projektu albo wszystkich, co najmniej 5 zadań). Bez tej
+        opcji jest tylko podpowiedzią „zwykle ~…”; włączona liczy się w
+        pojemności tablicy tygodnia, osi planu i „Rozłóż”.
+      </p>
     </template>
     <template v-if="section === 'focus'">
-    <h2>Skupienie</h2>
-    <div class="planning-fields settings-fields">
-      <label
-        >Blok skupienia (minuty)<input
-          :value="settings.focusBlockMinutes"
-          type="number"
-          min="1"
-          max="240"
+      <h2>Skupienie</h2>
+      <div class="planning-fields settings-fields">
+        <label
+          >Blok skupienia (minuty)<input
+            :value="settings.focusBlockMinutes"
+            type="number"
+            min="1"
+            max="240"
+            :disabled="busy"
+            @change="save({ focusBlockMinutes: number($event) })"
+        /></label>
+        <label
+          >Przerwa (minuty)<input
+            :value="settings.focusBreakMinutes"
+            type="number"
+            min="1"
+            max="60"
+            :disabled="busy"
+            @change="save({ focusBreakMinutes: number($event) })"
+        /></label>
+      </div>
+      <div class="planning-actions">
+        <button
+          v-for="m in [25, 50]"
+          :key="'b' + m"
+          class="today-button"
+          :aria-pressed="settings.focusBlockMinutes === m"
           :disabled="busy"
-          @change="save({ focusBlockMinutes: number($event) })"
-      /></label>
-      <label
-        >Przerwa (minuty)<input
-          :value="settings.focusBreakMinutes"
-          type="number"
-          min="1"
-          max="60"
+          @click="save({ focusBlockMinutes: m })"
+        >
+          Blok {{ m }} min</button
+        ><button
+          v-for="m in [5, 10]"
+          :key="'p' + m"
+          class="today-button"
+          :aria-pressed="settings.focusBreakMinutes === m"
           :disabled="busy"
-          @change="save({ focusBreakMinutes: number($event) })"
-      /></label>
-    </div>
-    <div class="planning-actions">
-      <button
-        v-for="m in [25, 50]"
-        :key="'b' + m"
-        class="today-button"
-        :aria-pressed="settings.focusBlockMinutes === m"
-        :disabled="busy"
-        @click="save({ focusBlockMinutes: m })"
+          @click="save({ focusBreakMinutes: m })"
+        >
+          Przerwa {{ m }} min
+        </button>
+      </div>
+      <label class="inline-check"
+        ><input
+          :checked="settings.focusBreakStops"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ focusBreakStops: checked($event) })"
+        />Przerwa zatrzymuje pomiar</label
       >
-        Blok {{ m }} min</button
-      ><button
-        v-for="m in [5, 10]"
-        :key="'p' + m"
-        class="today-button"
-        :aria-pressed="settings.focusBreakMinutes === m"
-        :disabled="busy"
-        @click="save({ focusBreakMinutes: m })"
-      >
-        Przerwa {{ m }} min
-      </button>
-    </div>
-    <label class="inline-check"
-      ><input
-        :checked="settings.focusBreakStops"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ focusBreakStops: checked($event) })"
-      />Przerwa zatrzymuje pomiar</label
-    >
-    <p class="hint">
-      „Skupienie” na pasku bieżącego pomiaru albo w widgecie zaczyna blok i
-      uruchamia pomiar, jeśli nie trwa. W czasie bloku powiadomienia i
-      propozycje agentów czekają i przychodzą po bloku w jednym zbiorczym. Stop
-      albo inne zadanie kończy blok jako nieukończony.
-    </p>
+      <p class="hint">
+        „Skupienie” na pasku bieżącego pomiaru albo w widgecie zaczyna blok i
+        uruchamia pomiar, jeśli nie trwa. W czasie bloku powiadomienia i
+        propozycje agentów czekają i przychodzą po bloku w jednym zbiorczym.
+        Stop albo inne zadanie kończy blok jako nieukończony.
+      </p>
     </template>
     <template v-if="section === 'windows'">
-    <h2>Okna</h2>
-    <label class="inline-check"
-      ><input
-        :checked="settings.widgetEnabled"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ widgetEnabled: checked($event) })"
-      />Pokazuj mini-widget zawsze na wierzchu</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="settings.widgetBackgroundOnly"
-        type="checkbox"
-        :disabled="busy || !settings.widgetEnabled"
-        @change="save({ widgetBackgroundOnly: checked($event) })"
-      />Tylko gdy główne okno jest schowane lub bez fokusu</label
-    >
-    <p class="hint">
-      Mini-widget pokazuje bieżący pomiar z przyciskami Start/Stop i ⇄. X na
-      widgecie chowa go do końca sesji; przywrócisz go przełącznikiem w
-      nagłówku.
-    </p>
+      <h2>Okna</h2>
+      <label class="inline-check"
+        ><input
+          :checked="settings.widgetEnabled"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ widgetEnabled: checked($event) })"
+        />Pokazuj mini-widget zawsze na wierzchu</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="settings.widgetBackgroundOnly"
+          type="checkbox"
+          :disabled="busy || !settings.widgetEnabled"
+          @change="save({ widgetBackgroundOnly: checked($event) })"
+        />Tylko gdy główne okno jest schowane lub bez fokusu</label
+      >
+      <p class="hint">
+        Mini-widget pokazuje bieżący pomiar z przyciskami Start/Stop i ⇄. X na
+        widgecie chowa go do końca sesji; przywrócisz go przełącznikiem w
+        nagłówku.
+      </p>
     </template>
     <template v-if="section === 'jira'">
-    <h2>Jira</h2>
-    <label class="inline-check"
-      ><input
-        :checked="settings.jiraAutoImport"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ jiraAutoImport: checked($event) })"
-      />Dodawaj nowe zgłoszenia przypisane do mnie</label
-    >
-    <p class="hint">
-      Co 5 minut, gdy konto Jiry jest połączone. Nowe zgłoszenie trafia do „Do
-      zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
-      sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
-    </p>
-    <label class="settings-statuses"
-      >Statusy oznaczające „Czekam na” (jeden w wierszu)<textarea
-        :value="settings.waitingJiraStatuses.join('\n')"
-        rows="5"
-        :disabled="busy"
-        @change="
-          save({
-            waitingJiraStatuses: ($event.target as HTMLTextAreaElement).value.split(
-              '\n',
-            ),
-          })
-        "
-      />
-    </label>
-    <p class="hint">
-      Gdy zgłoszenie zadania wejdzie w taki status, kafelek proponuje
-      oznaczenie „Czekam na”, a gdy z niego wyjdzie — odblokowanie. Nic nie
-      zmienia się samo. Wielkość liter nie ma znaczenia.
-    </p>
-    <p class="hint">
-      Konto Jiry (adres, e-mail, token API) i tablice ustawiasz w widoku Jira.
-    </p>
-    <button class="action-button" @click="openView({ view: 'jira' })">
-      Połączenie z Jirą
-    </button>
+      <h2>Jira</h2>
+      <label class="inline-check"
+        ><input
+          :checked="settings.jiraAutoImport"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ jiraAutoImport: checked($event) })"
+        />Dodawaj nowe zgłoszenia przypisane do mnie</label
+      >
+      <p class="hint">
+        Co 5 minut, gdy konto Jiry jest połączone. Nowe zgłoszenie trafia do „Do
+        zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
+        sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
+      </p>
+      <label class="settings-statuses"
+        >Statusy oznaczające „Czekam na” (jeden w wierszu)<textarea
+          :value="settings.waitingJiraStatuses.join('\n')"
+          rows="5"
+          :disabled="busy"
+          @change="
+            save({
+              waitingJiraStatuses: (
+                $event.target as HTMLTextAreaElement
+              ).value.split('\n'),
+            })
+          "
+        />
+      </label>
+      <p class="hint">
+        Gdy zgłoszenie zadania wejdzie w taki status, kafelek proponuje
+        oznaczenie „Czekam na”, a gdy z niego wyjdzie — odblokowanie. Nic nie
+        zmienia się samo. Wielkość liter nie ma znaczenia.
+      </p>
+      <p class="hint">
+        Konto Jiry (adres, e-mail, token API) i tablice ustawiasz w widoku Jira.
+      </p>
+      <button class="action-button" @click="openView({ view: 'jira' })">
+        Połączenie z Jirą
+      </button>
     </template>
     <template v-if="section === 'calendar'">
-    <h2>Kalendarz</h2>
-    <CalendarSettings />
-    <label class="inline-check"
-      ><input
-        :checked="settings.calendarShowTitles"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ calendarShowTitles: checked($event) })"
-      />Pokazuj tytuły spotkań</label
-    >
-    <p class="hint">
-      Wyłączone: zamiast tytułu widać „Spotkanie”, np. przy udostępnianiu
-      ekranu. Spotkania są tylko do odczytu; czas spotkania dodajesz sam.
-    </p>
+      <h2>Kalendarz</h2>
+      <CalendarSettings />
+      <label class="inline-check"
+        ><input
+          :checked="settings.calendarShowTitles"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ calendarShowTitles: checked($event) })"
+        />Pokazuj tytuły spotkań</label
+      >
+      <p class="hint">
+        Wyłączone: zamiast tytułu widać „Spotkanie”, np. przy udostępnianiu
+        ekranu. Spotkania są tylko do odczytu; czas spotkania dodajesz sam.
+      </p>
     </template>
     <template v-if="section === 'notifications'">
-    <h2>Powiadomienia</h2>
-    <label class="inline-check"
-      ><input
-        :checked="settings.notifyDue"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ notifyDue: checked($event) })"
-      />Przypominaj o terminach na dziś i przekroczonych</label
-    >
-    <div class="planning-fields settings-fields">
-      <label
-        >Długi pomiar bez Stop (minuty, 0 wyłącza)<input
-          :value="settings.notifyLongMinutes"
-          type="number"
-          min="0"
-          max="1440"
-          step="15"
+      <h2>Powiadomienia</h2>
+      <label class="inline-check"
+        ><input
+          :checked="settings.notifyDue"
+          type="checkbox"
           :disabled="busy"
-          @change="save({ notifyLongMinutes: number($event) })"
-      /></label>
-      <label
-        >Wieczorne „pomiar nadal trwa”<input
-          :value="settings.notifyEvening"
-          type="time"
-          :disabled="busy || !settings.notifyEveningEnabled"
-          @change="save({ notifyEvening: text($event) })"
-      /></label>
-    </div>
-    <label class="inline-check"
-      ><input
-        :checked="settings.notifyEveningEnabled"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ notifyEveningEnabled: checked($event) })"
-      />Przypominaj wieczorem, że pomiar nadal trwa</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="settings.notifyTarget"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ notifyTarget: checked($event) })"
-      />Powiadom o osiągnięciu celu dnia</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="settings.notifyMorningReview"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ notifyMorningReview: checked($event) })"
-      />Przypominaj o porannym przeglądzie dnia</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="settings.notifyWeekReview"
-        type="checkbox"
-        :disabled="busy"
-        @change="save({ notifyWeekReview: checked($event) })"
-      />Przypominaj o przeglądzie tygodnia</label
-    >
-    <div class="planning-fields settings-fields">
-      <label
-        >Przegląd tygodnia o godzinie<input
-          :value="settings.weekReviewTime"
-          type="time"
-          :disabled="busy || !settings.notifyWeekReview"
-          @change="save({ weekReviewTime: text($event) })"
-      /></label>
-    </div>
-    <div class="planning-fields settings-fields">
-      <label
-        >Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)<input
-          :value="settings.waitingNotifyDays"
-          type="number"
-          min="0"
-          max="30"
-          step="1"
+          @change="save({ notifyDue: checked($event) })"
+        />Przypominaj o terminach na dziś i przekroczonych</label
+      >
+      <div class="planning-fields settings-fields">
+        <label
+          >Długi pomiar bez Stop (minuty, 0 wyłącza)<input
+            :value="settings.notifyLongMinutes"
+            type="number"
+            min="0"
+            max="1440"
+            step="15"
+            :disabled="busy"
+            @change="save({ notifyLongMinutes: number($event) })"
+        /></label>
+        <label
+          >Wieczorne „pomiar nadal trwa”<input
+            :value="settings.notifyEvening"
+            type="time"
+            :disabled="busy || !settings.notifyEveningEnabled"
+            @change="save({ notifyEvening: text($event) })"
+        /></label>
+      </div>
+      <label class="inline-check"
+        ><input
+          :checked="settings.notifyEveningEnabled"
+          type="checkbox"
           :disabled="busy"
-          @change="save({ waitingNotifyDays: number($event) })"
-      /></label>
-    </div>
-    <p class="hint">
-      Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz na
-      przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd dnia
-      w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam dzień”,
-      przegląd tygodnia raz w ostatni dzień roboczy tygodnia o wybranej
-      godzinie,
-      „Czekam na” raz na blokadę po wybranej liczbie dni roboczych (z
-      „Odblokuj” i „Przypomnij jutro”). Każde pojawia się
-      najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
-      Start/Stop pokazuje się, gdy widget jest schowany.
-    </p>
+          @change="save({ notifyEveningEnabled: checked($event) })"
+        />Przypominaj wieczorem, że pomiar nadal trwa</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="settings.notifyTarget"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ notifyTarget: checked($event) })"
+        />Powiadom o osiągnięciu celu dnia</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="settings.notifyMorningReview"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ notifyMorningReview: checked($event) })"
+        />Przypominaj o porannym przeglądzie dnia</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="settings.notifyWeekReview"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ notifyWeekReview: checked($event) })"
+        />Przypominaj o przeglądzie tygodnia</label
+      >
+      <div class="planning-fields settings-fields">
+        <label
+          >Przegląd tygodnia o godzinie<input
+            :value="settings.weekReviewTime"
+            type="time"
+            :disabled="busy || !settings.notifyWeekReview"
+            @change="save({ weekReviewTime: text($event) })"
+        /></label>
+      </div>
+      <div class="planning-fields settings-fields">
+        <label
+          >Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)<input
+            :value="settings.waitingNotifyDays"
+            type="number"
+            min="0"
+            max="30"
+            step="1"
+            :disabled="busy"
+            @change="save({ waitingNotifyDays: number($event) })"
+        /></label>
+      </div>
+      <p class="hint">
+        Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz
+        na przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd
+        dnia w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam
+        dzień”, przegląd tygodnia raz w ostatni dzień roboczy tygodnia o
+        wybranej godzinie, „Czekam na” raz na blokadę po wybranej liczbie dni
+        roboczych (z „Odblokuj” i „Przypomnij jutro”). Każde pojawia się
+        najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
+        Start/Stop pokazuje się, gdy widget jest schowany.
+      </p>
     </template>
     <template v-if="section === 'templates'">
-    <h2>Szablony</h2>
-    <p class="hint">
-      Wpisz /nazwa w polu „Nowe zadanie” albo w szybkim przełączaniu, np.
-      /review WMS-123. W tytule {klucz} to klucz Jiry, a {tytuł} to tytuł z
-      linii albo zgłoszenia. Pola wpisane w linii (~, #, !) wygrywają z
-      szablonem. Szablon zapiszesz też z rozwiniętego zadania.
-    </p>
-    <div class="template-list" aria-label="Szablony zadań">
-      <TemplateEditor v-for="t in templates" :key="t.id" :template="t" />
-      <p v-if="!templates.length && !addingTemplate" class="empty-detail">
-        Brak szablonów.
+      <h2>Szablony</h2>
+      <p class="hint">
+        Wpisz /nazwa w polu „Nowe zadanie” albo w szybkim przełączaniu, np.
+        /review WMS-123. W tytule {klucz} to klucz Jiry, a {tytuł} to tytuł z
+        linii albo zgłoszenia. Pola wpisane w linii (~, #, !) wygrywają z
+        szablonem. Szablon zapiszesz też z rozwiniętego zadania.
       </p>
-      <TemplateEditor
-        v-if="addingTemplate"
-        :template="null"
-        @done="addingTemplate = false"
-      />
-    </div>
-    <button
-      v-if="!addingTemplate"
-      class="action-button"
-      @click="addingTemplate = true"
-    >
-      Nowy szablon
-    </button>
+      <div class="template-list" aria-label="Szablony zadań">
+        <TemplateEditor v-for="t in templates" :key="t.id" :template="t" />
+        <p v-if="!templates.length && !addingTemplate" class="empty-detail">
+          Brak szablonów.
+        </p>
+        <TemplateEditor
+          v-if="addingTemplate"
+          :template="null"
+          @done="addingTemplate = false"
+        />
+      </div>
+      <button
+        v-if="!addingTemplate"
+        class="action-button"
+        @click="addingTemplate = true"
+      >
+        Nowy szablon
+      </button>
     </template>
     <template v-if="section === 'shortcuts'">
-    <h2>Skróty</h2>
-    <p>
-      Ctrl+K — szybkie przełączanie w aplikacji.<br />{{
-        settings.shortcutQuick
-      }}
-      — szybkie przełączanie z dowolnego okna.<br />{{
-        settings.shortcutToggle
-      }}
-      — Start/Stop z dowolnego okna: zatrzymuje pomiar albo wznawia ostatnio
-      mierzone zadanie.
-    </p>
-    <p class="hint">
-      Kliknij pole i naciśnij nową kombinację z Ctrl, Alt, Shift lub Win. Esc
-      anuluje.
-    </p>
-    <ShortcutInput
-      :model-value="settings.shortcutQuick"
-      label="Szybkie przełączanie (globalnie)"
-      :default-value="defaultSettings.shortcutQuick"
-      :error="shortcutError('quick')"
-      :disabled="busy"
-      @update:model-value="saveShortcut('quick', $event)"
-    />
-    <ShortcutInput
-      :model-value="settings.shortcutToggle"
-      label="Start/Stop (globalnie)"
-      :default-value="defaultSettings.shortcutToggle"
-      :error="shortcutError('toggle')"
-      :disabled="busy"
-      @update:model-value="saveShortcut('toggle', $event)"
-    />
+      <h2>Skróty</h2>
+      <p>
+        Ctrl+K — szybkie przełączanie w aplikacji.<br />{{
+          settings.shortcutQuick
+        }}
+        — szybkie przełączanie z dowolnego okna.<br />{{
+          settings.shortcutToggle
+        }}
+        — Start/Stop z dowolnego okna: zatrzymuje pomiar albo wznawia ostatnio
+        mierzone zadanie.
+      </p>
+      <p class="hint">
+        Kliknij pole i naciśnij nową kombinację z Ctrl, Alt, Shift lub Win. Esc
+        anuluje.
+      </p>
+      <ShortcutInput
+        :model-value="settings.shortcutQuick"
+        label="Szybkie przełączanie (globalnie)"
+        :default-value="defaultSettings.shortcutQuick"
+        :error="shortcutError('quick')"
+        :disabled="busy"
+        @update:model-value="saveShortcut('quick', $event)"
+      />
+      <ShortcutInput
+        :model-value="settings.shortcutToggle"
+        label="Start/Stop (globalnie)"
+        :default-value="defaultSettings.shortcutToggle"
+        :error="shortcutError('toggle')"
+        :disabled="busy"
+        @update:model-value="saveShortcut('toggle', $event)"
+      />
     </template>
     <template v-if="section === 'startup'">
-    <h2>Uruchamianie</h2>
-    <label class="inline-check"
-      ><input
-        :checked="autostart.enabled"
-        type="checkbox"
-        :disabled="busy"
-        @change="saveAutostart('enabled', $event)"
-      />Uruchamiaj z Windows</label
-    >
-    <label class="inline-check"
-      ><input
-        :checked="autostart.hidden"
-        type="checkbox"
-        :disabled="busy || !autostart.enabled"
-        @change="saveAutostart('hidden', $event)"
-      />Uruchamiaj schowane do traya</label
-    >
-    <p class="hint">
-      Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
-      trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
-    </p>
+      <h2>Uruchamianie</h2>
+      <label class="inline-check"
+        ><input
+          :checked="autostart.enabled"
+          type="checkbox"
+          :disabled="busy"
+          @change="saveAutostart('enabled', $event)"
+        />Uruchamiaj z Windows</label
+      >
+      <label class="inline-check"
+        ><input
+          :checked="autostart.hidden"
+          type="checkbox"
+          :disabled="busy || !autostart.enabled"
+          @change="saveAutostart('hidden', $event)"
+        />Uruchamiaj schowane do traya</label
+      >
+      <p class="hint">
+        Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
+        trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
+      </p>
     </template>
     <small v-if="info.version">Todo Track {{ info.version }}</small>
   </section>

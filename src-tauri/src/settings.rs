@@ -15,6 +15,8 @@ pub struct AppSettings {
     pub agent_suggest: bool,
     /// Foldery (z podfolderami), dla których nie proponujemy przełączenia.
     pub agent_muted_folders: Vec<String>,
+    /// Podpowiadaj zadanie na podstawie aktywnego okna (W3; tytuły tylko w pamięci).
+    pub window_suggest: bool,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     /// Polskie święta ustawowe nie są dniami roboczymi w celu dnia, tygodnia i miesiąca.
@@ -79,6 +81,7 @@ impl Default for AppSettings {
             idle_agents: true,
             agent_suggest: true,
             agent_muted_folders: Vec::new(),
+            window_suggest: false,
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             holidays_in_target: true,

@@ -623,6 +623,9 @@ pub fn start(app: &tauri::AppHandle) {
                 if let Some(agents) = changed {
                     let _ = app.emit("agents-changed", agents);
                 }
+                // Aktywne okno (W3, gdy włączone w ustawieniach): sygnał trafia do
+                // tej samej reguły propozycji co agenci.
+                crate::foreground::observe(&app, now);
                 // Propozycje przełączenia liczone co przebieg: zależą też od czasu
                 // pracy agenta (2 min) i od bieżącego pomiaru.
                 crate::suggest::refresh(&app, now);
