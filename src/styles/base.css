@@ -1,11 +1,15 @@
 /* Tokeny, motywy, typografia i wspólne kontrolki. */
 :root {
-  font-family: "Segoe UI", sans-serif;
+  /* Segoe UI Variable to krój systemowy Windows 11 (Fluent: trzeba go nazwać wprost). */
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", sans-serif;
   color-scheme: dark;
   --bg: #111318;
   --surface: #1a1d24;
   --raised: #242833;
   --line: #303542;
+  /* Obramowania pól i kontrolek: co najmniej 3:1 do tła (WCAG 1.4.11). */
+  --line-strong: #6b7386;
   --text: #e6e9f0;
   --muted: #9ba2b3;
   --accent: #8fb3ff;
@@ -14,18 +18,19 @@
   --danger: #ffaaa1;
   --danger-bg: #44282a;
   --warning: #f2c46d;
-  /* Skala typografii: wszystkie rozmiary fontu biorą się stąd. */
-  --fs-xs: 11.5px;
-  --fs-sm: 12.5px;
-  --fs-base: 13.5px;
-  --fs-md: 14.5px;
-  --fs-lg: 17px;
-  --fs-xl: 22px;
+  /* Skala typografii według rampy Fluent 2 / Windows: Caption 12, Body 14,
+     Subtitle 16, Title 24 i 28. Nic poniżej 12 px. */
+  --fs-xs: 12px;
+  --fs-sm: 12px;
+  --fs-base: 14px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 24px;
   --fs-2xl: 28px;
-  /* Zaokrąglenia: drobne (odznaki), kontrolki, karty. */
-  --radius-sm: 4px;
-  --radius: 7px;
-  --radius-lg: 10px;
+  /* Zaokrąglenia Windows 11: odznaki 2, kontrolki 4, karty i okna 8. */
+  --radius-sm: 2px;
+  --radius: 4px;
+  --radius-lg: 8px;
   /* Odstępy: krok 4 px. */
   --space-1: 4px;
   --space-2: 8px;
@@ -47,6 +52,7 @@
   background: var(--bg);
   color: var(--text);
   font-size: var(--fs-md);
+  line-height: 1.43;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -57,6 +63,7 @@
   --surface: #ffffff;
   --raised: #eceff5;
   --line: #d9dde7;
+  --line-strong: #80879a;
   --text: #1f2433;
   --muted: #5b6375;
   --accent: #2f5bd3;
@@ -64,7 +71,7 @@
   --accent-text: #ffffff;
   --danger: #b3261e;
   --danger-bg: #fdebea;
-  --warning: #9a6400;
+  --warning: #8a5a00;
   --tl-0: #2f8a5f;
   --tl-1: #2f6fb0;
   --tl-2: #b86a22;
@@ -119,7 +126,7 @@ textarea {
   min-width: 0;
   background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   padding: 9px 11px;
 }
