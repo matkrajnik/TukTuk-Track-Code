@@ -550,6 +550,26 @@
 .widget-suggest {
   color: var(--accent);
 }
+/* Ustawienia → Czas pracy → Rozszerzenie przeglądarki (W4). */
+.browser-extension-status {
+  margin: 4px 0 8px;
+  color: var(--warning);
+  font-size: var(--fs-sm);
+}
+.browser-extension-status.connected {
+  color: var(--accent);
+}
+.browser-extension-guide {
+  margin: 6px 0 8px;
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  display: grid;
+  gap: 4px;
+}
+.browser-extension-guide code {
+  overflow-wrap: anywhere;
+}
 .repeat-options {
   display: flex;
   flex-wrap: wrap;

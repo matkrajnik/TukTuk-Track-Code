@@ -1560,3 +1560,55 @@ export async function saveWeekNote(week: string, text: string): Promise<string> 
   localStorage.setItem(weekNotesKey, JSON.stringify(notes));
   return value;
 }
+
+/** Stan rozszerzenia przeglądarki (`browser::Status`, W4). */
+export interface BrowserStatus {
+  enabled: boolean;
+  /** Wpisy hosta native messaging są w rejestrze Chrome i Edge. */
+  registered: boolean;
+  /** Rozszerzenie odezwało się w ostatnich 45 s. */
+  connected: boolean;
+  lastMessage: number | null;
+  /** Ostatni rozpoznany klucz zgłoszenia i kiedy przyszedł. */
+  lastKey: string | null;
+  lastKeyAt: number | null;
+  /** Błąd rejestracji (np. brak todo-track-bridge.exe). */
+  error: string;
+  extensionId: string;
+  /** Folder do „Załaduj rozpakowane”; `null`, gdy nie znaleziono. */
+  extensionFolder: string | null;
+}
+/** Stały identyfikator rozszerzenia (`browser::EXTENSION_ID`). */
+export const browserExtensionId = "cecpcpkmmmkgfdklnkkkigofkcibnhbl";
+/**
+ * Podgląd: ostatnia wiadomość rozszerzenia (`lastMessage`, `lastKey`,
+ * `lastKeyAt`) w localStorage; testy ustawiają ją, żeby pokazać „połączone”.
+ */
+export const browserKey = "todo-track-preview-browser-v1";
+/** `browser_status`: stan wyłącznika, rejestracji i ostatniego sygnału. */
+export async function browserStatus(): Promise<BrowserStatus> {
+  if (desktop) return invoke("browser_status");
+  const enabled = previewJson(previewSettingsKey).browserExtension === true;
+  const data = previewJson(browserKey);
+  const num = (v: unknown) => (typeof v === "number" ? v : null);
+  const lastMessage = num(data.lastMessage);
+  return {
+    enabled,
+    registered: enabled,
+    connected:
+      enabled && lastMessage != null && Date.now() - lastMessage <= 45_000,
+    lastMessage,
+    lastKey: typeof data.lastKey === "string" ? data.lastKey : null,
+    lastKeyAt: num(data.lastKeyAt),
+    error: "",
+    extensionId: browserExtensionId,
+    extensionFolder: "browser-extension",
+  };
+}
+/** `browser_open_folder`: folder rozszerzenia w Eksploratorze (tylko aplikacja). */
+export async function browserOpenFolder(): Promise<void> {
+  if (desktop) return invoke("browser_open_folder");
+  throw new Error(
+    "Folder rozszerzenia otwiera się w aplikacji Windows. W repozytorium to katalog browser-extension.",
+  );
+}

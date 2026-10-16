@@ -165,6 +165,14 @@ export const isSignal = (kind: string): kind is SignalKind =>
 /** Nazwa źródła w interfejsie (`suggest::source_label`). */
 export const sourceLabel = (kind: string) =>
   kind === "window" ? "Okno" : kind === "browser" ? "Przeglądarka" : "Agent";
+/**
+ * Pytanie w propozycji z samego sygnału (`suggest::signal_title`): z rozszerzenia
+ * przeglądarki z kluczem „Pracujesz teraz przy WMS-123?”, inaczej ogólne.
+ */
+export const signalTitle = (s: Suggestion) =>
+  s.task.key && s.agents.some((a) => a.kind === "browser")
+    ? `Pracujesz teraz przy ${s.task.key}?`
+    : "Pracujesz teraz przy innym zadaniu?";
 /** Propozycja tylko z sygnału okna albo przeglądarki (`suggest::signal_only`). */
 export const signalOnly = (s: Suggestion) =>
   s.agents.length > 0 && s.agents.every((a) => isSignal(a.kind));
@@ -214,7 +222,7 @@ export function pendingSuggestions(
   activeTaskId: number | null,
   settings: Pick<
     AppSettings,
-    "agentSuggest" | "agentMutedFolders" | "windowSuggest"
+    "agentSuggest" | "agentMutedFolders" | "windowSuggest" | "browserExtension"
   >,
   dismissed: Set<string>,
   now: number,
@@ -224,10 +232,15 @@ export function pendingSuggestions(
     const task = agent.task;
     if (!task) continue;
     const target = suggestionTarget(task);
-    // Osobne wyłączniki agentów i okna (`foreground::enabled`), wspólna reguła.
-    const enabled = isSignal(agent.kind)
-      ? settings.windowSuggest
-      : settings.agentSuggest;
+    // Osobne wyłączniki agentów, okna i przeglądarki (`foreground::enabled`),
+    // wspólna reguła.
+    const kind: string = agent.kind;
+    const enabled =
+      kind === "window"
+        ? settings.windowSuggest
+        : kind === "browser"
+          ? settings.browserExtension
+          : settings.agentSuggest;
     if (
       !target ||
       !enabled ||

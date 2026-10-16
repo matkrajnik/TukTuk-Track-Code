@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8" />
+    <title>Todo Track — opcje</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #ffffff;
+        --text: #1d2433;
+        --muted: #5b6475;
+        --border: #d6dbe4;
+        --accent: #2f6fde;
+        --ok: #1f7a4d;
+        --warn: #a15c00;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #1b1f27;
+          --text: #e6e9ef;
+          --muted: #9aa3b2;
+          --border: #343b48;
+          --accent: #6ea0ff;
+          --ok: #5cc48c;
+          --warn: #f0b35a;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        min-width: 320px;
+        max-width: 520px;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          14px/1.45 "Segoe UI",
+          system-ui,
+          sans-serif;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 0 0 10px;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      label {
+        display: block;
+        font-weight: 600;
+        margin: 12px 0 4px;
+      }
+      textarea {
+        width: 100%;
+        box-sizing: border-box;
+        min-height: 80px;
+        font:
+          13px/1.4 Consolas,
+          monospace;
+        background: transparent;
+        color: inherit;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 8px;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin: 8px 0;
+      }
+      button {
+        font: inherit;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 4px 12px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      #status[data-state="connected"] {
+        color: var(--ok);
+      }
+      #status:not([data-state="connected"]) {
+        color: var(--warn);
+      }
+      #message:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Todo Track — podpowiedzi z przeglądarki</h1>
+    <p class="hint">
+      Rozszerzenie wysyła do aplikacji Todo Track adres i tytuł aktywnej karty,
+      ale tylko dla domen z listy poniżej. Inne strony nie wychodzą z
+      przeglądarki. Aplikacja trzyma rozpoznany klucz zgłoszenia tylko w pamięci
+      przez 30 sekund i jedynie proponuje przełączenie pomiaru.
+    </p>
+    <p id="status" role="status" data-state="">Sprawdzam połączenie…</p>
+    <div class="actions">
+      <button id="reconnect" type="button">Sprawdź połączenie</button>
+    </div>
+    <label for="domains">Dozwolone domeny (jedna w wierszu)</label>
+    <textarea
+      id="domains"
+      spellcheck="false"
+      aria-describedby="domains-hint"
+    ></textarea>
+    <p id="domains-hint" class="hint">
+      <code>*.atlassian.net</code> obejmuje wszystkie witryny Jira Cloud. Serwer
+      firmowy wpisz jako nazwę, np. <code>jira.firma.pl</code>. Aplikacja
+      przyjmuje też tylko *.atlassian.net i witryny Jiry, które zna.
+    </p>
+    <div class="actions">
+      <button id="save" class="primary" type="button">Zapisz</button>
+      <button id="reset" type="button">Przywróć domyślne</button>
+    </div>
+    <p id="message" class="hint" role="alert"></p>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

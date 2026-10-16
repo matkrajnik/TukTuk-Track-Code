@@ -5,3 +5,6 @@ test-results/
 playwright-report/
 *.log
 .claude/settings.local.json
+# Klucz prywatny i paczki rozszerzenia przeglądarki (klucz trzymamy poza repozytorium).
+*.pem
+*.crx

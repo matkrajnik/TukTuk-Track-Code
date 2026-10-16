@@ -2,6 +2,18 @@
 name = "todo-track"
 version = "1.6.0"
 edition = "2021"
+# Główny program aplikacji; `todo-track-bridge` to host native messaging (W4).
+default-run = "todo-track"
+
+[[bin]]
+name = "todo-track"
+path = "src/main.rs"
+
+# Host native messaging rozszerzenia przeglądarki (PLAN_1.7.md, W4); instalator NSIS
+# dołącza go obok aplikacji.
+[[bin]]
+name = "todo-track-bridge"
+path = "src/bin/bridge.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -35,3 +47,5 @@ calamine = "=0.36.1"
 # Ta sama wersja, której używa notify-rust w tauri-plugin-notification 2.5.0;
 # bezpośrednio, bo plugin nie przekazuje kliknięć ani przycisków na Windows.
 tauri-winrt-notification = "=0.8.1"
+# Ta sama wersja, której używa auto-launch: wpisy hosta native messaging w HKCU (W4).
+winreg = "=0.10.1"

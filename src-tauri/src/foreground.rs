@@ -15,7 +15,9 @@
 //! zamienia kolejne sygnały na „pseudoagenta” (`agents::Agent` z `kind` równym
 //! źródłu), którego `suggest::Memory` traktuje jak agenta AI: ta sama reguła
 //! 2 minut, „Nie teraz”, wyciszone foldery, powiadomienie i kolejka trybu skupienia.
-//! Rozszerzenie przeglądarki (W4) poda swój sygnał do tego samego `Tracker`.
+//! Rozszerzenie przeglądarki (W4, `browser`) podaje klucz z adresu karty: gdy
+//! przeglądarka jest na pierwszym planie, ma on pierwszeństwo przed tytułem okna
+//! (`pick`) i trafia do tego samego `Tracker` ze źródłem `browser`.
 //!
 //! Timer nigdy nie przełącza się sam: to tylko propozycja.
 use crate::agents::{self, Agent, Head, Match};
@@ -41,7 +43,8 @@ pub fn is_signal(kind: &str) -> bool {
 /// Czy propozycje dla danego źródła są włączone w ustawieniach.
 pub fn enabled(kind: &str, s: &AppSettings) -> bool {
     match kind {
-        WINDOW | BROWSER => s.window_suggest,
+        WINDOW => s.window_suggest,
+        BROWSER => s.browser_extension,
         _ => s.agent_suggest,
     }
 }
@@ -174,6 +177,37 @@ pub fn recognize(window: &Window) -> Option<(&'static str, Clue)> {
     Some((name, clue))
 }
 
+/// Przeglądarki, w których działa rozszerzenie (Chrome, Edge i pochodne Chromium).
+pub fn is_browser(process: &str) -> bool {
+    matches!(
+        app(process),
+        Some((
+            "Google Chrome" | "Microsoft Edge" | "Brave" | "Opera" | "Vivaldi" | "Arc",
+            _
+        ))
+    )
+}
+
+/// Wybór śladu: przeglądarka na pierwszym planie ze świeżym kluczem z rozszerzenia
+/// (W4, gdy włączone) ma pierwszeństwo; inaczej tytuł okna (W3, gdy włączone).
+/// Wynik: źródło, nazwa aplikacji i ślad.
+pub fn pick(
+    window: &Window,
+    browser_key: Option<&str>,
+    s: &AppSettings,
+) -> Option<(&'static str, &'static str, Clue)> {
+    if s.browser_extension && is_browser(&window.process) {
+        if let (Some(key), Some((name, _))) = (browser_key, app(&window.process)) {
+            return Some((BROWSER, name, Clue::Key(key.to_string())));
+        }
+    }
+    if !s.window_suggest {
+        return None;
+    }
+    let (name, clue) = recognize(window)?;
+    Some((WINDOW, name, clue))
+}
+
 /// Ostatni człon ścieżki (bez względu na separator i wielkość liter).
 fn leaf(folder: &str) -> String {
     agents::norm_folder(folder)
@@ -268,7 +302,7 @@ fn goal(signal: &Signal) -> String {
     crate::suggest::target(signal.task.task_id, signal.task.key.as_deref())
 }
 
-/// Ciągłość sygnału: od kiedy ten sam ślad (źródło, folder, zadanie) jest na
+/// Ciągłość sygnału: od kiedy ten sam ślad (folder, zadanie) jest na
 /// pierwszym planie i kiedy widziano go ostatnio.
 #[derive(Debug, Default)]
 pub struct Tracker {
@@ -283,9 +317,10 @@ impl Tracker {
             return;
         };
         let since = match &self.current {
+            // To samo zadanie z tytułu okna i z rozszerzenia (W4) liczy się dalej:
+            // źródło może się zmienić, gdy sygnał rozszerzenia chwilę nie dotrze.
             Some((old, since, seen))
-                if old.source == signal.source
-                    && agents::norm_folder(&old.folder) == agents::norm_folder(&signal.folder)
+                if agents::norm_folder(&old.folder) == agents::norm_folder(&signal.folder)
                     && goal(old) == goal(&signal)
                     && now - seen <= HOLD
                     && now >= *seen =>
@@ -381,7 +416,8 @@ pub fn observe(
     let Some(state) = app.try_state::<State>() else {
         return;
     };
-    if !crate::settings::current(app).window_suggest {
+    let settings = crate::settings::current(app);
+    if !settings.window_suggest && !settings.browser_extension {
         if let Ok(mut t) = state.0.lock() {
             t.clear();
         }
@@ -399,31 +435,36 @@ pub fn observe(
         }
         return;
     }
-    let signal = recognize(&window).and_then(|(name, clue)| {
-        let seen: Vec<String> = agents::current(app).into_iter().map(|a| a.cwd).collect();
-        // Folder szukany pod blokadą bazy, gałąź czytana poza nią (dysk sieciowy).
-        let folder = match &clue {
-            Clue::Folder(n) => {
+    // Klucz z rozszerzenia (W4) tylko dla przeglądarki na pierwszym planie.
+    let browser_key = (settings.browser_extension && is_browser(&window.process))
+        .then(|| crate::browser::fresh_key(app, now))
+        .flatten();
+    let signal =
+        pick(&window, browser_key.as_deref(), &settings).and_then(|(source, name, clue)| {
+            let seen: Vec<String> = agents::current(app).into_iter().map(|a| a.cwd).collect();
+            // Folder szukany pod blokadą bazy, gałąź czytana poza nią (dysk sieciowy).
+            let folder = match &clue {
+                Clue::Folder(n) => {
+                    let db = app.state::<crate::Database>();
+                    let db = db.0.lock().ok()?;
+                    Some(find_folder(&db, n, &seen)?)
+                }
+                Clue::Key(_) => None,
+            };
+            let head = folder.as_deref().and_then(|f| branch(Path::new(f)));
+            let clue = folder.map(Clue::Folder).unwrap_or(clue);
+            let mut signal = {
                 let db = app.state::<crate::Database>();
                 let db = db.0.lock().ok()?;
-                Some(find_folder(&db, n, &seen)?)
+                resolve_clue(&db, source, name, &clue, &[], |_| head.clone())?
+            };
+            if signal.task.title.is_empty() {
+                if let Some(key) = signal.task.key.clone() {
+                    signal.task.title = crate::jira::cached_summary(app, &key).unwrap_or_default();
+                }
             }
-            Clue::Key(_) => None,
-        };
-        let head = folder.as_deref().and_then(|f| branch(Path::new(f)));
-        let clue = folder.map(Clue::Folder).unwrap_or(clue);
-        let mut signal = {
-            let db = app.state::<crate::Database>();
-            let db = db.0.lock().ok()?;
-            resolve_clue(&db, WINDOW, name, &clue, &[], |_| head.clone())?
-        };
-        if signal.task.title.is_empty() {
-            if let Some(key) = signal.task.key.clone() {
-                signal.task.title = crate::jira::cached_summary(app, &key).unwrap_or_default();
-            }
-        }
-        Some(signal)
-    });
+            Some(signal)
+        });
     let lock = state.0.lock();
     if let Ok(mut t) = lock {
         t.observe(signal, now);
@@ -830,5 +871,101 @@ mod tests {
         assert_eq!(msg.title, "Pracujesz teraz przy innym zadaniu?");
         assert_eq!(msg.body, "Okno: Google Chrome · wms · Zadanie 1");
         assert_eq!(msg.actions[0].argument(), "agent-switch:1");
+    }
+
+    #[test]
+    fn browser_extension_key_wins_when_browser_is_in_front() {
+        let both = AppSettings {
+            window_suggest: true,
+            browser_extension: true,
+            ..AppSettings::default()
+        };
+        let ext = AppSettings {
+            browser_extension: true,
+            ..AppSettings::default()
+        };
+        let chrome = win("[WMS-1] Tablica WMS - Jira - Google Chrome", "chrome.exe");
+        // Świeży klucz z rozszerzenia (tablica z selectedIssue) przed tytułem okna.
+        assert_eq!(
+            pick(&chrome, Some("WMS-45"), &both),
+            Some((BROWSER, "Google Chrome", Clue::Key("WMS-45".into())))
+        );
+        // Bez świeżego klucza (wygasł albo strona bez zgłoszenia): tytuł okna.
+        assert_eq!(
+            pick(&chrome, None, &both),
+            Some((WINDOW, "Google Chrome", Clue::Key("WMS-1".into())))
+        );
+        // Tylko rozszerzenie: tytuł okna nie jest używany.
+        assert_eq!(pick(&chrome, None, &ext), None);
+        assert_eq!(
+            pick(
+                &win(
+                    "x",
+                    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
+                ),
+                Some("WMS-45"),
+                &ext
+            ),
+            Some((BROWSER, "Microsoft Edge", Clue::Key("WMS-45".into())))
+        );
+        // Rozszerzenie wyłączone: klucz z rozszerzenia pomijany.
+        assert_eq!(
+            pick(&chrome, Some("WMS-45"), &on()).map(|p| p.2),
+            Some(Clue::Key("WMS-1".into()))
+        );
+        // Na pierwszym planie inny program (VS Code, Firefox bez rozszerzenia).
+        let code = win("main.rs - wms - Visual Studio Code", "Code.exe");
+        assert_eq!(
+            pick(&code, Some("WMS-45"), &both).map(|p| p.0),
+            Some(WINDOW)
+        );
+        assert_eq!(pick(&code, Some("WMS-45"), &ext), None);
+        assert_eq!(
+            pick(
+                &win("Jira - Mozilla Firefox", "firefox.exe"),
+                Some("WMS-45"),
+                &ext
+            ),
+            None
+        );
+    }
+
+    fn browser(task: i64) -> Signal {
+        Signal {
+            source: BROWSER,
+            task: Match {
+                key: Some(format!("WMS-{task}")),
+                ..signal(task, "").task
+            },
+            ..signal(task, "")
+        }
+    }
+
+    #[test]
+    fn browser_signal_uses_its_own_switch_and_the_shared_rule() {
+        let ext = AppSettings {
+            browser_extension: true,
+            ..AppSettings::default()
+        };
+        let mut t = Tracker::default();
+        let mut m = Memory::default();
+        // 1 min z tytułu okna, potem to samo zadanie z rozszerzenia: liczenie trwa.
+        feed(&mut t, signal(7, ""), NOW, NOW + MIN);
+        feed(&mut t, browser(7), NOW + MIN + 5_000, NOW + MIN_WORK);
+        assert_eq!(t.agent(NOW + MIN_WORK).unwrap().since, NOW);
+        assert_eq!(pending(&t, &mut m, &ext, NOW + MIN_WORK), [Some(7)]);
+        // Wyłącznik okna nie dotyczy przeglądarki i odwrotnie.
+        assert!(pending(&t, &mut m, &on(), NOW + MIN_WORK).is_empty());
+        let agent = t.agent(NOW + MIN_WORK).unwrap();
+        assert_eq!(agent.kind, BROWSER);
+        // Powiadomienie: „Pracujesz teraz przy WMS-7?” ze źródłem „Przeglądarka”.
+        let list = Memory::default().pending(&[agent], None, &ext, NOW + MIN_WORK);
+        let msg = crate::suggest::message(&list).unwrap();
+        assert_eq!(msg.title, "Pracujesz teraz przy WMS-7?");
+        assert_eq!(msg.body, "Przeglądarka: Google Chrome · Zadanie 7");
+        assert_eq!(msg.actions[0].argument(), "agent-switch:7");
+        // Bez odświeżenia przez ponad 30 s sygnał gaśnie.
+        t.observe(None, NOW + MIN_WORK + HOLD + 1);
+        assert!(t.agent(NOW + MIN_WORK + HOLD + 1).is_none());
     }
 }

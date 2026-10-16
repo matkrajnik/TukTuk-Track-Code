@@ -375,6 +375,19 @@ function install(init: {
           };
         case "calendar_events":
           return [];
+        // Rozszerzenie przeglądarki (W4) bez połączenia; logika w `browser.rs`.
+        case "browser_status":
+          return {
+            enabled: settings.browserExtension === true,
+            registered: settings.browserExtension === true,
+            connected: false,
+            lastMessage: null,
+            lastKey: null,
+            lastKeyAt: null,
+            error: "",
+            extensionId: "cecpcpkmmmkgfdklnkkkigofkcibnhbl",
+            extensionFolder: null,
+          };
         case "jira_settings":
           return {
             config: {

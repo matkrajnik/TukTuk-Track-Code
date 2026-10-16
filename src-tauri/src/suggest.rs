@@ -16,7 +16,8 @@
 //! Sygnał z aktywnego okna (W3, `foreground`) wchodzi tu jako „pseudoagent”
 //! z `kind` równym źródłu (`window`, w W4 `browser`): ta sama reguła 2 minut,
 //! „Nie teraz”, wyciszone foldery i powiadomienie, ale własny wyłącznik
-//! (`window_suggest`) i treść ze źródłem „Okno”.
+//! (`window_suggest`, dla przeglądarki `browser_extension`) i treść ze źródłem
+//! „Okno” albo „Przeglądarka”.
 //!
 //! Timer nigdy nie przełącza się sam: zmienia go tylko `agent_switch` (kliknięcie).
 use crate::agents::{self, Agent, Match};
@@ -207,6 +208,18 @@ fn signal_only(s: &Suggestion) -> bool {
     !s.agents.is_empty() && s.agents.iter().all(|w| foreground::is_signal(&w.kind))
 }
 
+/// Pytanie w propozycji z samego sygnału: z rozszerzenia przeglądarki (W4) z kluczem
+/// zgłoszenia („Pracujesz teraz przy WMS-123?”), inaczej ogólne.
+fn signal_title(s: &Suggestion) -> String {
+    match (
+        &s.task.key,
+        s.agents.iter().any(|w| w.kind == foreground::BROWSER),
+    ) {
+        (Some(key), true) => format!("Pracujesz teraz przy {key}?"),
+        _ => "Pracujesz teraz przy innym zadaniu?".into(),
+    }
+}
+
 /// Nazwa źródła sygnału w interfejsie.
 pub fn source_label(kind: &str) -> &'static str {
     match kind {
@@ -245,7 +258,7 @@ pub fn message(list: &[Suggestion]) -> Option<Message> {
         // Sam sygnał z okna albo przeglądarki (W3, W4): źródło w treści.
         [one] if signal_only(one) => Some(Message {
             key: String::new(),
-            title: "Pracujesz teraz przy innym zadaniu?".into(),
+            title: signal_title(one),
             body: format!(
                 "{}: {} · {}",
                 source_label(&one.agents[0].kind),

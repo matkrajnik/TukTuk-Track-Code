@@ -12,6 +12,8 @@ export interface AppSettings {
   agentMutedFolders: string[];
   /** Podpowiadaj zadanie na podstawie aktywnego okna (tytuły tylko w pamięci). */
   windowSuggest: boolean;
+  /** Rozszerzenie przeglądarki Chrome i Edge (wpisy hosta w rejestrze, W4). */
+  browserExtension: boolean;
   targetDayMinutes: number;
   workDays: number[];
   /** Święta ustawowe nie są dniami roboczymi w celu. */
@@ -68,6 +70,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   agentSuggest: true,
   agentMutedFolders: [],
   windowSuggest: false,
+  browserExtension: false,
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   holidaysInTarget: true,

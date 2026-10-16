@@ -75,6 +75,7 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico", "icons/icon.png"],
+    "resources": { "../browser-extension/": "browser-extension/" },
     "publisher": "todotrack",
     "shortDescription": "Zadania, plan dnia i czas pracy",
     "copyright": "Todo Track · Twój dzień pracy",

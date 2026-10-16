@@ -3,6 +3,7 @@ mod agent_time;
 mod agents;
 mod autostart;
 mod backup;
+mod browser;
 mod calendar;
 mod capacity;
 mod db;
@@ -13,6 +14,7 @@ mod holidays;
 mod idle;
 mod jira;
 mod maintenance;
+mod native_msg;
 mod notify;
 mod planner;
 mod quickadd;
@@ -330,6 +332,7 @@ fn main() {
             agents::setup(app.handle());
             suggest::setup(app.handle());
             foreground::setup(app.handle());
+            browser::setup(app.handle());
             notify::setup(app.handle());
             focus::setup(app.handle());
             // Okna dopiero po zarejestrowaniu całego stanu (manage), z którego
@@ -347,6 +350,10 @@ fn main() {
             agents::start(app.handle());
             notify::start(app.handle());
             focus::start(app.handle());
+            // Rozszerzenie przeglądarki (W4): potok dla hosta i wpisy w rejestrze
+            // zgodne z ustawieniem (ścieżka exe po aktualizacji).
+            browser::start(app.handle());
+            browser::sync(app.handle(), &settings::current(app.handle()));
             jira::start(app.handle());
             calendar::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
@@ -420,6 +427,8 @@ fn main() {
             idle::idle_notice,
             idle::idle_resolve,
             agents::agents_status,
+            browser::browser_status,
+            browser::browser_open_folder,
             agents::agent_bindings,
             agents::agent_bind,
             agents::agent_unbind,

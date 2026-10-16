@@ -6,6 +6,7 @@ import {
   onSuggestionsChanged,
   readSuggestions,
   signalOnly,
+  signalTitle,
   sourceLabel,
   switchToSuggestion,
   type AgentTask,
@@ -86,7 +87,7 @@ const single = computed(() => {
   if (!s) return { title: "", text: "" };
   return signalOnly(s)
     ? {
-        title: "Pracujesz teraz przy innym zadaniu?",
+        title: signalTitle(s),
         text: `${who(s)} pokazuje ${label(s.task)}.`,
       }
     : {

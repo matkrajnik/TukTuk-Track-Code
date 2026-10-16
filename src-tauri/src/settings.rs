@@ -17,6 +17,9 @@ pub struct AppSettings {
     pub agent_muted_folders: Vec<String>,
     /// Podpowiadaj zadanie na podstawie aktywnego okna (W3; tytuły tylko w pamięci).
     pub window_suggest: bool,
+    /// Rozszerzenie przeglądarki Chrome i Edge (W4): rejestracja hosta native
+    /// messaging w HKCU i propozycje ze źródłem „Przeglądarka”.
+    pub browser_extension: bool,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     /// Polskie święta ustawowe nie są dniami roboczymi w celu dnia, tygodnia i miesiąca.
@@ -82,6 +85,7 @@ impl Default for AppSettings {
             agent_suggest: true,
             agent_muted_folders: Vec::new(),
             window_suggest: false,
+            browser_extension: false,
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             holidays_in_target: true,
@@ -395,6 +399,8 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     let _ = app.emit("settings-changed", result.clone());
     // Wyłącznik propozycji agentów i wyciszone foldery działają od razu.
     crate::suggest::refresh(&app, crate::db::now());
+    // Rozszerzenie przeglądarki: wpisy hosta w rejestrze przy zmianie wyłącznika.
+    crate::browser::sync(&app, &result);
     Ok(result)
 }
 

@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
+import BrowserExtensionStatus from "./BrowserExtensionStatus.vue";
 import { openView, type SettingsSection } from "../navigation";
 import {
   defaultSettings,
@@ -193,6 +194,15 @@ onUnmounted(() => {
         trafiają do bazy ani logów. Propozycja przychodzi po 2 minutach przy tym
         samym zadaniu.
       </p>
+      <label class="inline-check"
+        ><input
+          :checked="settings.browserExtension"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ browserExtension: checked($event) })"
+        />Rozszerzenie przeglądarki (Chrome i Edge)</label
+      >
+      <BrowserExtensionStatus :enabled="settings.browserExtension" />
       <template v-if="settings.agentMutedFolders.length">
         <p class="hint">Bez propozycji dla folderów (z podfolderami):</p>
         <ul class="muted-folders" aria-label="Foldery bez propozycji agentów">

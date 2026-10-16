@@ -849,6 +849,12 @@ Section Uninstall
     Delete "$INSTDIR\\{{this}}"
   {{/each}}
 
+  ; Todo Track: host native messaging rozszerzenia przeglądarki (W4) — manifest
+  ; zapisany przez aplikację obok exe i wpisy w rejestrze Chrome i Edge.
+  Delete "$INSTDIR\pl.todotrack.bridge.json"
+  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\pl.todotrack.bridge"
+  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\pl.todotrack.bridge"
+
   ; Delete app associations
   {{#each file_associations as |association| ~}}
     {{#each association.ext as |ext| ~}}
