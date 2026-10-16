@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { TriangleAlert } from "lucide-vue-next";
 import {
   change,
   meetingOccupies,
@@ -335,6 +336,17 @@ const reviewedAt = computed(() =>
         <template v-if="settings.planWithCorrection">
           · szacunki z poprawką</template
         >
+      </p>
+      <!-- Ostrzeżenie o przeładowanym dniu słowami, nie tylko kolorem paska
+           (Sunsama: kontrola obciążenia w planowaniu dnia; WCAG 1.4.1). -->
+      <p
+        v-if="capacity.level === 'over' && !capacity.free"
+        class="morning-over"
+      >
+        <TriangleAlert :size="16" aria-hidden="true" />Plan jest o
+        {{ hm(capacity.estimate - capacity.capacity) }} dłuższy niż czas na
+        pracę. Przenieś część zadań na inny dzień w kroku 1 albo na tablicy
+        tygodnia.
       </p>
       <h4>Spotkania</h4>
       <ul v-if="meetings.length" class="morning-list" aria-label="Spotkania dziś">

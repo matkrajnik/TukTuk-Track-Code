@@ -12,8 +12,14 @@
   border-radius: var(--radius-lg);
   min-width: 0;
 }
+/* Hierarchia w kartach: tytuł karty Subtitle 16, nagłówek sekcji Body Strong
+   14 (Windows: nagłówki sekcji w treści), a nie odwrotnie jak wcześniej. */
 .dashboard-card h2 {
-  font-size: var(--fs-md);
+  font-size: var(--fs-lg);
+}
+.dashboard-card h3 {
+  font-size: var(--fs-base);
+  font-weight: 600;
 }
 .dashboard-stats strong,
 .dashboard-stats .stat-value {
@@ -2218,4 +2224,35 @@ html.widget-root body {
 /* Przyciski kroków Zamknięcia dnia stoją pod treścią kroku, z odstępem. */
 .close-step-action {
   margin-top: var(--space-2);
+}
+.morning-over {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-2) 0 0;
+  color: var(--warning);
+  font-size: var(--fs-base);
+}
+.morning-over svg {
+  margin-top: 2px;
+}
+/* Ustawienia: opis przy swojej opcji, wcięty pod etykietę i bliżej niej niż
+   następnej opcji (Laws of UX: bliskość), linia do ~72 znaków (Windows:
+   50–60 znaków w wierszu), pole wyboru 16 px. */
+.settings-panel > .inline-check {
+  margin: var(--space-4) 0 0;
+  font-size: var(--fs-base);
+}
+.settings-panel > .inline-check + .inline-check {
+  margin-top: var(--space-2);
+}
+.settings-panel > .inline-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+}
+.settings-panel > .inline-check + .hint {
+  margin: 2px 0 0 24px;
+}
+.settings-panel .hint {
+  max-width: 72ch;
 }
