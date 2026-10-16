@@ -23,6 +23,7 @@ import {
   Moon,
   PictureInPicture2,
   Settings,
+  Square,
   Sun,
   Ticket,
 } from "lucide-vue-next";
@@ -37,8 +38,11 @@ import {
 import { onSettingsChanged, writeSettings } from "../settings";
 
 const view = defineModel<View>("view", { required: true });
+/** Trwający pomiar: pokazywany w pasku na każdym widoku poza Zadaniami. */
+defineProps<{ running?: { title: string; elapsed: string } | null }>();
 const emit = defineEmits<{
   quick: [];
+  stop: [];
   error: [message: string];
 }>();
 
@@ -140,49 +144,49 @@ async function hide() {
     <nav aria-label="Nawigacja główna">
       <button
         :class="{ selected: view === 'tasks' }"
-        :aria-pressed="view === 'tasks'"
+        :aria-current="view === 'tasks' ? 'page' : undefined"
         @click="view = 'tasks'"
       >
         <ListTodo :size="16" />Zadania
       </button>
       <button
         :class="{ selected: view === 'dashboard' }"
-        :aria-pressed="view === 'dashboard'"
+        :aria-current="view === 'dashboard' ? 'page' : undefined"
         @click="view = 'dashboard'"
       >
         <LayoutDashboard :size="16" />Dashboard
       </button>
       <button
         :class="{ selected: view === 'journal' }"
-        :aria-pressed="view === 'journal'"
+        :aria-current="view === 'journal' ? 'page' : undefined"
         @click="view = 'journal'"
       >
         <CalendarRange :size="16" />Plan i historia
       </button>
       <button
         :class="{ selected: view === 'reports' }"
-        :aria-pressed="view === 'reports'"
+        :aria-current="view === 'reports' ? 'page' : undefined"
         @click="view = 'reports'"
       >
         <CalendarDays :size="16" />Raporty dzienne
       </button>
       <button
         :class="{ selected: view === 'jira' }"
-        :aria-pressed="view === 'jira'"
+        :aria-current="view === 'jira' ? 'page' : undefined"
         @click="view = 'jira'"
       >
         <Ticket :size="16" />Jira
       </button>
       <button
         :class="{ selected: view === 'library' }"
-        :aria-pressed="view === 'library'"
+        :aria-current="view === 'library' ? 'page' : undefined"
         @click="view = 'library'"
       >
         <History :size="16" />Historia i kopie
       </button>
       <button
         :class="{ selected: view === 'settings' }"
-        :aria-pressed="view === 'settings'"
+        :aria-current="view === 'settings' ? 'page' : undefined"
         title="Ustawienia (Ctrl+,)"
         @click="view = 'settings'"
       >
@@ -190,6 +194,34 @@ async function hide() {
       </button>
     </nav>
     <div class="header-actions">
+      <!-- Wzorzec paska timera z Toggl Track i Clockify: mierzone zadanie i Stop
+           są widoczne na każdym widoku. Nazwa i czas idą przez atrybuty, żeby nie
+           dublować tekstu widoku; dostępna nazwa jest w aria-label. -->
+      <div
+        v-if="running && view !== 'tasks'"
+        class="topbar-timer"
+        role="group"
+        aria-label="Bieżący pomiar w pasku"
+      >
+        <button
+          class="topbar-timer-task"
+          :data-title="running.title"
+          :data-elapsed="running.elapsed"
+          :aria-label="`Mierzone teraz: ${running.title}. Pokaż w Zadaniach`"
+          :title="running.title"
+          @click="view = 'tasks'"
+        >
+          <span class="status-dot" aria-hidden="true" />
+        </button>
+        <button
+          class="topbar-timer-stop"
+          aria-label="Zatrzymaj mierzone zadanie"
+          title="Stop"
+          @click="emit('stop')"
+        >
+          <Square :size="14" />
+        </button>
+      </div>
       <span
         v-if="!desktop"
         class="preview-label"

@@ -30,7 +30,7 @@ test("navigate z długiego pomiaru rozwija bieżące zadanie i otwiera Podziel",
   });
   const active = data.sessions.find((s) => s.endedAt === null)!;
   await page.getByRole("button", { name: "Dashboard", exact: true }).click();
-  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(tasksNav(page)).not.toHaveAttribute("aria-current");
 
   // Kliknięcie treści: Zadania z rozwiniętym bieżącym zadaniem; wyszukiwanie czyszczone.
   await navigatePreview(page, {
@@ -41,7 +41,7 @@ test("navigate z długiego pomiaru rozwija bieżące zadanie i otwiera Podziel",
     section: null,
     dayClose: false,
   });
-  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(tasksNav(page)).toHaveAttribute("aria-current", "page");
   await expect(expandButton(page, "Analiza importu")).toHaveAttribute(
     "aria-expanded",
     "true",
@@ -146,7 +146,7 @@ test("navigate nie zamyka otwartego okna dialogowego ani nie gubi zmian", async 
   await expect(
     page.getByRole("dialog", { name: "Edytuj przedział" }),
   ).toHaveCount(0);
-  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(tasksNav(page)).toHaveAttribute("aria-current", "page");
 });
 
 test("navigate z wieczoru i celu otwiera Zamknięcie dnia na dziś", async ({
@@ -188,7 +188,7 @@ test("navigate z backendu (Jira) przewija do nowego zadania bez zmiany danych", 
       dayClose: false,
     }),
   );
-  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(tasksNav(page)).toHaveAttribute("aria-current", "page");
   await expect(
     page
       .getByRole("region", { name: "Nierozpoczęte", exact: true })
@@ -198,7 +198,7 @@ test("navigate z backendu (Jira) przewija do nowego zadania bez zmiany danych", 
   await page.evaluate(() =>
     (window as any).__tauriMock.emit("navigate", { view: null }),
   );
-  await expect(tasksNav(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(tasksNav(page)).toHaveAttribute("aria-current", "page");
   const calls: { cmd: string }[] = await page.evaluate(() =>
     (window as any).__tauriMock.calls(),
   );

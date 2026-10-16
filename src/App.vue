@@ -36,6 +36,7 @@ import {
   type Snapshot,
   type Task,
   type Session,
+  duration,
 } from "./store";
 import { dayKey } from "./time";
 
@@ -73,6 +74,15 @@ const activeTask = computed(() => {
 const activeSessionId = computed(
   () => data.value.sessions.find((s) => s.endedAt === null)?.id ?? null,
 );
+/** Mierzone zadanie w pasku nawigacji (widoczne na każdym widoku poza Zadaniami). */
+const running = computed(() => {
+  const active = data.value.sessions.find((s) => s.endedAt === null);
+  if (!active || !activeTask.value) return null;
+  return {
+    title: activeTask.value.title,
+    elapsed: duration(now.value - active.startedAt),
+  };
+});
 const todayKey = computed(() => dayKey(now.value));
 // Stop albo zmiana zadania kończy blok skupienia: stan sprawdzamy po każdej zmianie danych.
 watch(data, () => void refreshFocus());
@@ -201,6 +211,10 @@ async function openQuick() {
     }
   } else quickPreview.value = true;
 }
+/** Link „Przejdź do treści” (WCAG 2.4.1): fokus na początek widoku, bez zmiany adresu. */
+function skipToMain() {
+  document.getElementById("main")?.focus();
+}
 function shortcut(e: KeyboardEvent) {
   if (e.ctrlKey && e.key.toLowerCase() === "k") {
     e.preventDefault();
@@ -258,13 +272,18 @@ onUnmounted(() => {
 
 <template>
   <div class="app-shell">
+    <a class="skip-link" href="#main" @click.prevent="skipToMain"
+      >Przejdź do treści</a
+    >
     <TitleBar v-if="desktop" @error="error = $event" />
     <AppNav
       v-model:view="view"
+      :running="running"
       @quick="openQuick"
+      @stop="act('stop')"
       @error="error = $event"
     />
-    <main>
+    <main id="main" tabindex="-1">
       <IdleBanner
         :tasks="data.tasks"
         @updated="updated"

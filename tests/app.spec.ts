@@ -211,7 +211,7 @@ test("task groups prioritize started tasks and dashboard links to daily reports"
   await page.reload();
   await expect(
     page.getByRole("button", { name: "Zadania", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  ).toHaveAttribute("aria-current", "page");
 });
 
 test("dark theme persists, compact cards show intervals only when expanded", async ({

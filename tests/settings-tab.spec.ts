@@ -27,8 +27,8 @@ const tab = (page: Page, name: string) =>
 /** Sekcja widoczna w treści: zaznaczona na liście i z nagłówkiem. */
 async function expectSection(page: Page, name: string) {
   await expect(navButton(page, "Ustawienia")).toHaveAttribute(
-    "aria-pressed",
-    "true",
+    "aria-current",
+    "page",
   );
   await expect(tab(page, name)).toHaveAttribute("aria-selected", "true");
   await expect(
@@ -202,7 +202,7 @@ test("linki z innych widoków i navigate otwierają właściwą sekcję", async 
   // Ustawienia → Jira prowadzi z powrotem do widoku Jira (połączenie konta).
   await tab(page, "Jira").click();
   await page.getByRole("button", { name: "Połączenie z Jirą" }).click();
-  await expect(navButton(page, "Jira")).toHaveAttribute("aria-pressed", "true");
+  await expect(navButton(page, "Jira")).toHaveAttribute("aria-current", "page");
 });
 
 test("widok Jira ma link do Ustawienia → Jira", async ({ page }) => {

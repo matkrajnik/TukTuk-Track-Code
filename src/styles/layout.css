@@ -4,7 +4,8 @@
   align-items: center;
   gap: var(--space-6);
   padding: 0 var(--space-6);
-  height: 64px;
+  /* Fluent NavigationView: górny pasek 48 px. */
+  height: 48px;
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
@@ -47,6 +48,7 @@ nav button {
 nav button.selected {
   border-bottom-color: var(--accent);
   color: var(--text);
+  font-weight: 600;
 }
 .header-actions {
   margin-left: auto;
@@ -100,7 +102,7 @@ main {
   nav button {
     white-space: nowrap;
     flex-shrink: 0;
-    font-size: var(--fs-sm);
+    font-size: var(--fs-base);
   }
   nav button svg {
     display: none;
@@ -225,7 +227,8 @@ main {
 }
 .titlebar {
   display: flex;
-  height: 34px;
+  /* Standardowy pasek tytułu Windows: 32 px. */
+  height: 32px;
   background: var(--surface);
   border-bottom: 1px solid var(--line);
   user-select: none;
@@ -259,7 +262,7 @@ main {
   }
   nav button {
     padding: 0 10px;
-    font-size: var(--fs-sm);
+    font-size: var(--fs-base);
   }
 }
 @media (max-width: 600px) {
@@ -286,4 +289,86 @@ main {
   border-radius: var(--radius-sm);
   background: var(--raised);
   cursor: help;
+}
+/* Link „Przejdź do treści” (WCAG 2.4.1): widoczny dopiero po fokusie z klawiatury. */
+.skip-link {
+  position: absolute;
+  left: var(--space-3);
+  top: -100px;
+  z-index: 20;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  text-decoration: none;
+}
+.skip-link:focus {
+  top: var(--space-2);
+}
+main:focus {
+  outline: none;
+}
+/* Mierzone zadanie w pasku: nazwa i czas z atrybutów (patrz AppNav.vue). */
+.topbar-timer {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--accent-bg);
+}
+.topbar-timer-task {
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  gap: 8px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  font-size: var(--fs-sm);
+}
+.topbar-timer-task::before {
+  content: attr(data-title);
+  order: 1;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-timer-task::after {
+  content: attr(data-elapsed);
+  order: 2;
+  color: var(--accent);
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.topbar-timer-stop {
+  width: 30px;
+  height: 30px;
+  border-left: 1px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  color: var(--accent);
+}
+@media (max-width: 900px) {
+  .topbar-timer-task::before {
+    max-width: 90px;
+  }
+}
+@media (max-width: 600px) {
+  .topbar-timer-task::before {
+    display: none;
+  }
+}
+/* 1100–1439 px: jeden rząd mieści się dopiero bez ikon
+   nawigacji i bez nazwy w mierzonym zadaniu (zostaje kropka, czas i Stop;
+   nazwa jest w podpowiedzi i w aria-label). */
+@media (min-width: 1100px) and (max-width: 1439px) {
+  nav button svg {
+    display: none;
+  }
+  .topbar {
+    gap: var(--space-4);
+  }
+  .topbar-timer-task::before {
+    display: none;
+  }
 }

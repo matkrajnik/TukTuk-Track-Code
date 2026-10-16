@@ -68,7 +68,7 @@ const views: {
     ready: (page) =>
       expect(
         page.getByRole("button", { name: "Dashboard", exact: true }),
-      ).toHaveAttribute("aria-pressed", "true"),
+      ).toHaveAttribute("aria-current", "page"),
   },
   {
     name: "plan-dzien",
