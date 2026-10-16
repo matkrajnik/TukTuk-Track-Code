@@ -625,7 +625,9 @@ pub fn start(app: &tauri::AppHandle) {
                 }
                 // Aktywne okno (W3, gdy włączone w ustawieniach): sygnał trafia do
                 // tej samej reguły propozycji co agenci.
-                crate::foreground::observe(&app, now);
+                crate::foreground::observe(&app, now, |p| {
+                    branches.get(&p.to_string_lossy(), now, git_branch)
+                });
                 // Propozycje przełączenia liczone co przebieg: zależą też od czasu
                 // pracy agenta (2 min) i od bieżącego pomiaru.
                 crate::suggest::refresh(&app, now);

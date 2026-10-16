@@ -297,10 +297,13 @@ impl Tracker {
         self.current = Some((signal, since, now));
     }
 
-    /// Okno Todo Track na pierwszym planie (np. klik w baner): ostatni sygnał trwa.
+    /// Okno Todo Track na pierwszym planie (np. klik w baner): ostatni sygnał trwa,
+    /// ale czas w Todo Track nie liczy się do reguły 2 minut: `since` przesuwa się
+    /// o tyle samo co `seen`, więc policzony czas pracy w oknie stoi w miejscu.
     pub fn keep(&mut self, now: i64) {
-        if let Some((_, _, seen)) = &mut self.current {
-            if now - *seen <= HOLD {
+        if let Some((_, since, seen)) = &mut self.current {
+            if now - *seen <= HOLD && now >= *seen {
+                *since += now - *seen;
                 *seen = now;
             }
         }
@@ -368,8 +371,13 @@ pub fn current(app: &tauri::AppHandle, now: i64) -> Vec<Agent> {
 }
 
 /// Jeden przebieg (z pętli agentów co 5 s): odczyt okna, rozpoznanie, zapis w
-/// pamięci. Przy wyłączonym ustawieniu nic nie czyta.
-pub fn observe(app: &tauri::AppHandle, now: i64) {
+/// pamięci. Przy wyłączonym ustawieniu nic nie czyta. `branch` czyta gałąź folderu
+/// (w pętli: przez cache `Branches` z TTL 30 s, jak u agentów).
+pub fn observe(
+    app: &tauri::AppHandle,
+    now: i64,
+    mut branch: impl FnMut(&Path) -> Option<agents::Head>,
+) {
     let Some(state) = app.try_state::<State>() else {
         return;
     };
@@ -402,9 +410,7 @@ pub fn observe(app: &tauri::AppHandle, now: i64) {
             }
             Clue::Key(_) => None,
         };
-        let head = folder
-            .as_deref()
-            .and_then(|f| agents::git_branch(Path::new(f)));
+        let head = folder.as_deref().and_then(|f| branch(Path::new(f)));
         let clue = folder.map(Clue::Folder).unwrap_or(clue);
         let mut signal = {
             let db = app.state::<crate::Database>();
@@ -730,12 +736,45 @@ mod tests {
         t.keep(at + 20_000);
         assert_eq!(pending(&t, &mut m, &s, at + 40_000), [Some(1)]);
         // Wyłączone ustawienie: brak propozycji z okna (agenci osobno).
-        assert!(pending(&t, &mut m, &AppSettings::default(), at).is_empty());
+        assert!(pending(&t, &mut m, &AppSettings::default(), at + 40_000).is_empty());
         let agents_off = AppSettings {
             agent_suggest: false,
             ..on()
         };
-        assert_eq!(pending(&t, &mut m, &agents_off, at), [Some(1)]);
+        assert_eq!(pending(&t, &mut m, &agents_off, at + 40_000), [Some(1)]);
+    }
+
+    #[test]
+    fn time_in_todo_track_does_not_count_toward_the_two_minute_rule() {
+        let s = on();
+        let mut t = Tracker::default();
+        let mut m = Memory::default();
+        // 5 s w Chrome z zadaniem, potem ponad 2 min w Todo Track: bez propozycji.
+        feed(&mut t, signal(1, ""), NOW, NOW + 5_000);
+        let mut at = NOW + 10_000;
+        while at <= NOW + 5_000 + MIN_WORK + 10_000 {
+            t.keep(at);
+            assert!(pending(&t, &mut m, &s, at).is_empty(), "za wcześnie: {at}");
+            at += 5_000;
+        }
+        // Powrót do tego samego okna liczy dalej od 5 s (plus jeden przebieg 5 s
+        // od ostatniego `keep`), nie od czasu w Todo Track.
+        let back = at;
+        t.observe(Some(signal(1, "")), back);
+        assert!(pending(&t, &mut m, &s, back).is_empty());
+        assert_eq!(back - t.agent(back).unwrap().since, 10_000);
+        feed(
+            &mut t,
+            signal(1, ""),
+            back + 5_000,
+            back + MIN_WORK - 15_000,
+        );
+        assert!(pending(&t, &mut m, &s, back + MIN_WORK - 15_000).is_empty());
+        t.observe(Some(signal(1, "")), back + MIN_WORK - 10_000);
+        assert_eq!(pending(&t, &mut m, &s, back + MIN_WORK - 10_000), [Some(1)]);
+        // Gotowa propozycja nie gaśnie i nie cofa się podczas pobytu w Todo Track.
+        t.keep(back + MIN_WORK);
+        assert_eq!(pending(&t, &mut m, &s, back + MIN_WORK + 5_000), [Some(1)]);
     }
 
     /// Ten sam sygnał co 5 s od `from` do `to` włącznie.
