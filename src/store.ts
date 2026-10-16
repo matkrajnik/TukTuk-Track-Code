@@ -2008,6 +2008,8 @@ export interface JiraCreated {
   key: string;
   url: string;
   snapshot: Snapshot | null;
+  /** Zgłoszenie utworzone, ale zadanie w Todo Track nie powstało. */
+  warning?: string | null;
 }
 export type JiraScope = "mine" | "all";
 
@@ -2754,6 +2756,14 @@ export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
   let snapshot: Snapshot | null = null;
   if (issue.createTask) {
     const data = await read();
+    const linked = data.tasks.find((t) => t.jiraKey === issueKey);
+    if (linked) {
+      // Jak w Ruście: zadanie zaimportowane wcześniej, bez drugiej kopii.
+      if (issue.plannedDay)
+        linked.details = { ...detailsOf(linked), plannedDay: issue.plannedDay };
+      localStorage.setItem(key, JSON.stringify(data));
+      return { key: issueKey, url: previewIssueUrl(issueKey), snapshot: data, warning: null };
+    }
     const created: Task = {
       id:
         Math.max(
@@ -2773,5 +2783,5 @@ export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
     localStorage.setItem(key, JSON.stringify(data));
     snapshot = data;
   }
-  return { key: issueKey, url: previewIssueUrl(issueKey), snapshot };
+  return { key: issueKey, url: previewIssueUrl(issueKey), snapshot, warning: null };
 }

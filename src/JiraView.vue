@@ -364,8 +364,15 @@ async function moveCard(
   from = card.column,
 ) {
   if (!writable.value || !board.value) return;
-  if (card.column === column && transitionId === null) return;
   if (pending.value.includes(card.key)) return;
+  // Otwarty wybór przejścia: karta stoi w kolumnie docelowej tylko
+  // optymistycznie. Prawdziwa kolumna to choice.from.
+  if (choice.value?.card === card) {
+    card.column = choice.value.from;
+    from = choice.value.from;
+    choice.value = null;
+  }
+  if (card.column === column && transitionId === null) return;
   const id = board.value.boardId;
   card.column = column;
   openMenu.value = null;
@@ -482,6 +489,7 @@ async function submitCreate() {
     notice.value = `Utworzono ${created.key}${
       created.snapshot ? " i zadanie w Todo Track" : ""
     }.`;
+    if (created.warning) error.value = `Utworzono ${created.key}. ${created.warning}`;
     if (created.snapshot) emit("updated", created.snapshot);
     await refresh();
   });

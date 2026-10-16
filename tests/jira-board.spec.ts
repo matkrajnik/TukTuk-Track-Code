@@ -231,6 +231,24 @@ test("błąd Jiry cofa przesunięcie z komunikatem", async ({ page }) => {
   expect((await boardIssue(page, "WMS-31")).status).toBe("Do zrobienia");
 });
 
+test("błąd po przeciągnięciu z otwartym wyborem cofa kartę do prawdziwej kolumny", async ({
+  page,
+}) => {
+  await openBoard(page);
+  await card(page, "WMS-31").dragTo(column(page, "W toku"));
+  await expect(page.getByRole("group", { name: "Wybierz przejście: WMS-31" })).toBeVisible();
+  await page.evaluate(
+    (k) => localStorage.setItem(k, JSON.stringify({ ready: true, fail: 403 })),
+    JIRA_KEY,
+  );
+  await card(page, "WMS-31").dragTo(column(page, "Code review"));
+  await expect(page.getByRole("alert")).toContainText("Nie przesunięto WMS-31 do „Code review”.");
+  await expect(page.getByRole("group", { name: "Wybierz przejście: WMS-31" })).toHaveCount(0);
+  expect(await keys(page, "Do zrobienia")).toEqual(["WMS-31", "WMS-7"]);
+  expect(await keys(page, "W toku")).not.toContain("WMS-31");
+  expect((await boardIssue(page, "WMS-31")).status).toBe("Do zrobienia");
+});
+
 test("przypisz do mnie, zmień osobę i komentarz z menu karty", async ({ page }) => {
   await openBoard(page);
   await wholeBoard(page);

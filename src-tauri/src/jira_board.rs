@@ -1177,6 +1177,8 @@ pub struct Created {
     url: String,
     /// Dane po utworzeniu zadania w Todo Track (`create_task`).
     snapshot: Option<db::Snapshot>,
+    /// Zgłoszenie utworzone, ale zadanie w Todo Track nie powstało.
+    warning: Option<String>,
 }
 
 /// Zadanie w Todo Track dla nowego zgłoszenia (bez startu pomiaru).
@@ -1189,21 +1191,38 @@ pub fn create_linked_task(
     now: i64,
 ) -> Result<db::Snapshot, String> {
     let tx = db.transaction().map_err(|e| e.to_string())?;
-    let title: String = summary.chars().take(240).collect();
-    tx.execute(
-        "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
-        params![title, now],
-    )
-    .map_err(|e| e.to_string())?;
-    let id = tx.last_insert_rowid();
-    tx.execute(
-        "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(?1,?2,?3)",
-        params![id, site, key],
-    )
-    .map_err(|e| e.to_string())?;
+    // Idempotentnie: obserwacja przypisanych (sync_assigned) mogła już
+    // zaimportować to zgłoszenie. Wtedy nie dodajemy drugiego zadania.
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT task_id FROM jira_tasks WHERE site=?1 AND issue_key=?2",
+            params![site, key],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let id = match existing {
+        Some(id) => id,
+        None => {
+            let title: String = summary.chars().take(240).collect();
+            tx.execute(
+                "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
+                params![title, now],
+            )
+            .map_err(|e| e.to_string())?;
+            let id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(?1,?2,?3)",
+                params![id, site, key],
+            )
+            .map_err(|e| e.to_string())?;
+            id
+        }
+    };
     if !planned_day.is_empty() {
         tx.execute(
-            "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('plannedDay',?2))",
+            "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('plannedDay',?2))
+             ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.plannedDay',?2)",
             params![id, planned_day],
         )
         .map_err(|e| e.to_string())?;
@@ -1238,17 +1257,32 @@ pub async fn jira_create(app: tauri::AppHandle, issue: NewIssue) -> Result<Creat
         .filter(|k| jira::valid_key(k))
         .ok_or("Jira utworzyła zgłoszenie, ale nie zwróciła jego klucza. Odśwież tablicę.")?
         .to_string();
+    // Zgłoszenie już istnieje w Jirze: błąd lokalny nie może zwrócić Err,
+    // bo ponowienie formularza utworzyłoby duplikat.
+    let mut warning = None;
     let snapshot = if issue.create_task {
         let state = app.state::<Database>();
-        let mut db = state.0.lock().map_err(|e| e.to_string())?;
-        Some(create_linked_task(
-            &mut db,
-            &c.site,
-            &key,
-            &summary,
-            &issue.planned_day,
-            db::now(),
-        )?)
+        let linked = state
+            .0
+            .lock()
+            .map_err(|e| e.to_string())
+            .and_then(|mut db| {
+                create_linked_task(
+                    &mut db,
+                    &c.site,
+                    &key,
+                    &summary,
+                    &issue.planned_day,
+                    db::now(),
+                )
+            });
+        match linked {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warning = Some(format!("Nie utworzono zadania w Todo Track: {e}"));
+                None
+            }
+        }
     } else {
         None
     };
@@ -1257,6 +1291,7 @@ pub async fn jira_create(app: tauri::AppHandle, issue: NewIssue) -> Result<Creat
         url: format!("{}/browse/{}", c.site, key),
         key,
         snapshot,
+        warning,
     })
 }
 
@@ -1730,6 +1765,42 @@ mod tests {
         )
         .unwrap();
         assert_eq!(s.tasks[0].details.planned_day, "");
+    }
+
+    #[test]
+    fn new_issue_task_reuses_task_imported_by_assigned_watch() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        // Obserwacja przypisanych zaimportowała zgłoszenie przed linkowaniem.
+        conn.execute_batch(
+            "INSERT INTO tasks(id,title,created_at) VALUES(9,'WMS-79 Import',1);
+             INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(9,'https://a.atlassian.net','WMS-79');",
+        )
+        .unwrap();
+        let s = create_linked_task(
+            &mut conn,
+            "https://a.atlassian.net",
+            "WMS-79",
+            "Nowe",
+            "2026-10-18",
+            5,
+        )
+        .unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].id, 9);
+        assert_eq!(s.tasks[0].details.planned_day, "2026-10-18");
+        // Ponowienie bez dnia nie zmienia niczego i nie zwraca błędu.
+        let s = create_linked_task(
+            &mut conn,
+            "https://a.atlassian.net",
+            "WMS-79",
+            "Nowe",
+            "",
+            6,
+        )
+        .unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].details.planned_day, "2026-10-18");
     }
 
     /// Serwer HTTP na jedno połączenie: zwraca całe żądanie.
