@@ -42,6 +42,8 @@ pub struct AppSettings {
     pub jira_ask_move: bool,
     /// Nazwa preferowanego statusu docelowego przy kilku przejściach „w toku”.
     pub jira_move_status: String,
+    /// Prefiks nazwy gałęzi z „Kopiuj nazwę gałęzi” (J2), np. `feature/`.
+    pub jira_branch_prefix: String,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
     /// Długość bloku skupienia w minutach (1–240, domyślnie 25).
@@ -109,6 +111,7 @@ impl Default for AppSettings {
             jira_write: true,
             jira_ask_move: true,
             jira_move_status: "In Progress".into(),
+            jira_branch_prefix: "feature/".into(),
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
             focus_block_minutes: 25,
@@ -203,6 +206,20 @@ fn same_shortcut(a: &str, b: &str) -> bool {
     }
 }
 
+/// Komunikat dla niepoprawnego prefiksu gałęzi.
+pub const BRANCH_PREFIX_ERROR: &str =
+    "Prefiks gałęzi może mieć najwyżej 40 znaków: litery łacińskie, cyfry, „/”, „-”, „_” i „.”.";
+
+/// Prefiks gałęzi: pusty albo do 40 znaków ASCII bezpiecznych w nazwie gałęzi git.
+pub fn valid_branch_prefix(value: &str) -> bool {
+    value.len() <= 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'/' | b'-' | b'_' | b'.'))
+        && !value.contains("..")
+        && !value.starts_with(['/', '.', '-'])
+}
+
 /// Pełna walidacja: pola osobno i reguły łączące pola.
 pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
     let s = validate_fields(s)?;
@@ -274,6 +291,10 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     s.jira_move_status = s.jira_move_status.trim().to_string();
     if s.jira_move_status.is_empty() || s.jira_move_status.chars().count() > 80 {
         return Err("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.".into());
+    }
+    s.jira_branch_prefix = s.jira_branch_prefix.trim().to_string();
+    if !valid_branch_prefix(&s.jira_branch_prefix) {
+        return Err(BRANCH_PREFIX_ERROR.into());
     }
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());

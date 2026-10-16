@@ -1903,3 +1903,875 @@ export async function onMovePromptsChanged(
     window.removeEventListener("storage", storage);
   };
 }
+
+// ---------------------------------------------------------------------------
+// J2: Jira z poziomu Todo Track (tablica, przejścia, przypisanie, komentarze,
+// nazwa gałęzi, nowe zgłoszenia). W aplikacji komendy z `jira.rs` i
+// `jira_board.rs`; w podglądzie symulowana Jira w localStorage
+// (`previewJiraBoardKey`) z tymi samymi regułami (`columnFor`, `decideMove`,
+// `branchName`). Błąd zapisu symuluje `fail` (400 albo 403) ze stanu J1.
+// ---------------------------------------------------------------------------
+
+export interface JiraBoardRef {
+  id: number;
+  name: string;
+}
+/** `jira::Settings`: konto i wybrane tablice. */
+export interface JiraAccount {
+  config: {
+    site: string;
+    email: string;
+    displayName: string;
+    boards: JiraBoardRef[];
+  };
+  connected: boolean;
+}
+/** Zgłoszenie listy „Moje” (`jira::Issue`). */
+export interface JiraListIssue {
+  key: string;
+  summary: string;
+  status: string;
+  boards: string[];
+  url: string;
+}
+export interface JiraColumn {
+  name: string;
+  statusIds: string[];
+}
+export interface JiraPerson {
+  accountId: string;
+  displayName: string;
+}
+/** Karta tablicy (`jira_board::BoardIssue`). */
+export interface JiraBoardIssue {
+  key: string;
+  summary: string;
+  status: string;
+  statusId: string;
+  category: string;
+  issueType: string;
+  priority: string;
+  assignee: JiraPerson | null;
+  url: string;
+  column: number;
+}
+export interface JiraBoardView {
+  boardId: number;
+  project: string;
+  columns: JiraColumn[];
+  issues: JiraBoardIssue[];
+  truncated: boolean;
+  limit: number;
+  layoutAt: number;
+}
+/** Przejście z polami ekranu (`jira_board::MoveOption`). */
+export interface JiraMoveOption {
+  id: string;
+  name: string;
+  toStatus: string;
+  toStatusId: string;
+  toCategory: string;
+  required: string[];
+}
+export type JiraMoveOutcome =
+  | {
+      result: "moved";
+      status: string;
+      statusId: string;
+      category: string;
+      column: number;
+    }
+  | { result: "choose"; options: JiraMoveOption[] }
+  | { result: "screen"; url: string; fields: string[]; message: string };
+export interface JiraIssueType {
+  id: string;
+  name: string;
+}
+export interface JiraProject {
+  key: string;
+  boards: string[];
+}
+export interface JiraTypeFields {
+  extraRequired: string[];
+  createUrl: string;
+}
+export interface JiraNewIssue {
+  project: string;
+  issueTypeId: string;
+  summary: string;
+  description: string;
+  assignMe: boolean;
+  createTask: boolean;
+  plannedDay: string;
+}
+export interface JiraCreated {
+  key: string;
+  url: string;
+  snapshot: Snapshot | null;
+}
+export type JiraScope = "mine" | "all";
+
+/** Najwięcej kart na tablicy (`jira_board::ISSUE_LIMIT`). */
+export const jiraIssueLimit = 300;
+/** Najdłuższy komentarz (`jira_board::COMMENT_LIMIT`). */
+export const jiraCommentLimit = 5000;
+
+/**
+ * Kolumna statusu jak `jira_board::column_for`: kolumna ze statusem; inaczej
+ * pierwsza kolumna ze statusem tej samej kategorii; inaczej „Do zrobienia” →
+ * pierwsza, „Gotowe” → ostatnia, „W toku” → druga (przy 3+ kolumnach).
+ */
+export function columnFor(
+  statusId: string,
+  category: string,
+  columns: JiraColumn[],
+  categories: Record<string, string>,
+): number {
+  if (!columns.length) return 0;
+  const direct = columns.findIndex((c) => c.statusIds.includes(statusId));
+  if (direct >= 0) return direct;
+  if (category) {
+    const same = columns.findIndex((c) =>
+      c.statusIds.some((s) => categories[s] === category),
+    );
+    if (same >= 0) return same;
+  }
+  if (category === "new") return 0;
+  if (category === "done") return columns.length - 1;
+  return columns.length >= 3 ? 1 : 0;
+}
+export type JiraMoveDecision =
+  | { kind: "perform" | "screen"; option: JiraMoveOption }
+  | { kind: "choose"; options: JiraMoveOption[] }
+  | { kind: "none" };
+/** Wybór przejścia do kolumny jak `jira_board::decide`. */
+export function decideMove(
+  options: JiraMoveOption[],
+  target: number,
+  columns: JiraColumn[],
+  categories: Record<string, string>,
+  chosen: string | null,
+): JiraMoveDecision {
+  const candidates = options.filter(
+    (o) => columnFor(o.toStatusId, o.toCategory, columns, categories) === target,
+  );
+  let pick: JiraMoveOption | undefined;
+  if (chosen !== null) {
+    pick = candidates.find((o) => o.id === chosen);
+    if (!pick) throw new Error("To przejście nie prowadzi do wybranej kolumny.");
+  } else if (!candidates.length) return { kind: "none" };
+  else if (candidates.length > 1) return { kind: "choose", options: candidates };
+  else pick = candidates[0];
+  return { kind: pick.required.length ? "screen" : "perform", option: pick };
+}
+const plainLetters: Record<string, string> = {
+  ą: "a",
+  á: "a",
+  ä: "a",
+  à: "a",
+  â: "a",
+  ć: "c",
+  č: "c",
+  ç: "c",
+  ę: "e",
+  é: "e",
+  ě: "e",
+  è: "e",
+  ë: "e",
+  ê: "e",
+  ł: "l",
+  ń: "n",
+  ň: "n",
+  ó: "o",
+  ö: "o",
+  ô: "o",
+  ò: "o",
+  ś: "s",
+  š: "s",
+  ź: "z",
+  ż: "z",
+  ž: "z",
+  í: "i",
+  ì: "i",
+  î: "i",
+  ï: "i",
+  ú: "u",
+  ü: "u",
+  ů: "u",
+  ù: "u",
+  û: "u",
+  ř: "r",
+  ý: "y",
+  ť: "t",
+  ď: "d",
+  ß: "ss",
+};
+/** Nazwa gałęzi jak `jira_board::branch_name` (część bez prefiksu do 50 znaków). */
+export function branchName(prefix: string, key: string, title: string): string {
+  let slug = "";
+  for (const c of title.toLowerCase()) {
+    if (/^[a-z0-9]$/.test(c)) slug += c;
+    else if (plainLetters[c]) slug += plainLetters[c];
+    else if (!slug.endsWith("-")) slug += "-";
+  }
+  slug = slug.replace(/^-+|-+$/g, "");
+  const full = slug ? `${key}-${slug}` : key;
+  return prefix + full.slice(0, 50).replace(/-+$/, "");
+}
+/** Inicjały osoby na karcie. */
+export const initials = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0]?.toLocaleUpperCase("pl") ?? "")
+    .join("") || "?";
+
+const jiraKeyPattern = /^[A-Z0-9_]+-\d+$/;
+function checkKey(issueKey: string) {
+  if (!jiraKeyPattern.test(issueKey) || issueKey.length > 100)
+    throw new Error("Niepoprawny klucz zgłoszenia Jiry.");
+}
+
+/** Symulowana Jira podglądu (J2). */
+export const previewJiraBoardKey = "todo-track-preview-jira-board-v1";
+/** Linki otwarte „w przeglądarce” w podglądzie (do sprawdzenia w testach). */
+export const previewJiraOpenedKey = "todo-track-preview-jira-opened-v1";
+interface PreviewIssue {
+  key: string;
+  summary: string;
+  status: string;
+  issueType: string;
+  priority: string;
+  assignee: JiraPerson | null;
+  boards: number[];
+}
+interface PreviewBoardState {
+  issues?: PreviewIssue[];
+  comments?: Record<string, string[]>;
+  next?: number;
+  boards?: JiraBoardRef[];
+}
+export const previewJiraMe: Readonly<JiraPerson> = Object.freeze({
+  accountId: "preview-me",
+  displayName: "Jan Kowalski",
+});
+const previewPeople: JiraPerson[] = [
+  { ...previewJiraMe },
+  { accountId: "preview-anna", displayName: "Anna Nowak" },
+  { accountId: "preview-piotr", displayName: "Piotr Wiśniewski" },
+];
+const previewBoards: JiraBoardRef[] = [
+  { id: 1, name: "WMS" },
+  { id: 2, name: "Foundation" },
+];
+const previewBoardProject: Record<number, string> = { 1: "WMS", 2: "FND" };
+/** Statusy symulowanej Jiry; „Testy” nie ma kolumny (trafia według kategorii). */
+const previewStatuses = [
+  { id: "1", name: "Do zrobienia", category: "new" },
+  { id: "3", name: "In Progress", category: "indeterminate" },
+  { id: "4", name: "Code review", category: "indeterminate" },
+  { id: "5", name: "Gotowe", category: "done" },
+  { id: "6", name: "Testy", category: "indeterminate" },
+];
+const previewColumns: JiraColumn[] = [
+  { name: "Do zrobienia", statusIds: ["1"] },
+  { name: "W toku", statusIds: ["3"] },
+  { name: "Code review", statusIds: ["4"] },
+  { name: "Gotowe", statusIds: ["5"] },
+];
+const previewCategories: Record<string, string> = Object.fromEntries(
+  previewStatuses.map((s) => [s.id, s.category]),
+);
+function previewStatusId(name: string): string {
+  const n = name.trim().toLowerCase();
+  return previewStatuses.find((s) => s.name.toLowerCase() === n)?.id ?? "";
+}
+/** Przejścia tablicy: przepływ z J1, „Do testów” i „Zakończ” z polem Rozwiązanie. */
+function previewMoveOptions(status: string): JiraMoveOption[] {
+  const all: JiraMoveOption[] = [
+    ...previewWorkflow.map((t) => ({
+      ...t,
+      toStatusId: previewStatusId(t.toStatus),
+      required: t.id === "41" ? ["Rozwiązanie"] : [],
+    })),
+    {
+      id: "51",
+      name: "Do testów",
+      toStatus: "Testy",
+      toStatusId: "6",
+      toCategory: "indeterminate",
+      required: [],
+    },
+  ];
+  return all.filter(
+    (t) => t.toStatus.toLowerCase() !== status.trim().toLowerCase(),
+  );
+}
+const previewTypes: (JiraIssueType & { required: string[] })[] = [
+  { id: "10001", name: "Zadanie", required: [] },
+  { id: "10002", name: "Błąd", required: ["Środowisko"] },
+  { id: "10004", name: "Historia", required: [] },
+];
+const previewIssueSeed = (): PreviewIssue[] => [
+  {
+    key: "WMS-31",
+    summary: "Obsługa przyjęcia towaru",
+    status: "Do zrobienia",
+    issueType: "Historia",
+    priority: "High",
+    assignee: { ...previewJiraMe },
+    boards: [1, 2],
+  },
+  {
+    key: "WMS-40",
+    summary: "Raport rozbieżności magazynowych",
+    status: "Code review",
+    issueType: "Błąd",
+    priority: "High",
+    assignee: { ...previewPeople[1] },
+    boards: [1],
+  },
+  {
+    key: "WMS-41",
+    summary: "Etykiety dla kurierów",
+    status: "Do zrobienia",
+    issueType: "Zadanie",
+    priority: "Low",
+    assignee: null,
+    boards: [1],
+  },
+  {
+    key: "WMS-44",
+    summary: "Inwentaryzacja cząstkowa",
+    status: "Testy",
+    issueType: "Zadanie",
+    priority: "Medium",
+    assignee: { ...previewPeople[2] },
+    boards: [1],
+  },
+  {
+    key: "FND-3",
+    summary: "Aktualizacja bibliotek",
+    status: "In Progress",
+    issueType: "Zadanie",
+    priority: "Medium",
+    assignee: { ...previewJiraMe },
+    boards: [2],
+  },
+];
+/**
+ * Stan symulowanej tablicy: zgłoszenia z przykładu i z zadań z kluczem
+ * (status z kafelka wygrywa, bo zmienia go też J1).
+ */
+async function previewBoardState(): Promise<{
+  state: PreviewBoardState;
+  data: Snapshot;
+  issues: PreviewIssue[];
+}> {
+  const state = previewJson(previewJiraBoardKey) as PreviewBoardState;
+  const data = await read();
+  const issues = Array.isArray(state.issues) ? state.issues : previewIssueSeed();
+  for (const task of [...data.tasks, ...(data.trash ?? [])]) {
+    if (!task.jiraKey) continue;
+    const issue = issues.find((i) => i.key === task.jiraKey);
+    if (!issue)
+      issues.push({
+        key: task.jiraKey,
+        summary: task.title,
+        status: task.jiraStatus || "Do zrobienia",
+        issueType: "Zadanie",
+        priority: "Medium",
+        assignee: { ...previewJiraMe },
+        boards: [1],
+      });
+    else if (task.jiraStatus) issue.status = task.jiraStatus;
+  }
+  state.issues = issues;
+  return { state, data, issues };
+}
+function savePreviewBoard(state: PreviewBoardState) {
+  localStorage.setItem(previewJiraBoardKey, JSON.stringify(state));
+}
+const previewSelectedBoards = (state: PreviewBoardState) =>
+  Array.isArray(state.boards)
+    ? state.boards
+    : previewBoards.map((b) => ({ ...b }));
+/** Zapis do symulowanej Jiry: główny przełącznik i błąd `fail` (jak `jira::write`). */
+function previewWrite() {
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  const fail = previewJiraState().fail;
+  if (fail === 403)
+    throw new Error("Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
+  if (fail === 400)
+    throw new Error(
+      "Jira odrzuciła zmianę. Przejście może wymagać wypełnienia pól na ekranie w Jirze — zrób je w przeglądarce.",
+    );
+}
+const previewIssueUrl = (issueKey: string) =>
+  `${previewJiraSite}/browse/${issueKey}`;
+function previewCategory(status: string) {
+  const id = previewStatusId(status);
+  return id ? previewCategories[id] : previewStatusCategory(status);
+}
+
+/** `jira_settings` (w podglądzie połączone konto przykładowe). */
+export async function jiraAccount(): Promise<JiraAccount> {
+  if (desktop) return invoke("jira_settings");
+  const state = previewJson(previewJiraBoardKey) as PreviewBoardState;
+  return {
+    config: {
+      site: previewJiraSite,
+      email: "jan.kowalski@firma.example",
+      displayName: previewJiraMe.displayName,
+      boards: previewSelectedBoards(state),
+    },
+    connected: true,
+  };
+}
+const previewOnlyAccount =
+  "W podglądzie Jira jest symulowana. Konto łączysz w aplikacji Windows.";
+export async function jiraConnect(
+  site: string,
+  email: string,
+  apiToken: string,
+): Promise<JiraAccount> {
+  if (desktop) return invoke("jira_connect", { site, email, apiToken });
+  throw new Error(previewOnlyAccount);
+}
+export async function jiraDisconnect(): Promise<JiraAccount> {
+  if (desktop) return invoke("jira_disconnect");
+  throw new Error(previewOnlyAccount);
+}
+/** `jira_boards`: wyszukiwanie tablic. */
+export async function jiraBoards(
+  name: string,
+  startAt: number,
+): Promise<{ values: JiraBoardRef[]; nextStart: number | null }> {
+  if (desktop) return invoke("jira_boards", { name, startAt });
+  const q = name.trim().toLocaleLowerCase("pl");
+  return {
+    values: previewBoards.filter((b) =>
+      b.name.toLocaleLowerCase("pl").includes(q),
+    ),
+    nextStart: null,
+  };
+}
+/** `jira_select_boards`: wybrane tablice (najwyżej 20). */
+export async function jiraSelectBoards(boards: JiraBoardRef[]): Promise<void> {
+  if (desktop) return invoke("jira_select_boards", { boards });
+  if (boards.length > 20) throw new Error("Wybierz maksymalnie 20 tablic.");
+  const state = previewJson(previewJiraBoardKey) as PreviewBoardState;
+  state.boards = boards.map((b) => ({ id: b.id, name: b.name }));
+  savePreviewBoard(state);
+}
+/** `jira_issues`: lista „Przypisane do mnie”. */
+export async function jiraIssues(
+  openOnly: boolean,
+): Promise<{ issues: JiraListIssue[]; warnings: string[] }> {
+  if (desktop) return invoke("jira_issues", { openOnly });
+  const { state, issues } = await previewBoardState();
+  savePreviewBoard(state);
+  const boards = previewSelectedBoards(state);
+  if (!boards.length) throw new Error("Najpierw wybierz tablice.");
+  return {
+    issues: issues
+      .filter((i) => i.assignee?.accountId === previewJiraMe.accountId)
+      .filter((i) => !openOnly || previewCategory(i.status) !== "done")
+      .map((i) => ({
+        key: i.key,
+        summary: i.summary,
+        status: i.status,
+        boards: boards
+          .filter((b) => i.boards.includes(b.id))
+          .map((b) => b.name),
+        url: previewIssueUrl(i.key),
+      }))
+      .filter((i) => i.boards.length)
+      .sort((a, b) => a.key.localeCompare(b.key, "pl", { numeric: true })),
+    warnings: [],
+  };
+}
+/** `jira_start`: zadanie zgłoszenia (nowe albo z kosza/archiwum) i jeden pomiar. */
+export async function jiraStart(issueKey: string): Promise<Snapshot> {
+  if (desktop) return invoke("jira_start", { key: issueKey });
+  checkKey(issueKey);
+  const { state, issues } = await previewBoardState();
+  savePreviewBoard(state);
+  const issue = issues.find((i) => i.key === issueKey);
+  if (!issue) throw new Error("Odśwież listę zgłoszeń przed rozpoczęciem.");
+  const data = await read();
+  const now = Date.now();
+  let task = data.tasks.find((t) => t.jiraKey === issueKey);
+  const trashed = data.trash?.find((t) => t.jiraKey === issueKey);
+  if (!task && trashed) {
+    data.trash = data.trash?.filter((t) => t !== trashed);
+    data.sessions.push(
+      ...(data.trashSessions ?? []).filter((s) => s.taskId === trashed.id),
+    );
+    data.trashSessions = data.trashSessions?.filter(
+      (s) => s.taskId !== trashed.id,
+    );
+    data.tasks.unshift(trashed);
+    task = trashed;
+  }
+  if (!task) {
+    task = {
+      id:
+        Math.max(
+          0,
+          ...data.tasks.map((t) => t.id),
+          ...(data.trash ?? []).map((t) => t.id),
+        ) + 1,
+      title: [...issue.summary].slice(0, 240).join(""),
+      done: false,
+      createdAt: now,
+      jiraKey: issueKey,
+      jiraUrl: previewIssueUrl(issueKey),
+      jiraStatus: issue.status,
+    };
+    data.tasks.unshift(task);
+  }
+  const started = task;
+  started.done = false;
+  started.archived = false;
+  started.details = unblocked(started);
+  if (
+    !data.sessions.some((s) => s.taskId === started.id && s.endedAt === null)
+  ) {
+    data.sessions.forEach((s) => {
+      if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
+    });
+    data.sessions.unshift({
+      id:
+        Math.max(
+          0,
+          ...data.sessions.map((s) => s.id),
+          ...(data.trashSessions ?? []).map((s) => s.id),
+        ) + 1,
+      taskId: started.id,
+      startedAt: now,
+      endedAt: null,
+    });
+  }
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
+/** `jira_open`: zgłoszenie w przeglądarce (w podglądzie tylko zapisany link). */
+export async function jiraOpen(url: string): Promise<void> {
+  if (desktop) return invoke("jira_open", { url });
+  try {
+    const opened = JSON.parse(
+      localStorage.getItem(previewJiraOpenedKey) ?? "[]",
+    );
+    localStorage.setItem(
+      previewJiraOpenedKey,
+      JSON.stringify(
+        [...(Array.isArray(opened) ? opened : []), url].slice(-20),
+      ),
+    );
+  } catch {
+    /* tylko ślad dla testów */
+  }
+}
+/** `jira_board`: kolumny i karty tablicy. */
+export async function jiraBoard(
+  boardId: number,
+  scope: JiraScope,
+  openOnly: boolean,
+  refresh: boolean,
+): Promise<JiraBoardView> {
+  if (desktop)
+    return invoke("jira_board", { boardId, scope, openOnly, refresh });
+  const { state, issues } = await previewBoardState();
+  savePreviewBoard(state);
+  if (!previewSelectedBoards(state).some((b) => b.id === boardId))
+    throw new Error(
+      "Tej tablicy nie ma wśród wybranych. Wybierz ją w widoku Jira.",
+    );
+  const cards = issues
+    .filter((i) => i.boards.includes(boardId))
+    .filter((i) =>
+      scope === "mine"
+        ? i.assignee?.accountId === previewJiraMe.accountId &&
+          (!openOnly || previewCategory(i.status) !== "done")
+        : previewCategory(i.status) !== "done",
+    )
+    .map((i): JiraBoardIssue => {
+      const statusId = previewStatusId(i.status);
+      const category = previewCategory(i.status);
+      return {
+        key: i.key,
+        summary: i.summary,
+        status: i.status,
+        statusId,
+        category,
+        issueType: i.issueType,
+        priority: i.priority,
+        assignee: i.assignee ? { ...i.assignee } : null,
+        url: previewIssueUrl(i.key),
+        column: columnFor(
+          statusId,
+          category,
+          previewColumns,
+          previewCategories,
+        ),
+      };
+    });
+  return {
+    boardId,
+    project: previewBoardProject[boardId] ?? "",
+    columns: previewColumns.map((c) => ({
+      ...c,
+      statusIds: [...c.statusIds],
+    })),
+    issues: cards.slice(0, jiraIssueLimit),
+    truncated: cards.length > jiraIssueLimit,
+    limit: jiraIssueLimit,
+    layoutAt: Date.now(),
+  };
+}
+/** Status zgłoszenia w symulowanej Jirze i na kafelkach zadań z tym kluczem. */
+async function previewSetStatus(issueKey: string, status: string) {
+  const { state, data, issues } = await previewBoardState();
+  const issue = issues.find((i) => i.key === issueKey);
+  if (issue) issue.status = status;
+  for (const task of [...data.tasks, ...(data.trash ?? [])])
+    if (task.jiraKey === issueKey) task.jiraStatus = status;
+  savePreviewBoard(state);
+  localStorage.setItem(key, JSON.stringify(data));
+}
+/** `jira_board_move`: przeciągnięcie karty i „Przesuń do…”. */
+export async function jiraBoardMove(
+  boardId: number,
+  issueKey: string,
+  column: number,
+  transitionId: string | null,
+): Promise<JiraMoveOutcome> {
+  if (desktop)
+    return invoke("jira_board_move", {
+      boardId,
+      key: issueKey,
+      column,
+      transitionId,
+    });
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  checkKey(issueKey);
+  const { issues } = await previewBoardState();
+  const issue = issues.find((i) => i.key === issueKey);
+  if (!issue)
+    throw new Error("Nie znaleziono zgłoszenia albo przejścia w Jirze.");
+  const target = previewColumns[column];
+  if (!target) throw new Error("Nie ma takiej kolumny na tablicy.");
+  const decision = decideMove(
+    previewMoveOptions(issue.status),
+    column,
+    previewColumns,
+    previewCategories,
+    transitionId,
+  );
+  if (decision.kind === "none")
+    throw new Error(
+      `Jira nie ma przejścia ${issueKey} do kolumny „${target.name}”. Zgłoszenie zostaje w poprzedniej kolumnie.`,
+    );
+  if (decision.kind === "choose")
+    return { result: "choose", options: decision.options };
+  const o = decision.option;
+  if (decision.kind === "screen")
+    return {
+      result: "screen",
+      url: previewIssueUrl(issueKey),
+      fields: o.required,
+      message: `Przejście „${o.name}” wymaga wypełnienia pól w Jirze (${o.required.join(", ")}). Otwieram ${issueKey} w przeglądarce — dokończ zmianę tam.`,
+    };
+  previewWrite();
+  await previewSetStatus(issueKey, o.toStatus);
+  return {
+    result: "moved",
+    status: o.toStatus,
+    statusId: o.toStatusId,
+    category: o.toCategory,
+    column: columnFor(
+      o.toStatusId,
+      o.toCategory,
+      previewColumns,
+      previewCategories,
+    ),
+  };
+}
+/** `jira_assignable`: osoby do przypisania. */
+export async function jiraAssignable(
+  issueKey: string,
+  query: string,
+): Promise<JiraPerson[]> {
+  if (desktop) return invoke("jira_assignable", { key: issueKey, query });
+  checkKey(issueKey);
+  const q = query.trim().toLocaleLowerCase("pl");
+  if ([...q].length > 100) throw new Error("Wpisz najwyżej 100 znaków.");
+  return previewPeople
+    .filter((p) => p.displayName.toLocaleLowerCase("pl").includes(q))
+    .map((p) => ({ ...p }));
+}
+/** `jira_assign`: „Przypisz do mnie” (`accountId` = null) i „Zmień osobę…”. */
+export async function jiraAssign(
+  issueKey: string,
+  accountId: string | null,
+): Promise<JiraPerson> {
+  if (desktop) return invoke("jira_assign", { key: issueKey, accountId });
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  checkKey(issueKey);
+  const who =
+    accountId === null
+      ? previewJiraMe
+      : previewPeople.find((p) => p.accountId === accountId);
+  if (!who) throw new Error("Niepoprawna osoba w Jirze.");
+  previewWrite();
+  const { state, issues } = await previewBoardState();
+  const issue = issues.find((i) => i.key === issueKey);
+  if (!issue)
+    throw new Error("Nie znaleziono zgłoszenia albo przejścia w Jirze.");
+  issue.assignee = { ...who };
+  savePreviewBoard(state);
+  return { ...who };
+}
+/** `jira_comment`: komentarz zwykłym tekstem (w Jirze jako ADF). */
+export async function jiraComment(
+  issueKey: string,
+  text: string,
+): Promise<void> {
+  if (desktop) return invoke("jira_comment", { key: issueKey, text });
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  checkKey(issueKey);
+  const body = text.replace(/\r\n?/g, "\n").trim();
+  if (!body) throw new Error("Wpisz treść komentarza.");
+  if ([...body].length > jiraCommentLimit)
+    throw new Error(
+      `Komentarz może mieć najwyżej ${jiraCommentLimit} znaków.`,
+    );
+  previewWrite();
+  const { state } = await previewBoardState();
+  const comments = (state.comments ??= {});
+  comments[issueKey] = [...(comments[issueKey] ?? []), body];
+  savePreviewBoard(state);
+}
+/** `jira_branch_name`: nazwa gałęzi z prefiksem z ustawień. */
+export async function jiraBranchName(
+  issueKey: string,
+  title: string,
+): Promise<string> {
+  if (desktop) return invoke("jira_branch_name", { key: issueKey, title });
+  checkKey(issueKey);
+  const s = previewJson(previewSettingsKey);
+  const prefix =
+    typeof s.jiraBranchPrefix === "string" ? s.jiraBranchPrefix : "feature/";
+  return branchName(prefix, issueKey, title);
+}
+/** `jira_projects`: projekty wybranych tablic. */
+export async function jiraProjects(): Promise<JiraProject[]> {
+  if (desktop) return invoke("jira_projects");
+  const state = previewJson(previewJiraBoardKey) as PreviewBoardState;
+  const out: JiraProject[] = [];
+  for (const b of previewSelectedBoards(state)) {
+    const project = previewBoardProject[b.id];
+    if (!project) continue;
+    const known = out.find((p) => p.key === project);
+    if (known) known.boards.push(b.name);
+    else out.push({ key: project, boards: [b.name] });
+  }
+  if (!out.length)
+    throw new Error("Wybrane tablice nie należą do projektu Jiry.");
+  return out;
+}
+const projectPattern = /^[A-Z][A-Z0-9_]{0,19}$/;
+/** `jira_issue_types`: typy zgłoszeń projektu. */
+export async function jiraIssueTypes(
+  project: string,
+): Promise<JiraIssueType[]> {
+  if (desktop) return invoke("jira_issue_types", { project });
+  if (!projectPattern.test(project)) throw new Error("Wybierz projekt w Jirze.");
+  return previewTypes.map(({ id, name }) => ({ id, name }));
+}
+/** `jira_issue_type_fields`: wymagane pola spoza formularza. */
+export async function jiraIssueTypeFields(
+  project: string,
+  issueTypeId: string,
+): Promise<JiraTypeFields> {
+  if (desktop)
+    return invoke("jira_issue_type_fields", { project, issueTypeId });
+  const type = previewTypes.find((t) => t.id === issueTypeId);
+  if (!type || !projectPattern.test(project))
+    throw new Error("Wybierz projekt i typ zgłoszenia.");
+  return {
+    extraRequired: [...type.required],
+    createUrl: `${previewJiraSite}/secure/CreateIssue!default.jspa`,
+  };
+}
+/** Walidacja formularza jak `jira_board::validate_new_issue`; zwraca tytuł. */
+export function validateNewIssue(n: JiraNewIssue): string {
+  if (!projectPattern.test(n.project))
+    throw new Error("Wybierz projekt w Jirze.");
+  if (!/^\d{1,20}$/.test(n.issueTypeId))
+    throw new Error("Wybierz typ zgłoszenia.");
+  const summary = n.summary.trim();
+  if (!summary || [...summary].length > 255 || /[\r\n]/.test(summary))
+    throw new Error(
+      "Tytuł zgłoszenia musi mieć od 1 do 255 znaków w jednej linii.",
+    );
+  if ([...n.description].length > jiraCommentLimit)
+    throw new Error(`Opis może mieć najwyżej ${jiraCommentLimit} znaków.`);
+  if (n.plannedDay && !/^\d{4}-\d{2}-\d{2}$/.test(n.plannedDay))
+    throw new Error("Dzień planu musi mieć format RRRR-MM-DD.");
+  return summary;
+}
+/** `jira_create`: nowe zgłoszenie i opcjonalnie zadanie w Todo Track. */
+export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
+  if (desktop) return invoke("jira_create", { issue });
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  const summary = validateNewIssue(issue);
+  const type = previewTypes.find((t) => t.id === issue.issueTypeId);
+  if (!type) throw new Error("Wybierz typ zgłoszenia.");
+  if (type.required.length)
+    throw new Error(
+      `Ten typ zgłoszenia wymaga pól, których Todo Track nie wypełnia (${type.required.join(", ")}). Utwórz zgłoszenie w Jirze.`,
+    );
+  previewWrite();
+  const { state, issues } = await previewBoardState();
+  const number = state.next ?? 100;
+  state.next = number + 1;
+  const issueKey = `${issue.project}-${number}`;
+  issues.push({
+    key: issueKey,
+    summary,
+    status: "Do zrobienia",
+    issueType: type.name,
+    priority: "Medium",
+    assignee: issue.assignMe ? { ...previewJiraMe } : null,
+    boards: Object.entries(previewBoardProject)
+      .filter(([, p]) => p === issue.project)
+      .map(([id]) => Number(id)),
+  });
+  savePreviewBoard(state);
+  let snapshot: Snapshot | null = null;
+  if (issue.createTask) {
+    const data = await read();
+    const created: Task = {
+      id:
+        Math.max(
+          0,
+          ...data.tasks.map((t) => t.id),
+          ...(data.trash ?? []).map((t) => t.id),
+        ) + 1,
+      title: [...summary].slice(0, 240).join(""),
+      done: false,
+      createdAt: Date.now(),
+      jiraKey: issueKey,
+      jiraUrl: previewIssueUrl(issueKey),
+    };
+    if (issue.plannedDay)
+      created.details = { ...detailsOf(created), plannedDay: issue.plannedDay };
+    data.tasks.unshift(created);
+    localStorage.setItem(key, JSON.stringify(data));
+    snapshot = data;
+  }
+  return { key: issueKey, url: previewIssueUrl(issueKey), snapshot };
+}

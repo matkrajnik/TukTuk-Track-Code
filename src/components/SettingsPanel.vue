@@ -406,6 +406,21 @@ onUnmounted(() => {
         o tej nazwie, a bez dopasowania pytanie pokazuje listę. Pomiar startuje
         od razu, a zgłoszenie zmienia się dopiero po kliknięciu „Przesuń”.
       </p>
+      <div class="planning-fields settings-fields">
+        <label
+          >Prefiks nazwy gałęzi<input
+            :value="settings.jiraBranchPrefix"
+            maxlength="40"
+            placeholder="feature/"
+            :disabled="busy"
+            @change="save({ jiraBranchPrefix: text($event) })"
+        /></label>
+      </div>
+      <p class="hint">
+        „Kopiuj nazwę gałęzi” na tablicy Jiry i w kafelku zadania daje np.
+        {{ settings.jiraBranchPrefix }}WMS-123-krotki-tytul (małe litery, bez
+        polskich znaków, do 50 znaków po prefiksie). Pusty prefiks — sama nazwa.
+      </p>
       <label class="inline-check"
         ><input
           :checked="settings.jiraAutoImport"

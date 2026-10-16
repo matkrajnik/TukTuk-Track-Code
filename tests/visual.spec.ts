@@ -157,6 +157,24 @@ for (const theme of themes)
           fullPage: true,
         });
       });
+
+      // J2: ta sama Jira jako tablica z kolumnami (karty z typem, priorytetem,
+      // osobą, czasem lokalnym i znacznikiem „mierzone teraz”).
+      test("widok jira tablica", async ({ page }) => {
+        await useTheme(page, theme);
+        await openDesktop(page, {
+          data: seed({ active: { task: ids.analysis, from: "11:00" } }),
+          jira: jiraFixture(),
+        });
+        await nav(page, "Jira");
+        await page.getByRole("button", { name: "Tablica", exact: true }).click();
+        await expect(page.locator(".jira-card")).toHaveCount(3);
+        await settle(page);
+        await expect(page).toHaveScreenshot(
+          `jira-tablica-${theme}-${width}.png`,
+          { fullPage: true },
+        );
+      });
     });
   }
 

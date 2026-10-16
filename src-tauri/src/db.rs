@@ -65,7 +65,10 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS agent_sessions_start ON agent_sessions(start);
         CREATE INDEX IF NOT EXISTS agent_sessions_end ON agent_sessions(\"end\");
         CREATE INDEX IF NOT EXISTS agent_sessions_task ON agent_sessions(task_id);
-        CREATE TABLE IF NOT EXISTS week_notes (week TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '');")
+        CREATE TABLE IF NOT EXISTS week_notes (week TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS jira_board_columns (board_id INTEGER NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, status_ids TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(board_id, position));
+        CREATE TABLE IF NOT EXISTS jira_statuses (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
+        CREATE TABLE IF NOT EXISTS jira_board_meta (board_id INTEGER PRIMARY KEY, site TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', fetched_at INTEGER NOT NULL);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db

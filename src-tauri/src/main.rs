@@ -13,6 +13,7 @@ mod foreground;
 mod holidays;
 mod idle;
 mod jira;
+mod jira_board;
 mod jira_move;
 mod maintenance;
 mod native_msg;
@@ -466,6 +467,16 @@ fn main() {
             jira_move::jira_no_ask,
             jira_move::jira_transitions,
             jira_move::jira_transition,
+            jira_board::jira_board,
+            jira_board::jira_board_move,
+            jira_board::jira_assignable,
+            jira_board::jira_assign,
+            jira_board::jira_comment,
+            jira_board::jira_branch_name,
+            jira_board::jira_projects,
+            jira_board::jira_issue_types,
+            jira_board::jira_issue_type_fields,
+            jira_board::jira_create,
             calendar::calendar_status,
             calendar::calendar_connect,
             calendar::calendar_disconnect,

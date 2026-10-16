@@ -411,6 +411,52 @@ function install(init: {
             })),
             warnings: [],
           };
+        // Tablica Jiry (J2) na danych fixture: kolumny jak w Jirze, karta
+        // w kolumnie swojego statusu (przypisanie spoza kolumn testuje Rust
+        // `jira_board::column_for` i e2e na podglądzie).
+        case "jira_board": {
+          const columns = [
+            { name: "Do zrobienia", statusIds: ["1"] },
+            { name: "W toku", statusIds: ["3"] },
+            { name: "Gotowe", statusIds: ["5"] },
+          ];
+          const byName: Record<string, [string, string, number]> = {
+            "Do zrobienia": ["1", "new", 0],
+            "W toku": ["3", "indeterminate", 1],
+            Gotowe: ["5", "done", 2],
+          };
+          const board = init.jira?.boards.find((b: any) => b.id === args.boardId);
+          const issues = (init.jira?.issues ?? [])
+            .filter((i: any) => board && i.boards.includes(board.name))
+            .map((i: any) => {
+              const [statusId, category, column] = byName[i.status] ?? [
+                "",
+                "indeterminate",
+                1,
+              ];
+              return {
+                key: i.key,
+                summary: i.summary,
+                status: i.status,
+                statusId,
+                category,
+                issueType: i.issueType ?? "Zadanie",
+                priority: i.priority ?? "Medium",
+                assignee: i.assignee ?? null,
+                url: `${init.site}/browse/${i.key}`,
+                column,
+              };
+            });
+          return {
+            boardId: args.boardId,
+            project: "WMS",
+            columns,
+            issues,
+            truncated: false,
+            limit: 300,
+            layoutAt: Date.now(),
+          };
+        }
         case "idle_notice":
           return clone(idle.pending);
         case "idle_resolve": {

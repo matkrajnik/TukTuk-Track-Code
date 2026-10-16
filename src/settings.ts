@@ -34,6 +34,8 @@ export interface AppSettings {
   jiraAskMove: boolean;
   /** Preferowany status docelowy przy kilku przejściach „w toku”. */
   jiraMoveStatus: string;
+  /** Prefiks nazwy gałęzi w „Kopiuj nazwę gałęzi” (J2). */
+  jiraBranchPrefix: string;
   shortcutQuick: string;
   shortcutToggle: string;
   /** Długość bloku skupienia w minutach (1–240). */
@@ -93,6 +95,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   jiraWrite: true,
   jiraAskMove: true,
   jiraMoveStatus: "In Progress",
+  jiraBranchPrefix: "feature/",
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
   focusBlockMinutes: 25,
@@ -208,6 +211,16 @@ export function altGrLetter(value: string): boolean {
   return !!parsed && /^Alt\+Control\+(Shift\+)?KEY[ACELNOSXZ]$/.test(parsed);
 }
 
+/** Komunikat dla niepoprawnego prefiksu gałęzi (`BRANCH_PREFIX_ERROR` w Rust). */
+export const branchPrefixError =
+  "Prefiks gałęzi może mieć najwyżej 40 znaków: litery łacińskie, cyfry, „/”, „-”, „_” i „.”.";
+/** Prefiks gałęzi jak `valid_branch_prefix` w Rust. */
+export const validBranchPrefix = (value: string) =>
+  value.length <= 40 &&
+  /^[A-Za-z0-9/_.-]*$/.test(value) &&
+  !value.includes("..") &&
+  !/^[/.-]/.test(value);
+
 const fresh = (): AppSettings => ({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
@@ -299,6 +312,8 @@ function applyFields(
   s.jiraMoveStatus = s.jiraMoveStatus.trim();
   if (!s.jiraMoveStatus || [...s.jiraMoveStatus].length > 80)
     throw new Error("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.");
+  s.jiraBranchPrefix = s.jiraBranchPrefix.trim();
+  if (!validBranchPrefix(s.jiraBranchPrefix)) throw new Error(branchPrefixError);
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
   if (s.morningReviewDay !== "" && !validDay(s.morningReviewDay))

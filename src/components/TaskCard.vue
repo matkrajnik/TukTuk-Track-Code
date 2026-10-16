@@ -16,9 +16,11 @@ import { invoke } from "@tauri-apps/api/core";
 import TaskPlanning from "../TaskPlanning.vue";
 import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
+import JiraIssueActions from "./JiraIssueActions.vue";
 import {
   desktop,
   duration,
+  jiraConnected,
   jiraTransition,
   jiraTransitions,
   saveTemplate,
@@ -420,6 +422,11 @@ async function openJira(url: string) {
           Otwórz {{ task.jiraKey }} w Jirze
         </button>
       </p>
+      <JiraIssueActions
+        v-if="task.jiraKey && jiraConnected"
+        :issue-key="task.jiraKey"
+        :summary="task.title"
+      />
       <p
         v-if="task.jiraKey && task.details?.jiraNoAsk && settings.jiraWrite"
         class="hint jira-no-ask"

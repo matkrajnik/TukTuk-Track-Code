@@ -360,6 +360,8 @@ onUnmounted(() => {
       <JiraView
         v-else-if="view === 'jira'"
         :active-url="activeTask?.jiraUrl"
+        :data="data"
+        :now="now"
         @updated="updated"
         @stop="act('stop')"
       />

@@ -76,6 +76,31 @@ pub fn cached_summary(app: &tauri::AppHandle, key: &str) -> Option<String> {
         .get(key)
         .map(|issue| issue.summary.clone())
 }
+/// Dopisuje zgłoszenia z tablicy (J2) do listy sesji, żeby „Start” z tablicy
+/// działał jak z listy (`jira_start`). Istniejące wpisy dostają nazwę tablicy.
+pub fn remember(app: &tauri::AppHandle, rows: &[(String, String, String)], board: &str) {
+    let Ok(c) = config(app) else {
+        return;
+    };
+    let state = app.state::<JiraState>();
+    let Ok(mut cache) = state.0.lock() else {
+        return;
+    };
+    for (key, summary, status) in rows {
+        let row = cache.entry(key.clone()).or_insert_with(|| Issue {
+            key: key.clone(),
+            summary: summary.clone(),
+            status: status.clone(),
+            boards: vec![],
+            url: format!("{}/browse/{}", c.site, key),
+        });
+        row.summary = summary.clone();
+        row.status = status.clone();
+        if !row.boards.iter().any(|b| b == board) {
+            row.boards.push(board.to_string());
+        }
+    }
+}
 pub fn config(app: &tauri::AppHandle) -> Result<Config, String> {
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
@@ -161,7 +186,7 @@ fn status_error(status: StatusCode) -> String {
         ),
     }
 }
-async fn get(
+pub(crate) async fn get(
     client: &Client,
     c: &Config,
     secret: &str,
@@ -360,14 +385,15 @@ fn merge_issues(
     Ok(())
 }
 /// Pobiera wszystkie strony wyniku JQL (stronicowanie `nextPageToken`) i podaje
-/// każdą odpowiedź do `each`.
-async fn pages(
+/// każdą odpowiedź do `each`; `Ok(false)` z `each` kończy pobieranie (limit).
+pub(crate) async fn pages(
     client: &Client,
     c: &Config,
     secret: &str,
     path: &str,
     jql: &str,
-    mut each: impl FnMut(&Value) -> Result<(), String>,
+    fields: &str,
+    mut each: impl FnMut(&Value) -> Result<bool, String>,
 ) -> Result<(), String> {
     let mut cursor = String::new();
     let mut seen = HashSet::new();
@@ -375,13 +401,15 @@ async fn pages(
         let mut query = vec![
             ("jql", jql.into()),
             ("maxResults", "100".into()),
-            ("fields", "summary,status".into()),
+            ("fields", fields.into()),
         ];
         if !cursor.is_empty() {
             query.push(("nextPageToken", cursor.clone()));
         }
         let value = get(client, c, secret, path, &query).await?;
-        each(&value)?;
+        if !each(&value)? {
+            return Ok(());
+        }
         if value["isLast"].as_bool() == Some(true) {
             return Ok(());
         }
@@ -411,8 +439,8 @@ async fn board_issues(
     };
     let mut result = BTreeMap::new();
     let path = format!("/rest/software/1.0/board/{}/issue", board.id);
-    pages(client, c, secret, &path, jql, |value| {
-        merge_issues(&mut result, value, c, board)
+    pages(client, c, secret, &path, jql, "summary,status", |value| {
+        merge_issues(&mut result, value, c, board).map(|_| true)
     })
     .await?;
     Ok(result)
@@ -667,7 +695,8 @@ async fn fetch_assigned(
         secret,
         "/rest/api/3/search/jql",
         WATCH_JQL,
-        |value| assigned_rows(value, &mut rows),
+        "summary,status",
+        |value| assigned_rows(value, &mut rows).map(|_| true),
     )
     .await?;
     Ok(rows)
@@ -953,7 +982,7 @@ pub fn write_error(status: StatusCode, body: &Value) -> String {
 
 /// Wysyła zapis (np. `POST …/transitions`). Ścieżka musi zaczynać się od `/rest/`,
 /// treść ma limit długości. Pusta odpowiedź (204) to `Value::Null`.
-async fn send_write(
+pub(crate) async fn send_write(
     client: &Client,
     c: &Config,
     secret: &str,
@@ -993,7 +1022,8 @@ async fn send_write(
     }
 }
 
-/// Jedyna ścieżka zapisu do Jiry (J1, później J2): główny przełącznik, połączone
+/// Jedyna ścieżka zapisu do Jiry (J1 i J2: przejścia, przypisanie, komentarze,
+/// tworzenie zgłoszeń): główny przełącznik, połączone
 /// konto, walidacja i polskie komunikaty błędów.
 pub async fn write(
     app: &tauri::AppHandle,
@@ -1149,6 +1179,25 @@ pub async fn transition(
     .map(|_| ())
 }
 
+/// Adres tworzenia zgłoszenia w Jirze (J2: typ z polami spoza formularza aplikacji).
+pub const CREATE_PATH: &str = "/secure/CreateIssue!default.jspa";
+
+/// Link, który aplikacja otwiera w przeglądarce: zgłoszenie (`/browse/KLUCZ`) albo
+/// tworzenie zgłoszenia, bez zapytania, fragmentu, portu i danych logowania.
+fn allowed_link(parsed: &Url) -> bool {
+    parsed.scheme() == "https"
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.port().is_none()
+        && parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && (parsed.path() == CREATE_PATH
+            || parsed
+                .path()
+                .strip_prefix("/browse/")
+                .is_some_and(valid_key))
+}
+
 #[tauri::command]
 pub fn jira_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
     if url == "https://id.atlassian.com/manage-profile/security/api-tokens" {
@@ -1160,17 +1209,7 @@ pub fn jira_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let parsed = Url::parse(&url).map_err(|_| "Niepoprawny link.".to_owned())?;
     let site = format!("https://{}", parsed.host_str().unwrap_or(""));
     normalize_site(&site)?;
-    if parsed.scheme() != "https"
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-        || parsed.port().is_some()
-        || parsed.query().is_some()
-        || parsed.fragment().is_some()
-        || !parsed
-            .path()
-            .strip_prefix("/browse/")
-            .is_some_and(valid_key)
-    {
+    if !allowed_link(&parsed) {
         return Err("Niepoprawny link zgłoszenia Jiry.".into());
     }
     app.opener()
@@ -1716,6 +1755,15 @@ mod tests {
         ] {
             assert!(normalize_site(bad).is_err());
         }
+        // Linki do przeglądarki: zgłoszenie i tworzenie zgłoszenia (J2), nic więcej.
+        let link = |u: &str| allowed_link(&Url::parse(u).unwrap());
+        assert!(link("https://a.atlassian.net/browse/WMS-1"));
+        assert!(link(&format!("https://a.atlassian.net{CREATE_PATH}")));
+        assert!(!link(
+            "https://a.atlassian.net/secure/CreateIssue!default.jspa?pid=1"
+        ));
+        assert!(!link("https://a.atlassian.net/secure/Other.jspa"));
+        assert!(!link("http://a.atlassian.net/browse/WMS-1"));
         assert!(valid_key("WMS-123"));
         assert!(!valid_key("../123"));
         assert!(!valid_key("WMS-1?x"));

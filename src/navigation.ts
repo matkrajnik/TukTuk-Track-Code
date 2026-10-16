@@ -95,6 +95,8 @@ export const settingsSections = [
       "In Progress",
       "przesunięcie",
       "przejścia",
+      "gałąź",
+      "Prefiks nazwy gałęzi",
     ],
   },
   {
