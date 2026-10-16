@@ -116,7 +116,15 @@ button:focus-visible,
 a:focus-visible,
 input:focus-visible,
 select:focus-visible,
-textarea:focus-visible {
+textarea:focus-visible,
+input[type="date"]:focus,
+input[type="month"]:focus,
+input[type="time"]:focus,
+input[type="date"]:focus-within,
+input[type="month"]:focus-within,
+input[type="time"]:focus-within {
+  /* Pola daty i godziny: przycisk kalendarza w środku pola nie dostaje
+     :focus-visible w WebView2, więc pierścień zależy od samego fokusu. */
   outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
@@ -201,7 +209,8 @@ h2 {
   margin: 8px 0 0;
 }
 .today-button {
-  padding: 8px 10px;
+  min-height: 32px;
+  padding: 6px 10px;
   color: var(--accent);
   font-size: var(--fs-sm);
 }
@@ -218,12 +227,15 @@ h2 {
   font-size: var(--fs-base);
 }
 .secondary-button {
-  border: 1px solid var(--line);
+  min-height: 32px;
+  border: 1px solid var(--line-strong);
   padding: 8px 12px;
   color: var(--text);
   font-size: var(--fs-sm);
 }
 .text-link {
+  /* Obszar klikania co najmniej 24 px (WCAG 2.5.8). */
+  min-height: 24px;
   color: var(--accent);
   padding: 4px 2px;
   font-size: var(--fs-sm);

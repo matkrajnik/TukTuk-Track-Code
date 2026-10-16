@@ -162,12 +162,25 @@
   padding: 12px 16px;
 }
 .checkbox {
-  width: 19px;
-  height: 19px;
+  position: relative;
+  width: 20px;
+  height: 20px;
   flex-shrink: 0;
   border: 1px solid var(--muted);
   border-radius: var(--radius-sm);
   padding: 0;
+}
+/* Obszar klikania 26 px przy polu 20 px (WCAG 2.5.8). */
+.checkbox::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+}
+/* Obszar klikania 26 px przy polu 20 px (WCAG 2.5.8). */
+.checkbox::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
 }
 .checkbox.checked {
   border-color: var(--accent);
@@ -387,16 +400,10 @@
   border-radius: 50%;
   background: var(--accent);
 }
+/* Zero i przycisk Start bez przezroczystości: tekst ma kontrast co najmniej
+   4.5:1 (WCAG 1.4.3), a aktywny przycisk nie wygląda na wyłączony. */
 .task-duration.zero {
   color: var(--muted);
-  opacity: 0.55;
-}
-.task-card:not(.isRunning) .row-timer {
-  opacity: 0.6;
-}
-.task-card:hover .row-timer,
-.task-card:focus-within .row-timer {
-  opacity: 1;
 }
 .details-actions {
   display: flex;

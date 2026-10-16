@@ -201,7 +201,10 @@
   margin-top: 22px;
   color: var(--muted);
 }
-.overdue-plans summary {
+.overdue-plans summary,
+.week-overdue summary {
+  min-height: 24px;
+  padding: 2px 0;
   cursor: pointer;
 }
 .weekly-day {
@@ -456,7 +459,7 @@
   margin: 12px 0;
   padding: 12px;
   background: var(--bg);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   color: var(--text);
 }
@@ -617,7 +620,7 @@
 }
 .task-checklist input:not([type="checkbox"]) {
   padding: 8px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   color: var(--text);
   background: var(--bg);
@@ -634,7 +637,7 @@
   min-height: 64px;
   background: var(--bg);
   color: var(--text);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   padding: 10px;
 }
@@ -679,7 +682,7 @@
   align-items: center;
   gap: var(--space-2);
   padding: 0 var(--space-3);
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-strong);
   border-radius: var(--radius);
   background: var(--surface);
   color: var(--muted);
@@ -695,8 +698,11 @@
 .settings-search input:focus {
   outline: none;
 }
+/* Pierścień fokusu jak w całej aplikacji (WCAG 2.4.7), nie sama zmiana ramki. */
 .settings-search:focus-within {
   border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 .settings-sections {
   display: flex;
@@ -1005,7 +1011,8 @@ html.widget-root body {
 /* Ręczna kolejność zadań */
 .reorder-handle {
   flex-shrink: 0;
-  width: 22px;
+  width: 24px;
+  min-height: 24px;
   padding: 4px 0;
   border: 0;
   background: transparent;
@@ -1326,7 +1333,7 @@ html.widget-root body {
   font-size: var(--fs-sm);
 }
 .week-card.done {
-  opacity: 0.65;
+  color: var(--muted);
 }
 .week-card-top {
   display: flex;
@@ -1541,7 +1548,6 @@ html.widget-root body {
 }
 .dashboard-zero {
   color: var(--muted);
-  opacity: 0.6;
 }
 @media (max-width: 900px) {
   .dashboard-columns.even {
