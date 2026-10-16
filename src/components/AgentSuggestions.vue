@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { Bot } from "lucide-vue-next";
 import {
   dismissSuggestion,
   muteSuggestionFolders,
@@ -133,12 +134,13 @@ onUnmounted(() => {
     class="idle-banner agent-banner"
     aria-label="Propozycja przełączenia"
   >
+    <Bot class="infobar-icon" :size="20" aria-hidden="true" />
     <template v-if="visible.length === 1">
       <h2>{{ single.title }}</h2>
       <p>{{ single.text }} {{ timer }} Przełączyć pomiar?</p>
       <div class="planning-actions">
         <button
-          class="today-button"
+          class="primary-button"
           :disabled="busy"
           @click="switchTo(visible[0])"
         >
@@ -188,7 +190,7 @@ onUnmounted(() => {
           >
           <span class="planning-actions">
             <button
-              class="today-button"
+              class="secondary-button"
               :disabled="busy"
               :aria-label="`Przełącz na: ${name(s.task)}`"
               @click="switchTo(s)"

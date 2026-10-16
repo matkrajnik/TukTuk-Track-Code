@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
+import { Clock } from "lucide-vue-next";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { desktop, type Snapshot, type Task } from "../store";
@@ -55,7 +56,8 @@ onUnmounted(() => unlisten?.());
 </script>
 
 <template>
-  <section v-if="idleNotice" class="idle-banner" role="alert">
+  <section v-if="idleNotice" class="idle-banner infobar-warning" role="alert">
+    <Clock class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Wracasz po przerwie?</h2>
     <p>
       {{ tasks.find((t) => t.id === idleNotice?.taskId)?.title }} · brak
@@ -74,14 +76,14 @@ onUnmounted(() => unlisten?.());
       (ostatnia aktywność przy komputerze).
     </p>
     <div class="planning-actions">
-      <button class="today-button" @click="resolveIdle(false)">
+      <button class="secondary-button" @click="resolveIdle(false)">
         Zachowaj cały czas</button
-      ><button class="today-button" @click="resolveIdle(true)">
+      ><button class="secondary-button" @click="resolveIdle(true)">
         Zatrzymaj na początku przerwy</button
       ><button
         v-for="task in idleNotice.agentTasks ?? []"
         :key="task.taskId ?? ''"
-        class="today-button"
+        class="secondary-button"
         @click="assignBreak(task)"
       >
         Przypisz przerwę do „{{ task.title }}”

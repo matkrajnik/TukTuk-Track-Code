@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
+import { Ticket } from "lucide-vue-next";
 import { invoke } from "@tauri-apps/api/core";
 import {
   desktop,
@@ -118,6 +119,7 @@ onUnmounted(() => {
     class="idle-banner jira-move-banner"
     aria-label="Przesunięcie zgłoszenia w Jirze"
   >
+    <Ticket class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Przesunąć {{ p.key }} do „{{ moveTargetName(p) }}”?</h2>
     <p>
       „{{ p.title }}” ma w Jirze status {{ p.status }}. Pomiar już trwa;
@@ -127,7 +129,7 @@ onUnmounted(() => {
     <div class="planning-actions">
       <button
         v-if="p.transitionId"
-        class="today-button"
+        class="primary-button"
         :disabled="busy"
         :aria-label="`Przesuń ${p.key} do ${moveTargetName(p)}`"
         @click="move(p.taskId, p.url, p.transitionId)"
@@ -136,7 +138,7 @@ onUnmounted(() => {
       ><button
         v-for="t in p.transitionId ? [] : p.transitions"
         :key="t.id"
-        class="today-button"
+        class="secondary-button"
         :disabled="busy"
         :aria-label="`Przesuń do: ${t.toStatus}`"
         @click="move(p.taskId, p.url, t.id)"
@@ -165,13 +167,14 @@ onUnmounted(() => {
     class="idle-banner jira-move-banner"
     aria-label="Przesunięcie zgłoszenia po ukończeniu"
   >
+    <Ticket class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Ukończone. Przesunąć {{ p.key }} dalej?</h2>
     <p>Wybierz przejście dla „{{ p.title }}” albo zostaw zgłoszenie bez zmian.</p>
     <div class="planning-actions">
       <button
         v-for="t in p.transitions"
         :key="t.id"
-        class="today-button"
+        class="secondary-button"
         :disabled="busy"
         :aria-label="`Przesuń do: ${t.toStatus}`"
         @click="move(p.taskId, p.url, t.id)"

@@ -506,7 +506,6 @@
 .library-row button {
   flex-shrink: 0;
 }
-.idle-banner,
 .restore-review {
   padding: var(--space-5);
   border: 1px solid var(--accent);
@@ -514,9 +513,46 @@
   background: var(--accent-bg);
   margin-bottom: 20px;
 }
+/* Banery jak Fluent InfoBar: neutralna powierzchnia, pasek i ikona rodzaju
+   komunikatu (informacja albo ostrzeżenie; kolor nigdy nie jest jedynym
+   sygnałem), główna akcja jako przycisk z akcentem, pozostałe obok. */
+.idle-banner {
+  --infobar: var(--accent);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-4) var(--space-4);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--infobar);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  margin-bottom: var(--space-4);
+}
+.idle-banner.infobar-warning {
+  --infobar: var(--warning);
+}
+.idle-banner > * {
+  grid-column: 2;
+}
+.idle-banner > .infobar-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  margin-top: 1px;
+  color: var(--infobar);
+}
 .idle-banner h2 {
-  margin-top: 0;
+  margin: 0 0 2px;
   font-size: var(--fs-lg);
+}
+.idle-banner .planning-actions {
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.idle-banner .primary-button,
+.idle-banner .secondary-button {
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: var(--fs-base);
 }
 /* Propozycje przełączenia z pracy agentów AI */
 .agent-suggestions {
@@ -2168,4 +2204,8 @@ html.widget-root body {
 }
 .jira-card-local:empty {
   display: none;
+}
+/* Przyciski kroków Zamknięcia dnia stoją pod treścią kroku, z odstępem. */
+.close-step-action {
+  margin-top: var(--space-2);
 }

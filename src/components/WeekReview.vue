@@ -412,7 +412,7 @@ async function saveNotes() {
         @input="notesStatus = ''"
       />
       <div class="planning-actions">
-        <button class="today-button" :disabled="saving || !dirty">
+        <button class="primary-button" :disabled="saving || !dirty">
           Zapisz wnioski
         </button>
         <span v-if="notesStatus" class="hint" role="status">{{

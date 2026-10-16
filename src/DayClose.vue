@@ -221,7 +221,7 @@ async function move() {
     <p v-if="!rows.length" class="report-note">Brak czasu w tym dniu.</p>
     <button
       v-if="rows.length"
-      class="today-button"
+      class="secondary-button close-step-action"
       :disabled="busy"
       @click="saveNotes"
     >
@@ -281,7 +281,7 @@ async function move() {
     <h3>Niedokończony plan</h3>
     <p>{{ unfinished.length }} zadań do przeniesienia na następny dzień.</p>
     <button
-      class="today-button"
+      class="secondary-button close-step-action"
       :disabled="busy || !unfinished.length"
       @click="move"
     >
@@ -297,7 +297,7 @@ async function move() {
     />
     <div class="planning-actions">
       <button
-        class="today-button"
+        class="secondary-button"
         @click="
           run(async () => {
             message = await copyReport(report, reportArea);
@@ -306,7 +306,7 @@ async function move() {
       >
         Kopiuj raport TS</button
       ><button
-        class="today-button"
+        class="primary-button"
         :disabled="busy || active || day > dayKey(now)"
         @click="
           run(async () =>

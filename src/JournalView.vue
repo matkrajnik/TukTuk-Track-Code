@@ -381,7 +381,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           <option v-for="task in unplanned" :key="task.id" :value="task.id">
             {{ task.title }}
           </option></select
-        ><button class="today-button" :disabled="busy || !selectedTask">
+        ><button class="secondary-button" :disabled="busy || !selectedTask">
           Dodaj do planu
         </button>
       </form>

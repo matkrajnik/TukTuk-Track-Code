@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { Coffee, Timer } from "lucide-vue-next";
 import { countdown, focusAction, useFocus, type FocusAction } from "../focus";
 import { read, type Snapshot } from "../store";
 
@@ -46,14 +47,15 @@ async function run(action: FocusAction) {
     class="idle-banner focus-banner"
     aria-label="Koniec bloku skupienia"
   >
+    <Timer class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Koniec bloku skupienia</h2>
     <p>
       „{{ focus.ended.title }}” · {{ minutes }} min. Przerwa czy kolejny blok?
     </p>
     <div class="planning-actions">
-      <button class="today-button" :disabled="busy" @click="run('break')">
+      <button class="primary-button" :disabled="busy" @click="run('break')">
         Przerwa</button
-      ><button class="today-button" :disabled="busy" @click="run('next')">
+      ><button class="secondary-button" :disabled="busy" @click="run('next')">
         Kolejny blok</button
       ><button class="today-button" :disabled="busy" @click="run('dismiss')">
         Zamknij
@@ -65,6 +67,7 @@ async function run(action: FocusAction) {
     class="idle-banner focus-banner"
     aria-label="Przerwa"
   >
+    <Coffee class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>
       Przerwa ·
       <span class="mono" aria-label="Pozostało z przerwy">{{
@@ -80,7 +83,7 @@ async function run(action: FocusAction) {
       }}
     </p>
     <div class="planning-actions">
-      <button class="today-button" :disabled="busy" @click="run('end-break')">
+      <button class="secondary-button" :disabled="busy" @click="run('end-break')">
         Zakończ przerwę
       </button>
     </div>
@@ -90,12 +93,13 @@ async function run(action: FocusAction) {
     class="idle-banner focus-banner"
     aria-label="Powrót z przerwy"
   >
+    <Timer class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Wracasz do „{{ focus.resume.title }}”?</h2>
     <p>Przerwa minęła. Pomiar ruszy dopiero po kliknięciu.</p>
     <div class="planning-actions">
-      <button class="today-button" :disabled="busy" @click="run('resume')">
+      <button class="primary-button" :disabled="busy" @click="run('resume')">
         Rozpocznij</button
-      ><button class="today-button" :disabled="busy" @click="run('next')">
+      ><button class="secondary-button" :disabled="busy" @click="run('next')">
         Kolejny blok</button
       ><button class="today-button" :disabled="busy" @click="run('dismiss')">
         Nie teraz
