@@ -631,6 +631,8 @@ pub fn start(app: &tauri::AppHandle) {
                 // Propozycje przełączenia liczone co przebieg: zależą też od czasu
                 // pracy agenta (2 min) i od bieżącego pomiaru.
                 crate::suggest::refresh(&app, now);
+                // Rozszerzenie przeglądarki: ponowienie nieudanej rejestracji hosta.
+                crate::browser::retry(&app, now);
             }
             std::thread::sleep(CHECK);
         }

@@ -65,8 +65,16 @@ pub fn target(task_id: Option<i64>, key: Option<&str>) -> String {
 fn target_of(m: &Match) -> String {
     target(m.task_id, m.key.as_deref())
 }
-/// Para (agent, zadanie): rodzaj agenta, jego folder i cel.
+/// Para (agent, zadanie): rodzaj agenta, jego folder i cel. Okno (W3)
+/// i przeglądarka (W4) to jeden sygnał: źródło zmienia się, gdy odświeżenie
+/// z rozszerzenia chwilę nie dotrze, a „Nie teraz” i wysłane powiadomienie mają
+/// obowiązywać dalej.
 fn pair(kind: &str, cwd: &str, target: &str) -> String {
+    let kind = if foreground::is_signal(kind) {
+        "signal"
+    } else {
+        kind
+    };
     format!("{kind}|{}|{target}", agents::norm_folder(cwd))
 }
 

@@ -188,6 +188,22 @@ pub fn is_browser(process: &str) -> bool {
     )
 }
 
+/// Przeglądarka z rozszerzeniem po nazwie procesu, tak jak rozszerzenie podaje ją
+/// w polu `browser` (`browser::browser_tag`): `Some("")` dla przeglądarki, której
+/// nazwy rozszerzenie nie rozróżnia (np. Arc), `None` dla innych programów.
+pub fn browser_tag(process: &str) -> Option<&'static str> {
+    if !is_browser(process) {
+        return None;
+    }
+    Some(match app(process)?.0 {
+        "Google Chrome" => "chrome",
+        "Microsoft Edge" => "edge",
+        "Brave" => "brave",
+        "Opera" => "opera",
+        _ => "",
+    })
+}
+
 /// Wybór śladu: przeglądarka na pierwszym planie ze świeżym kluczem z rozszerzenia
 /// (W4, gdy włączone) ma pierwszeństwo; inaczej tytuł okna (W3, gdy włączone).
 /// Wynik: źródło, nazwa aplikacji i ślad.
@@ -423,7 +439,9 @@ pub fn observe(
         }
         return;
     }
-    let Some((window, own)) = foreground() else {
+    // Tytuł okna czytamy tylko przy włączonych podpowiedziach z okien (W3); dla
+    // samego rozszerzenia (W4) wystarczy nazwa programu na pierwszym planie.
+    let Some((window, own)) = foreground(settings.window_suggest) else {
         if let Ok(mut t) = state.0.lock() {
             t.observe(None, now);
         }
@@ -437,7 +455,7 @@ pub fn observe(
     }
     // Klucz z rozszerzenia (W4) tylko dla przeglądarki na pierwszym planie.
     let browser_key = (settings.browser_extension && is_browser(&window.process))
-        .then(|| crate::browser::fresh_key(app, now))
+        .then(|| crate::browser::fresh_key(app, now, &window.process))
         .flatten();
     let signal =
         pick(&window, browser_key.as_deref(), &settings).and_then(|(source, name, clue)| {
@@ -473,7 +491,7 @@ pub fn observe(
 
 /// Okno na pierwszym planie i czy należy do tego procesu (Todo Track).
 #[cfg(windows)]
-fn foreground() -> Option<(Window, bool)> {
+fn foreground(read_title: bool) -> Option<(Window, bool)> {
     type Handle = *mut std::ffi::c_void;
     #[link(name = "user32")]
     extern "system" {
@@ -503,9 +521,13 @@ fn foreground() -> Option<(Window, bool)> {
         if pid == std::process::id() {
             return Some((Window::default(), true));
         }
-        let mut text = [0u16; 512];
-        let len = GetWindowTextW(hwnd, text.as_mut_ptr(), text.len() as i32);
-        let title = String::from_utf16_lossy(&text[..len.clamp(0, 512) as usize]);
+        let title = if read_title {
+            let mut text = [0u16; 512];
+            let len = GetWindowTextW(hwnd, text.as_mut_ptr(), text.len() as i32);
+            String::from_utf16_lossy(&text[..len.clamp(0, 512) as usize])
+        } else {
+            String::new()
+        };
         let mut process = String::new();
         let handle = OpenProcess(QUERY_LIMITED_INFORMATION, 0, pid);
         if !handle.is_null() {
@@ -521,7 +543,7 @@ fn foreground() -> Option<(Window, bool)> {
     }
 }
 #[cfg(not(windows))]
-fn foreground() -> Option<(Window, bool)> {
+fn foreground(_read_title: bool) -> Option<(Window, bool)> {
     None
 }
 
@@ -967,5 +989,47 @@ mod tests {
         // Bez odświeżenia przez ponad 30 s sygnał gaśnie.
         t.observe(None, NOW + MIN_WORK + HOLD + 1);
         assert!(t.agent(NOW + MIN_WORK + HOLD + 1).is_none());
+    }
+
+    #[test]
+    fn not_now_and_notification_survive_a_source_change() {
+        let both = AppSettings {
+            window_suggest: true,
+            browser_extension: true,
+            ..AppSettings::default()
+        };
+        // Propozycja z rozszerzenia: powiadomienie raz, potem „Nie teraz”.
+        let mut t = Tracker::default();
+        let mut m = Memory::default();
+        feed(&mut t, browser(7), NOW, NOW + MIN_WORK);
+        let at = NOW + MIN_WORK;
+        let live: Vec<Agent> = t.agent(at).into_iter().collect();
+        let list = m.pending(&live, None, &both, at);
+        assert_eq!(m.unnotified(&list, at).len(), 1);
+        assert!(m.dismiss(&live, "t:7", at));
+        // Jedno odświeżenie rozszerzenia nie dotarło: to samo zadanie z tytułu okna.
+        let window = Signal {
+            task: browser(7).task,
+            ..signal(7, "")
+        };
+        t.observe(Some(window.clone()), at + 5_000);
+        assert_eq!(t.agent(at + 5_000).unwrap().kind, WINDOW);
+        assert!(pending(&t, &mut m, &both, at + 5_000).is_empty());
+        // I odwrotnie: powrót do rozszerzenia też nie pokazuje propozycji.
+        t.observe(Some(browser(7)), at + 10_000);
+        assert!(pending(&t, &mut m, &both, at + 10_000).is_empty());
+
+        // Bez „Nie teraz”: zmiana źródła nie wysyła drugiego powiadomienia.
+        let mut t = Tracker::default();
+        let mut m = Memory::default();
+        feed(&mut t, browser(7), NOW, NOW + MIN_WORK);
+        let live: Vec<Agent> = t.agent(at).into_iter().collect();
+        let list = m.pending(&live, None, &both, at);
+        assert_eq!(m.unnotified(&list, at).len(), 1);
+        t.observe(Some(window), at + 5_000);
+        let live: Vec<Agent> = t.agent(at + 5_000).into_iter().collect();
+        let list = m.pending(&live, None, &both, at + 5_000);
+        assert_eq!(list.len(), 1);
+        assert!(m.unnotified(&list, at + 5_000).is_empty());
     }
 }

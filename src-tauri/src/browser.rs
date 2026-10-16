@@ -25,6 +25,7 @@ use crate::settings::AppSettings;
 use reqwest::Url;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Manager;
@@ -126,12 +127,28 @@ pub struct Page {
     pub received: i64,
 }
 
+/// Przeglądarka z pola `browser` wiadomości (rozszerzenie bierze ją z
+/// `navigator.userAgentData`): tylko znane nazwy, inaczej pusta (nieznana).
+pub fn browser_tag(raw: &str) -> &'static str {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "chrome" => "chrome",
+        "edge" => "edge",
+        "brave" => "brave",
+        "opera" => "opera",
+        _ => "",
+    }
+}
+
 /// Stan rozszerzenia w pamięci.
 #[derive(Debug, Default)]
 pub struct Bridge {
-    /// Ostatnia dozwolona strona; `None` po `clear` (inna strona, przeglądarka
-    /// w tle) albo przy wyłączonym ustawieniu.
-    page: Option<Page>,
+    /// Ostatnia dozwolona strona osobno dla każdej przeglądarki (Chrome i Edge
+    /// z rozszerzeniem działają jednocześnie). Wpis znika po `clear` z tej
+    /// przeglądarki (inna strona) albo przy wyłączonym ustawieniu. „clear” od
+    /// przeglądarki w tle (`reason: "background"`) niczego nie zmienia: na
+    /// pierwszym planie może być wtedy inna instancja (druga przeglądarka albo
+    /// profil), a klucz liczy się tylko dla przeglądarki na pierwszym planie.
+    pages: HashMap<&'static str, Page>,
     /// Ostatnia wiadomość od rozszerzenia (dowolna).
     last_message: Option<i64>,
     /// Ostatni rozpoznany klucz i kiedy przyszedł.
@@ -139,9 +156,19 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    /// Klucz z rozszerzenia, jeśli świeży (najwyżej `HOLD` od odbioru).
+    /// Klucz z rozszerzenia bez wskazania przeglądarki (wpis od przeglądarki
+    /// o nieznanej nazwie), jeśli świeży.
     pub fn fresh_key(&self, now: i64) -> Option<String> {
-        let page = self.page.as_ref()?;
+        self.fresh_key_for(now, "")
+    }
+
+    /// Klucz z rozszerzenia dla przeglądarki `process` (np. `msedge.exe`) na
+    /// pierwszym planie, jeśli świeży (najwyżej `HOLD` od odbioru). Wpis tej
+    /// przeglądarki, a bez niego wpis od przeglądarki, której rozszerzenie nie
+    /// rozpoznało (np. Arc). Wpis innej rozpoznanej przeglądarki się nie liczy.
+    pub fn fresh_key_for(&self, now: i64, process: &str) -> Option<String> {
+        let tag = crate::foreground::browser_tag(process).unwrap_or("");
+        let page = self.pages.get(tag).or_else(|| self.pages.get(""))?;
         if now < page.received || now - page.received > HOLD {
             return None;
         }
@@ -149,7 +176,7 @@ impl Bridge {
     }
 
     pub fn clear(&mut self) {
-        self.page = None;
+        self.pages.clear();
     }
 
     /// Jedna wiadomość z rozszerzenia (przez host). Zwraca odpowiedź dla
@@ -157,30 +184,41 @@ impl Bridge {
     pub fn handle(&mut self, msg: &Value, enabled: bool, patterns: &[String], now: i64) -> Value {
         self.last_message = Some(now);
         if !enabled {
-            self.page = None;
+            self.pages.clear();
             return json!({ "ok": false, "connected": true, "enabled": false, "status": "wyłączone" });
         }
+        let browser = browser_tag(
+            msg.get("browser")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        );
         let kind = msg.get("type").and_then(Value::as_str).unwrap_or("page");
         match kind {
             "page" => {
                 let url = msg.get("url").and_then(Value::as_str).unwrap_or_default();
                 let title = msg.get("title").and_then(Value::as_str).unwrap_or_default();
                 if url.len() > MAX_URL || title.len() > MAX_TITLE {
-                    self.page = None;
+                    self.pages.remove(browser);
                     return json!({ "ok": false, "connected": true, "enabled": true, "error": "Za długi adres albo tytuł." });
                 }
                 let key = issue_key(url, title, patterns);
                 if let Some(key) = &key {
                     self.last_key = Some((key.clone(), now));
                 }
-                self.page = Some(Page {
-                    key: key.clone(),
-                    received: now,
-                });
+                self.pages.insert(
+                    browser,
+                    Page {
+                        key: key.clone(),
+                        received: now,
+                    },
+                );
                 json!({ "ok": true, "connected": true, "enabled": true, "key": key })
             }
             "clear" => {
-                self.page = None;
+                // Przeglądarka w tle nie gasi klucza innej instancji.
+                if msg.get("reason").and_then(Value::as_str) != Some("background") {
+                    self.pages.remove(browser);
+                }
                 json!({ "ok": true, "connected": true, "enabled": true, "key": null })
             }
             "ping" | "hello" => json!({ "ok": true, "connected": true, "enabled": true }),
@@ -272,12 +310,32 @@ pub fn unregister_all(bases: &[&str]) -> Result<(), String> {
 const BASES: [&str; 2] = [CHROME_HOSTS, EDGE_HOSTS];
 const MANIFEST_FILE: &str = "pl.todotrack.bridge.json";
 
+/// Co ile pętla w tle ponawia nieudaną rejestrację hosta.
+pub const RETRY: i64 = 60_000;
+
+/// Stan rejestracji hosta w rejestrze.
+#[derive(Debug, Default)]
+pub struct Registration {
+    /// Ostatnio udanie zastosowany stan (`None` = jeszcze nie albo błąd).
+    pub applied: Option<bool>,
+    /// Ostatnia próba (do ponowień z pętli w tle).
+    pub last_try: i64,
+}
+
+impl Registration {
+    /// Czy próbować teraz: ustawienie różni się od udanej rejestracji; ponowienie
+    /// z pętli w tle (`periodic`) dopiero po [`RETRY`] od ostatniej próby.
+    pub fn due(&self, enabled: bool, now: i64, periodic: bool) -> bool {
+        self.applied != Some(enabled)
+            && (!periodic || now < self.last_try || now - self.last_try >= RETRY)
+    }
+}
+
 /// Stan aplikacji: rozszerzenie w pamięci i wynik ostatniej rejestracji.
 #[derive(Default)]
 pub struct State {
     bridge: Mutex<Bridge>,
-    /// Ostatnio zastosowany stan rejestracji (`None` = jeszcze nie).
-    applied: Mutex<Option<bool>>,
+    registration: Mutex<Registration>,
     error: Mutex<String>,
 }
 
@@ -341,33 +399,57 @@ pub fn apply(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
     }
 }
 
-/// Stosuje ustawienie, gdy zmieniło się od ostatniego razu (start aplikacji
-/// i każdy zapis ustawień). Błąd trafia do stanu (`browser_status`).
+/// Stosuje ustawienie, gdy różni się od ostatnio udanej rejestracji (start
+/// aplikacji, każdy zapis ustawień, przywrócenie kopii). Błąd trafia do stanu
+/// (`browser_status`), a nieudana rejestracja zostaje do ponowienia.
 pub fn sync(app: &tauri::AppHandle, s: &AppSettings) {
+    attempt(app, s.browser_extension, crate::db::now(), false);
+}
+
+/// Ponowienie po błędzie z pętli w tle (najwyżej raz na [`RETRY`]).
+pub fn retry(app: &tauri::AppHandle, now: i64) {
+    let due = app
+        .try_state::<State>()
+        .and_then(|s| s.registration.lock().ok().map(|r| r.applied.is_none()))
+        .unwrap_or(false);
+    if due {
+        attempt(
+            app,
+            crate::settings::current(app).browser_extension,
+            now,
+            true,
+        );
+    }
+}
+
+fn attempt(app: &tauri::AppHandle, enabled: bool, now: i64, periodic: bool) {
     let Some(state) = app.try_state::<State>() else {
         return;
     };
-    let enabled = s.browser_extension;
     {
-        let Ok(mut applied) = state.applied.lock() else {
+        let Ok(mut reg) = state.registration.lock() else {
             return;
         };
-        if *applied == Some(enabled) {
+        if !reg.due(enabled, now, periodic) {
             return;
         }
-        *applied = Some(enabled);
+        reg.last_try = now;
     }
-    let error = apply(app, enabled).err().unwrap_or_default();
+    let result = apply(app, enabled);
+    if let Ok(mut reg) = state.registration.lock() {
+        reg.applied = result.is_ok().then_some(enabled);
+    }
     if let Ok(mut e) = state.error.lock() {
-        *e = error;
+        *e = result.err().unwrap_or_default();
     };
 }
 
-/// Świeży klucz z rozszerzenia (dla `foreground::observe`).
-pub fn fresh_key(app: &tauri::AppHandle, now: i64) -> Option<String> {
+/// Świeży klucz z rozszerzenia dla przeglądarki `process` na pierwszym planie
+/// (dla `foreground::observe`).
+pub fn fresh_key(app: &tauri::AppHandle, now: i64, process: &str) -> Option<String> {
     let state = app.try_state::<State>()?;
     let bridge = state.bridge.lock().ok()?;
-    bridge.fresh_key(now)
+    bridge.fresh_key_for(now, process)
 }
 
 /// Witryny Jiry znane aplikacji: połączone konto i zadania z kluczem.
@@ -492,11 +574,15 @@ pub fn start(app: &tauri::AppHandle) {
 
 #[cfg(windows)]
 mod pipe {
-    use crate::native_msg::{read_frame, write_frame};
+    use crate::native_msg::{write_frame, MAX};
     use serde_json::Value;
     use std::ffi::c_void;
+    use std::fs::File;
+    use std::io::Read;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     type Handle = *mut c_void;
     #[link(name = "kernel32")]
@@ -516,6 +602,14 @@ mod pipe {
         fn FlushFileBuffers(file: Handle) -> i32;
         fn GetLastError() -> u32;
         fn CloseHandle(handle: Handle) -> i32;
+        fn PeekNamedPipe(
+            pipe: Handle,
+            buffer: *mut c_void,
+            size: u32,
+            read: *mut u32,
+            available: *mut u32,
+            left: *mut u32,
+        ) -> i32;
     }
     const PIPE_ACCESS_DUPLEX: u32 = 0x3;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x0008_0000;
@@ -549,36 +643,144 @@ mod pipe {
         Ok(h)
     }
 
+    /// Najdłuższy czas na odebranie ramki od klienta. Połączenie, które nic nie
+    /// wysyła (albo urywa ramkę), jest zamykane, zamiast trzymać wątek.
+    pub const READ_TIMEOUT: Duration = Duration::from_secs(5);
+    /// Najwięcej obsługiwanych naraz połączeń; nadmiarowe są od razu zamykane.
+    const MAX_CLIENTS: usize = 16;
+    /// Odstęp ponowień, gdy nie da się utworzyć kolejnej instancji potoku.
+    const RETRY_DELAY: Duration = Duration::from_secs(1);
+
+    /// Czyta dokładnie `buf.len()` bajtów, ale tylko tyle, ile jest już w potoku
+    /// (`PeekNamedPipe`), więc odczyt nie blokuje dłużej niż do `deadline`.
+    fn read_by(file: &mut File, buf: &mut [u8], deadline: Instant) -> bool {
+        let h = file.as_raw_handle() as Handle;
+        let mut got = 0;
+        while got < buf.len() {
+            let mut avail = 0u32;
+            let ok = unsafe {
+                PeekNamedPipe(
+                    h,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                    &mut avail,
+                    std::ptr::null_mut(),
+                )
+            };
+            if ok == 0 {
+                return false;
+            }
+            if avail == 0 {
+                if Instant::now() >= deadline {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            let want = (buf.len() - got).min(avail as usize);
+            match file.read(&mut buf[got..got + want]) {
+                Ok(0) | Err(_) => return false,
+                Ok(n) => got += n,
+            }
+        }
+        true
+    }
+
+    /// Jedna ramka (jak `native_msg::read_frame`) z limitem czasu.
+    fn read_frame_by(file: &mut File, deadline: Instant) -> Option<Vec<u8>> {
+        let mut len = [0u8; 4];
+        if !read_by(file, &mut len, deadline) {
+            return None;
+        }
+        let size = u32::from_le_bytes(len) as usize;
+        if size > MAX {
+            return None;
+        }
+        let mut body = vec![0u8; size];
+        read_by(file, &mut body, deadline).then_some(body)
+    }
+
+    /// Kolejna instancja potoku; przy błędzie (np. brak zasobów) próbuje dalej co
+    /// [`RETRY_DELAY`] zamiast kończyć serwer.
+    fn create_next(name: &[u16]) -> Handle {
+        let mut reported = false;
+        loop {
+            match create(name, false) {
+                Ok(h) => return h,
+                Err(e) => {
+                    if !reported {
+                        eprintln!("Rozszerzenie przeglądarki: {e}, ponawiam.");
+                        reported = true;
+                    }
+                    std::thread::sleep(RETRY_DELAY);
+                }
+            }
+        }
+    }
+
+    /// Obsługa połączonego klienta w osobnym wątku (najwyżej [`MAX_CLIENTS`] naraz).
+    fn dispatch(
+        pipe: Handle,
+        timeout: Duration,
+        active: &Arc<AtomicUsize>,
+        handle: &Arc<dyn Fn(&[u8]) -> Value + Send + Sync>,
+    ) {
+        if active.fetch_add(1, Ordering::SeqCst) >= MAX_CLIENTS {
+            active.fetch_sub(1, Ordering::SeqCst);
+            unsafe {
+                DisconnectNamedPipe(pipe);
+                CloseHandle(pipe);
+            }
+            return;
+        }
+        let addr = pipe as usize;
+        let handle = handle.clone();
+        let active = active.clone();
+        std::thread::spawn(move || {
+            let mut file = unsafe { File::from_raw_handle(addr as Handle) };
+            if let Some(body) = read_frame_by(&mut file, Instant::now() + timeout) {
+                let reply = serde_json::to_vec(&handle(&body)).unwrap_or_default();
+                if write_frame(&mut file, &reply).is_ok() {
+                    unsafe { FlushFileBuffers(file.as_raw_handle() as Handle) };
+                }
+            }
+            unsafe { DisconnectNamedPipe(file.as_raw_handle() as Handle) };
+            drop(file);
+            active.fetch_sub(1, Ordering::SeqCst);
+        });
+    }
+
     /// Pętla serwera. Zawsze czeka co najmniej jedna instancja potoku, więc inny
-    /// proces nie przejmie nazwy.
+    /// proces nie przejmie nazwy. Błąd tylko wtedy, gdy nazwa jest już zajęta.
     pub fn serve(
         name: &str,
         handle: impl Fn(&[u8]) -> Value + Send + Sync + 'static,
     ) -> Result<(), String> {
+        serve_with(name, READ_TIMEOUT, handle)
+    }
+
+    pub fn serve_with(
+        name: &str,
+        timeout: Duration,
+        handle: impl Fn(&[u8]) -> Value + Send + Sync + 'static,
+    ) -> Result<(), String> {
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        let handle = Arc::new(handle);
+        let handle: Arc<dyn Fn(&[u8]) -> Value + Send + Sync> = Arc::new(handle);
+        let active = Arc::new(AtomicUsize::new(0));
         let mut pipe = create(&wide, true)?;
         loop {
             let ok = unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) } != 0
                 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
-            let next = create(&wide, false)?;
+            // Zwykle kolejna instancja powstaje przed oddaniem bieżącej; gdy się nie
+            // da, bieżący klient jest obsłużony, a tworzenie ponawiane.
+            let next = create(&wide, false).ok();
             if ok {
-                let addr = pipe as usize;
-                let handle = handle.clone();
-                std::thread::spawn(move || {
-                    let mut file = unsafe { std::fs::File::from_raw_handle(addr as Handle) };
-                    if let Ok(Some(body)) = read_frame(&mut file) {
-                        let reply = serde_json::to_vec(&handle(&body)).unwrap_or_default();
-                        if write_frame(&mut file, &reply).is_ok() {
-                            unsafe { FlushFileBuffers(file.as_raw_handle() as Handle) };
-                        }
-                    }
-                    unsafe { DisconnectNamedPipe(file.as_raw_handle() as Handle) };
-                });
+                dispatch(pipe, timeout, &active, &handle);
             } else {
                 unsafe { CloseHandle(pipe) };
             }
-            pipe = next;
+            pipe = next.unwrap_or_else(|| create_next(&wide));
         }
     }
 }
@@ -812,6 +1014,69 @@ mod tests {
     }
 
     #[test]
+    fn background_clear_from_another_browser_keeps_the_key() {
+        let p = jira();
+        let mut b = Bridge::default();
+        let chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+        let edge = r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
+        let page = |browser: &str| json!({ "type": "page", "browser": browser, "url": "https://x.atlassian.net/jira/software/c/projects/WMS/boards/1?selectedIssue=WMS-45", "title": "Tablica" });
+        let clear = |browser: &str, reason: &str| json!({ "type": "clear", "browser": browser, "reason": reason });
+        // Chrome na pierwszym planie z tablicą, Edge (Startup Boost) w tle co 10 s
+        // wysyła „clear” z powodem „background”: klucz Chrome zostaje.
+        b.handle(&page("chrome"), true, &p, 1_000);
+        b.handle(&clear("edge", "background"), true, &p, 2_000);
+        assert_eq!(b.fresh_key_for(2_000, chrome).as_deref(), Some("WMS-45"));
+        b.handle(&page("chrome"), true, &p, 11_000);
+        b.handle(&clear("edge", "background"), true, &p, 12_000);
+        assert_eq!(b.fresh_key_for(12_000, chrome).as_deref(), Some("WMS-45"));
+        // Drugi profil Chrome w tle (ta sama przeglądarka) też nie gasi klucza.
+        b.handle(&clear("chrome", "background"), true, &p, 13_000);
+        assert_eq!(b.fresh_key_for(13_000, chrome).as_deref(), Some("WMS-45"));
+        // Edge na pierwszym planie nie dostaje klucza z Chrome.
+        assert_eq!(b.fresh_key_for(13_000, edge), None);
+        b.handle(&page("edge"), true, &p, 14_000);
+        assert_eq!(b.fresh_key_for(14_000, edge).as_deref(), Some("WMS-45"));
+        // „clear” z przeglądarki na pierwszym planie (inna strona) gasi tylko ją.
+        b.handle(&clear("chrome", "page"), true, &p, 15_000);
+        assert_eq!(b.fresh_key_for(15_000, chrome), None);
+        assert_eq!(b.fresh_key_for(15_000, edge).as_deref(), Some("WMS-45"));
+        // Przeglądarka bez rozpoznanej nazwy (np. Arc): wpis bez nazwy.
+        b.handle(&page(""), true, &p, 16_000);
+        assert_eq!(
+            b.fresh_key_for(16_000, "Arc.exe").as_deref(),
+            Some("WMS-45")
+        );
+        assert_eq!(b.fresh_key_for(16_000, chrome).as_deref(), Some("WMS-45"));
+        assert_eq!(crate::foreground::browser_tag("brave.exe"), Some("brave"));
+        assert_eq!(crate::foreground::browser_tag("Code.exe"), None);
+        assert_eq!(browser_tag("Firefox"), "");
+        // Wyłączenie czyści wszystkie przeglądarki.
+        b.handle(&page("edge"), false, &p, 17_000);
+        assert_eq!(b.fresh_key_for(17_000, edge), None);
+        assert_eq!(b.fresh_key_for(17_000, "Arc.exe"), None);
+    }
+
+    #[test]
+    fn failed_registration_is_retried() {
+        let mut r = Registration::default();
+        // Start: jeszcze nic nie zastosowano.
+        assert!(r.due(true, 1_000, false));
+        assert!(r.due(true, RETRY, true));
+        // Błąd (np. brak todo-track-bridge.exe): `applied` zostaje puste. Zapis
+        // ustawień próbuje od razu, pętla w tle dopiero po RETRY.
+        r.last_try = 1_000;
+        r.applied = None;
+        assert!(r.due(true, 2_000, false));
+        assert!(!r.due(true, 2_000, true));
+        assert!(r.due(true, 1_000 + RETRY, true));
+        // Udana rejestracja: bez ponowień, dopóki ustawienie się nie zmieni.
+        r.applied = Some(true);
+        assert!(!r.due(true, 1_000 + 10 * RETRY, true));
+        assert!(!r.due(true, 1_000 + 10 * RETRY, false));
+        assert!(r.due(false, 1_000 + 10 * RETRY, false));
+    }
+
+    #[test]
     fn extension_id_matches_manifest_key() {
         let manifest: Value =
             serde_json::from_str(include_str!("../../browser-extension/manifest.json")).unwrap();
@@ -874,6 +1139,52 @@ mod tests {
         }
         // Druga instancja serwera pod tą samą nazwą nie przejmie potoku.
         assert!(pipe::serve(&name, |_| json!({})).is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn idle_pipe_client_is_dropped_after_timeout() {
+        use std::time::{Duration, Instant};
+        let name =
+            native_msg::pipe_name_for(&format!("idle-{}-{}", std::process::id(), crate::db::now()));
+        let server = name.clone();
+        std::thread::spawn(move || {
+            let _ = pipe::serve_with(
+                &server,
+                Duration::from_millis(300),
+                |_| json!({ "ok": true }),
+            );
+        });
+        let open = || {
+            for _ in 0..100 {
+                if let Ok(f) = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&name)
+                {
+                    return f;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            panic!("potok niedostępny");
+        };
+        // Klienci, którzy łączą się i nic nie wysyłają (albo urywają ramkę), nie
+        // blokują innych i zostają rozłączeni po limicie czasu.
+        let mut idle: Vec<std::fs::File> = (0..3).map(|_| open()).collect();
+        let mut cut = open();
+        std::io::Write::write_all(&mut cut, &10u32.to_le_bytes()).unwrap();
+        idle.push(cut);
+        let mut f = open();
+        write_frame(&mut f, b"{}").unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&read_frame(&mut f).unwrap().unwrap()).unwrap(),
+            json!({ "ok": true })
+        );
+        let started = Instant::now();
+        for mut c in idle {
+            assert!(!matches!(read_frame(&mut c), Ok(Some(_))));
+        }
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[cfg(windows)]

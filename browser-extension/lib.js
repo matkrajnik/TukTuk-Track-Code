@@ -110,9 +110,45 @@ export function pageMessage(tab, domains, now, focused = true) {
   };
 }
 
+/**
+ * Nazwa przeglądarki dla aplikacji (pole `browser`), żeby Chrome i Edge
+ * z rozszerzeniem nie nadpisywały sobie stanu. Z `navigator.userAgentData.brands`,
+ * a bez nich z `navigator.userAgent`. Pusta, gdy nie da się rozpoznać.
+ * @param {{ brands?: { brand: string }[] } | null | undefined} uaData
+ * @param {string} [userAgent]
+ * @returns {"edge" | "chrome" | "brave" | "opera" | ""}
+ */
+export function browserName(uaData, userAgent = "") {
+  const brands = (uaData?.brands ?? []).map((b) => String(b?.brand ?? ""));
+  if (brands.includes("Microsoft Edge")) return "edge";
+  if (brands.includes("Brave")) return "brave";
+  if (brands.includes("Opera")) return "opera";
+  if (brands.includes("Google Chrome")) return "chrome";
+  if (brands.length) return "";
+  const ua = String(userAgent ?? "");
+  if (/\bEdg\//.test(ua)) return "edge";
+  if (/\bOPR\//.test(ua)) return "opera";
+  return "";
+}
+
+/**
+ * Wiadomość z `pageMessage` uzupełniona o przeglądarkę i powód „clear”:
+ * `background`, gdy przeglądarka nie jest na pierwszym planie (aplikacja wtedy
+ * nie gasi klucza innej przeglądarki ani profilu), inaczej `page` (inna strona).
+ * @param {{ type: string }} msg
+ * @param {string} browser z `browserName`
+ * @param {boolean} focused
+ */
+export function withSource(msg, browser, focused) {
+  const out = { ...msg, browser };
+  if (msg.type === "clear") out.reason = focused ? "page" : "background";
+  return out;
+}
+
 /** Klucz porównania wiadomości (bez czasu): ta sama treść nie idzie dwa razy z rzędu. */
 export function messageKey(msg) {
-  return msg.type === "page" ? `page ${msg.url} ${msg.title}` : msg.type;
+  if (msg.type === "page") return `page ${msg.url} ${msg.title}`;
+  return msg.reason ? `${msg.type} ${msg.reason}` : msg.type;
 }
 
 /**

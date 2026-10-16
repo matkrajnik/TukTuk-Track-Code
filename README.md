@@ -171,6 +171,16 @@ Wybierz tablice (maksymalnie 20) i zapisz wybór. Aplikacja pobiera wszystkie st
 
 Dokumentacja API: [tablice i stronicowanie Jira Cloud](https://developer.atlassian.com/cloud/jira/software/rest/api-group-board/), [logowanie e-mailem i tokenem](https://developer.atlassian.com/cloud/jira/platform/basic-auth-for-rest-apis/).
 
+## Rozszerzenie przeglądarki (Chrome i Edge)
+
+Rozszerzenie z folderu `browser-extension/` podpowiada zadanie ze zgłoszenia Jiry otwartego w aktywnej karcie, także gdy tytuł okna nie ma klucza (np. tablica z `?selectedIssue=WMS-123`): „Pracujesz teraz przy WMS-123? — Przełącz”. Timer nigdy nie przełącza się sam. Szczegóły: [browser-extension/README.md](browser-extension/README.md).
+
+1. **Ustawienia → Czas pracy → „Rozszerzenie przeglądarki (Chrome i Edge)”** — włącz. Aplikacja zapisuje manifest hosta `todo-track-bridge.exe` i wpisy w `HKCU\Software\Google\Chrome\NativeMessagingHosts` oraz `HKCU\Software\Microsoft\Edge\NativeMessagingHosts` (bez uprawnień administratora); wyłączenie je usuwa. Nieudana rejestracja jest ponawiana co minutę.
+2. Załaduj rozszerzenie: `chrome://extensions` albo `edge://extensions` → „Tryb dewelopera” → „Załaduj rozpakowane” → folder `browser-extension` (przycisk „Otwórz folder rozszerzenia” w Ustawieniach). W firmie administrator może je wdrożyć zasadami grupy (`ExtensionInstallForcelist`) — identyfikator rozszerzenia jest stały: `cecpcpkmmmkgfdklnkkkigofkcibnhbl`.
+3. W opcjach rozszerzenia można dopisać domenę własnego serwera Jiry (domyślnie `*.atlassian.net`).
+
+Co jest wysyłane: adres i tytuł aktywnej karty tylko dla domen z listy dozwolonych, nazwa przeglądarki (Chrome, Edge…), a dla innych stron i przeglądarki w tle samo „clear”. Aplikacja trzyma w pamięci tylko rozpoznany klucz zgłoszenia przez 30 s; nic nie trafia do bazy ani logów. Przy włączonym rozszerzeniu aplikacja co 5 s sprawdza, który program jest na pierwszym planie (nazwa procesu); tytuł okna czyta tylko przy włączonych „Podpowiedziach z aktywnego okna”.
+
 ## Przypomnienie w tle
 
 Gdy główne okno jest schowane lub nie ma fokusu, a żaden pomiar nie jest aktywny, backend odlicza 5 minut (sprawdzanie co 2 sekundy). Następnie pokazuje małe okno nad innymi aplikacjami, bez przejmowania fokusu. „Wpisz zadanie” przywraca główne okno i ustawia kursor w polu nowego zadania; można też rozpocząć istniejące zadanie lub zgłoszenie z Jiry. „Za 5 minut” oraz krzyżyk odkładają przypomnienie. Uruchomienie pomiaru albo powrót do głównego okna resetują odliczanie. Samo posiadanie zadań na liście nie wyłącza przypomnienia — istotny jest aktywny pomiar.

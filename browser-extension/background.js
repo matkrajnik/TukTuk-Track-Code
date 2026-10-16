@@ -10,10 +10,16 @@ import {
   DEFAULT_DOMAINS,
   HOST,
   REFRESH_MS,
+  browserName,
   describeReply,
   messageKey,
   pageMessage,
+  withSource,
 } from "./lib.js";
+
+// Chrome i Edge (albo dwa profile) z rozszerzeniem działają naraz: aplikacja
+// trzyma stan osobno dla każdej przeglądarki, a „clear” z tła go nie gasi.
+const BROWSER = browserName(navigator.userAgentData, navigator.userAgent);
 
 let port = null;
 let domains = [...DEFAULT_DOMAINS];
@@ -58,15 +64,28 @@ function connect() {
 }
 
 async function current() {
-  if (!focused) return pageMessage(null, domains, Date.now(), false);
+  if (!focused)
+    return withSource(
+      pageMessage(null, domains, Date.now(), false),
+      BROWSER,
+      false,
+    );
   try {
     const [tab] = await chrome.tabs.query({
       active: true,
       lastFocusedWindow: true,
     });
-    return pageMessage(tab, domains, Date.now(), true);
+    return withSource(
+      pageMessage(tab, domains, Date.now(), true),
+      BROWSER,
+      true,
+    );
   } catch {
-    return pageMessage(null, domains, Date.now(), false);
+    return withSource(
+      pageMessage(null, domains, Date.now(), false),
+      BROWSER,
+      true,
+    );
   }
 }
 

@@ -5,6 +5,7 @@ Rozszerzenie podpowiada w Todo Track zadanie ze zgłoszenia Jiry otwartego w akt
 ## Co jest wysyłane
 
 - Adres i tytuł aktywnej karty, tylko dla domen z listy dozwolonych (opcje rozszerzenia; domyślnie `*.atlassian.net`). Dla innych stron rozszerzenie wysyła samo „clear”, bez adresu i tytułu.
+- Nazwa przeglądarki (`chrome`, `edge`, `brave`, `opera` albo pusta) i przy „clear” powód: `page` (inna strona) albo `background` (przeglądarka w tle). Aplikacja trzyma stan osobno dla każdej przeglądarki, a „clear” z tła go nie gasi, więc Chrome i Edge (albo dwa profile) z rozszerzeniem nie nadpisują sobie klucza.
 - Wiadomości idą przez native messaging do programu `todo-track-bridge.exe` (instalowany razem z aplikacją), a on przekazuje je do działającej aplikacji nazwanym potokiem `\\.\pipe\todo-track-bridge-<użytkownik>`. Gdy aplikacja nie działa, host odpowiada „niepołączone” i nic nie robi.
 - Aplikacja przyjmuje tylko `*.atlassian.net` i witryny Jiry, które zna, i trzyma wyłącznie rozpoznany klucz zgłoszenia, w pamięci, przez 30 s od ostatniego odświeżenia. Nic nie trafia do bazy ani logów.
 

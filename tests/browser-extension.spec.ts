@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import {
   DEFAULT_DOMAINS,
   HOST,
+  browserName,
   describeReply,
   hostMatches,
   messageKey,
@@ -10,6 +11,7 @@ import {
   pageMessage,
   parseDomains,
   urlAllowed,
+  withSource,
 } from "../browser-extension/lib.js";
 import { ids, NOW, openPreview } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
@@ -133,6 +135,59 @@ test("dane z karty: tylko dozwolone domeny wychodzą z przeglądarki", () => {
     messageKey(pageMessage(tab, domains, 2)),
   );
   expect(messageKey(clear)).toBe("clear");
+});
+
+test("przeglądarka i powód „clear”: tło nie gasi stanu innej przeglądarki", () => {
+  const brands = (...names: string[]) => ({
+    brands: names.map((brand) => ({ brand, version: "130" })),
+  });
+  expect(browserName(brands("Chromium", "Microsoft Edge", "Not?A_Brand"))).toBe(
+    "edge",
+  );
+  expect(browserName(brands("Google Chrome", "Chromium"))).toBe("chrome");
+  expect(browserName(brands("Brave", "Chromium"))).toBe("brave");
+  expect(browserName(brands("Opera", "Chromium"))).toBe("opera");
+  expect(browserName(brands("Chromium", "Not?A_Brand"))).toBe("");
+  // Bez userAgentData: z napisu userAgent.
+  expect(
+    browserName(
+      undefined,
+      "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0 Safari/537.36 Edg/130.0",
+    ),
+  ).toBe("edge");
+  expect(browserName(null, "Mozilla/5.0 Chrome/130.0 Safari/537.36")).toBe("");
+
+  const at = 5;
+  const tab = { url: "https://x.atlassian.net/browse/WMS-1", title: "t" };
+  expect(
+    withSource(pageMessage(tab, DEFAULT_DOMAINS, at), "edge", true),
+  ).toEqual({ type: "page", url: tab.url, title: "t", at, browser: "edge" });
+  // Przeglądarka w tle: „clear” z powodem „background” (aplikacja go pomija).
+  const background = withSource(
+    pageMessage(tab, DEFAULT_DOMAINS, at, false),
+    "chrome",
+    false,
+  );
+  expect(background).toEqual({
+    type: "clear",
+    at,
+    browser: "chrome",
+    reason: "background",
+  });
+  // Inna strona na pierwszym planie: „clear” z powodem „page” (gasi klucz).
+  const other = withSource(
+    pageMessage({ url: "https://github.com/", title: "" }, DEFAULT_DOMAINS, at),
+    "chrome",
+    true,
+  );
+  expect(other).toEqual({
+    type: "clear",
+    at,
+    browser: "chrome",
+    reason: "page",
+  });
+  // Zmiana tła na inną stronę to inna wiadomość (wysyłana od razu).
+  expect(messageKey(background)).not.toBe(messageKey(other));
 });
 
 test("stan połączenia z odpowiedzi hosta", () => {

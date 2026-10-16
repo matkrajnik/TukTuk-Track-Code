@@ -178,7 +178,10 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
         crate::reminder::reset(&app);
         let _ = app.emit("data-changed", ());
         // Kopia przynosi własne ustawienia; moduły reagują jak na zwykłą zmianę.
-        let _ = app.emit("settings-changed", crate::settings::current(&app));
+        let settings = crate::settings::current(&app);
+        // Rozszerzenie przeglądarki: wpisy hosta zgodne z ustawieniem z kopii.
+        crate::browser::sync(&app, &settings);
+        let _ = app.emit("settings-changed", settings);
         Ok(result)
     })
     .await
