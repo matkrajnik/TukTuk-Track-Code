@@ -133,6 +133,8 @@ async function useMovePrompt() {
     await loadMovePrompts();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
+    // Pytanie zostaje z błędem: baner w głównym oknie ma link do zgłoszenia.
+    await showMain();
   } finally {
     busy.value = false;
   }

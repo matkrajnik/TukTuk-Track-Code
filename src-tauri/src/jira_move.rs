@@ -43,6 +43,10 @@ pub struct Prompt {
     pub transitions: Vec<Transition>,
     /// Wybrane przejście; `None` = baner pokazuje listę do wyboru.
     pub transition_id: Option<String>,
+    /// Błąd ostatniej próby przesunięcia (widget, powiadomienie, baner): baner
+    /// pokazuje komunikat z linkiem do zgłoszenia.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 impl Prompt {
@@ -98,6 +102,22 @@ pub fn started(previous: Active, current: Active) -> Option<i64> {
         (Some((ps, pt)), Some((s, t))) if ps == s || pt == t => None,
         (_, Some((_, task))) => Some(task),
     }
+}
+
+/// Pytania dotyczą tylko zadania aktywnego pomiaru: nowy start innego zadania
+/// (także bez klucza Jiry) albo zatrzymanie pomiaru usuwa pytania pozostałych.
+pub fn keep_current(prompts: &mut Vec<Prompt>, current: Active) {
+    prompts.retain(|p| current.map(|(_, task)| task) == Some(p.task_id));
+}
+
+/// Błąd przy pytaniu zadania; `false`, gdy pytania nie ma.
+pub fn mark_failure(prompts: &mut [Prompt], task_id: i64, error: &str) -> bool {
+    let mut found = false;
+    for p in prompts.iter_mut().filter(|p| p.task_id == task_id) {
+        p.failure = Some(error.to_string());
+        found = true;
+    }
+    found
 }
 
 /// Zadanie powiązane ze zgłoszeniem: adres Jiry, klucz, tytuł i „Nie pytaj”.
@@ -244,6 +264,7 @@ fn tick(app: &tauri::AppHandle) {
             None
         };
         g.seen = current;
+        keep_current(&mut g.prompts, current);
         fresh
     };
     if let (Some(task), Some(info)) = (fresh, info) {
@@ -287,6 +308,7 @@ async fn check(app: &tauri::AppHandle, task_id: i64, info: Linked) -> Result<(),
         target: settings.jira_move_status.clone(),
         transitions,
         transition_id,
+        failure: None,
     };
     {
         let state = app.state::<State>();
@@ -394,7 +416,28 @@ pub async fn jira_transitions(
 }
 
 /// Wykonuje przejście, odświeża status w `jira_issues` i zamyka pytanie zadania.
+/// Błąd zostaje przy pytaniu zadania (baner pokazuje go z linkiem do zgłoszenia).
 pub async fn perform(
+    app: &tauri::AppHandle,
+    task_id: i64,
+    transition_id: &str,
+) -> Result<db::Snapshot, String> {
+    let result = attempt(app, task_id, transition_id).await;
+    if let Err(e) = &result {
+        let marked = app
+            .state::<State>()
+            .0
+            .lock()
+            .map(|mut g| mark_failure(&mut g.prompts, task_id, e))
+            .unwrap_or(false);
+        if marked {
+            publish(app);
+        }
+    }
+    result
+}
+
+async fn attempt(
     app: &tauri::AppHandle,
     task_id: i64,
     transition_id: &str,
@@ -444,23 +487,33 @@ pub async fn jira_transition(
 }
 
 /// „Przesuń” z powiadomienia: przejście wybrane w pytaniu. Bez pytania (np. stary
-/// toast) albo przy błędzie pokazuje główne okno.
+/// toast) albo przy błędzie pokazuje główne okno; błąd zostaje w banerze pytania
+/// z linkiem do zgłoszenia.
 pub fn activate(app: &tauri::AppHandle, task_id: i64) {
     let chosen = app.state::<State>().0.lock().ok().and_then(|g| {
         g.prompts
             .iter()
             .find(|p| p.task_id == task_id)
-            .and_then(|p| p.transition_id.clone())
+            .map(|p| (p.transition_id.clone(), p.url.clone()))
     });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let Some(id) = chosen else {
+        let Some((Some(id), url)) = chosen else {
             crate::show(&app);
             return;
         };
         if let Err(e) = perform(&app, task_id, &id).await {
             crate::show(&app);
-            let _ = app.emit("storage-error", e);
+            // Pytanie zniknęło w międzyczasie: komunikat z adresem zgłoszenia.
+            let kept = app
+                .state::<State>()
+                .0
+                .lock()
+                .map(|g| g.prompts.iter().any(|p| p.task_id == task_id))
+                .unwrap_or(false);
+            if !kept {
+                let _ = app.emit("storage-error", format!("{e} Zgłoszenie: {url}"));
+            }
         }
     });
 }
@@ -610,6 +663,7 @@ mod tests {
                 t("31", "Review", "Code review", "indeterminate"),
             ],
             transition_id: Some("21".into()),
+            failure: None,
         };
         let m = message(&p);
         assert_eq!(m.title, "Przesunąć WMS-1 do „W toku”?");
@@ -623,5 +677,51 @@ mod tests {
         let m = message(&p);
         assert_eq!(m.title, "Przesunąć WMS-1 do „In Progress”?");
         assert!(m.actions.is_empty());
+    }
+
+    fn prompt(task_id: i64) -> Prompt {
+        Prompt {
+            task_id,
+            key: format!("WMS-{task_id}"),
+            title: "Zadanie".into(),
+            status: "Do zrobienia".into(),
+            url: format!("https://a.atlassian.net/browse/WMS-{task_id}"),
+            target: "In Progress".into(),
+            transitions: vec![t("21", "Start", "W toku", "indeterminate")],
+            transition_id: Some("21".into()),
+            failure: None,
+        }
+    }
+
+    #[test]
+    fn prompts_follow_the_active_measurement() {
+        // Pomiar A trwa: pytanie A zostaje (także po podziale przedziału o północy).
+        let mut list = vec![prompt(1)];
+        keep_current(&mut list, Some((10, 1)));
+        assert_eq!(list, [prompt(1)]);
+        keep_current(&mut list, Some((11, 1)));
+        assert_eq!(list.len(), 1);
+        // Przełączenie na B (np. bez klucza Jiry): pytanie A znika.
+        keep_current(&mut list, Some((12, 2)));
+        assert!(list.is_empty());
+        // Stop: żadnego pytania.
+        let mut list = vec![prompt(1)];
+        keep_current(&mut list, None);
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn failure_stays_with_the_prompt() {
+        let mut list = vec![prompt(1), prompt(2)];
+        assert!(mark_failure(&mut list, 2, "Brak uprawnień"));
+        assert_eq!(list[0].failure, None);
+        assert_eq!(list[1].failure.as_deref(), Some("Brak uprawnień"));
+        assert!(!mark_failure(&mut list, 3, "x"));
+        let json = serde_json::to_value(&list[1]).unwrap();
+        assert_eq!(json["failure"], "Brak uprawnień");
+        assert!(serde_json::to_value(&list[0])
+            .unwrap()
+            .get("failure")
+            .is_none());
     }
 }

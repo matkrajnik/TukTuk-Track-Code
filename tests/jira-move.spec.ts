@@ -269,3 +269,70 @@ test("wyłączone zapisy do Jiry: bez pytania i bez „Przesuń w Jirze…”", 
   await expect(doneBanner(page)).toHaveCount(0);
   expect(await analysisStatus(page)).toBe("Do zrobienia");
 });
+
+test("przełączenie na zadanie bez klucza albo stop chowa pytanie poprzedniego zadania", async ({
+  page,
+}) => {
+  await openPreview(page, { data: todoSeed() });
+  await start(page, "Analiza importu");
+  await expect(banner(page)).toBeVisible();
+  // Inne zadanie bez zgłoszenia: pytanie o WMS-12 jest już nieaktualne.
+  await start(page, "Wdrożenie etykiet");
+  await expect(banner(page)).toHaveCount(0);
+  expect(await analysisStatus(page)).toBe("Do zrobienia");
+  // Powrót do zadania ze zgłoszeniem pyta znowu, a stop chowa pytanie.
+  await start(page, "Analiza importu");
+  await expect(banner(page)).toBeVisible();
+  await stop(page, "Analiza importu");
+  await expect(banner(page)).toHaveCount(0);
+});
+
+test("błąd przesunięcia z kafelka pokazuje komunikat z linkiem do zgłoszenia", async ({
+  page,
+}) => {
+  await openPreview(page, { data: todoSeed() });
+  await page.evaluate(
+    (k) => localStorage.setItem(k, JSON.stringify({ ready: true, fail: 400 })),
+    JIRA_KEY,
+  );
+  await page.getByLabel("Przedziały: Analiza importu", { exact: true }).click();
+  await page.getByRole("button", { name: "Przesuń w Jirze: WMS-12" }).click();
+  await page
+    .getByRole("group", { name: "Przejścia w Jirze: WMS-12" })
+    .getByRole("button", { name: "Przesuń WMS-12 do: Code review" })
+    .click();
+  const tile = card(page, "Analiza importu");
+  await expect(tile.getByRole("alert")).toContainText("Jira odrzuciła zmianę.");
+  await expect(
+    tile.getByRole("button", { name: "Otwórz WMS-12 w Jirze" }),
+  ).toBeVisible();
+  expect(await analysisStatus(page)).toBe("Do zrobienia");
+});
+
+test("błąd „Przesuń” z widgetu zostawia pytanie z komunikatem w banerze", async ({
+  page,
+}) => {
+  await openPreview(page, { data: todoSeed() });
+  await page.evaluate(
+    (k) => localStorage.setItem(k, JSON.stringify({ ready: true, fail: 403 })),
+    JIRA_KEY,
+  );
+  await start(page, "Analiza importu");
+  await expect(banner(page)).toBeVisible();
+  await page.goto("/#widget");
+  await page.reload();
+  const widget = page.locator("#widget");
+  await widget
+    .getByRole("button", { name: "Przesuń WMS-12 do In Progress" })
+    .click();
+  await expect(widget.getByRole("status")).toContainText("Brak uprawnień");
+  await page.goto("/");
+  await page.reload();
+  await expect(banner(page).getByRole("alert")).toContainText(
+    "Brak uprawnień do zmiany tego zgłoszenia w Jirze.",
+  );
+  await expect(
+    banner(page).getByRole("button", { name: "Otwórz WMS-12 w Jirze" }),
+  ).toBeVisible();
+  expect(await analysisStatus(page)).toBe("Do zrobienia");
+});

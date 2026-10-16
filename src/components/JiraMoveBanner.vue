@@ -148,13 +148,13 @@ onUnmounted(() => {
         Nie pytaj dla tego zadania
       </button>
     </div>
-    <p v-if="failure?.taskId === p.taskId" class="jira-move-error" role="alert">
-      {{ failure.text }}
-      <button
-        v-if="failure.url"
-        class="text-link"
-        @click="openIssue(failure.url)"
-      >
+    <p
+      v-if="failure?.taskId === p.taskId || p.failure"
+      class="jira-move-error"
+      role="alert"
+    >
+      {{ failure?.taskId === p.taskId ? failure.text : p.failure }}
+      <button v-if="p.url" class="text-link" @click="openIssue(p.url)">
         Otwórz {{ p.key }} w Jirze
       </button>
     </p>

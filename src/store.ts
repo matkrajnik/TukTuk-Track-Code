@@ -1636,6 +1636,8 @@ export interface JiraMovePrompt {
   transitions: JiraTransition[];
   /** Wybrane przejście; `null` = lista do wyboru. */
   transitionId: string | null;
+  /** Błąd ostatniej próby przesunięcia (baner z linkiem do zgłoszenia). */
+  failure?: string;
 }
 /** Nazwa statusu docelowego w pytaniu (`Prompt::target_name`). */
 export const moveTargetName = (p: JiraMovePrompt) =>
@@ -1756,6 +1758,10 @@ async function previewObserveStart(): Promise<PreviewJira> {
   )
     fresh = current[1];
   state.seen = current;
+  // Pytania tylko dla zadania aktywnego pomiaru (`jira_move::keep_current`).
+  state.prompts = (state.prompts ?? []).filter(
+    (p) => current !== null && p.taskId === current[1],
+  );
   const task = data.tasks.find((t) => t.id === fresh);
   const settings = previewJiraSettings();
   if (
@@ -1853,17 +1859,28 @@ export async function jiraTransition(
   if (desktop) return invoke("jira_transition", { taskId, transitionId });
   const { data, task } = await previewJiraTask(taskId);
   const state = previewJiraState();
+  // Błąd zostaje przy pytaniu zadania (`jira_move::mark_failure`).
+  const fail = (message: string) => {
+    if ((state.prompts ?? []).some((p) => p.taskId === taskId)) {
+      state.prompts = (state.prompts ?? []).map((p) =>
+        p.taskId === taskId ? { ...p, failure: message } : p,
+      );
+      savePreviewJira(state);
+      notifyPreviewJira();
+    }
+    return new Error(message);
+  };
   if (state.fail === 403)
-    throw new Error("Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
+    throw fail("Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
   if (state.fail === 400)
-    throw new Error(
+    throw fail(
       "Jira odrzuciła zmianę. Przejście może wymagać wypełnienia pól na ekranie w Jirze — zrób je w przeglądarce.",
     );
   const transition = previewTransitionsFor(
     task.jiraStatus || "Do zrobienia",
   ).find((t) => t.id === transitionId);
   if (!transition)
-    throw new Error("Nie znaleziono zgłoszenia albo przejścia w Jirze.");
+    throw fail("Nie znaleziono zgłoszenia albo przejścia w Jirze.");
   task.jiraStatus = transition.toStatus;
   localStorage.setItem(key, JSON.stringify(data));
   state.prompts = (state.prompts ?? []).filter((p) => p.taskId !== taskId);

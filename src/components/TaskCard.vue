@@ -132,14 +132,16 @@ async function changeWaiting(change: WaitingChange) {
 /** „Przesuń w Jirze…”: lista przejść zgłoszenia (J1); nic nie zmienia się samo. */
 const moveList = ref<JiraTransition[] | null>(null);
 const moveBusy = ref(false);
+/** Błąd Jiry przy kafelku: komunikat z linkiem do zgłoszenia. */
+const moveError = ref("");
 async function jiraRun(action: () => Promise<void>) {
   if (moveBusy.value) return;
   moveBusy.value = true;
-  emit("error", "");
+  moveError.value = "";
   try {
     await action();
   } catch (e) {
-    emit("error", String(e instanceof Error ? e.message : e));
+    moveError.value = String(e instanceof Error ? e.message : e);
   } finally {
     moveBusy.value = false;
   }
@@ -407,6 +409,17 @@ async function openJira(url: string) {
         </button>
         <button class="action-button" @click="moveList = null">Anuluj</button>
       </div>
+      <p v-if="moveError" class="jira-move-error" role="alert">
+        {{ moveError }}
+        <button
+          v-if="task.jiraUrl"
+          type="button"
+          class="text-link"
+          @click="openJira(task.jiraUrl)"
+        >
+          Otwórz {{ task.jiraKey }} w Jirze
+        </button>
+      </p>
       <p
         v-if="task.jiraKey && task.details?.jiraNoAsk && settings.jiraWrite"
         class="hint jira-no-ask"
