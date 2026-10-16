@@ -133,7 +133,10 @@ const misses = computed(() => {
         ratio: time.total / estimate,
         lastDay: dayKey(time.last),
       };
-    });
+    })
+    // Otwarte zadanie z dużym szacunkiem i małą pracą nie jest jeszcze
+    // rozjazdem; otwarte liczy się dopiero, gdy już przekroczyło szacunek.
+    .filter((row) => row.task.done || row.actual > row.estimate);
   return biggestMisses(rows, 5);
 });
 

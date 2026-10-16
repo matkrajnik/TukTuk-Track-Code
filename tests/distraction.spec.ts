@@ -212,10 +212,13 @@ test("Plan i historia → Tydzień → Przegląd: czas, plan, szacunki, agenci, 
   await expect(plan).toContainText("Wdrożenie etykiet");
 
   const misses = page.getByRole("region", { name: "Rozjazdy szacunków" });
-  await expect(misses.locator("tbody tr")).toHaveCount(4);
+  // Otwarte zadania tylko po przekroczeniu szacunku: „Analiza importu” (110%)
+  // zostaje, „Wdrożenie etykiet” (otwarte, poniżej szacunku) nie.
+  await expect(misses.locator("tbody tr")).toHaveCount(3);
   await expect(misses.locator("tbody tr").first()).toHaveText(
     /Analiza importu\s*10:00\s*11:00\s*110%/,
   );
+  await expect(misses).not.toContainText("Wdrożenie etykiet");
 
   const agents = page.getByRole("region", { name: "Czas agentów w tygodniu" });
   await expect(agents).toContainText("Razem 03:55");
