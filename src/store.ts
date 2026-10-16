@@ -1266,7 +1266,8 @@ export interface NavigateRequest {
   split?: number | null;
   /**
    * Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”), przy
-   * `view: "journal"` zakładka `morning` (Plan i historia → Rano), albo przy
+   * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
+   * `week-review` (Plan i historia → Tydzień → Przegląd), albo przy
    * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `jira`,
    * `notifications`, `focus`, `templates`, `windows`, `shortcuts`, `startup`).
    */
@@ -1510,4 +1511,52 @@ export async function navigateMain(request: NavigateRequest): Promise<void> {
   if (!desktop) return;
   await invoke("widget_open_main");
   await emitTo("main", "navigate", request);
+}
+
+/** „Wnioski” z przeglądu tygodnia w podglądzie (`week_notes`): tydzień → tekst. */
+export const weekNotesKey = "todo-track-preview-week-notes-v1";
+const WEEK_NOTE_MAX = 10_000;
+function previewWeekNotes(): Record<string, string> {
+  const value = previewJson(weekNotesKey);
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
+}
+/** Jak `week_notes::valid_week`: istniejący poniedziałek RRRR-MM-DD. */
+function checkWeek(week: string) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(week);
+  const d = m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+  if (
+    !m ||
+    !d ||
+    d.getUTCFullYear() !== +m[1] ||
+    d.getUTCMonth() !== +m[2] - 1 ||
+    d.getUTCDate() !== +m[3] ||
+    d.getUTCDay() !== 1
+  )
+    throw new Error("Tydzień musi być poniedziałkiem w formacie RRRR-MM-DD.");
+}
+/** Wnioski tygodnia zaczynającego się w poniedziałek `week` (`week_note`). */
+export async function weekNote(week: string): Promise<string> {
+  if (desktop) return invoke("week_note", { week });
+  checkWeek(week);
+  return previewWeekNotes()[week] ?? "";
+}
+/**
+ * Zapis wniosków (`week_note_save`): tekst bez białych znaków na końcach, pusty
+ * usuwa wpis. Zwraca zapisany tekst.
+ */
+export async function saveWeekNote(week: string, text: string): Promise<string> {
+  if (desktop) return invoke("week_note_save", { week, text });
+  checkWeek(week);
+  const value = text.trim();
+  if ([...value].length > WEEK_NOTE_MAX)
+    throw new Error(`Wnioski mogą mieć najwyżej ${WEEK_NOTE_MAX} znaków.`);
+  const notes = previewWeekNotes();
+  if (value) notes[week] = value;
+  else delete notes[week];
+  localStorage.setItem(weekNotesKey, JSON.stringify(notes));
+  return value;
 }

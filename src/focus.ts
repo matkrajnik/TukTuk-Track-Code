@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted, ref, watch } from "vue";
 import { readSettings } from "./settings";
 import { change, desktop, read, type Snapshot } from "./store";
 
@@ -398,4 +398,57 @@ export function useFocus() {
     }
   });
   return focus;
+}
+
+/** Blok skupienia do wskaźników rozproszenia (`focus::BlockRow`). */
+export interface FocusBlockInfo {
+  id: number;
+  taskId: number;
+  start: number;
+  end: number;
+  /** null = trwa, false = przerwany, true = ukończony. */
+  completed: boolean | null;
+}
+
+/** Bloki rozpoczęte w `[from, to)`, według początku (`focus_blocks`). */
+export async function focusBlocks(
+  from: number,
+  to: number,
+): Promise<FocusBlockInfo[]> {
+  if (desktop) return invoke("focus_blocks", { from, to });
+  if (to < from) throw new Error("Niepoprawny zakres dat.");
+  return load()
+    .blocks.filter((b) => b.start >= from && b.start < to)
+    .sort((a, b) => a.start - b.start || a.id - b.id)
+    .map((b) => ({ ...b }));
+}
+
+/**
+ * Bloki skupienia w zakresie `[from, to)` (ms), odświeżane po zmianie zakresu
+ * i po zmianie stanu skupienia. Błąd daje pustą listę.
+ */
+export function useFocusBlocks(range: () => [number, number]) {
+  const blocks = ref<FocusBlockInfo[]>([]);
+  let request = 0;
+  async function reload() {
+    const id = ++request;
+    try {
+      const [from, to] = range();
+      const list = await focusBlocks(from, to);
+      if (id === request) blocks.value = list;
+    } catch {
+      if (id === request) blocks.value = [];
+    }
+  }
+  watch(() => range().join(","), reload, { immediate: true });
+  let stop: (() => void) | undefined;
+  let alive = true;
+  void onFocusChanged(() => void reload())
+    .then((s) => (alive ? (stop = s) : s()))
+    .catch(() => undefined);
+  onUnmounted(() => {
+    alive = false;
+    stop?.();
+  });
+  return { blocks, reload };
 }

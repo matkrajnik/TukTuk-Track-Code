@@ -451,6 +451,23 @@ onUnmounted(() => {
         @change="save({ notifyMorningReview: checked($event) })"
       />Przypominaj o porannym przeglądzie dnia</label
     >
+    <label class="inline-check"
+      ><input
+        :checked="settings.notifyWeekReview"
+        type="checkbox"
+        :disabled="busy"
+        @change="save({ notifyWeekReview: checked($event) })"
+      />Przypominaj o przeglądzie tygodnia</label
+    >
+    <div class="planning-fields settings-fields">
+      <label
+        >Przegląd tygodnia o godzinie<input
+          :value="settings.weekReviewTime"
+          type="time"
+          :disabled="busy || !settings.notifyWeekReview"
+          @change="save({ weekReviewTime: text($event) })"
+      /></label>
+    </div>
     <div class="planning-fields settings-fields">
       <label
         >Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)<input
@@ -467,6 +484,8 @@ onUnmounted(() => {
       Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz na
       przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd dnia
       w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam dzień”,
+      przegląd tygodnia raz w ostatni dzień roboczy tygodnia o wybranej
+      godzinie,
       „Czekam na” raz na blokadę po wybranej liczbie dni roboczych (z
       „Odblokuj” i „Przypomnij jutro”). Każde pojawia się
       najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu

@@ -225,3 +225,171 @@ export function tsText(
     `Razem\t${decimalHours(total)}`,
   ].join("\n");
 }
+
+/**
+ * Rozproszenie (PLAN_1.7.md, W2): wskaźniki dnia liczone z przedziałów pomiaru
+ * i bloków skupienia. Wspólne dla Dashboardu i przeglądu tygodnia.
+ *
+ * - **Przełączenie**: start pomiaru innego zadania niż poprzedni pomiar, nie
+ *   później niż 15 min po jego końcu. Liczy się w dniu startu (lokalnie), więc
+ *   przełączenie tuż po północy należy do nowego dnia. Powrót do tego samego
+ *   zadania i start po dłuższej przerwie nie są przełączeniami.
+ * - **Nieprzerwany pomiar**: kolejne przedziały tego samego zadania z przerwą
+ *   krótszą niż minuta (np. po „Podziel”) liczą się jako jeden. Pomiar przez
+ *   północ dzieli się lokalną północą; trwający liczy się do `now`.
+ * - **Bloki skupienia**: rozpoczęte w danym dniu i ukończone z nich.
+ */
+export const SWITCH_WINDOW_MS = 15 * 60_000;
+/** Krótsza przerwa w pomiarze tego samego zadania nie przerywa pomiaru. */
+export const CONTINUE_GAP_MS = 60_000;
+
+/** Blok skupienia (`focus_blocks`): `completed` null = trwa. */
+export interface FocusBlockRow {
+  start: number;
+  end: number;
+  completed: boolean | null;
+}
+
+export interface Distraction {
+  /** Przełączenia na inne zadanie w ciągu 15 min po poprzednim pomiarze. */
+  switches: number;
+  /** Liczba nieprzerwanych pomiarów w dniu. */
+  measurements: number;
+  /** Mediana i najdłuższy nieprzerwany pomiar (część w dniu, ms). */
+  medianMs: number;
+  longestMs: number;
+  /** Bloki skupienia rozpoczęte w dniu i ukończone z nich. */
+  focusStarted: number;
+  focusDone: number;
+}
+
+const byStart = (sessions: readonly Session[]) =>
+  [...sessions].sort((a, b) => a.startedAt - b.startedAt || a.id - b.id);
+
+/** Mediana liczb (0 dla pustej listy). */
+function middle(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Przełączenia ze startem w `[from, to)`. */
+export function switchCount(
+  sessions: readonly Session[],
+  from: number,
+  to: number,
+  now: number,
+): number {
+  const sorted = byStart(sessions);
+  let count = 0;
+  for (let i = 1; i < sorted.length; i++) {
+    const s = sorted[i];
+    if (s.startedAt < from || s.startedAt >= to) continue;
+    const previous = sorted[i - 1];
+    const end = previous.endedAt ?? now;
+    if (
+      previous.taskId !== s.taskId &&
+      s.startedAt - end <= SWITCH_WINDOW_MS
+    )
+      count++;
+  }
+  return count;
+}
+
+/** Nieprzerwane pomiary `[start, end)`: przedziały tego samego zadania złączone. */
+export function continuousRuns(
+  sessions: readonly Session[],
+  now: number,
+): [number, number][] {
+  const runs: { taskId: number; start: number; end: number }[] = [];
+  for (const s of byStart(sessions)) {
+    const end = Math.max(s.startedAt, s.endedAt ?? now);
+    const last = runs[runs.length - 1];
+    if (
+      last &&
+      last.taskId === s.taskId &&
+      s.startedAt - last.end < CONTINUE_GAP_MS
+    )
+      last.end = Math.max(last.end, end);
+    else runs.push({ taskId: s.taskId, start: s.startedAt, end });
+  }
+  return runs.map((r) => [r.start, r.end]);
+}
+
+/** Wskaźniki rozproszenia dnia `day` (podział przez lokalną północ). */
+export function dayDistraction(
+  sessions: readonly Session[],
+  day: string,
+  now: number,
+  blocks: readonly FocusBlockRow[] = [],
+): Distraction {
+  const [from, to] = dayBounds(day);
+  const parts = continuousRuns(sessions, now)
+    .map(([a, b]) => Math.min(b, to) - Math.max(a, from))
+    .filter((ms) => ms > 0);
+  const started = blocks.filter((b) => b.start >= from && b.start < to);
+  return {
+    switches: switchCount(sessions, from, to, now),
+    measurements: parts.length,
+    medianMs: middle(parts),
+    longestMs: parts.length ? Math.max(...parts) : 0,
+    focusStarted: started.length,
+    focusDone: started.filter((b) => b.completed === true).length,
+  };
+}
+
+export interface DistractionAverage {
+  /** Dni z co najmniej jednym pomiarem, z których liczona jest średnia. */
+  days: number;
+  switches: number;
+  /** Mediana wszystkich nieprzerwanych pomiarów z tych dni. */
+  medianMs: number;
+  /** Średni najdłuższy pomiar dnia. */
+  longestMs: number;
+  focusDone: number;
+  focusStarted: number;
+}
+
+/**
+ * Średnia z dni `days` (np. 7 ostatnich dni roboczych). Dni bez żadnego pomiaru
+ * (urlop, choroba) nie zaniżają średniej.
+ */
+export function averageDistraction(
+  sessions: readonly Session[],
+  days: readonly string[],
+  now: number,
+  blocks: readonly FocusBlockRow[] = [],
+): DistractionAverage {
+  const runs = continuousRuns(sessions, now);
+  const all: number[] = [];
+  const worked = days
+    .map((day) => {
+      const [from, to] = dayBounds(day);
+      all.push(
+        ...runs
+          .map(([a, b]) => Math.min(b, to) - Math.max(a, from))
+          .filter((ms) => ms > 0),
+      );
+      return dayDistraction(sessions, day, now, blocks);
+    })
+    .filter((d) => d.measurements > 0);
+  const avg = (pick: (d: Distraction) => number) =>
+    worked.length
+      ? worked.reduce((sum, d) => sum + pick(d), 0) / worked.length
+      : 0;
+  return {
+    days: worked.length,
+    switches: avg((d) => d.switches),
+    medianMs: middle(all),
+    longestMs: avg((d) => d.longestMs),
+    focusDone: avg((d) => d.focusDone),
+    focusStarted: avg((d) => d.focusStarted),
+  };
+}
+
+/** Liczba z jednym miejscem po przecinku bez zbędnego „,0”, np. „1,5”, „2”. */
+export const oneDecimal = (value: number) =>
+  (Math.round(value * 10) / 10).toLocaleString("pl-PL", {
+    maximumFractionDigits: 1,
+  });

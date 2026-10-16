@@ -7,7 +7,9 @@ import { atRisk, percent } from "./estimates";
 import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
-import { useFocus } from "./focus";
+import { useFocus, useFocusBlocks } from "./focus";
+import { averageDistraction, dayDistraction, oneDecimal } from "./report";
+import { previousWorkDay } from "./review";
 import { openSettings, openView } from "./navigation";
 import { dayGoal, offDayEvent } from "./capacity";
 import { useMeetings } from "./composables/useMeetings";
@@ -115,6 +117,28 @@ const counts = computed(() => {
     },
   ];
 });
+/** Rozproszenie (W2): dziś i średnia z 7 poprzednich dni roboczych. */
+const distractionDays = computed(() => {
+  const list: string[] = [];
+  let cursor = today.value;
+  for (let i = 0; i < 7; i++) list.push((cursor = previousWorkDay(settings.value, cursor)));
+  return list;
+});
+const { blocks: focusBlocks } = useFocusBlocks(() => [
+  dayBounds(distractionDays.value[distractionDays.value.length - 1])[0],
+  dayBounds(today.value)[1],
+]);
+const distractionToday = computed(() =>
+  dayDistraction(props.data.sessions, today.value, props.now, focusBlocks.value),
+);
+const distractionAverage = computed(() =>
+  averageDistraction(
+    props.data.sessions,
+    distractionDays.value,
+    props.now,
+    focusBlocks.value,
+  ),
+);
 const topTasks = computed(() =>
   props.data.tasks
     .map((task) => ({
@@ -201,6 +225,7 @@ const topTasks = computed(() =>
     </section>
   </div>
   <div class="dashboard-columns">
+    <div class="dashboard-side">
     <section
       class="dashboard-card"
       aria-label="Czas pracy w ostatnich 7 dniach"
@@ -226,6 +251,53 @@ const topTasks = computed(() =>
         }}</span>
       </button>
     </section>
+    <section class="dashboard-card" aria-label="Rozproszenie">
+      <h2>Rozproszenie</h2>
+      <table class="estimate-table distraction-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Dziś</th>
+            <th title="Średnia z 7 poprzednich dni roboczych z zapisaną pracą">
+              Średnio (7 dni rob.)
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">Przełączenia</th>
+            <td class="mono">{{ distractionToday.switches }}</td>
+            <td class="mono">{{ oneDecimal(distractionAverage.switches) }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Mediana pomiaru</th>
+            <td class="mono">{{ hhmm(distractionToday.medianMs) }}</td>
+            <td class="mono">{{ hhmm(distractionAverage.medianMs) }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Najdłuższy pomiar</th>
+            <td class="mono">{{ hhmm(distractionToday.longestMs) }}</td>
+            <td class="mono">{{ hhmm(distractionAverage.longestMs) }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Bloki skupienia</th>
+            <td class="mono">
+              {{ distractionToday.focusDone }} /
+              {{ distractionToday.focusStarted }}
+            </td>
+            <td class="mono">
+              {{ oneDecimal(distractionAverage.focusDone) }} /
+              {{ oneDecimal(distractionAverage.focusStarted) }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="report-note">
+        Przełączenie: start innego zadania w ciągu 15 min po poprzednim
+        pomiarze. Bloki: ukończone / rozpoczęte.
+      </p>
+    </section>
+    </div>
     <div class="dashboard-side">
       <section class="dashboard-card" aria-label="Zagrożone teraz">
         <h2>Zagrożone teraz</h2>

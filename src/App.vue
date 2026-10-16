@@ -116,6 +116,8 @@ const tasksRequest = ref<NavigateRequest | null>(null);
 const journalDayClose = ref(false);
 /** Żądanie otwarcia Plan i historia → Rano (powiadomienie „Przegląd dnia”, Dashboard). */
 const journalMorning = ref(false);
+/** Żądanie otwarcia Plan i historia → Tydzień → Przegląd (powiadomienie „Przegląd tygodnia”). */
+const journalWeekReview = ref(false);
 const views: View[] = [
   "tasks",
   "reports",
@@ -143,6 +145,8 @@ async function navigate(request: NavigateRequest) {
   if (target === "journal" && request.dayClose) journalDayClose.value = true;
   else if (target === "journal" && request.section === "morning")
     journalMorning.value = true;
+  else if (target === "journal" && request.section === "week-review")
+    journalWeekReview.value = true;
   if (request.split != null && !modalOpen.value) {
     await refresh();
     const session = data.value.sessions.find((s) => s.id === request.split);
@@ -320,8 +324,10 @@ onUnmounted(() => {
           :now="now"
           :day-close="journalDayClose"
           :morning="journalMorning"
+          :week-review="journalWeekReview"
           @day-close-shown="journalDayClose = false"
           @morning-shown="journalMorning = false"
+          @week-review-shown="journalWeekReview = false"
           @updated="updated"
           @edit="openSession"
           @split="openSplit"

@@ -312,4 +312,31 @@ mod tests {
         drop(current);
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    /// Kopia niesie wnioski z przeglądu tygodnia (`week_notes`, PLAN_1.7.md W2).
+    #[test]
+    fn backup_carries_week_notes() {
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-week-notes-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        let source = Connection::open(&path).unwrap();
+        db::init(&source).unwrap();
+        crate::week_notes::save(&source, "2026-10-12", "Mniej przełączeń").unwrap();
+        drop(source);
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        let staged = stage(&path).unwrap();
+        copy(&staged, &mut current).unwrap();
+        assert_eq!(
+            crate::week_notes::load(&current, "2026-10-12").unwrap(),
+            "Mniej przełączeń"
+        );
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

@@ -64,7 +64,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS agent_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, folder TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS agent_sessions_start ON agent_sessions(start);
         CREATE INDEX IF NOT EXISTS agent_sessions_end ON agent_sessions(\"end\");
-        CREATE INDEX IF NOT EXISTS agent_sessions_task ON agent_sessions(task_id);")
+        CREATE INDEX IF NOT EXISTS agent_sessions_task ON agent_sessions(task_id);
+        CREATE TABLE IF NOT EXISTS week_notes (week TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '');")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let tasks = db

@@ -46,6 +46,10 @@ export interface AppSettings {
   waitingNotifyDays: number;
   /** Statusy Jiry oznaczające czekanie (propozycje na kafelku). */
   waitingJiraStatuses: string[];
+  /** Powiadomienie „Przegląd tygodnia” w ostatni dzień roboczy tygodnia. */
+  notifyWeekReview: boolean;
+  /** Godzina powiadomienia „Przegląd tygodnia” (GG:MM). */
+  weekReviewTime: string;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -92,6 +96,8 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
     "Waiting for customer",
     "Oczekuje",
   ],
+  notifyWeekReview: true,
+  weekReviewTime: "15:00",
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -281,6 +287,8 @@ function applyFields(
     throw new Error("Dzień przeglądu musi mieć format RRRR-MM-DD.");
   if (!Number.isSafeInteger(s.morningReviewAt) || s.morningReviewAt < 0)
     throw new Error("Niepoprawna chwila przeglądu dnia.");
+  if (!time.test(s.weekReviewTime))
+    throw new Error("Godzina przeglądu tygodnia musi mieć format GG:MM.");
   if (!time.test(s.notifyEvening))
     throw new Error(
       "Godzina wieczornego przypomnienia musi mieć format GG:MM.",

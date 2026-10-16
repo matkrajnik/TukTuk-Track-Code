@@ -17,7 +17,9 @@
 //!   jeszcze nie zrobiony (`morning_review`, osobno od `tick`);
 //! - `waiting:<zadanie>:<od kiedy>[:<dzień>]`: blokada „Czekam na” trwa
 //!   `waiting_notify_days` dni roboczych albo nadszedł dzień „Przypomnij jutro”
-//!   (`waiting_reminders`, osobno od `tick`).
+//!   (`waiting_reminders`, osobno od `tick`);
+//! - `week:<poniedziałek>`: ostatni dzień roboczy tygodnia od `week_review_time`
+//!   (`week_review`, osobno od `tick`).
 //!
 //! Logika siedzi w `NotifyClock` z czasem i strefą podawanymi z zewnątrz, więc testy
 //! sterują zegarem. Klucz trafia do bazy przed wysłaniem (`INSERT OR IGNORE`), dlatego
@@ -52,7 +54,8 @@ pub struct View {
     pub split: Option<i64>,
     /// Grupa listy zadań (np. „Nierozpoczęte”), do której przewinąć, przy
     /// `view: "settings"` sekcja Ustawień (np. `notifications`), a przy
-    /// `view: "journal"` zakładka `morning` (Plan i historia → Rano).
+    /// `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
+    /// `week-review` (Plan i historia → Tydzień → Przegląd).
     pub section: Option<&'static str>,
     /// Plan i historia → Zamknięcie dnia (dzisiaj).
     pub day_close: bool,
@@ -77,6 +80,14 @@ impl View {
         View {
             view: Some("journal"),
             section: Some("morning"),
+            ..View::default()
+        }
+    }
+    /// Plan i historia → Tydzień → Przegląd („Przegląd tygodnia”).
+    pub fn week_review() -> Self {
+        View {
+            view: Some("journal"),
+            section: Some("week-review"),
             ..View::default()
         }
     }
@@ -648,6 +659,75 @@ pub fn morning_review<Tz: TimeZone>(
     Ok(claim(db, &message.key, now)?.then_some(message))
 }
 
+/// Czy `today` to ostatni dzień roboczy swojego tygodnia (Pon–Nd): dzień roboczy
+/// z ustawień (dni tygodnia i święta), a do niedzieli żaden kolejny dzień nie jest
+/// roboczy. `off` mówi, czy dzień jest wolny z kalendarza (całodniowe „poza
+/// biurem”); taki dzień nie jest roboczy.
+pub fn last_work_day_of_week(
+    s: &AppSettings,
+    today: NaiveDate,
+    off: impl Fn(NaiveDate) -> bool,
+) -> bool {
+    use chrono::Datelike;
+    let work = |d: NaiveDate| crate::holidays::is_work_day(s, d) && !off(d);
+    if !work(today) {
+        return false;
+    }
+    let left = 6 - i64::from(today.weekday().num_days_from_monday());
+    (1..=left).all(|i| !work(today + chrono::Duration::days(i)))
+}
+
+/// Czy przypomnieć o przeglądzie tygodnia: wyłącznik włączony, ostatni dzień
+/// roboczy tygodnia (`last_work_day_of_week`) i nie wcześniej niż
+/// `week_review_time`.
+pub fn week_review_due(
+    s: &AppSettings,
+    today: NaiveDate,
+    time: NaiveTime,
+    off: impl Fn(NaiveDate) -> bool,
+) -> bool {
+    let Ok(at) = NaiveTime::parse_from_str(&s.week_review_time, "%H:%M") else {
+        return false;
+    };
+    s.notify_week_review && time >= at && last_work_day_of_week(s, today, off)
+}
+
+/// Powiadomienie „Przegląd tygodnia” dla tygodnia zaczynającego się w `monday`.
+pub fn week_message(monday: NaiveDate) -> Message {
+    Message {
+        key: format!("week:{monday}"),
+        title: "Przegląd tygodnia".into(),
+        body: "Podsumuj tydzień: czas, plan, rozproszenie i wnioski.".into(),
+        actions: Vec::new(),
+        open: View::week_review(),
+    }
+}
+
+/// Reguła „Przegląd tygodnia” w chwili `now`: najwyżej jedno powiadomienie na
+/// tydzień (klucz `week:<poniedziałek>` w `notifications_sent`, także po
+/// restarcie). Nie zmienia planu ani timera; kliknięcie otwiera Plan i historia
+/// → Tydzień → Przegląd.
+pub fn week_review<Tz: TimeZone>(
+    db: &Connection,
+    s: &AppSettings,
+    tz: &Tz,
+    now: i64,
+) -> rusqlite::Result<Option<Message>> {
+    use chrono::Datelike;
+    let Some(local) = tz.timestamp_millis_opt(now).earliest() else {
+        return Ok(None);
+    };
+    let today = local.date_naive();
+    if !week_review_due(s, today, local.time(), |d| {
+        crate::capacity::off_day_in(db, tz, d)
+    }) {
+        return Ok(None);
+    }
+    let monday = today - chrono::Duration::days(i64::from(today.weekday().num_days_from_monday()));
+    let message = week_message(monday);
+    Ok(claim(db, &message.key, now)?.then_some(message))
+}
+
 /// Liczba dni roboczych po dniu `since` aż do `today` włącznie (dzień blokady
 /// się nie liczy). Najwyżej 400 dni wstecz.
 pub fn work_days_between(s: &AppSettings, since: NaiveDate, today: NaiveDate) -> u32 {
@@ -948,6 +1028,9 @@ pub fn start(app: &tauri::AppHandle) {
                     let now = crate::db::now();
                     let mut messages = clock.tick(&db, &s, &chrono::Local, now).unwrap_or_default();
                     if let Ok(Some(m)) = morning_review(&db, &s, &chrono::Local, now) {
+                        messages.push(m);
+                    }
+                    if let Ok(Some(m)) = week_review(&db, &s, &chrono::Local, now) {
                         messages.push(m);
                     }
                     if let Ok(waiting) = waiting_reminders(&db, &s, &chrono::Local, now) {
@@ -1892,6 +1975,118 @@ mod tests {
         );
         assert_eq!(morning_message(day, 3, 0).body, "Niedokończone: 3 zadania");
         assert_eq!(morning_message(day, 0, 5).body, "Terminy: 5 zadań");
+    }
+
+    fn week(db: &Connection, s: &AppSettings, when: &str) -> Option<Message> {
+        week_review(db, s, &Warsaw, at(when)).unwrap()
+    }
+
+    #[test]
+    fn week_review_fires_once_on_last_work_day_after_set_time() {
+        let db = setup();
+        let s = AppSettings::default();
+        // Czwartek 15.10.2026 to nie ostatni dzień roboczy tygodnia.
+        assert!(week(&db, &s, "2026-10-15 16:00").is_none());
+        // Piątek przed 15:00: nic i bez klucza.
+        assert!(week(&db, &s, "2026-10-16 14:59").is_none());
+        assert!(!sent(&db).contains(&"week:2026-10-12".to_owned()));
+        let m = week(&db, &s, "2026-10-16 15:00").unwrap();
+        assert_eq!(m.key, "week:2026-10-12");
+        assert_eq!(m.title, "Przegląd tygodnia");
+        assert!(m.actions.is_empty());
+        assert_eq!(m.open, View::week_review());
+        assert_eq!(
+            serde_json::to_value(&m.open).unwrap(),
+            json!({"view": "journal", "filter": null, "task": null, "split": null,
+                   "section": "week-review", "dayClose": false})
+        );
+        // Drugi raz w tym tygodniu nie przychodzi, także po restarcie; weekend nic.
+        assert!(week(&db, &s, "2026-10-16 17:00").is_none());
+        assert!(week(&db, &s, "2026-10-17 15:00").is_none());
+        assert!(week(&db, &s, "2026-10-18 15:00").is_none());
+        // Własna godzina i wyłącznik.
+        let late = AppSettings {
+            week_review_time: "16:30".into(),
+            ..s.clone()
+        };
+        assert!(week(&db, &late, "2026-10-23 16:29").is_none());
+        assert!(week(&db, &late, "2026-10-23 16:30").is_some());
+        let off = AppSettings {
+            notify_week_review: false,
+            ..s.clone()
+        };
+        assert!(week(&db, &off, "2026-10-30 15:00").is_none());
+        assert!(!sent(&db).contains(&"week:2026-10-26".to_owned()));
+        // Sobota jako dzień roboczy: ostatni jest sobota, nie piątek.
+        let saturday = AppSettings {
+            work_days: vec![1, 2, 3, 4, 5, 6],
+            ..s.clone()
+        };
+        assert!(week(&db, &saturday, "2026-11-06 15:00").is_none());
+        assert!(week(&db, &saturday, "2026-11-07 15:00").is_some());
+    }
+
+    #[test]
+    fn week_review_moves_to_earlier_day_before_holiday() {
+        let db = setup();
+        let s = AppSettings::default();
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        let none = |_: NaiveDate| false;
+        // Piątek 1.05.2026 to Święto Pracy: ostatni dzień roboczy to czwartek 30.04.
+        assert!(last_work_day_of_week(&s, day(2026, 4, 30), none));
+        assert!(!last_work_day_of_week(&s, day(2026, 5, 1), none));
+        assert!(week(&db, &s, "2026-05-01 15:00").is_none());
+        let m = week(&db, &s, "2026-04-30 15:00").unwrap();
+        assert_eq!(m.key, "week:2026-04-27");
+        // Wigilia i Boże Narodzenie (czwartek i piątek): środa 23.12.
+        assert!(last_work_day_of_week(&s, day(2026, 12, 23), none));
+        assert!(!last_work_day_of_week(&s, day(2026, 12, 22), none));
+        assert!(week(&db, &s, "2026-12-23 15:00").is_some());
+        // Bez świąt w celu piątek 1.05 jest zwykłym ostatnim dniem roboczym.
+        let no_holidays = AppSettings {
+            holidays_in_target: false,
+            ..s.clone()
+        };
+        assert!(!last_work_day_of_week(&no_holidays, day(2026, 4, 30), none));
+        assert!(last_work_day_of_week(&no_holidays, day(2026, 5, 1), none));
+        // Bez dni roboczych w ustawieniach nie ma ostatniego dnia roboczego.
+        let nothing = AppSettings {
+            work_days: Vec::new(),
+            ..s.clone()
+        };
+        assert!(!last_work_day_of_week(&nothing, day(2026, 10, 16), none));
+    }
+
+    #[test]
+    fn week_review_skips_calendar_off_days() {
+        let mut db = setup();
+        let s = AppSettings::default();
+        // Urlop całodniowy w piątek 23.10: przegląd w czwartek 22.10.
+        let (from, to) = crate::stats::day_bounds(
+            &Warsaw,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 23).unwrap(),
+        );
+        crate::calendar::replace_range(
+            &mut db,
+            at("2026-10-19 00:00"),
+            at("2026-10-26 00:00"),
+            &[crate::calendar::CalendarEvent {
+                id: "u".into(),
+                start: from,
+                end: to,
+                subject: "Urlop".into(),
+                show_as: "oof".into(),
+                all_day: true,
+                cancelled: false,
+                response: "accepted".into(),
+            }],
+            at("2026-10-19 07:00"),
+        )
+        .unwrap();
+        crate::calendar::set_test_email(&db, "jan@firma.example");
+        assert!(week(&db, &s, "2026-10-23 15:00").is_none());
+        let m = week(&db, &s, "2026-10-22 15:00").unwrap();
+        assert_eq!(m.key, "week:2026-10-19");
     }
 
     fn waiting(db: &Connection, s: &AppSettings, when: &str) -> Vec<Message> {

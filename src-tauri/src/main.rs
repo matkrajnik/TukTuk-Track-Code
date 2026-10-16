@@ -23,6 +23,7 @@ mod stats;
 mod suggest;
 mod templates;
 mod tray;
+mod week_notes;
 mod widget;
 mod window_state;
 use std::sync::Mutex;
@@ -430,6 +431,9 @@ fn main() {
             export::export_report,
             focus::focus_status,
             focus::focus_action,
+            focus::focus_blocks,
+            week_notes::week_note,
+            week_notes::week_note_save,
             reminder::reminder_action,
             widget::widget_status,
             widget::widget_dismiss,

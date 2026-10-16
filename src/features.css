@@ -1807,3 +1807,21 @@ html.widget-root body {
 .agent-task-time .estimate-table {
   max-width: 360px;
 }
+/* Rozproszenie i przegląd tygodnia (PLAN_1.7.md, W2). */
+.distraction-table th[scope="row"] {
+  font-weight: 400;
+}
+.week-review-table .text-link {
+  padding: 0;
+  text-align: left;
+}
+.week-notes textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.week-notes .planning-actions {
+  margin-top: 8px;
+  align-items: center;
+}

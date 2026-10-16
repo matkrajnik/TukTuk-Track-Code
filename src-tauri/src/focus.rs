@@ -126,6 +126,36 @@ pub fn running(db: &Connection) -> rusqlite::Result<Option<Block>> {
     .optional()
 }
 
+/// Blok skupienia do wskaźników rozproszenia (PLAN_1.7.md, W2): `completed`
+/// `None` = blok trwa, `Some(false)` = przerwany, `Some(true)` = ukończony.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockRow {
+    pub id: i64,
+    pub task_id: i64,
+    pub start: i64,
+    pub end: i64,
+    pub completed: Option<bool>,
+}
+
+/// Bloki rozpoczęte w `[from, to)`, według początku.
+pub fn blocks_between(db: &Connection, from: i64, to: i64) -> rusqlite::Result<Vec<BlockRow>> {
+    db.prepare(
+        r#"SELECT id, task_id, start, "end", completed FROM focus_blocks
+           WHERE start >= ?1 AND start < ?2 ORDER BY start, id"#,
+    )?
+    .query_map(params![from, to], |r| {
+        Ok(BlockRow {
+            id: r.get(0)?,
+            task_id: r.get(1)?,
+            start: r.get(2)?,
+            end: r.get(3)?,
+            completed: r.get::<_, Option<i64>>(4)?.map(|c| c != 0),
+        })
+    })?
+    .collect()
+}
+
 /// Bieżący pomiar: zadanie i początek przedziału.
 fn active(db: &Connection) -> rusqlite::Result<Option<(i64, i64)>> {
     db.query_row(
@@ -721,6 +751,21 @@ pub fn focus_status(app: tauri::AppHandle) -> Result<Status, String> {
     status(&app)
 }
 
+/// Bloki rozpoczęte w `[from, to)` (wskaźniki rozproszenia na Dashboardzie
+/// i w przeglądzie tygodnia).
+#[tauri::command]
+pub fn focus_blocks(
+    state: tauri::State<Database>,
+    from: i64,
+    to: i64,
+) -> Result<Vec<BlockRow>, String> {
+    if to < from {
+        return Err("Niepoprawny zakres dat.".into());
+    }
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    blocks_between(&db, from, to).map_err(str_err)
+}
+
 /// Akcje z okien: `start` (opcjonalnie `task_id`), `stop`, `break`, `next`,
 /// `end-break`, `resume`, `dismiss`.
 #[tauri::command]
@@ -792,6 +837,44 @@ mod tests {
     }
     fn measuring(db: &Connection) -> Option<i64> {
         active(db).unwrap().map(|(t, _)| t)
+    }
+
+    /// Bloki do wskaźników rozproszenia (W2): zakres po początku bloku, stan
+    /// trwający / przerwany / ukończony.
+    #[test]
+    fn blocks_between_lists_blocks_started_in_range() {
+        let mut db = setup();
+        let mut f = Focus::default();
+        let s = AppSettings::default();
+        f.start(&mut db, Some(1), &s, at("2026-10-14 10:00"))
+            .unwrap();
+        // Ukończony z zegara ściennego.
+        f.tick(&db, at("2026-10-14 10:25")).unwrap();
+        f.start(&mut db, Some(2), &s, at("2026-10-14 23:50"))
+            .unwrap();
+        // Przerwany po północy przez Stop.
+        f.stop(&db, at("2026-10-15 00:05")).unwrap();
+        f.start(&mut db, Some(1), &s, at("2026-10-15 09:00"))
+            .unwrap();
+        let (from, to) = stats::day_bounds(
+            &Warsaw,
+            chrono::NaiveDate::from_ymd_opt(2026, 10, 14).unwrap(),
+        );
+        let day = blocks_between(&db, from, to).unwrap();
+        assert_eq!(
+            day.iter()
+                .map(|b| (b.task_id, b.completed))
+                .collect::<Vec<_>>(),
+            [(1, Some(true)), (2, Some(false))]
+        );
+        // Blok liczy się w dniu swojego początku, trwający ma `None`.
+        let next = blocks_between(&db, to, to + 86_400_000).unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].completed, None);
+        assert_eq!(
+            serde_json::to_value(&next[0]).unwrap()["taskId"],
+            serde_json::json!(1)
+        );
     }
 
     #[test]

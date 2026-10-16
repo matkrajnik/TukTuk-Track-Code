@@ -53,6 +53,10 @@ pub struct AppSettings {
     pub waiting_notify_days: u32,
     /// Statusy Jiry oznaczające czekanie (propozycje „Czekam na” na kafelku).
     pub waiting_jira_statuses: Vec<String>,
+    /// Powiadomienie „Przegląd tygodnia” w ostatni dzień roboczy tygodnia (W2).
+    pub notify_week_review: bool,
+    /// Godzina powiadomienia „Przegląd tygodnia” (`GG:MM`, domyślnie 15:00).
+    pub week_review_time: String,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -100,6 +104,8 @@ impl Default for AppSettings {
             morning_review_at: 0,
             waiting_notify_days: 3,
             waiting_jira_statuses: default_waiting_statuses(),
+            notify_week_review: true,
+            week_review_time: "15:00".into(),
         }
     }
 }
@@ -256,6 +262,9 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     if s.morning_review_at < 0 {
         return Err("Niepoprawna chwila przeglądu dnia.".into());
+    }
+    if !valid_time(&s.week_review_time) {
+        return Err("Godzina przeglądu tygodnia musi mieć format GG:MM.".into());
     }
     if !valid_time(&s.notify_evening) {
         return Err("Godzina wieczornego przypomnienia musi mieć format GG:MM.".into());
@@ -610,6 +619,37 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(&db).morning_review_day, "");
+    }
+
+    #[test]
+    fn week_review_fields_are_validated_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert!(base.notify_week_review);
+        assert_eq!(base.week_review_time, "15:00");
+        for bad in [
+            json!({"weekReviewTime": "24:00"}),
+            json!({"weekReviewTime": "9:00"}),
+            json!({"weekReviewTime": ""}),
+            json!({"notifyWeekReview": "tak"}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad} powinno być odrzucone");
+        }
+        let saved = save(
+            &mut db,
+            &json!({"weekReviewTime": "16:30", "notifyWeekReview": false}),
+        )
+        .unwrap();
+        assert_eq!(load(&db), saved);
+        assert_eq!(saved.week_review_time, "16:30");
+        assert!(!saved.notify_week_review);
+        // Uszkodzona zapisana godzina wraca do domyślnej.
+        db.execute(
+            "UPDATE settings SET value='po obiedzie' WHERE key='week_review_time'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(load(&db).week_review_time, "15:00");
     }
 
     #[test]

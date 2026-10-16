@@ -28,6 +28,7 @@ import MorningReview from "./MorningReview.vue";
 import ReorderHandle from "./components/ReorderHandle.vue";
 import DayTimeline from "./components/DayTimeline.vue";
 import WeekBoard from "./components/WeekBoard.vue";
+import WeekReview from "./components/WeekReview.vue";
 import { useReorder } from "./composables/useReorder";
 const props = defineProps<{
   data: Snapshot;
@@ -36,6 +37,8 @@ const props = defineProps<{
   dayClose?: boolean;
   /** Żądanie z powiadomienia lub Dashboardu: otwórz zakładkę Rano. */
   morning?: boolean;
+  /** Żądanie z powiadomienia „Przegląd tygodnia”: Tydzień → Przegląd (bieżący). */
+  weekReview?: boolean;
 }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -44,6 +47,7 @@ const emit = defineEmits<{
   report: [day: string];
   dayCloseShown: [];
   morningShown: [];
+  weekReviewShown: [];
 }>();
 const day = ref(dayKey(props.now));
 /** Poprawka szacunków (podpowiedź w rozwiniętym planie); przeliczana co minutę. */
@@ -56,8 +60,8 @@ const weekly = ref(false),
   busy = ref(false),
   error = ref("");
 const expanded = ref(0);
-/** Zakładka Tydzień: tablica (domyślnie) albo dotychczasowe podsumowanie. */
-const weekView = ref<"board" | "summary">("board");
+/** Zakładka Tydzień: tablica (domyślnie), podsumowanie albo przegląd tygodnia. */
+const weekView = ref<"board" | "summary" | "review">("board");
 const settings = useSettings();
 watch(
   () => props.dayClose,
@@ -79,6 +83,19 @@ watch(
     closing.value = false;
     morning.value = true;
     emit("morningShown");
+  },
+  { immediate: true },
+);
+watch(
+  () => props.weekReview,
+  (open) => {
+    if (!open) return;
+    day.value = dayKey(props.now);
+    morning.value = false;
+    closing.value = false;
+    weekly.value = true;
+    weekView.value = "review";
+    emit("weekReviewShown");
   },
   { immediate: true },
 );
@@ -565,7 +582,13 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         :aria-pressed="weekView === 'summary'"
         @click="weekView = 'summary'"
       >
-        Podsumowanie
+        Podsumowanie</button
+      ><button
+        :class="{ selected: weekView === 'review' }"
+        :aria-pressed="weekView === 'review'"
+        @click="weekView = 'review'"
+      >
+        Przegląd
       </button>
     </div>
     <WeekBoard
@@ -574,6 +597,13 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       :now="now"
       :day="day"
       @updated="emit('updated', $event)"
+    />
+    <WeekReview
+      v-else-if="weekView === 'review'"
+      :data="data"
+      :now="now"
+      :day="day"
+      @report="emit('report', $event)"
     />
   </template>
   <template v-if="weekly && !closing && weekView === 'summary'">
