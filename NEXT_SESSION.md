@@ -1,4 +1,197 @@
-# Todo Track — stan po 1.6.0
+# Todo Track — stan po 1.7.0
+
+## Stan po 1.7.0 (16 października 2026)
+
+Gałąź `release/1.0`, lokalnie, bez pusha. Wydanie 1.7.0 obejmuje wszystkie zadania z PLAN_1.7.md:
+- K1 (logowanie Microsoft i pobieranie spotkań): `src-tauri/src/calendar.rs` (OAuth z PKCE w przeglądarce systemowej, jednorazowy serwer na losowym porcie, limit 5 min, refresh token w magazynie poświadczeń Windows), tabela `calendar_events`, pobieranie z Graph przy starcie, co 10 min i po „Odśwież”, Ustawienia → Kalendarz (`CalendarSettings.vue`), symulowane połączenie w podglądzie.
+- K2 (spotkania w planie i pojemności): `src/capacity.ts` i `src-tauri/src/capacity.rs`; tray, powiadomienie o celu, Dashboard, Zadania, Zamknięcie dnia („Dodaj jako czas”), tablica tygodnia i tor „Spotkania” na osi dnia.
+- S1 (zakładka Ustawienia): osobna pozycja nawigacji, Ctrl+,, lista sekcji z wyszukiwaniem i zapamiętaną sekcją, `navigate` z polem `section`.
+- P1 (szacunki z poprawką i „Rozłóż”): `src/estimates.ts`, podgląd planu na tablicy tygodnia, komenda `plan_tasks` (jedna transakcja), ustawienie `planWithCorrection`.
+- P2 (poranny przegląd): Plan i historia → Rano, `morningReviewDay`/`morningReviewAt`, powiadomienie „Przegląd dnia” raz dziennie przez kolejkę trybu skupienia.
+- P3 (cykle miesięczne i „Czekam na”): `repeatRule` w `task_details`, grupa „Czekam na…”, powiadomienie z „Odblokuj” i „Przypomnij jutro”, propozycje ze statusów Jiry.
+- W1 (czas agentów): tabela `agent_sessions`, tor „Agenci”, kolumny „Agent” i „Równolegle”.
+- W2 (rozproszenie i przegląd tygodnia): `src/report.ts`, karta „Rozproszenie”, Tydzień → Przegląd, tabela `week_notes`, powiadomienie „Przegląd tygodnia”.
+- W3 (podpowiedzi z aktywnego okna): `src-tauri/src/foreground.rs`, źródło „Okno” w mechanizmie propozycji, domyślnie wyłączone.
+- W4 (rozszerzenie przeglądarki): `browser-extension/` (Manifest V3), `todo-track-bridge.exe` (native messaging → nazwany potok), rejestracja hosta w HKCU dla Chrome i Edge, źródło „Przeglądarka”.
+- J1 (przesunięcie zgłoszenia przy starcie pracy): baner, widget i powiadomienie z „Przesuń”, „Przesuń w Jirze…” w kafelku, propozycja przy ukończeniu, główny wyłącznik zapisów do Jiry.
+- J2 (Jira z poziomu Todo Track): Lista/Tablica, kolumny z konfiguracji tablicy (tabele `jira_board_columns`, `jira_statuses`, `jira_board_meta`), przeciąganie i „Przesuń do…”, przypisanie, komentarz, nazwa gałęzi, nowe zgłoszenie, symulowana Jira w `store.ts`.
+
+Wersja 1.7.0 w pięciu plikach, instalator `releases/Todo Track_1.7.0_x64-setup.exe` (nie instalowany), lokalny tag `v1.7.0` (niewypchnięty). README: „Nowości 1.7” z instrukcją rejestracji aplikacji w Entra ID i instalacji rozszerzenia przeglądarki, nowa zakładka Ustawienia w opisie ustawień, opis Jiry poprawiony (od 1.7 aplikacja zapisuje do Jiry po kliknięciu), wersja w „Instalacja i aktualizacje”.
+
+Weryfikacja: `npm run build`, 253 testy Playwright (w tym zrzuty wzorcowe), `cargo fmt --check`, 234 testy Rust (`cargo test --locked`) oraz `npm run tauri build -- -- --locked` przechodzą (Git Bash, cargo dodane do PATH). Maszyna była mocno obciążona innymi procesami: pierwszy pełny przebieg Playwright (domyślna liczba procesów) dał 74 przekroczenia 30 s (czekanie na stronę, kliknięcie, `newPage`), drugi pełny przebieg z `--workers=2` 250/253, a pozostałe 3 przeszły przy `--workers=1`; każdy z 74 testów pierwszego przebiegu przeszedł po ponownym uruchomieniu. Żaden błąd nie dotyczył treści asercji poza skutkami przekroczenia czasu. Warto powtórzyć pełny przebieg na odciążonej maszynie albo w CI.
+
+Odstępstwa od planu:
+- Żadne zadanie 1.7 nie było uruchamiane w natywnej aplikacji ani po instalacji NSIS. Nic nie łączyło się z prawdziwym Microsoft Graph ani prawdziwą Jirą (e2e działają na podglądzie z symulowanym kalendarzem i Jirą, testy Rust nowych tabel używają bazy w pamięci). Zgodnie z PLAN_1.7.md ręczne testy nie są częścią planu; lista jest niżej.
+- Świadomie zregenerowane lokalnie zrzuty wzorcowe, żaden nie potwierdzony na windows-latest: K1 — 4 `ustawienia-*`, K2 — 12, S1 — 28 (Ustawienia i nawigacja), W4 — 4 Ustawień, J2 — 8 widoku Jira.
+- S1 przeniósł wejście do ustawień w istniejących testach e2e z „Historia i kopie → Ustawienia” na nową zakładkę Ustawienia (zgodnie z planem).
+- README przy wydaniu poprawiono: sekcja „Ustawienia” opisywała jeszcze „Historia i kopie → Ustawienia”, a sekcja „Jira” mówiła, że integracja nie zmienia zgłoszeń.
+- Otwarte jak po 1.6.0: etap 0 (instalacja 1.2.0, tagi `v1.0.0` i `v1.2.0`, push tagów), dwa zielone przebiegi CI, natywna walidacja przycisków w powiadomieniach (AUMID).
+
+Do ręcznego sprawdzenia:
+
+K1 — nic nie było uruchamiane z prawdziwym Microsoftem. Wymaga natywnej aplikacji (`tauri dev` albo instalacja NSIS) i rejestracji aplikacji w Entra ID: platforma „Mobile and desktop”, przekierowanie `http://localhost`, uprawnienia delegowane `User.Read`, `Calendars.Read` i `offline_access`.
+- Logowanie: „Połącz konto Microsoft” otwiera przeglądarkę; po zalogowaniu strona pokazuje „Zalogowano…”, a Ustawienia e-mail konta i liczbę spotkań.
+  - Czy Entra przyjmuje `http://localhost:<losowy port>` wobec zarejestrowanego `http://localhost`.
+  - Czy przekierowanie dociera do serwera, gdy `localhost` rozwiązuje się na `::1` albo na `127.0.0.1`.
+- Komunikaty błędów:
+  - zły client ID albo błąd w rejestracji pokazuje komunikat `AADSTS…`;
+  - zamknięcie karty przeglądarki i „Anuluj” przerywa logowanie;
+  - czekanie ponad 5 minut kończy się komunikatem o limicie czasu.
+- Dzierżawca: domyślne `organizations` z kontem firmowym; identyfikator dzierżawcy albo domena firmy też działają.
+- Token i restart: refresh token w Menedżerze poświadczeń Windows (`<identyfikator>.calendar`); po restarcie spotkania pobierają się bez ponownego logowania; odświeżenie po wygaśnięciu access tokenu (około 1 h) działa.
+- Dane z Graph:
+  - spotkania zgodne z Outlookiem: godziny lokalne, całodniowe od lokalnej północy, cykliczne;
+  - długi kalendarz pobiera wszystkie strony;
+  - spotkanie usunięte w Outlooku znika po „Odśwież”.
+- Automatyczne pobieranie co 10 minut i przy starcie, także przy starcie schowanym do traya.
+- „Rozłącz” usuwa token z magazynu poświadczeń i `calendar_events` z bazy.
+- Brak zgody administratora: gdy dzierżawca wymaga zgody na `Calendars.Read`, komunikat jest czytelny.
+- Istniejąca baza: start na bazie użytkownika tworzy tabelę `calendar_events` i ustawienie `calendar_show_titles` bez utraty danych (testy automatyczne używały bazy w pamięci).
+- Kopia: zawiera `calendar_events`; po przywróceniu token nie jest przenoszony (jak przy Jirze).
+- 4 zregenerowane wzorce `ustawienia-*` potwierdzić na windows-latest w CI.
+
+K2 — w natywnej aplikacji z połączonym kontem Microsoft:
+- Tooltip traya pokazuje „dziś X / cel minus spotkania”, a w całodniowy „poza biurem” celu nie ma.
+- Powiadomienie „Cel dnia osiągnięty” przychodzi przy pomniejszonym celu.
+- Tor osi dnia, pojemność tablicy tygodnia i lista „Dzisiaj” odświeżają się po pobraniu co 10 minut i po „Odśwież” (zdarzenie `calendar-changed`).
+- W Zamknięciu dnia „Dodaj jako czas” zapisuje spotkanie jako czas przez `add_session` w Rust, a ostrzeżenie o nakładaniu zgadza się z jego odmową.
+- Rozłączenie konta usuwa tor i pomniejszenia pojemności.
+- Spotkania przez północ i przez zmianę czasu (25.10) wyglądają poprawnie na osi.
+- 12 zregenerowanych zrzutów potwierdzić na windows-latest.
+
+S1:
+- W natywnej aplikacji (WebView2) Ctrl+, otwiera Ustawienia i nie koliduje ze skrótem WebView. W polu skrótu w sekcji Skróty Ctrl+, ma być przechwycony jako kombinacja, a nie otwierać zakładkę.
+- Kliknięcie powiadomienia Windows z `navigate {view:"settings", section}`, gdy dodaje je późniejsze zadanie (np. P2/W2).
+- Zapamiętana sekcja w natywnej aplikacji po restarcie (localStorage WebView2).
+- Przycisk „Otwórz ustawienia” przy błędach kalendarza („Ustawieniach → Kalendarz”) w natywnej aplikacji.
+- Link „Ustawienia → Jira” w widoku Jira z połączonym prawdziwym kontem.
+- Układ ustawień przy prawdziwych rozmiarach okna i DPI, w tym przejście na listę rozwijaną poniżej 850 px.
+- 28 zrzutów wzorcowych potwierdzić na windows-latest w CI.
+
+P1:
+- W natywnej aplikacji „Rozłóż” → „Zastosuj” przez komendę `plan_tasks`: odświeżenie `data-changed`, widget i tray po zapisie. Logika Rust testowana tylko na bazie w pamięci.
+- „Planuj z poprawką szacunków” w Ustawieniach → Czas pracy: zapis w SQLite natywnej aplikacji i dotarcie do otwartych okien przez `settings-changed`.
+- „Rozłóż” z połączonym kalendarzem Microsoft: pojemność pomniejszona o spotkania, a całodniowy „poza biurem” oznaczony w podglądzie jako „wolne” (sprawdzone tylko w podglądzie bez kalendarza).
+- Podpowiedź „zwykle ~…” w osobnym oknie szybkiego przełączania (Ctrl+Shift+Space) w natywnej aplikacji; liczy z danych, które samo wczytuje.
+- Wygląd podglądu przy wąskim oknie i w ciemnym motywie w oknie aplikacji (oglądane tylko na zrzucie Playwright).
+
+P2:
+- Toast „Przegląd dnia” w natywnej aplikacji: czy przychodzi w dzień roboczy po godzinie początku dnia, tylko raz dziennie także po restarcie, i czy kliknięcie otwiera Plan i historia → Rano.
+- Czy toast nie przychodzi po „Zaczynam dzień” zrobionym przed początkiem dnia, w święto i przy całodniowym urlopie z kalendarza Microsoft.
+- Czy w czasie bloku skupienia toast czeka w kolejce i przychodzi w zbiorczym powiadomieniu po bloku. Kliknięcie zbiorczego pokazuje tylko główne okno, bez zakładki Rano.
+- Zapis `morningReviewDay` i `morningReviewAt` do SQLite oraz odczyt po restarcie.
+- Pasek pojemności w Rano z prawdziwymi spotkaniami i z włączonym „Planuj z poprawką szacunków”.
+- Wygląd zakładki Rano przy 760 px w obu motywach (nie ma dla niej zrzutu wzorcowego).
+- Po instalacji NSIS: brak AUMID w kompilacji deweloperskiej utrudnia sprawdzenie toastów.
+
+P3 — natywnie (`tauri dev` albo po instalacji NSIS), nic nie było uruchamiane:
+- Toast „Czekam na” z przyciskami „Odblokuj” i „Przypomnij jutro” (wymaga AUMID):
+  - „Odblokuj” odblokowuje bez startu timera;
+  - „Przypomnij jutro” przywraca toast w kolejny dzień roboczy;
+  - kliknięcie treści otwiera Zadania na grupie „Czekam na…” z rozwiniętym zadaniem;
+  - w czasie bloku skupienia toast czeka w kolejce.
+- Istniejąca baza po aktualizacji: stare `task_details` bez `repeatRule` i pól `waiting*` czytają się poprawnie; stare cykle tygodniowe generują się jak dotąd; istniejące blokady nie pokazują „od N dni” do ponownego zapisu.
+- Reguły miesięczne w prawdziwej bazie:
+  - zadanie źródłowe dostaje kopie z datami po restarcie;
+  - „ostatni dzień roboczy” uwzględnia `holidaysInTarget`;
+  - po cofnięciu do 1.6 zadanie miesięczne nie jest traktowane jak tygodniowe.
+- Propozycje z Jiry z prawdziwym kontem: po automatycznym odświeżeniu statusów (co 5 min) kafelek pokazuje propozycję; „Oznacz jako czekam na” zatrzymuje trwający pomiar; odblokowanie i „Nie teraz” nie przywracają jej dla tego samego statusu.
+- Ustawienia → Jira: wpisanie i zapis statusów w polu tekstowym w WebView2; Ustawienia → Powiadomienia: wartości 0 i 31 (błąd).
+- Układ przycisku „Odblokuj” w wierszu kafelka i paska propozycji w obu motywach przy 760 px (bez zrzutu wzorcowego).
+- Pola wyboru „Rodzaj cyklu”, „Który w miesiącu” i „Dzień tygodnia cyklu” w rozwiniętym kafelku przy 760 px.
+
+W1 — w natywnej aplikacji (`tauri dev`) albo po instalacji NSIS:
+1. Na istniejącej bazie użytkownika tabela `agent_sessions` i jej indeksy powstają bez utraty danych, a czyszczenie przy starcie nie spowalnia startu.
+2. Prawdziwy agent Claude Code / Codex daje jeden okres na agenta i folder, łączony przez kolejne 5-sekundowe cykle. Przerwa 2+ min albo zamknięcie aplikacji kończy okres. Okres po restarcie w ciągu 2 min dołącza do poprzedniego.
+3. Tor „Agenci” na dzisiejszej osi odświeża się w ciągu około 60 s.
+4. Przypisanie folderu w kafelku „Agenci AI” uzupełnia ostatnie okresy bez zadania, a oś i kafelek pokazują kolor zadania.
+5. Sekcja „Czas agentów” w rozwiniętym kafelku i kolumny w Miesiącu pokazują sensowne wartości przy trwającym pomiarze („Równolegle” rośnie).
+6. Wygląd toru „Agenci”, szarych bloków i legendy „Agent bez zadania” w obu motywach przy 760 i 1280 px (żaden zrzut wzorcowy nie obejmuje danych agentów).
+7. Kopia i przywracanie przenoszą `agent_sessions` (sprawdzone tylko testem Rust).
+8. Blokada bazy brana co 5 s przy pracy agentów nie spowalnia interfejsu.
+
+W2:
+- W natywnej aplikacji powiadomienie Windows „Przegląd tygodnia” przychodzi w ostatni dzień roboczy tygodnia o ustawionej godzinie (domyślnie 15:00), tylko raz w tygodniu (także po restarcie) i czeka do końca bloku skupienia. Kliknięcie otwiera Plan i historia → Tydzień → Przegląd dla bieżącego tygodnia.
+- Tydzień cofa się na wcześniejszy dzień przy święcie albo całodniowym „poza biurem” w kalendarzu (pokryte testami Rust, nie oglądane w aplikacji).
+- Po instalacji NSIS: tabela `week_notes` powstaje na istniejącej bazie, wnioski zapisują się i przeżywają restart, a kopia i przywracanie SQLite zachowują wnioski.
+- Karta „Rozproszenie” na Dashboardzie i kolumna „Bloki skupienia” poprawnie czytają prawdziwe wiersze `focus_blocks`, w tym trwający blok.
+- Sekcja czasu agentów w przeglądzie tygodnia wypełnia się z prawdziwych wierszy `agent_sessions`.
+- Ustawienia → Powiadomienia: wyłącznik i godzina przeglądu tygodnia zapisują się przez backend, a pole godziny jest wyszarzone przy wyłączonym przełączniku.
+
+W3:
+- Po włączeniu ustawienia w natywnej aplikacji Chrome lub Edge z otwartym zgłoszeniem Jiry (klucz w tytule, zadanie powiązane lokalnie) daje baner „Pracujesz teraz przy innym zadaniu?” po około 2 minutach. „Przełącz” uruchamia zadanie.
+- VS Code, Cursor i IntelliJ z folderem przypisanym w `agent_bindings` albo znanym z pracy agenta, na gałęzi `feature/KEY-123`: tytuł okna jest rozpoznany. Sprawdzić prawdziwe formaty tytułów, w tym en dash w JetBrains i ustawienie `window.title` w VS Code.
+- Kliknięcie w baner albo widget (okno Todo Track na pierwszym planie) nie gasi propozycji.
+- Przy schowanym głównym oknie przychodzi jedno powiadomienie „Pracujesz teraz przy innym zadaniu?” z „Przełącz”. W trybie skupienia trafia do kolejki.
+- Po wyłączeniu ustawienia propozycja z okna znika od razu (`set_settings` → odświeżenie). Tytuły nie trafiają do bazy ani logów.
+- Teams (`ms-teams.exe`) i nowy Outlook (`olk.exe`): sprawdzić, czy nazwy procesów są rozpoznawane.
+
+W4 — nic nie było uruchamiane w Chrome ani Edge i nic nie było instalowane.
+
+Wczytanie rozszerzenia i połączenie z zainstalowaną aplikacją:
+1. Po instalacji `Todo Track_1.7.0_x64-setup.exe` włączyć Ustawienia → Czas pracy → „Rozszerzenie przeglądarki (Chrome i Edge)”.
+2. Sprawdzić, że `pl.todotrack.bridge.json` pojawia się obok `Todo Track.exe` (albo w folderze danych aplikacji, gdy folder instalacji nie jest zapisywalny).
+3. Sprawdzić klucze `HKCU\Software\Google\Chrome\NativeMessagingHosts\pl.todotrack.bridge` i `HKCU\Software\Microsoft\Edge\NativeMessagingHosts\pl.todotrack.bridge`; wartość domyślna ma być ścieżką manifestu.
+4. Wyłączenie ustawienia ma usunąć klucze rejestru i manifest.
+
+„Załaduj rozpakowane”:
+1. W `chrome://extensions` i `edge://extensions` wczytać `<folder instalacji>\browser-extension`.
+2. Identyfikator ma być `cecpcpkmmmkgfdklnkkkigofkcibnhbl` w obu przeglądarkach.
+3. Opcje rozszerzenia mają pokazywać „Połączono z Todo Track”.
+4. Przy zamkniętej aplikacji: „Todo Track nie działa (niepołączone)”. Przy wyłączonym ustawieniu: „Brak połączenia… Włącz…”.
+
+Rozpoznanie i propozycje:
+1. Na tablicy Jira Cloud z `?selectedIssue=WMS-123` i przeglądarką na pierwszym planie po około 2 minutach ma się pojawić baner albo powiadomienie „Pracujesz teraz przy WMS-123?” z „Przełącz”.
+2. Ma mieć pierwszeństwo przed tytułem okna.
+3. Po przejściu do innego programu albo po ponad 30 s bez odświeżenia sygnał ma zniknąć.
+4. Stan w Ustawieniach: „Połączone · ostatni sygnał: WMS-123, …”.
+
+Do obserwacji:
+- Czy przy starcie `todo-track-bridge.exe` przez Chrome lub Edge mignie okno konsoli (program podsystemu konsoli).
+- Czy service worker MV3 rzeczywiście żyje przy otwartym porcie natywnym i czy alarm co 30 s budzi go po długiej bezczynności przeglądarki.
+- Czy `windows.onFocusChanged` (`WINDOW_ID_NONE`) na Windows poprawnie czyści sygnał przy przejściu do innego programu.
+
+Inne:
+- Na niedozwolonej domenie (np. github.com) most ma dostawać tylko `{type:"clear"}` (obserwacja stdin mostu albo test Rust).
+- Edge: czy najpierw używa własnego klucza rejestru (powinien) i czy działa ten sam identyfikator.
+- Odinstalowanie NSIS ma usunąć most, folder rozszerzenia, manifest hosta i oba klucze HKCU.
+- Aktualizacja instalacji z włączonym ustawieniem: przy starcie aplikacja przepisuje manifest z bieżącą ścieżką exe.
+- Start na istniejącej bazie użytkownika: klucz `browser_extension` dostaje wartość domyślną (wyłączone).
+- 4 zregenerowane zrzuty Ustawień potwierdzić na windows-latest.
+
+J1 — nic nie było uruchamiane w natywnej aplikacji; sprawdzić w `tauri dev` albo po instalacji:
+- Start zadania powiązanego ze zgłoszeniem w „To Do” (przycisk, Ctrl+K szybkie przełączanie, skrót globalny, „Rozpocznij” z powiadomienia, „Przełącz” z propozycji agenta): baner pojawia się w ciągu kilku sekund, a timer już działa. „Przesuń” zmienia status w prawdziwej Jirze i na kafelku.
+- Zgłoszenie z kilkoma przejściami „w toku” i nazwą niezgodną z ustawieniem: baner pokazuje listę. Przejście z ekranem wymaganych pól zwraca komunikat 400, a przycisk „Otwórz KEY w Jirze” otwiera zgłoszenie.
+- Konto bez uprawnienia do przejść (403): czytelny komunikat.
+- Główne okno schowane w trayu: toast „Przesunąć KEY do „…”?” z działającym przyciskiem „Przesuń” (wymaga AUMID). Bez wybranego przejścia nie ma przycisku, a kliknięcie otwiera główne okno z banerem.
+- W czasie bloku skupienia toast czeka w kolejce, a baner wraca po bloku.
+- Widget 320×64 w obu motywach: linia „Jira: przesunąć …” i przycisk z ikoną mieszczą się, a przesunięcie z widgetu działa.
+- Ustawienia → Jira: wyłączenie „Pozwól aplikacji zmieniać zgłoszenia w Jirze” blokuje pytanie, przycisk w kafelku i propozycję przy ukończeniu. Bezpośrednie wywołanie `jira_transition` zwraca komunikat `WRITE_DISABLED`.
+- Istniejąca baza użytkownika: nowe klucze `jira_write`, `jira_ask_move` i `jira_move_status` dostają wartości domyślne bez utraty danych.
+- „Nie pytaj dla tego zadania” zapisuje się w `task_details` i przeżywa edycję formularza planu i restart aplikacji.
+- Ukończenie zadania z kluczem: propozycja ze wszystkimi przejściami; bez kliknięcia nic się nie zmienia.
+
+J2 — nic z tego nie było uruchamiane w natywnej aplikacji ani po instalacji NSIS. Sprawdzić z prawdziwym kontem Jira Cloud:
+- `GET /rest/agile/1.0/board/{id}/configuration`: nazwy kolumn i klucz projektu zgodne z tym, co pokazuje Jira.
+- `GET /rest/api/3/project/{key}/statuses`: kategorie czytane poprawnie; status spoza kolumn trafia do właściwej kolumny.
+- Endpoint `/rest/software/1.0/board/{id}/issue` przyjmuje JQL z „ORDER BY Rank ASC” i zwraca pola `issuetype`, `priority` i `assignee`.
+- Limit 300 i komunikat o obcięciu na dużej tablicy w „Cała tablica”.
+- Przeciąganie myszą w WebView2:
+  - optymistyczne przesunięcie, potem odświeżenie statusu na kafelku zadania;
+  - wybór, gdy kilka przejść prowadzi do jednej kolumny;
+  - przejście z Resolution albo innym wymaganym polem otwiera zgłoszenie w przeglądarce, a karta wraca.
+- Błędy 400, 403 i 404 z Jiry pokazują się po polsku.
+- „Przypisz do mnie” i „Zmień osobę…” działają przez wyszukiwanie `assignable/search`, łącznie z uprawnieniami.
+- Komentarz trafia do Jiry jako ADF z akapitami i podziałami wierszy.
+- „Kopiuj nazwę gałęzi” wstawia nazwę do schowka systemowego, z prefiksem z Ustawień.
+- „Nowe zgłoszenie”:
+  - createmeta zwraca `issueTypes` albo `values`;
+  - typ z dodatkowym wymaganym polem pokazuje link „Utwórz w Jirze”, a link `CreateIssue!default.jspa` otwiera się poprawnie;
+  - utworzone zgłoszenie jest przypisane do mnie, a powiązane zadanie ma wybrany dzień planu.
+- Z wyłączonym „Pozwól aplikacji zmieniać zgłoszenia w Jirze” tablica jest tylko do odczytu, a backend odrzuca zapisy.
+- Pamięć podręczna odświeża się po 24 h i po „Odśwież”. Na istniejącej bazie użytkownika tabele `jira_board_columns`, `jira_statuses` i `jira_board_meta` powstają bez utraty danych.
+- Układ tablicy w obu motywach przy 760 i 1280 px z wieloma kolumnami (poziome przewijanie wewnątrz tablicy, nie całej strony).
+- 8 zregenerowanych wzorców Jiry potwierdzić na windows-latest.
 
 ## Stan po 1.6.0 (15 października 2026)
 
