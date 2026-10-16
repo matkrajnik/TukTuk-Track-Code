@@ -2,6 +2,7 @@
 import { computed, nextTick, ref } from "vue";
 import {
   Archive,
+  ArrowRightCircle,
   BookmarkPlus,
   Check,
   ChevronDown,
@@ -18,9 +19,13 @@ import AgentTaskTime from "./AgentTaskTime.vue";
 import {
   desktop,
   duration,
+  jiraTransition,
+  jiraTransitions,
   saveTemplate,
+  setJiraNoAsk,
   setWaiting,
   templateFromTask,
+  type JiraTransition,
   type WaitingChange,
   type Session,
   type Snapshot,
@@ -124,6 +129,33 @@ async function changeWaiting(change: WaitingChange) {
     waitingBusy.value = false;
   }
 }
+/** „Przesuń w Jirze…”: lista przejść zgłoszenia (J1); nic nie zmienia się samo. */
+const moveList = ref<JiraTransition[] | null>(null);
+const moveBusy = ref(false);
+async function jiraRun(action: () => Promise<void>) {
+  if (moveBusy.value) return;
+  moveBusy.value = true;
+  emit("error", "");
+  try {
+    await action();
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    moveBusy.value = false;
+  }
+}
+const openMoveList = () =>
+  jiraRun(async () => {
+    moveList.value =
+      moveList.value === null ? await jiraTransitions(props.task.id) : null;
+  });
+const moveTo = (t: JiraTransition) =>
+  jiraRun(async () => {
+    emit("updated", await jiraTransition(props.task.id, t.id));
+    moveList.value = null;
+  });
+const askAgain = () =>
+  jiraRun(async () => emit("updated", await setJiraNoAsk(props.task.id, false)));
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
@@ -305,6 +337,17 @@ async function openJira(url: string) {
         >
           <ExternalLink :size="14" />{{ task.jiraKey }}
         </button>
+        <button
+          v-if="task.jiraKey && settings.jiraWrite"
+          class="action-button"
+          :aria-label="'Przesuń w Jirze: ' + task.jiraKey"
+          :aria-expanded="moveList !== null"
+          :disabled="moveBusy"
+          title="Wybierz przejście zgłoszenia w Jirze"
+          @click="openMoveList"
+        >
+          <ArrowRightCircle :size="14" />Przesuń w Jirze…
+        </button>
         <span class="details-actions-spacer" />
         <button
           class="action-button"
@@ -340,6 +383,45 @@ async function openJira(url: string) {
             <Trash2 :size="14" />Usuń
           </button>
       </div>
+      <div
+        v-if="moveList !== null"
+        class="jira-move-list"
+        role="group"
+        :aria-label="'Przejścia w Jirze: ' + task.jiraKey"
+      >
+        <span v-if="moveList.length"
+          >{{ task.jiraKey }}<template v-if="task.jiraStatus">
+            ({{ task.jiraStatus }})</template
+          >:</span
+        >
+        <span v-else>Jira nie ma dostępnych przejść dla {{ task.jiraKey }}.</span>
+        <button
+          v-for="t in moveList"
+          :key="t.id"
+          class="action-button"
+          :disabled="moveBusy"
+          :aria-label="`Przesuń ${task.jiraKey} do: ${t.toStatus}`"
+          @click="moveTo(t)"
+        >
+          {{ t.name && t.name !== t.toStatus ? `${t.name} → ${t.toStatus}` : t.toStatus }}
+        </button>
+        <button class="action-button" @click="moveList = null">Anuluj</button>
+      </div>
+      <p
+        v-if="task.jiraKey && task.details?.jiraNoAsk && settings.jiraWrite"
+        class="hint jira-no-ask"
+      >
+        Bez pytania o przesunięcie {{ task.jiraKey }} przy starcie pracy.
+        <button
+          type="button"
+          class="text-link"
+          :disabled="moveBusy"
+          :aria-label="'Pytaj o przesunięcie: ' + task.title"
+          @click="askAgain"
+        >
+          Pytaj znowu
+        </button>
+      </p>
       <form
         v-if="templateName !== null"
         class="template-save"

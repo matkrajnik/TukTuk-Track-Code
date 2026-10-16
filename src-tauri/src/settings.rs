@@ -35,6 +35,13 @@ pub struct AppSettings {
     pub notify_target: bool,
     /// Co 5 min dodaje nowe zgłoszenia przypisane w Jirze do „Do zaplanowania”.
     pub jira_auto_import: bool,
+    /// Główny wyłącznik zapisów do Jiry (J1, J2): wyłączony blokuje każdą zmianę
+    /// zgłoszenia, także w backendzie (`jira::ensure_write`).
+    pub jira_write: bool,
+    /// Pytaj o przesunięcie zgłoszenia „Do zrobienia” przy starcie pomiaru (J1).
+    pub jira_ask_move: bool,
+    /// Nazwa preferowanego statusu docelowego przy kilku przejściach „w toku”.
+    pub jira_move_status: String,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
     /// Długość bloku skupienia w minutach (1–240, domyślnie 25).
@@ -99,6 +106,9 @@ impl Default for AppSettings {
             notify_evening_enabled: true,
             notify_target: false,
             jira_auto_import: true,
+            jira_write: true,
+            jira_ask_move: true,
+            jira_move_status: "In Progress".into(),
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
             focus_block_minutes: 25,
@@ -261,6 +271,10 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
         return Err("Za dużo statusów Jiry oznaczających czekanie.".into());
     }
     s.waiting_jira_statuses = statuses;
+    s.jira_move_status = s.jira_move_status.trim().to_string();
+    if s.jira_move_status.is_empty() || s.jira_move_status.chars().count() > 80 {
+        return Err("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.".into());
+    }
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());
     }

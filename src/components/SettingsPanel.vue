@@ -373,6 +373,41 @@ onUnmounted(() => {
       <h2>Jira</h2>
       <label class="inline-check"
         ><input
+          :checked="settings.jiraWrite"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ jiraWrite: checked($event) })"
+        />Pozwól aplikacji zmieniać zgłoszenia w Jirze</label
+      >
+      <p class="hint">
+        Wyłączone blokuje każdą zmianę w Jirze z Todo Track (przesuwanie
+        zgłoszeń i inne zapisy); aplikacja wtedy tylko czyta zgłoszenia.
+      </p>
+      <label class="inline-check"
+        ><input
+          :checked="settings.jiraAskMove"
+          type="checkbox"
+          :disabled="busy || !settings.jiraWrite"
+          @change="save({ jiraAskMove: checked($event) })"
+        />Pytaj o przesunięcie zgłoszenia przy starcie pracy</label
+      >
+      <div class="planning-fields settings-fields">
+        <label
+          >Docelowy status przy starcie pracy<input
+            :value="settings.jiraMoveStatus"
+            maxlength="80"
+            :disabled="busy || !settings.jiraWrite"
+            @change="save({ jiraMoveStatus: text($event) })"
+        /></label>
+      </div>
+      <p class="hint">
+        Start pomiaru zadania ze zgłoszeniem w statusie „Do zrobienia” pyta o
+        przesunięcie do statusu w toku. Przy kilku przejściach wybierane jest to
+        o tej nazwie, a bez dopasowania pytanie pokazuje listę. Pomiar startuje
+        od razu, a zgłoszenie zmienia się dopiero po kliknięciu „Przesuń”.
+      </p>
+      <label class="inline-check"
+        ><input
           :checked="settings.jiraAutoImport"
           type="checkbox"
           :disabled="busy"

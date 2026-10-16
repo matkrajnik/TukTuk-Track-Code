@@ -7,6 +7,7 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import SessionEditor, { type SessionTab } from "./components/SessionEditor.vue";
 import IdleBanner from "./components/IdleBanner.vue";
 import AgentSuggestions from "./components/AgentSuggestions.vue";
+import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
 import { refreshFocus } from "./focus";
 import TasksView from "./views/TasksView.vue";
@@ -69,6 +70,9 @@ const activeTask = computed(() => {
   const active = data.value.sessions.find((s) => s.endedAt === null);
   return data.value.tasks.find((t) => t.id === active?.taskId);
 });
+const activeSessionId = computed(
+  () => data.value.sessions.find((s) => s.endedAt === null)?.id ?? null,
+);
 const todayKey = computed(() => dayKey(now.value));
 // Stop albo zmiana zadania kończy blok skupienia: stan sprawdzamy po każdej zmianie danych.
 watch(data, () => void refreshFocus());
@@ -274,6 +278,11 @@ onUnmounted(() => {
       <AgentSuggestions
         :tasks="data.tasks"
         :active-task-id="activeTask?.id ?? null"
+        @updated="updated"
+        @error="error = $event"
+      />
+      <JiraMoveBanner
+        :active-session-id="activeSessionId"
         @updated="updated"
         @error="error = $event"
       />

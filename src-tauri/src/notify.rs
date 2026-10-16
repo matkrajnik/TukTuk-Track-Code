@@ -110,6 +110,8 @@ pub const FOCUS_RESUME: &str = "focus-resume";
 pub const WAITING_UNBLOCK: &str = "waiting-unblock";
 /// „Przypomnij jutro” z przypomnienia o blokadzie (id zadania).
 pub const WAITING_REMIND: &str = "waiting-remind";
+/// „Przesuń” z pytania o przesunięcie zgłoszenia w Jirze (id zadania, J1).
+pub const JIRA_MOVE: &str = "jira-move";
 
 /// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
 #[derive(Clone, Debug, PartialEq)]
@@ -170,6 +172,8 @@ pub enum Command {
     WaitingUnblock(i64),
     /// Przypomnij o blokadzie zadania jutro.
     WaitingRemind(i64),
+    /// „Przesuń” zgłoszenie zadania w Jirze; wykonuje `jira_move::activate` (sieć).
+    JiraMove(i64),
     /// Pokaż główne okno z widokiem.
     Open(View),
 }
@@ -193,6 +197,7 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         FOCUS_RESUME => number.map(Command::FocusResume),
         WAITING_UNBLOCK => number.map(Command::WaitingUnblock),
         WAITING_REMIND => number.map(Command::WaitingRemind),
+        JIRA_MOVE => number.map(Command::JiraMove),
         PLAN_TODAY => arg
             .split(',')
             .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
@@ -319,7 +324,8 @@ pub fn perform(
         }
         // Wymagają stanu trybu skupienia: `focus::Focus::perform` (z `activate`).
         // Bez niego tylko pokazujemy listę zadań.
-        Command::FocusBreak(_) | Command::FocusNext(_) => Ok(Outcome {
+        // Przejście w Jirze wymaga sieci: `jira_move::activate` (z `activate`).
+        Command::FocusBreak(_) | Command::FocusNext(_) | Command::JiraMove(_) => Ok(Outcome {
             changed: false,
             navigate: Some(View::tasks()),
         }),
@@ -885,6 +891,10 @@ pub fn setup(app: &tauri::AppHandle) {
 /// Wykonuje polecenie z powiadomienia na `AppHandle`: zmiana danych → `data-changed`,
 /// widok → główne okno na wierzchu i `navigate`, błąd → okno z komunikatem.
 fn activate(app: &tauri::AppHandle, command: Command) {
+    if let Command::JiraMove(task) = command {
+        crate::jira_move::activate(app, task);
+        return;
+    }
     let result = if matches!(command, Command::FocusBreak(_) | Command::FocusNext(_)) {
         crate::focus::activate(app, command)
     } else {

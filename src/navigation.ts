@@ -89,6 +89,12 @@ export const settingsSections = [
       "Czekam na",
       "statusy",
       "Statusy oznaczające „Czekam na” (jeden w wierszu)",
+      "Pozwól aplikacji zmieniać zgłoszenia w Jirze",
+      "Pytaj o przesunięcie zgłoszenia przy starcie pracy",
+      "Docelowy status przy starcie pracy",
+      "In Progress",
+      "przesunięcie",
+      "przejścia",
     ],
   },
   {

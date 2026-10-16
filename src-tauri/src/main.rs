@@ -13,6 +13,7 @@ mod foreground;
 mod holidays;
 mod idle;
 mod jira;
+mod jira_move;
 mod maintenance;
 mod native_msg;
 mod notify;
@@ -324,6 +325,7 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
+            jira_move::setup(app.handle());
             calendar::setup(app.handle());
             let tray_refresher = tray::setup(app)?;
             let widget_waker = widget::setup(app);
@@ -355,6 +357,8 @@ fn main() {
             browser::start(app.handle());
             browser::sync(app.handle(), &settings::current(app.handle()));
             jira::start(app.handle());
+            // Pytanie o przesunięcie zgłoszenia przy starcie pracy (J1).
+            jira_move::start(app.handle());
             calendar::start(app.handle());
             // Główne okno startuje schowane (visible: false w konfiguracji); bez --hidden
             // pokazujemy je od razu, z --hidden (autostart) aplikacja zostaje w trayu.
@@ -457,6 +461,11 @@ fn main() {
             jira::jira_issues,
             jira::jira_start,
             jira::jira_open,
+            jira_move::jira_move_prompts,
+            jira_move::jira_move_dismiss,
+            jira_move::jira_no_ask,
+            jira_move::jira_transitions,
+            jira_move::jira_transition,
             calendar::calendar_status,
             calendar::calendar_connect,
             calendar::calendar_disconnect,

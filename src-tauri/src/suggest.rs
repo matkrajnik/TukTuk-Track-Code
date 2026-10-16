@@ -318,7 +318,7 @@ pub fn setup(app: &tauri::AppHandle) {
     app.manage(State::default());
 }
 
-fn main_hidden(app: &tauri::AppHandle) -> bool {
+pub fn main_hidden(app: &tauri::AppHandle) -> bool {
     app.get_webview_window("main")
         .map(|w| !w.is_visible().unwrap_or(true) || w.is_minimized().unwrap_or(false))
         .unwrap_or(true)

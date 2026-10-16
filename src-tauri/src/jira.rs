@@ -130,12 +130,12 @@ fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
     )
     .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
 }
-fn token(app: &tauri::AppHandle, c: &Config) -> Result<String, String> {
+pub(crate) fn token(app: &tauri::AppHandle, c: &Config) -> Result<String, String> {
     entry(app, c)?
         .get_password()
         .map_err(|_| "Połącz konto Jiry: podaj e-mail i token API.".into())
 }
-fn client() -> Result<Client, String> {
+pub(crate) fn client() -> Result<Client, String> {
     Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
@@ -673,7 +673,7 @@ async fn fetch_assigned(
     Ok(rows)
 }
 
-fn save_statuses<'a>(
+pub(crate) fn save_statuses<'a>(
     tx: &rusqlite::Transaction,
     site: &str,
     rows: impl Iterator<Item = (&'a str, &'a str)>,
@@ -882,6 +882,271 @@ pub fn start(app: &tauri::AppHandle) {
             }
         }
     });
+}
+
+/// Komunikat, gdy główny przełącznik zapisów do Jiry jest wyłączony.
+pub const WRITE_DISABLED: &str =
+    "Zmiany w Jirze są wyłączone. Włączysz je w Ustawienia → Jira („Pozwól aplikacji zmieniać zgłoszenia w Jirze”).";
+/// Limit treści jednego zapisu do Jiry.
+const WRITE_LIMIT: usize = 32 * 1024;
+
+/// Główny przełącznik zapisów (J1, J2): backend odrzuca zapis niezależnie od
+/// interfejsu.
+pub fn ensure_write(s: &crate::settings::AppSettings) -> Result<(), String> {
+    if s.jira_write {
+        Ok(())
+    } else {
+        Err(WRITE_DISABLED.into())
+    }
+}
+
+/// Szczegóły z odpowiedzi błędu Jiry (`errorMessages` i `errors`), najwyżej 300 znaków.
+fn error_details(body: &Value) -> String {
+    let mut parts: Vec<String> = body["errorMessages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|m| m.as_str().map(str::to_string))
+        .collect();
+    if let Some(errors) = body["errors"].as_object() {
+        parts.extend(
+            errors
+                .values()
+                .filter_map(|m| m.as_str().map(str::to_string)),
+        );
+    }
+    parts
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(300)
+        .collect()
+}
+
+/// Polski komunikat dla nieudanego zapisu do Jiry (400/401/403/404 i inne).
+pub fn write_error(status: StatusCode, body: &Value) -> String {
+    let details = error_details(body);
+    let suffix = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" Jira: {details}")
+    };
+    match status {
+        StatusCode::BAD_REQUEST => format!(
+            "Jira odrzuciła zmianę. Przejście może wymagać wypełnienia pól na ekranie w Jirze — zrób je w przeglądarce.{suffix}"
+        ),
+        StatusCode::UNAUTHORIZED => status_error(status),
+        StatusCode::FORBIDDEN => {
+            format!("Brak uprawnień do zmiany tego zgłoszenia w Jirze.{suffix}")
+        }
+        StatusCode::NOT_FOUND => {
+            format!("Nie znaleziono zgłoszenia albo przejścia w Jirze.{suffix}")
+        }
+        StatusCode::CONFLICT => {
+            format!("Zgłoszenie zmieniło się w Jirze w międzyczasie. Odśwież i spróbuj ponownie.{suffix}")
+        }
+        _ => status_error(status),
+    }
+}
+
+/// Wysyła zapis (np. `POST …/transitions`). Ścieżka musi zaczynać się od `/rest/`,
+/// treść ma limit długości. Pusta odpowiedź (204) to `Value::Null`.
+async fn send_write(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    if !path.starts_with("/rest/")
+        || path.len() > 500
+        || path.contains("..")
+        || path.contains(['?', '#', ' '])
+    {
+        return Err("Niepoprawny adres zapisu do Jiry.".into());
+    }
+    let raw = serde_json::to_vec(body).map_err(|e| e.to_string())?;
+    if raw.len() > WRITE_LIMIT {
+        return Err("Zmiana jest zbyt duża dla Jiry.".into());
+    }
+    let response = client
+        .request(method, format!("{}{}", c.site, path))
+        .basic_auth(&c.email, Some(secret))
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(raw)
+        .send()
+        .await
+        .map_err(|_| {
+            "Nie można połączyć się z Jirą. Sprawdź Internet i adres serwera.".to_owned()
+        })?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+    if status.is_success() {
+        Ok(value)
+    } else {
+        Err(write_error(status, &value))
+    }
+}
+
+/// Jedyna ścieżka zapisu do Jiry (J1, później J2): główny przełącznik, połączone
+/// konto, walidacja i polskie komunikaty błędów.
+pub async fn write(
+    app: &tauri::AppHandle,
+    method: reqwest::Method,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    ensure_write(&crate::settings::current(app))?;
+    let c = config(app)?;
+    if c.email.is_empty() {
+        return Err("Połącz konto Jiry, żeby zmieniać zgłoszenia.".into());
+    }
+    let secret = token(app, &c)?;
+    send_write(&client()?, &c, &secret, method, path, body).await
+}
+
+/// Przejście zgłoszenia z `GET /rest/api/3/issue/{klucz}/transitions`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Transition {
+    pub id: String,
+    pub name: String,
+    /// Status docelowy i jego kategoria (`new`, `indeterminate`, `done`).
+    pub to_status: String,
+    pub to_category: String,
+}
+
+/// Identyfikator przejścia: same cyfry, najwyżej 20 znaków.
+pub fn valid_transition_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Odczyt odpowiedzi `transitions`; przejścia z niepoprawnym identyfikatorem są pomijane.
+pub fn parse_transitions(value: &Value) -> Result<Vec<Transition>, String> {
+    let list = value["transitions"]
+        .as_array()
+        .ok_or("Jira nie zwróciła listy przejść.")?;
+    Ok(list
+        .iter()
+        .filter_map(|t| {
+            let id = match &t["id"] {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                _ => return None,
+            };
+            if !valid_transition_id(&id) {
+                return None;
+            }
+            let to = &t["to"];
+            let to_status = to["name"].as_str().unwrap_or("").trim().to_string();
+            let name = t["name"].as_str().unwrap_or("").trim().to_string();
+            Some(Transition {
+                id,
+                name: if name.is_empty() {
+                    to_status.clone()
+                } else {
+                    name
+                },
+                to_status,
+                to_category: to["statusCategory"]["key"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string(),
+            })
+        })
+        .collect())
+}
+
+/// Dostępne przejścia zgłoszenia.
+pub async fn transitions(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    key: &str,
+) -> Result<Vec<Transition>, String> {
+    if !valid_key(key) {
+        return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
+    }
+    let value = get(
+        client,
+        c,
+        secret,
+        &format!("/rest/api/3/issue/{key}/transitions"),
+        &[],
+    )
+    .await?;
+    parse_transitions(&value)
+}
+
+/// Bieżący status zgłoszenia: nazwa i kategoria (`statusCategory.key`).
+pub async fn issue_status(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    key: &str,
+) -> Result<(String, String), String> {
+    if !valid_key(key) {
+        return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
+    }
+    let value = get(
+        client,
+        c,
+        secret,
+        &format!("/rest/api/3/issue/{key}"),
+        &[("fields", "status".to_string())],
+    )
+    .await?;
+    let status = &value["fields"]["status"];
+    let name = status["name"]
+        .as_str()
+        .ok_or("Jira zwróciła niepoprawną odpowiedź.")?;
+    Ok((
+        name.to_string(),
+        status["statusCategory"]["key"]
+            .as_str()
+            .unwrap_or("")
+            .to_string(),
+    ))
+}
+
+/// Zapisuje status jednego zgłoszenia w `jira_issues` (kafelek, propozycje).
+pub fn store_status(app: &tauri::AppHandle, site: &str, key: &str, status: &str) {
+    let state = app.state::<Database>();
+    let Ok(mut db) = state.0.lock() else {
+        return;
+    };
+    let saved = db.transaction().and_then(|tx| {
+        save_statuses(&tx, site, std::iter::once((key, status)))?;
+        tx.commit()
+    });
+    drop(saved);
+}
+
+/// Wykonuje przejście zgłoszenia (`POST …/transitions`) przez wspólną ścieżkę zapisu.
+pub async fn transition(
+    app: &tauri::AppHandle,
+    key: &str,
+    transition_id: &str,
+) -> Result<(), String> {
+    if !valid_key(key) {
+        return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
+    }
+    if !valid_transition_id(transition_id) {
+        return Err("Niepoprawne przejście w Jirze.".into());
+    }
+    write(
+        app,
+        reqwest::Method::POST,
+        &format!("/rest/api/3/issue/{key}/transitions"),
+        &serde_json::json!({"transition": {"id": transition_id}}),
+    )
+    .await
+    .map(|_| ())
 }
 
 #[tauri::command]
@@ -1253,6 +1518,188 @@ mod tests {
             500,
         )
         .is_err());
+    }
+    #[test]
+    fn parses_transitions_with_target_category() {
+        let value = serde_json::json!({"expand":"transitions","transitions":[
+            {"id":"21","name":"Rozpocznij","to":{"name":"In Progress","statusCategory":{"key":"indeterminate"}}},
+            {"id":31,"name":"","to":{"name":"Gotowe","statusCategory":{"key":"done"}}},
+            {"id":"x/../1","name":"Zły","to":{"name":"A"}},
+            {"name":"Bez id"}
+        ]});
+        assert_eq!(
+            parse_transitions(&value).unwrap(),
+            vec![
+                Transition {
+                    id: "21".into(),
+                    name: "Rozpocznij".into(),
+                    to_status: "In Progress".into(),
+                    to_category: "indeterminate".into(),
+                },
+                Transition {
+                    id: "31".into(),
+                    name: "Gotowe".into(),
+                    to_status: "Gotowe".into(),
+                    to_category: "done".into(),
+                },
+            ]
+        );
+        assert!(parse_transitions(&serde_json::json!({"issues":[]})).is_err());
+        assert!(valid_transition_id("123"));
+        assert!(!valid_transition_id(""));
+        assert!(!valid_transition_id("1?x"));
+    }
+    #[test]
+    fn write_errors_are_polish_with_jira_details() {
+        let body = serde_json::json!({"errorMessages":["Brak pola"],"errors":{"resolution":"Resolution is required."}});
+        let e = write_error(StatusCode::BAD_REQUEST, &body);
+        assert!(e.starts_with("Jira odrzuciła zmianę."), "{e}");
+        assert!(e.contains("Brak pola") && e.contains("Resolution is required."));
+        let e = write_error(StatusCode::FORBIDDEN, &Value::Null);
+        assert_eq!(e, "Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
+        assert!(write_error(StatusCode::NOT_FOUND, &Value::Null).starts_with("Nie znaleziono"));
+        assert!(write_error(StatusCode::UNAUTHORIZED, &Value::Null).contains("token API"));
+        // Szczegóły są przycinane.
+        let long = serde_json::json!({"errorMessages":["x".repeat(1000)]});
+        assert!(write_error(StatusCode::BAD_REQUEST, &long).chars().count() < 450);
+    }
+    /// Serwer HTTP na jedno połączenie: zwraca żądanie (nagłówki i treść) i odpowiada
+    /// podanym statusem i treścią.
+    fn serve_once(status: &'static str, body: String) -> (String, std::thread::JoinHandle<String>) {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            loop {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+                let text = String::from_utf8_lossy(&request).to_string();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text
+                        .lines()
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|v| v.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            write!(socket,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (format!("http://{address}"), server)
+    }
+    fn test_config(site: String) -> Config {
+        Config {
+            site,
+            email: "test@example.invalid".into(),
+            ..Config::default()
+        }
+    }
+    #[test]
+    fn transition_post_sends_id_and_maps_errors() {
+        let (site, server) = serve_once("204 No Content", String::new());
+        let c = test_config(site);
+        let ok = tauri::async_runtime::block_on(send_write(
+            &client().unwrap(),
+            &c,
+            "test-only",
+            reqwest::Method::POST,
+            "/rest/api/3/issue/WMS-1/transitions",
+            &serde_json::json!({"transition":{"id":"21"}}),
+        ))
+        .unwrap();
+        assert_eq!(ok, Value::Null);
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /rest/api/3/issue/WMS-1/transitions "));
+        assert!(request.ends_with(r#"{"transition":{"id":"21"}}"#));
+        // 400: przejście z ekranem wymagających pól.
+        let (site, server) = serve_once(
+            "400 Bad Request",
+            serde_json::json!({"errorMessages":[],"errors":{"resolution":"Pole wymagane"}})
+                .to_string(),
+        );
+        let e = tauri::async_runtime::block_on(send_write(
+            &client().unwrap(),
+            &test_config(site),
+            "test-only",
+            reqwest::Method::POST,
+            "/rest/api/3/issue/WMS-1/transitions",
+            &serde_json::json!({"transition":{"id":"21"}}),
+        ))
+        .unwrap_err();
+        assert!(e.starts_with("Jira odrzuciła zmianę.") && e.contains("Pole wymagane"));
+        server.join().unwrap();
+        // 403: brak uprawnień.
+        let (site, server) = serve_once("403 Forbidden", "{}".into());
+        let e = tauri::async_runtime::block_on(send_write(
+            &client().unwrap(),
+            &test_config(site),
+            "test-only",
+            reqwest::Method::POST,
+            "/rest/api/3/issue/WMS-1/transitions",
+            &serde_json::json!({"transition":{"id":"21"}}),
+        ))
+        .unwrap_err();
+        assert_eq!(e, "Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
+        server.join().unwrap();
+        // Ścieżka spoza REST nie wychodzi do sieci.
+        assert!(tauri::async_runtime::block_on(send_write(
+            &client().unwrap(),
+            &c,
+            "test-only",
+            reqwest::Method::POST,
+            "/rest/../x",
+            &Value::Null,
+        ))
+        .is_err());
+    }
+    #[test]
+    fn reads_issue_status_and_transitions() {
+        let (site, server) = serve_once(
+            "200 OK",
+            serde_json::json!({"key":"WMS-1","fields":{"status":{"name":"Do zrobienia","statusCategory":{"key":"new"}}}}).to_string(),
+        );
+        let c = test_config(site);
+        let status =
+            tauri::async_runtime::block_on(issue_status(&client().unwrap(), &c, "t", "WMS-1"))
+                .unwrap();
+        assert_eq!(status, ("Do zrobienia".to_string(), "new".to_string()));
+        assert!(server
+            .join()
+            .unwrap()
+            .starts_with("GET /rest/api/3/issue/WMS-1?fields=status "));
+        let (site, server) = serve_once(
+            "200 OK",
+            serde_json::json!({"transitions":[{"id":"21","name":"Start","to":{"name":"In Progress","statusCategory":{"key":"indeterminate"}}}]}).to_string(),
+        );
+        let list = tauri::async_runtime::block_on(transitions(
+            &client().unwrap(),
+            &test_config(site),
+            "t",
+            "WMS-1",
+        ))
+        .unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].to_status, "In Progress");
+        assert!(server
+            .join()
+            .unwrap()
+            .starts_with("GET /rest/api/3/issue/WMS-1/transitions "));
     }
     #[test]
     fn validates_cloud_address_and_issue_keys() {

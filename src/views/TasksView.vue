@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Plus, Scissors, Search, Square, Timer } from "lucide-vue-next";
 import { countdown, focusAction, useFocus } from "../focus";
 import TaskCard from "../components/TaskCard.vue";
+import { offerAfterDone } from "../jiramove";
 import {
   change,
   duration,
@@ -237,7 +238,11 @@ async function act(
   working.value = true;
   emit("error", "");
   try {
+    const before = props.data.tasks.find((t) => t.id === id);
     emit("updated", await change(action, id, title));
+    // Ukończenie zadania z kluczem Jiry: propozycja przesunięcia (J1).
+    if (action === "toggle" && before && !before.done)
+      void offerAfterDone(before);
     return true;
   } catch (e) {
     emit("error", String(e));

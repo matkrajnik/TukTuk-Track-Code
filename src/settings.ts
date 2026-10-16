@@ -28,6 +28,12 @@ export interface AppSettings {
   notifyEveningEnabled: boolean;
   notifyTarget: boolean;
   jiraAutoImport: boolean;
+  /** Główny przełącznik zapisów do Jiry (J1, J2); wyłączony blokuje też backend. */
+  jiraWrite: boolean;
+  /** Pytaj o przesunięcie zgłoszenia „Do zrobienia” przy starcie pracy. */
+  jiraAskMove: boolean;
+  /** Preferowany status docelowy przy kilku przejściach „w toku”. */
+  jiraMoveStatus: string;
   shortcutQuick: string;
   shortcutToggle: string;
   /** Długość bloku skupienia w minutach (1–240). */
@@ -84,6 +90,9 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyEveningEnabled: true,
   notifyTarget: false,
   jiraAutoImport: true,
+  jiraWrite: true,
+  jiraAskMove: true,
+  jiraMoveStatus: "In Progress",
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
   focusBlockMinutes: 25,
@@ -287,6 +296,9 @@ function applyFields(
   if (statuses.length > 50)
     throw new Error("Za dużo statusów Jiry oznaczających czekanie.");
   s.waitingJiraStatuses = statuses;
+  s.jiraMoveStatus = s.jiraMoveStatus.trim();
+  if (!s.jiraMoveStatus || [...s.jiraMoveStatus].length > 80)
+    throw new Error("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.");
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
   if (s.morningReviewDay !== "" && !validDay(s.morningReviewDay))

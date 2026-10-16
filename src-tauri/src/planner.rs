@@ -30,6 +30,9 @@ pub struct Details {
     pub waiting_dismissed: String,
     /// „Przypomnij jutro” z powiadomienia: dzień kolejnego przypomnienia (`RRRR-MM-DD`).
     pub waiting_remind_day: String,
+    /// „Nie pytaj dla tego zadania” (J1): bez pytania o przesunięcie zgłoszenia
+    /// w Jirze przy starcie pomiaru.
+    pub jira_no_ask: bool,
 }
 
 /// Reguła cyklu w `task_details` (`repeatRule`). Rodzaj:

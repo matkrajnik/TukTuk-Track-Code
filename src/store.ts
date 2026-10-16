@@ -49,6 +49,8 @@ export interface TaskDetails {
   waitingDismissed?: string;
   /** „Przypomnij jutro” z powiadomienia: dzień kolejnego przypomnienia. */
   waitingRemindDay?: string;
+  /** „Nie pytaj dla tego zadania” o przesunięcie zgłoszenia w Jirze (J1). */
+  jiraNoAsk?: boolean;
 }
 const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 export const detailsOf = (task: Task): TaskDetails => ({
@@ -1611,4 +1613,276 @@ export async function browserOpenFolder(): Promise<void> {
   throw new Error(
     "Folder rozszerzenia otwiera się w aplikacji Windows. W repozytorium to katalog browser-extension.",
   );
+}
+
+/** Przejście zgłoszenia Jiry (`jira::Transition`). */
+export interface JiraTransition {
+  id: string;
+  name: string;
+  toStatus: string;
+  /** Kategoria statusu docelowego: `new`, `indeterminate`, `done`. */
+  toCategory: string;
+}
+/** Pytanie o przesunięcie zgłoszenia przy starcie pracy (`jira_move::Prompt`). */
+export interface JiraMovePrompt {
+  taskId: number;
+  key: string;
+  title: string;
+  status: string;
+  url: string;
+  /** Status z ustawień (gdy przejście nie jest wybrane). */
+  target: string;
+  /** Przejścia do statusu „w toku”. */
+  transitions: JiraTransition[];
+  /** Wybrane przejście; `null` = lista do wyboru. */
+  transitionId: string | null;
+}
+/** Nazwa statusu docelowego w pytaniu (`Prompt::target_name`). */
+export const moveTargetName = (p: JiraMovePrompt) =>
+  p.transitions.find((t) => t.id === p.transitionId)?.toStatus || p.target;
+/**
+ * Wybór przejścia jak `jira_move::choose`: przejścia do kategorii
+ * `indeterminate`; jedno wygrywa samo, przy kilku to z nazwą z ustawień (status
+ * docelowy, potem nazwa przejścia), bez dopasowania `null` (lista do wyboru).
+ */
+export function chooseTransition(
+  all: JiraTransition[],
+  preferred: string,
+): { transitions: JiraTransition[]; transitionId: string | null } {
+  const transitions = all.filter((t) => t.toCategory === "indeterminate");
+  const wanted = preferred.trim().toLowerCase();
+  const by = (pick: (t: JiraTransition) => string) =>
+    (wanted &&
+      transitions.find((t) => pick(t).trim().toLowerCase() === wanted)?.id) ||
+    null;
+  const transitionId =
+    transitions.length === 1
+      ? transitions[0].id
+      : transitions.length
+        ? (by((t) => t.toStatus) ?? by((t) => t.name))
+        : null;
+  return { transitions, transitionId };
+}
+/** Komunikat przy wyłączonych zapisach (`jira::WRITE_DISABLED`). */
+export const jiraWriteDisabled =
+  "Zmiany w Jirze są wyłączone. Włączysz je w Ustawienia → Jira („Pozwól aplikacji zmieniać zgłoszenia w Jirze”).";
+export const jiraMoveEvent = "jira-move-prompts";
+/**
+ * Symulowana Jira podglądu: ostatnio widziany pomiar i pytania; status zgłoszenia
+ * to status z kafelka (pusty = „Do zrobienia”). `fail` (400 albo 403) symuluje
+ * odrzucenie przejścia przez Jirę.
+ */
+export const previewJiraKey = "todo-track-preview-jira-v1";
+interface PreviewJira {
+  ready?: boolean;
+  seen?: [number, number] | null;
+  prompts?: JiraMovePrompt[];
+  fail?: number;
+}
+/** Przepływ symulowanej Jiry: z każdego statusu do pozostałych. */
+export const previewWorkflow: readonly JiraTransition[] = Object.freeze([
+  {
+    id: "11",
+    name: "Do zrobienia",
+    toStatus: "Do zrobienia",
+    toCategory: "new",
+  },
+  {
+    id: "21",
+    name: "Rozpocznij",
+    toStatus: "In Progress",
+    toCategory: "indeterminate",
+  },
+  {
+    id: "31",
+    name: "Do code review",
+    toStatus: "Code review",
+    toCategory: "indeterminate",
+  },
+  { id: "41", name: "Zakończ", toStatus: "Gotowe", toCategory: "done" },
+]);
+/** Kategoria statusu w symulowanej Jirze. */
+export function previewStatusCategory(status: string): string {
+  const s = status.trim().toLowerCase();
+  if (["", "do zrobienia", "to do", "open", "backlog", "nowe"].includes(s))
+    return "new";
+  if (["gotowe", "done", "zamknięte", "closed", "resolved"].includes(s))
+    return "done";
+  return "indeterminate";
+}
+const previewTransitionsFor = (status: string) =>
+  previewWorkflow
+    .filter((t) => t.toStatus.toLowerCase() !== status.trim().toLowerCase())
+    .map((t) => ({ ...t }));
+function previewJiraState(): PreviewJira {
+  return previewJson(previewJiraKey) as PreviewJira;
+}
+function savePreviewJira(state: PreviewJira) {
+  // Bez zmian nie zapisujemy: inne okna podglądu (widget) dostają `storage`.
+  const raw = JSON.stringify(state);
+  if (localStorage.getItem(previewJiraKey) !== raw)
+    localStorage.setItem(previewJiraKey, raw);
+}
+/** Ustawienia zapisu do Jiry w podglądzie (wartości domyślne jak w Rust). */
+function previewJiraSettings() {
+  const s = previewJson(previewSettingsKey);
+  return {
+    write: s.jiraWrite !== false,
+    ask: s.jiraAskMove !== false,
+    status:
+      typeof s.jiraMoveStatus === "string" && s.jiraMoveStatus.trim()
+        ? s.jiraMoveStatus.trim()
+        : "In Progress",
+  };
+}
+/**
+ * Odpowiednik wątku `jira_move::tick` i `check`: nowy pomiar innego zadania niż
+ * poprzednio widziany, zadanie z kluczem w kategorii „Do zrobienia” → pytanie.
+ * Pomiar trwający przy pierwszym odczycie nie jest nowym startem.
+ */
+async function previewObserveStart(): Promise<PreviewJira> {
+  const state = previewJiraState();
+  const data = await read();
+  const active = data.sessions.find((s) => s.endedAt === null);
+  const current: [number, number] | null = active
+    ? [active.id, active.taskId]
+    : null;
+  const previous = state.seen ?? null;
+  let fresh: number | null = null;
+  if (!state.ready) state.ready = true;
+  else if (
+    current &&
+    !(previous && (previous[0] === current[0] || previous[1] === current[1]))
+  )
+    fresh = current[1];
+  state.seen = current;
+  const task = data.tasks.find((t) => t.id === fresh);
+  const settings = previewJiraSettings();
+  if (
+    task?.jiraKey &&
+    settings.write &&
+    settings.ask &&
+    !task.details?.jiraNoAsk
+  ) {
+    // Status odczytany z Jiry trafia na kafelek (`store_status`).
+    const status = task.jiraStatus || "Do zrobienia";
+    if (task.jiraStatus !== status) {
+      task.jiraStatus = status;
+      localStorage.setItem(key, JSON.stringify(data));
+    }
+    if (previewStatusCategory(status) === "new") {
+      const choice = chooseTransition(
+        previewTransitionsFor(status),
+        settings.status,
+      );
+      if (choice.transitions.length)
+        state.prompts = [
+          {
+            taskId: task.id,
+            key: task.jiraKey,
+            title: task.title,
+            status,
+            url: task.jiraUrl ?? `${previewJiraSite}/browse/${task.jiraKey}`,
+            target: settings.status,
+            ...choice,
+          },
+        ];
+    }
+  }
+  savePreviewJira(state);
+  return state;
+}
+function notifyPreviewJira() {
+  window.dispatchEvent(new Event(jiraMoveEvent));
+}
+/** Pytania o przesunięcie zgłoszenia (`jira_move_prompts`). */
+export async function readMovePrompts(): Promise<JiraMovePrompt[]> {
+  if (desktop) return invoke("jira_move_prompts");
+  return (await previewObserveStart()).prompts ?? [];
+}
+/** „Nie teraz” (`jira_move_dismiss`): pytanie znika do kolejnego startu zadania. */
+export async function dismissMovePrompt(
+  taskId: number,
+): Promise<JiraMovePrompt[]> {
+  if (desktop) return invoke("jira_move_dismiss", { taskId });
+  const state = previewJiraState();
+  state.prompts = (state.prompts ?? []).filter((p) => p.taskId !== taskId);
+  savePreviewJira(state);
+  notifyPreviewJira();
+  return state.prompts;
+}
+/** „Nie pytaj dla tego zadania” i „Pytaj znowu” (`jira_no_ask`). */
+export async function setJiraNoAsk(
+  taskId: number,
+  noAsk: boolean,
+): Promise<Snapshot> {
+  if (desktop) return invoke("jira_no_ask", { taskId, noAsk });
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error("Nie znaleziono zadania.");
+  task.details = { ...detailsOf(task), jiraNoAsk: noAsk };
+  localStorage.setItem(key, JSON.stringify(data));
+  if (noAsk) await dismissMovePrompt(taskId);
+  return data;
+}
+/** Zadanie z kluczem dla zapisu w podglądzie (`jira_move::target`). */
+async function previewJiraTask(taskId: number) {
+  if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === taskId);
+  if (!task?.jiraKey)
+    throw new Error("To zadanie nie jest powiązane ze zgłoszeniem Jiry.");
+  return { data, task };
+}
+/** Dostępne przejścia zgłoszenia zadania (`jira_transitions`). */
+export async function jiraTransitions(
+  taskId: number,
+): Promise<JiraTransition[]> {
+  if (desktop) return invoke("jira_transitions", { taskId });
+  const { task } = await previewJiraTask(taskId);
+  return previewTransitionsFor(task.jiraStatus || "Do zrobienia");
+}
+/**
+ * Przejście zgłoszenia (`jira_transition`): status na kafelku po odświeżeniu,
+ * pytanie zadania znika. Błąd symulowanej Jiry jak `jira::write_error`.
+ */
+export async function jiraTransition(
+  taskId: number,
+  transitionId: string,
+): Promise<Snapshot> {
+  if (desktop) return invoke("jira_transition", { taskId, transitionId });
+  const { data, task } = await previewJiraTask(taskId);
+  const state = previewJiraState();
+  if (state.fail === 403)
+    throw new Error("Brak uprawnień do zmiany tego zgłoszenia w Jirze.");
+  if (state.fail === 400)
+    throw new Error(
+      "Jira odrzuciła zmianę. Przejście może wymagać wypełnienia pól na ekranie w Jirze — zrób je w przeglądarce.",
+    );
+  const transition = previewTransitionsFor(
+    task.jiraStatus || "Do zrobienia",
+  ).find((t) => t.id === transitionId);
+  if (!transition)
+    throw new Error("Nie znaleziono zgłoszenia albo przejścia w Jirze.");
+  task.jiraStatus = transition.toStatus;
+  localStorage.setItem(key, JSON.stringify(data));
+  state.prompts = (state.prompts ?? []).filter((p) => p.taskId !== taskId);
+  savePreviewJira(state);
+  notifyPreviewJira();
+  return data;
+}
+/** Nasłuch zmian pytań (zdarzenie Rust, w podglądzie zdarzenie okna i `storage`). */
+export async function onMovePromptsChanged(
+  handler: () => void,
+): Promise<() => void> {
+  if (desktop) return listen(jiraMoveEvent, handler);
+  const storage = (e: StorageEvent) => {
+    if (e.key === previewJiraKey || e.key === key) handler();
+  };
+  window.addEventListener(jiraMoveEvent, handler);
+  window.addEventListener("storage", storage);
+  return () => {
+    window.removeEventListener(jiraMoveEvent, handler);
+    window.removeEventListener("storage", storage);
+  };
 }

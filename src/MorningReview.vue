@@ -10,6 +10,7 @@ import {
   type Task,
 } from "./store";
 import { writeSettings } from "./settings";
+import { offerAfterDone } from "./jiramove";
 import { dayBounds, dayKey, dayText } from "./time";
 import { plannedTasks } from "./dayplan";
 import { dayCapacity } from "./capacity";
@@ -136,7 +137,12 @@ async function run(action: () => Promise<Snapshot | void>, done = "") {
 }
 const toDay = (task: Task, day: string) =>
   run(() => planTask(task.id, day, day ? nextOrder(props.data.tasks, day) : 0));
-const finish = (task: Task) => run(() => change("toggle", task.id));
+const finish = (task: Task) =>
+  run(async () => {
+    const data = await change("toggle", task.id);
+    if (!task.done) void offerAfterDone(task);
+    return data;
+  });
 const allToday = () =>
   run(
     () =>

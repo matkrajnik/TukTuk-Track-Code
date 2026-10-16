@@ -323,6 +323,9 @@ function install(init: {
           };
         case "agents_status":
           return [];
+        // Pytania o przesunięcie w Jirze (J1) pokrywa podgląd ze store.ts.
+        case "jira_move_prompts":
+          return [];
         case "agent_suggestions":
           return clone(suggestions);
         case "agent_dismiss": {

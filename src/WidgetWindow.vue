@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  ArrowRightCircle,
   Bot,
   Coffee,
   GripVertical,
@@ -28,10 +29,15 @@ import {
   type Suggestion,
 } from "./agents";
 import QuickSwitch from "./QuickSwitch.vue";
+import { readVisibleMovePrompts } from "./jiramove";
 import {
   desktop,
   dismissWidget,
   duration,
+  jiraTransition,
+  moveTargetName,
+  onMovePromptsChanged,
+  type JiraMovePrompt,
   openMainWindow,
   read,
   resumeCandidate,
@@ -100,6 +106,37 @@ async function useProposal() {
     busy.value = false;
   }
 }
+/** Pytanie o przesunięcie zgłoszenia w Jirze przy starcie pracy (J1). */
+const movePrompts = ref<JiraMovePrompt[]>([]);
+const moveLine = computed(() =>
+  movePrompts.value.length
+    ? `Jira: przesunąć ${movePrompts.value[0].key} do „${moveTargetName(movePrompts.value[0])}”?`
+    : "",
+);
+async function loadMovePrompts() {
+  try {
+    movePrompts.value = await readVisibleMovePrompts();
+  } catch {
+    movePrompts.value = [];
+  }
+}
+/** „Przesuń” z widgetu przy wybranym przejściu; inaczej główne okno z banerem. */
+async function useMovePrompt() {
+  const p = movePrompts.value[0];
+  if (!p?.transitionId) return showMain();
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    data.value = await jiraTransition(p.taskId, p.transitionId);
+    showFeedback(`Jira: ${p.key} → ${moveTargetName(p)}`);
+    await loadMovePrompts();
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
 /** Tryb skupienia: odliczanie bloku zamiast zegara pomiaru, przerwa i pytania. */
 const focus = useFocus();
 const hhmm = (ms: number) =>
@@ -136,6 +173,7 @@ const subline = computed(
     feedback.value ||
     focusLine.value ||
     proposalLine.value ||
+    moveLine.value ||
     (activeTask.value
       ? activeTask.value.details?.project || "Pomiar trwa"
       : resume.value
@@ -157,6 +195,7 @@ async function refresh() {
     now.value = Date.now();
     error.value = "";
     void refreshFocus();
+    void loadMovePrompts();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
   }
@@ -250,6 +289,9 @@ onMounted(async () => {
     unsubscribers.push(
       await onSuggestionsChanged(() => void loadSuggestions()),
     );
+    unsubscribers.push(
+      await onMovePromptsChanged(() => void loadMovePrompts()),
+    );
   } catch {}
   await refresh();
   await loadSuggestions();
@@ -284,7 +326,8 @@ onUnmounted(() => {
       <small
         :class="{
           'widget-error': !!error,
-          'widget-suggest': !error && !feedback && !!proposalLine,
+          'widget-suggest':
+            !error && !feedback && !!(proposalLine || moveLine),
         }"
         role="status"
         >{{ subline }}</small
@@ -303,6 +346,20 @@ onUnmounted(() => {
       @click="useProposal"
     >
       <Bot :size="16" />
+    </button>
+    <button
+      v-else-if="movePrompts.length"
+      class="icon-button widget-suggest"
+      :aria-label="
+        movePrompts[0].transitionId
+          ? `Przesuń ${movePrompts[0].key} do ${moveTargetName(movePrompts[0])}`
+          : 'Pokaż pytanie o przesunięcie w Jirze'
+      "
+      :title="moveLine"
+      :disabled="busy"
+      @click="useMovePrompt"
+    >
+      <ArrowRightCircle :size="16" />
     </button>
     <template v-if="focus.ended">
       <button
