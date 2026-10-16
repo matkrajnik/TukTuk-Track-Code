@@ -245,3 +245,15 @@ input[type="checkbox"] {
   accent-color: var(--accent);
   flex-shrink: 0;
 }
+/* Tekst tylko dla czytników ekranu (np. komunikaty w regionie na żywo). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

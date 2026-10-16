@@ -1293,6 +1293,11 @@ html.widget-root body {
   gap: 8px;
   overflow-x: auto;
   padding-bottom: 8px;
+  /* W wąskim oknie kolumny przewijają się do pełnej kolumny, a nie urywają. */
+  scroll-snap-type: x proximity;
+}
+.week-board > * {
+  scroll-snap-align: start;
 }
 .week-column {
   display: flex;

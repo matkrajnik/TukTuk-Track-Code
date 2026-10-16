@@ -330,12 +330,20 @@ function appendOrder(task: Task, day: string): number {
  * `focus`: po przeniesieniu z menu karta trafia do innej kolumny (nowa
  * instancja komponentu), więc fokus wraca na jej przycisk „Przenieś na…”.
  */
+/**
+ * Komunikat dla czytnika ekranu po przeniesieniu karty (Atlassian: ogłoszenie
+ * w regionie na żywo, skąd i dokąd; WCAG 4.1.3).
+ */
+const moved = ref("");
+const columnName = (day: string) => (day ? dayText(day) : "Do zaplanowania");
 async function moveTo(task: Task, day: string, focus = false) {
-  if ((task.details?.plannedDay ?? "") === day || busy.value) return;
+  const from = task.details?.plannedDay ?? "";
+  if (from === day || busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     emit("updated", await planTask(task.id, day, appendOrder(task, day)));
+    moved.value = `„${task.title}” przeniesione z: ${columnName(from)} na: ${columnName(day)}.`;
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -407,6 +415,7 @@ function columnProps(id: string, lists: string[], day: string) {
 
 <template>
   <section class="week-board-wrap" aria-label="Tablica tygodnia">
+    <p v-if="moved" class="sr-only" role="status">{{ moved }}</p>
     <div class="week-board-head">
       <p class="hint">
         {{ dayText(weekStart) }} — {{ dayText(weekEnd) }} · Przeciągnij kartę za uchwyt ⋮⋮ do innego
