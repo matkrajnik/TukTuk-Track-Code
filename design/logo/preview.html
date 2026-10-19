@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Todo Track – podgląd logo</title>
+<style>
+  :root { font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif; color: #1f2433; background: #f5f6f9; }
+  body { margin: 0; padding: 24px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  p { margin: 0 0 12px; color: #5b6375; font-size: 13px; max-width: 80ch; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .panel { border-radius: 8px; padding: 16px; display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+  .light { background: #f5f6f9; border: 1px solid #d9dde7; color: #1f2433; }
+  .dark { background: #111318; border: 1px solid #303542; color: #e6e9f0; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; opacity: .8; }
+  img, svg { display: block; }
+  .taskbar { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 14px; border-radius: 8px; font-size: 12px; }
+  .taskbar.light { background: #eef0f4; color: #1f2433; }
+  .taskbar.dark { background: #202228; color: #ffffff; }
+  .tray { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+  .tray img, .tray svg { width: 16px; height: 16px; }
+  .tray .big { width: 32px; height: 32px; }
+  .variants { display: grid; gap: 28px; }
+  .label { font-weight: 600; font-size: 14px; margin-bottom: 6px; }
+  .label span { font-weight: 400; color: #5b6375; }
+  code { font-family: Consolas, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Todo Track – nowe logo, podgląd wariantów</h1>
+<p>Każdy wariant w 16, 32, 64 i 256 px na jasnym i ciemnym tle (pasek zadań, tray, instalator). Przeglądarka skaluje SVG
+nieco inaczej niż <code>tauri icon</code> (resvg); wierny obraz klatek 16 i 32 px z gotowego ICO daje skrypt
+<code>preview-ico.ps1</code>. Pliki: <code>design/logo/*.svg</code>.</p>
+
+<div class="variants" id="variants"></div>
+
+<h2>Tray (16 px) – wariant monochromatyczny z kropką pomiaru</h2>
+<p>Sylwetka kiwi w jednym kolorze (<code>kiwi-mono.svg</code>, <code>kiwi-mono-active.svg</code>, kolor z <code>currentColor</code>),
+jak ikony systemowe Windows 11: czarna na jasnym pasku, biała na ciemnym. Obok ta sama sylwetka w 32 px i pełnokolorowe kafelki dla porównania.</p>
+<div class="row">
+  <div class="taskbar light">Pasek zadań (jasny)<div class="tray" id="tray-light"></div></div>
+  <div class="taskbar dark">Pasek zadań (ciemny)<div class="tray" id="tray-dark"></div></div>
+</div>
+
+<!-- Kopie sylwetki mono wstawione inline, żeby podgląd działał także z file:// (bez fetch). -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="kiwi-mono" viewBox="0 0 512 512">
+    <g transform="translate(-26 -44) scale(1.04)" transform-origin="256 256">
+      <path d="M198 398 194 452h42 M262 400l6 52h42" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M350 190 484 314 Q494 326 480 332 L322 254 Z" fill="currentColor"/>
+      <path fill="currentColor" fill-rule="evenodd" d="M80 290 C80 200 150 140 250 140 C302 140 344 162 360 210 C366 260 330 412 230 412 C140 412 80 370 80 290 Z M316 188a12 12 0 1 0 0.01 0Z"/>
+    </g>
+  </symbol>
+  <symbol id="kiwi-mono-active" viewBox="0 0 512 512">
+    <use href="#kiwi-mono"/>
+    <circle cx="400" cy="400" r="112" fill="#e5484d" stroke="#f4f1e6" stroke-width="22"/>
+  </symbol>
+</svg>
+
+<script>
+const variants = [
+  { file: "kiwi-a.svg", name: "A · Kiwi", note: "granatowy kafelek, kremowa sylwetka, pomarańczowy dziób (rekomendowany)" },
+  { file: "kiwi-b.svg", name: "B · Kiwi ze znacznikiem", note: "zielony kafelek (ciągłość z obecną ikoną), ptaszek wycięty w tułowiu" },
+  { file: "tukan-c.svg", name: "C · Tukan", note: "jasnoniebieski kafelek, granatowy tułów, pomarańczowy dziób" },
+];
+const sizes = [16, 32, 64, 256];
+const root = document.getElementById("variants");
+for (const v of variants) {
+  const box = document.createElement("div");
+  box.innerHTML = `<div class="label">${v.name} <span>— ${v.note} · <code>${v.file}</code></span></div>`;
+  const row = document.createElement("div"); row.className = "row";
+  for (const theme of ["light", "dark"]) {
+    const panel = document.createElement("div"); panel.className = "panel " + theme;
+    for (const s of sizes) {
+      const cell = document.createElement("div"); cell.className = "cell";
+      cell.innerHTML = `<img src="${v.file}" width="${s}" height="${s}" alt=""><span>${s}</span>`;
+      panel.appendChild(cell);
+    }
+    row.appendChild(panel);
+  }
+  box.appendChild(row); root.appendChild(box);
+}
+for (const id of ["tray-light", "tray-dark"]) {
+  const tray = document.getElementById(id);
+  let html = "";
+  for (const sym of ["kiwi-mono", "kiwi-mono-active"]) {
+    html += `<svg><use href="#${sym}"/></svg><svg class="big"><use href="#${sym}"/></svg>`;
+  }
+  for (const v of variants) html += `<img src="${v.file}" alt="">`;
+  tray.innerHTML = html;
+}
+</script>
+</body>
+</html>
