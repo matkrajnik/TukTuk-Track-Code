@@ -1,4 +1,14 @@
-# Todo Track — stan po 1.7.0
+# Todo Track — stan po 1.7.1
+
+## Stan po 1.7.1 (19 października 2026)
+
+Gałąź `release/1.0`, lokalnie, bez pusha. 1.7.1 dodaje przypięte zadania („w toku”): „Przypnij do widgetu” w kafelku (najwyżej 3 otwarte, `pinnedAt` w `task_details`, komenda `set_pinned`), drugi rząd przycisków w mini-widgecie (okno 320×96, uprawnienie `core:window:allow-set-size`) i pozycje w menu traya (`tray::read_pins`, `set_pins`). Instalator `releases/Todo Track_1.7.1_x64-setup.exe` (nie instalowany), lokalny tag `v1.7.1` (niewypchnięty).
+
+Do ręcznego sprawdzenia po instalacji:
+- okno widgetu rośnie do 96 px po przypięciu i wraca do 64 px po odpięciu ostatniego; pozycja okna zostaje;
+- menu traya wymienia pozycje po przypięciu, odpięciu, ukończeniu i starcie innego zadania (odświeżenie do 5 s), klik startuje zadanie i pokazuje „Start: …” w dymku i widgecie.
+
+Gałąź `claude/hungry-pare-c0cad4` (7 commitów UX, `UX_AUDIT.md`) nie weszła do 1.7.1; scala się z `release/1.0` bez konfliktów, ale po scaleniu trzeba uruchomić pełne testy.
 
 ## Stan po 1.7.0 (16 października 2026)
 
