@@ -8,6 +8,8 @@ import {
   ChevronDown,
   ExternalLink,
   Pencil,
+  Pin,
+  PinOff,
   Play,
   Square,
   Trash2,
@@ -25,6 +27,7 @@ import {
   jiraTransitions,
   saveTemplate,
   setJiraNoAsk,
+  setPinned,
   setWaiting,
   templateFromTask,
   type JiraTransition,
@@ -129,6 +132,21 @@ async function changeWaiting(change: WaitingChange) {
     emit("error", String(e instanceof Error ? e.message : e));
   } finally {
     waitingBusy.value = false;
+  }
+}
+/** Przypięcie do widgetu („w toku”): przyciski przełączania jednym kliknięciem. */
+const pinned = computed(() => (props.task.details?.pinnedAt ?? 0) > 0);
+const pinBusy = ref(false);
+async function togglePin() {
+  if (pinBusy.value) return;
+  pinBusy.value = true;
+  emit("error", "");
+  try {
+    emit("updated", await setPinned(props.task.id, !pinned.value));
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    pinBusy.value = false;
   }
 }
 /** „Przesuń w Jirze…”: lista przejść zgłoszenia (J1); nic nie zmienia się samo. */
@@ -353,6 +371,22 @@ async function openJira(url: string) {
           <ArrowRightCircle :size="14" />Przesuń w Jirze…
         </button>
         <span class="details-actions-spacer" />
+        <button
+          v-if="!task.done"
+          class="action-button"
+          :aria-label="
+            (pinned ? 'Odepnij od widgetu: ' : 'Przypnij do widgetu: ') +
+            task.title
+          "
+          :aria-pressed="pinned"
+          title="Przypięte zadania („w toku”) są w widgecie przyciskami przełączania"
+          :disabled="busy || pinBusy"
+          @click="togglePin"
+        >
+          <PinOff v-if="pinned" :size="14" /><Pin v-else :size="14" />{{
+            pinned ? "Odepnij" : "Przypnij do widgetu"
+          }}
+        </button>
         <button
           class="action-button"
           :aria-label="'Zapisz jako szablon: ' + task.title"

@@ -954,6 +954,49 @@ html.widget-root body {
 .widget-toggle {
   color: var(--accent);
 }
+/* Przypięte zadania: drugi rząd, okno 320×96. */
+.widget-card.has-pins {
+  flex-wrap: wrap;
+  align-content: center;
+  row-gap: 0;
+}
+.widget-card.has-pins .widget-grip {
+  align-self: center;
+}
+.widget-pins {
+  display: flex;
+  flex-basis: 100%;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 0 6px 22px;
+}
+.widget-pin {
+  flex: 1 1 0;
+  min-width: 0;
+  display: block;
+  height: 26px;
+  padding: 0 8px;
+  line-height: 24px;
+  text-align: center;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--fs-xs);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+}
+.widget-pin:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.widget-pin.current {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: 600;
+  cursor: default;
+}
 .widget-hidden-note {
   padding: 12px;
   font-size: var(--fs-sm);

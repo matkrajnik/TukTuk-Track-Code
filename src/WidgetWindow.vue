@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   ArrowRightCircle,
@@ -33,12 +34,14 @@ import { readVisibleMovePrompts } from "./jiramove";
 import {
   desktop,
   dismissWidget,
+  change,
   duration,
   jiraTransition,
   moveTargetName,
   onMovePromptsChanged,
   type JiraMovePrompt,
   openMainWindow,
+  pinnedTasks,
   read,
   resumeCandidate,
   toggleMeasurement,
@@ -62,6 +65,34 @@ const activeTask = computed(() =>
 );
 const resume = computed(() =>
   active.value ? undefined : resumeCandidate(data.value),
+);
+/** Przypięte zadania („w toku”): przełączanie jednym kliknięciem. */
+const pins = computed(() => pinnedTasks(data.value));
+const pinLabel = (t: { title: string; jiraKey?: string | null }) =>
+  t.jiraKey || t.title;
+async function switchToPin(id: number, title: string) {
+  if (busy.value || id === active.value?.taskId) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    data.value = await change("start", id);
+    showFeedback(`Start: ${title}`);
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
+/** Okno 320×64, z rzędem przypiętych 320×96 (jak `.widget-card.has-pins`). */
+watch(
+  () => pins.value.length > 0,
+  (hasPins) => {
+    if (!desktop) return;
+    getCurrentWindow()
+      .setSize(new LogicalSize(320, hasPins ? 96 : 64))
+      .catch((e) => (error.value = String(e)));
+  },
+  { immediate: true },
 );
 /** Propozycje przełączenia z pracy agentów AI (bez bieżącego zadania). */
 const suggestions = ref<Suggestion[]>([]);
@@ -311,7 +342,7 @@ onUnmounted(() => {
     v-if="!hidden"
     id="widget"
     class="widget-card"
-    :class="{ running: !!active }"
+    :class="{ running: !!active, 'has-pins': pins.length > 0 }"
     aria-label="Mini-widget"
     data-tauri-drag-region
   >
@@ -447,6 +478,30 @@ onUnmounted(() => {
     >
       <X :size="15" />
     </button>
+    <div
+      v-if="pins.length"
+      class="widget-pins"
+      role="group"
+      aria-label="Przypięte zadania"
+    >
+      <button
+        v-for="t in pins"
+        :key="t.id"
+        class="widget-pin"
+        :class="{ current: t.id === active?.taskId }"
+        :aria-pressed="t.id === active?.taskId"
+        :aria-label="
+          t.id === active?.taskId
+            ? `Mierzone: ${t.title}`
+            : `Przełącz na: ${t.title}`
+        "
+        :title="t.title"
+        :disabled="busy"
+        @click="switchToPin(t.id, t.title)"
+      >
+        {{ pinLabel(t) }}
+      </button>
+    </div>
   </section>
   <p v-else class="widget-hidden-note">
     Mini-widget schowany do końca sesji.

@@ -218,6 +218,21 @@ fn set_waiting(
     focus::sync(&app);
     Ok(result)
 }
+/// Przypięcie zadania do widgetu („w toku”) i odpięcie.
+#[tauri::command]
+fn set_pinned(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    id: i64,
+    pinned: bool,
+) -> Result<db::Snapshot, String> {
+    let result = {
+        let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+        planner::set_pinned(&mut connection, id, pinned, db::now())?
+    };
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
 /// Szybkie dodawanie ze składnią (pole „Nowe zadanie” i szybkie przełączanie).
 #[tauri::command]
 fn quick_add(
@@ -414,6 +429,7 @@ fn main() {
             edit_session,
             split_session,
             save_details,
+            set_pinned,
             set_waiting,
             add_session,
             quick_add,

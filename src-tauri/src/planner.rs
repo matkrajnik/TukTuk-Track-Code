@@ -33,6 +33,9 @@ pub struct Details {
     /// „Nie pytaj dla tego zadania” (J1): bez pytania o przesunięcie zgłoszenia
     /// w Jirze przy starcie pomiaru.
     pub jira_no_ask: bool,
+    /// Przypięcie do widgetu („w toku”): chwila przypięcia (Unix ms, kolejność
+    /// przycisków), 0 = nieprzypięte.
+    pub pinned_at: i64,
 }
 
 /// Reguła cyklu w `task_details` (`repeatRule`). Rodzaj:
@@ -462,6 +465,64 @@ pub fn set_waiting(
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Najwięcej przypiętych otwartych zadań (przyciski w widgecie).
+pub const MAX_PINNED: usize = 3;
+
+/// Przypina zadanie do widgetu albo je odpina. Zmienia tylko `pinnedAt` w JSON,
+/// jak `set_waiting`. Limit liczy otwarte zadania (nieukończone, niezarchiwizowane,
+/// nie w koszu): ukończone przypięte zadanie znika z widgetu i nie zajmuje miejsca.
+pub fn set_pinned(
+    db: &mut Connection,
+    id: i64,
+    pinned: bool,
+    now: i64,
+) -> Result<Snapshot, String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let open = "SELECT t.id FROM tasks t LEFT JOIN task_lifecycle l ON l.task_id=t.id WHERE t.done=0 AND COALESCE(l.archived,0)=0 AND l.deleted_at IS NULL";
+    if pinned {
+        let is_open: bool = tx
+            .query_row(&format!("SELECT EXISTS({open} AND t.id=?1)"), [id], |r| {
+                r.get(0)
+            })
+            .map_err(|e| e.to_string())?;
+        if !is_open {
+            return Err("Przypiąć można tylko otwarte zadanie.".into());
+        }
+        let others: i64 = tx
+            .query_row(
+                &format!("SELECT COUNT(*) FROM task_details WHERE task_id<>?1 AND COALESCE(json_extract(json,'$.pinnedAt'),0)>0 AND task_id IN ({open})"),
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if others as usize >= MAX_PINNED {
+            return Err(format!(
+                "Przypiąć można najwyżej {MAX_PINNED} zadania. Odepnij jedno z nich."
+            ));
+        }
+    } else {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1)",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("Nie znaleziono zadania.".into());
+        }
+    }
+    let at = if pinned { now.max(1) } else { 0 };
+    tx.execute(
+        "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('pinnedAt',?2))
+         ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.pinnedAt',?2)",
+        params![id, at],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 pub fn add_session(
     db: &mut Connection,
     task_id: i64,
@@ -793,6 +854,41 @@ mod tests {
             .find(|t| t.id == id)
             .unwrap()
             .details
+    }
+
+    #[test]
+    fn set_pinned_limits_open_tasks_and_keeps_other_details() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["A", "B", "C", "D", "E"] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        save(
+            &mut db,
+            1,
+            Details {
+                project: "WMS".into(),
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        for id in 1..=3 {
+            set_pinned(&mut db, id, true, 1_000 + id).unwrap();
+        }
+        let first = details_of(&db, 1);
+        assert_eq!((first.pinned_at, first.project.as_str()), (1_001, "WMS"));
+        let err = set_pinned(&mut db, 4, true, 2_000).err().unwrap();
+        assert!(err.contains("najwyżej 3"), "{err}");
+        // Ponowne przypięcie przypiętego nie liczy się do limitu.
+        set_pinned(&mut db, 3, true, 2_000).unwrap();
+        // Ukończone przypięte zadanie zwalnia miejsce i nie da się go przypiąć.
+        db::change(&mut db, "toggle", Some(2), None, 3_000).unwrap();
+        set_pinned(&mut db, 4, true, 3_000).unwrap();
+        assert!(set_pinned(&mut db, 2, true, 3_000).is_err());
+        set_pinned(&mut db, 1, false, 4_000).unwrap();
+        assert_eq!(details_of(&db, 1).pinned_at, 0);
+        assert_eq!(details_of(&db, 1).project, "WMS");
+        assert!(set_pinned(&mut db, 99, false, 4_000).is_err());
     }
 
     #[test]

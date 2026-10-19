@@ -115,6 +115,56 @@ pub fn menu_label(active: Option<&str>) -> String {
     }
 }
 
+/// Przypięte zadanie („w toku”) jako pozycja menu: przełączenie jednym kliknięciem.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pin {
+    pub task_id: i64,
+    pub title: String,
+    pub jira_key: Option<String>,
+    /// Zadanie jest teraz mierzone (pozycja nieaktywna).
+    pub current: bool,
+}
+
+/// „▶ WMS-12 · Poprawka logowania” dla mierzonego, „WMS-12 · …” dla pozostałych;
+/// `&` podwojone jak w `menu_label`.
+pub fn pin_label(pin: &Pin) -> String {
+    let title = one_line(&pin.title);
+    let text = match &pin.jira_key {
+        Some(key) => format!("{key} · {title}"),
+        None => title,
+    };
+    let text = truncate(&text, MENU_TITLE_LIMIT).replace('&', "&&");
+    if pin.current {
+        format!("▶ {text}")
+    } else {
+        text
+    }
+}
+
+/// Przypięte otwarte zadania w kolejności przypięcia (`pinnedTasks` w widgecie).
+pub fn read_pins(db: &Connection) -> rusqlite::Result<Vec<Pin>> {
+    db.prepare(
+        "SELECT t.id, t.title, j.issue_key,
+                EXISTS(SELECT 1 FROM sessions s WHERE s.task_id=t.id AND s.ended_at IS NULL)
+         FROM tasks t JOIN task_details d ON d.task_id=t.id
+         LEFT JOIN jira_tasks j ON j.task_id=t.id
+         LEFT JOIN task_lifecycle l ON l.task_id=t.id
+         WHERE t.done=0 AND COALESCE(l.archived,0)=0 AND l.deleted_at IS NULL
+           AND COALESCE(json_extract(d.json,'$.pinnedAt'),0)>0
+         ORDER BY json_extract(d.json,'$.pinnedAt'), t.id
+         LIMIT ?1",
+    )?
+    .query_map([crate::planner::MAX_PINNED as i64], |r| {
+        Ok(Pin {
+            task_id: r.get(0)?,
+            title: r.get(1)?,
+            jira_key: r.get(2)?,
+            current: r.get(3)?,
+        })
+    })?
+    .collect()
+}
+
 /// Czyta stan traya z bazy: aktywny pomiar, suma dnia (SQL, bez snapshotu) i cel.
 pub fn read_status(
     db: &Connection,
@@ -140,8 +190,14 @@ pub fn read_status(
     })
 }
 
+/// Pozycja pierwszej przypiętej pozycji w menu (po „Mierzone…” i separatorze).
+const PINS_AT: usize = 2;
+
 struct TrayState {
     current: MenuItem<Wry>,
+    menu: Menu<Wry>,
+    /// Liczba pozycji wstawionych dla przypiętych (z separatorem za nimi).
+    pin_items: Mutex<usize>,
     idle_icon: Option<Image<'static>>,
     /// Potwierdzenie Start/Stop ze skrótu i chwila jego pokazania.
     feedback: Mutex<Option<(String, Instant)>>,
@@ -194,6 +250,66 @@ fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
     }
 }
 
+/// Klik w przypięte zadanie: poprzedni pomiar staje, startuje wybrane (jak `mutate`).
+fn start_pinned(app: &tauri::AppHandle, task_id: i64) {
+    let state = app.state::<Database>();
+    let result = state
+        .0
+        .lock()
+        .map_err(|e| e.to_string())
+        .and_then(|mut db| {
+            db::change(&mut db, "start", Some(task_id), None, db::now()).map(|s| {
+                s.tasks
+                    .into_iter()
+                    .find(|t| t.id == task_id)
+                    .map(|t| t.title)
+                    .unwrap_or_default()
+            })
+        });
+    match result {
+        Ok(title) => {
+            reminder::reset(app);
+            let _ = app.emit("data-changed", ());
+            let text = format!("Start: {title}");
+            show_feedback(app, &text);
+            let _ = app.emit("toggle-feedback", text);
+        }
+        Err(e) => {
+            crate::show(app);
+            let _ = app.emit("storage-error", e);
+        }
+    }
+}
+
+/// Wymienia pozycje przypiętych zadań w menu (z separatorem za nimi, gdy są).
+fn set_pins(app: &tauri::AppHandle, state: &TrayState, pins: &[Pin]) -> tauri::Result<()> {
+    let Ok(mut count) = state.pin_items.lock() else {
+        return Ok(());
+    };
+    for _ in 0..*count {
+        state.menu.remove_at(PINS_AT)?;
+    }
+    *count = 0;
+    for (i, pin) in pins.iter().enumerate() {
+        let item = MenuItem::with_id(
+            app,
+            format!("pin:{}", pin.task_id),
+            pin_label(pin),
+            !pin.current,
+            None::<&str>,
+        )?;
+        state.menu.insert(&item, PINS_AT + i)?;
+        *count += 1;
+    }
+    if !pins.is_empty() {
+        state
+            .menu
+            .insert(&PredefinedMenuItem::separator(app)?, PINS_AT + pins.len())?;
+        *count += 1;
+    }
+    Ok(())
+}
+
 /// Sygnały odświeżenia zebrane od `setup` do `start`.
 pub struct Refresher(mpsc::Receiver<()>);
 
@@ -244,7 +360,11 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
             }
             "stop" => stop_measurement(app, false),
             "quit" => stop_measurement(app, true),
-            _ => {}
+            id => {
+                if let Some(task_id) = id.strip_prefix("pin:").and_then(|t| t.parse().ok()) {
+                    start_pinned(app, task_id);
+                }
+            }
         });
     if let Some(icon) = idle_icon.clone() {
         builder = builder.icon(icon);
@@ -254,6 +374,8 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let (wake, signal) = mpsc::channel();
     app.manage(TrayState {
         current,
+        menu,
+        pin_items: Mutex::new(0),
         idle_icon,
         feedback: Mutex::new(None),
     });
@@ -275,11 +397,12 @@ pub fn start(app: &tauri::AppHandle, refresher: Refresher) {
     let handle = app.clone();
     std::thread::spawn(move || {
         let mut last: Option<(bool, String)> = None;
+        let mut last_pins: Option<Vec<Pin>> = None;
         loop {
             if handle.get_webview_window("main").is_none() {
                 break;
             }
-            refresh(&handle, &mut last);
+            refresh(&handle, &mut last, &mut last_pins);
             match signal.recv_timeout(REFRESH) {
                 Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -288,14 +411,18 @@ pub fn start(app: &tauri::AppHandle, refresher: Refresher) {
     });
 }
 
-fn refresh(app: &tauri::AppHandle, last: &mut Option<(bool, String)>) {
-    let status = {
+fn refresh(
+    app: &tauri::AppHandle,
+    last: &mut Option<(bool, String)>,
+    last_pins: &mut Option<Vec<Pin>>,
+) {
+    let (status, pins) = {
         let database = app.state::<Database>();
         let Ok(db) = database.0.lock() else {
             return;
         };
         match read_status(&db, chrono::Local::now().date_naive(), db::now()) {
-            Ok(status) => status,
+            Ok(status) => (status, read_pins(&db).ok()),
             Err(_) => return,
         }
     };
@@ -324,6 +451,11 @@ fn refresh(app: &tauri::AppHandle, last: &mut Option<(bool, String)>) {
         let _ = state.current.set_text(&label);
     }
     *last = Some((active, label));
+    if let Some(pins) = pins.filter(|p| last_pins.as_ref() != Some(p)) {
+        if set_pins(app, &state, &pins).is_ok() {
+            *last_pins = Some(pins);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -402,6 +534,47 @@ mod tests {
         let label = menu_label(Some(&"x".repeat(200)));
         assert!(label.ends_with('…'));
         assert_eq!(label.chars().count(), "Mierzone: ".len() + MENU_TITLE_LIMIT);
+    }
+
+    #[test]
+    fn pins_are_read_in_pin_order_with_jira_key_and_current_mark() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in [
+            "Przegląd kodu",
+            "R&D logowania",
+            "Ukończone",
+            "Bez przypięcia",
+        ] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        db.execute(
+            "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(2,'https://x.atlassian.net','WMS-12')",
+            [],
+        )
+        .unwrap();
+        for (id, at) in [(2, 10), (1, 20), (3, 30)] {
+            crate::planner::set_pinned(&mut db, id, true, at).unwrap();
+        }
+        db::change(&mut db, "toggle", Some(3), None, 40).unwrap();
+        db::change(&mut db, "start", Some(1), None, 50).unwrap();
+        let pins = read_pins(&db).unwrap();
+        let labels: Vec<_> = pins.iter().map(pin_label).collect();
+        assert_eq!(labels, ["WMS-12 · R&&D logowania", "▶ Przegląd kodu"]);
+        assert_eq!(
+            pins.iter()
+                .map(|p| (p.task_id, p.current))
+                .collect::<Vec<_>>(),
+            [(2, false), (1, true)]
+        );
+        let long = pin_label(&Pin {
+            task_id: 9,
+            title: "x".repeat(200),
+            jira_key: None,
+            current: false,
+        });
+        assert_eq!(long.chars().count(), MENU_TITLE_LIMIT);
+        assert!(long.ends_with('…'));
     }
 
     #[test]

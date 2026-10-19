@@ -51,6 +51,8 @@ export interface TaskDetails {
   waitingRemindDay?: string;
   /** „Nie pytaj dla tego zadania” o przesunięcie zgłoszenia w Jirze (J1). */
   jiraNoAsk?: boolean;
+  /** Przypięcie do widgetu („w toku”): chwila przypięcia (ms), 0 = nieprzypięte. */
+  pinnedAt?: number;
 }
 const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 export const detailsOf = (task: Task): TaskDetails => ({
@@ -1077,6 +1079,7 @@ function generateRecurring(data: Snapshot): boolean {
             waitingStatus: "",
             waitingDismissed: "",
             waitingRemindDay: "",
+            pinnedAt: 0,
             checklist: (rule.checklist ?? []).map((i) => ({
               ...i,
               done: false,
@@ -1097,6 +1100,37 @@ export type ToggleResult =
   | { action: "stopped"; taskId: number; title: string; elapsedMs: number }
   | { action: "started"; taskId: number; title: string }
   | { action: "quick" };
+
+/** Najwięcej przypiętych otwartych zadań (`planner::MAX_PINNED`). */
+export const maxPinned = 3;
+/** Przypięte otwarte zadania w kolejności przypięcia (przyciski w widgecie). */
+export function pinnedTasks(data: Snapshot): Task[] {
+  const at = (t: Task) => t.details?.pinnedAt ?? 0;
+  return data.tasks
+    .filter((t) => !t.done && !t.archived && at(t) > 0)
+    .sort((a, b) => at(a) - at(b) || a.id - b.id);
+}
+/** Przypięcie do widgetu i odpięcie (`set_pinned`); odpowiednik w podglądzie. */
+export async function setPinned(
+  id: number,
+  pinned: boolean,
+): Promise<Snapshot> {
+  if (desktop) return invoke("set_pinned", { id, pinned });
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === id);
+  if (!task) throw new Error("Nie znaleziono zadania.");
+  if (pinned) {
+    if (task.done || task.archived)
+      throw new Error("Przypiąć można tylko otwarte zadanie.");
+    if (pinnedTasks(data).filter((t) => t.id !== id).length >= maxPinned)
+      throw new Error(
+        `Przypiąć można najwyżej ${maxPinned} zadania. Odepnij jedno z nich.`,
+      );
+  }
+  task.details = { ...detailsOf(task), pinnedAt: pinned ? Date.now() : 0 };
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
 
 /** Zadanie do wznowienia: ostatnio mierzone, nieukończone, niezarchiwizowane, nie w koszu. */
 export function resumeCandidate(data: Snapshot): Task | undefined {

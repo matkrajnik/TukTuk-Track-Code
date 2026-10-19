@@ -112,6 +112,7 @@ pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
                     copy.waiting_since = 0;
                     copy.waiting_status.clear();
                     copy.waiting_dismissed.clear();
+                    copy.pinned_at = 0;
                     copy.waiting_remind_day.clear();
                     copy.planned_day = key.clone();
                     copy.due_day.clear();

@@ -203,3 +203,110 @@ test("re-enabling the widget in settings clears the session dismissal", async ({
     page.getByRole("button", { name: "Mini-widget", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
 });
+
+test("pinned tasks: pin from the task card, switch with one click in the widget", async ({
+  page,
+}) => {
+  await seed(page);
+  // Dwa kolejne zadania: ze zgłoszeniem Jiry (przycisk pokazuje klucz) i czwarte.
+  await page.evaluate((key) => {
+    const data = JSON.parse(localStorage.getItem(key)!);
+    data.tasks.unshift(
+      {
+        id: 3,
+        title: "Poprawka logowania",
+        done: false,
+        createdAt: 0,
+        jiraKey: "WMS-12",
+      },
+      { id: 4, title: "Czwarte zadanie", done: false, createdAt: 0 },
+    );
+    localStorage.setItem(key, JSON.stringify(data));
+  }, dataKey);
+  await page.goto("/");
+  for (const title of [
+    "Przegląd kodu",
+    "Poprawka logowania",
+    "Raport miesięczny dla działu sprzedaży i marketingu",
+    "Czwarte zadanie",
+  ])
+    await page
+      .getByRole("button", { name: `Przedziały: ${title}`, exact: true })
+      .click();
+  for (const title of [
+    "Przegląd kodu",
+    "Poprawka logowania",
+    "Raport miesięczny dla działu sprzedaży i marketingu",
+  ]) {
+    await page
+      .getByRole("button", { name: `Przypnij do widgetu: ${title}` })
+      .click();
+    await expect(
+      page.getByRole("button", { name: `Odepnij od widgetu: ${title}` }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await page.clock.runFor(1000);
+  }
+  // Czwarte przekracza limit trzech.
+  await page
+    .getByRole("button", { name: "Przypnij do widgetu: Czwarte zadanie" })
+    .click();
+  await expect(
+    page.getByText("Przypiąć można najwyżej 3 zadania. Odepnij jedno z nich."),
+  ).toBeVisible();
+
+  await page.setViewportSize({ width: 320, height: 96 });
+  // Zmiana samego hasha nie przeładowuje strony: widget startuje od nowa.
+  await page.goto("/#widget");
+  await page.reload();
+  const widget = page.locator("#widget");
+  const pins = widget
+    .getByRole("group", { name: "Przypięte zadania" })
+    .getByRole("button");
+  // Kolejność przypięcia; klucz Jiry zamiast tytułu; mierzone zadanie wyróżnione.
+  await expect(pins).toHaveText([
+    "Przegląd kodu",
+    "WMS-12",
+    "Raport miesięczny dla działu sprzedaży i marketingu",
+  ]);
+  await expect(pins.nth(2)).toHaveAttribute("aria-pressed", "true");
+  const scroll = await page.evaluate(() => ({
+    width: document.documentElement.scrollWidth,
+    height: document.documentElement.scrollHeight,
+  }));
+  expect(scroll).toEqual({ width: 320, height: 96 });
+  await page.screenshot({ path: "test-results/widget-pins.png" });
+
+  // Jedno kliknięcie: poprzedni pomiar staje, startuje przypięte zadanie.
+  await widget
+    .getByRole("button", { name: "Przełącz na: Poprawka logowania" })
+    .click();
+  await expect(widget.getByRole("status")).toHaveText(
+    "Start: Poprawka logowania",
+  );
+  await expect(
+    widget.getByRole("button", { name: "Pokaż główne okno" }),
+  ).toContainText("Poprawka logowania");
+  await expect(pins.nth(1)).toHaveAttribute("aria-pressed", "true");
+  expect((await active(page)).map((s: { taskId: number }) => s.taskId)).toEqual(
+    [3],
+  );
+  await widget
+    .getByRole("button", { name: "Przełącz na: Przegląd kodu" })
+    .click();
+  expect((await active(page)).map((s: { taskId: number }) => s.taskId)).toEqual(
+    [1],
+  );
+
+  // Ukończone zadanie znika z rzędu; bez przypiętych rząd znika.
+  await page.evaluate((key) => {
+    const data = JSON.parse(localStorage.getItem(key)!);
+    for (const t of data.tasks)
+      if (t.id !== 2) t.details = { ...t.details, pinnedAt: 0 };
+    data.tasks.find((t: { id: number }) => t.id === 2).done = true;
+    localStorage.setItem(key, JSON.stringify(data));
+  }, dataKey);
+  await page.reload();
+  await expect(
+    page.locator("#widget").getByRole("group", { name: "Przypięte zadania" }),
+  ).toHaveCount(0);
+});
