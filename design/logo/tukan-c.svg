@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Wariant C: Tukan. Kafelek jasnoniebieski, tułów granatowy, pierś kremowa, dziób pomarańczowy z żółtym spodem. -->
+  <rect width="512" height="512" rx="116" fill="#8fb3ff"/>
+  <g transform="translate(-6 -10)">
+    <!-- nogi -->
+    <path d="M186 418v42h-34 M250 418v42h34" fill="none" stroke="#1b2540" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- tułów i głowa (jedna sylwetka) -->
+    <path d="M70 300 C70 196 140 118 250 118 C310 118 342 152 344 196 L344 240 C344 346 310 430 216 430 C136 430 70 388 70 300 Z" fill="#1b2540"/>
+    <!-- pierś -->
+    <path d="M318 226 C366 300 336 404 232 420 C290 376 304 312 318 226 Z" fill="#f4f1e6"/>
+    <!-- dziób: górna część pomarańczowa, dolna żółta -->
+    <path d="M318 130 C416 126 474 184 484 276 C488 304 468 320 450 304 C416 262 378 248 318 248 Z" fill="#e6a86b"/>
+    <path d="M318 248 C378 248 416 262 450 304 C466 318 488 308 484 282 C480 298 464 304 450 294 C420 268 378 264 318 266 Z" fill="#d9c65f"/>
+    <!-- oko -->
+    <circle cx="276" cy="184" r="24" fill="#f4f1e6"/>
+    <circle cx="282" cy="186" r="11" fill="#1b2540"/>
+  </g>
+</svg>

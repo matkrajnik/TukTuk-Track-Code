@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Wariant B: Kiwi ze znacznikiem. Kafelek zielony (ciągłość z obecną ikoną), ptaszek wycięty w tułowiu. -->
+  <rect width="512" height="512" rx="116" fill="#2f8a5f"/>
+  <g transform="translate(16 -48)">
+    <path d="M198 398 194 452h42 M262 400l6 52h42" fill="none" stroke="#f4f1e6" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M350 190 454 287 Q464 299 450 305 L322 254 Z" fill="#e6a86b"/>
+    <path d="M80 290 C80 200 150 140 250 140 C302 140 344 162 360 210 C366 260 330 412 230 412 C140 412 80 370 80 290 Z" fill="#f4f1e6"/>
+    <path d="m152 286 44 44 90-92" fill="none" stroke="#2f8a5f" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="316" cy="200" r="12" fill="#2f8a5f"/>
+  </g>
+</svg>
