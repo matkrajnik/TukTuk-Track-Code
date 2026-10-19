@@ -10,7 +10,7 @@ export type View =
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   ArrowDownToLine,
   ArrowLeftRight,
@@ -20,6 +20,7 @@ import {
   History,
   LayoutDashboard,
   ListTodo,
+  Menu,
   Moon,
   PictureInPicture2,
   Settings,
@@ -45,6 +46,64 @@ const emit = defineEmits<{
   stop: [];
   error: [message: string];
 }>();
+
+// Tryb panelu nawigacji (Windows NavigationView): progi 641 i 1008 px.
+const PANE_KEY = "todo-track-nav-collapsed";
+const narrowQuery = window.matchMedia("(max-width: 640px)");
+const midQuery = window.matchMedia("(max-width: 1007px)");
+const narrow = ref(narrowQuery.matches);
+const mid = ref(midQuery.matches);
+/** Ręczny wybór (zwinięty / rozwinięty); null = według szerokości okna. */
+const collapsed = ref<boolean | null>(null);
+try {
+  const saved = localStorage.getItem(PANE_KEY);
+  if (saved === "1" || saved === "0") collapsed.value = saved === "1";
+} catch {}
+const paneCompact = computed(
+  () => !narrow.value && (collapsed.value ?? mid.value),
+);
+/** Panel nad treścią w trybie LeftMinimal (poniżej 641 px). */
+const paneOpen = ref(false);
+const toggleLabel = computed(() =>
+  narrow.value
+    ? paneOpen.value
+      ? "Zamknij nawigację"
+      : "Pokaż nawigację"
+    : paneCompact.value
+      ? "Rozwiń nawigację"
+      : "Zwiń nawigację",
+);
+async function togglePane() {
+  if (narrow.value) {
+    paneOpen.value = !paneOpen.value;
+    await nextTick();
+    if (paneOpen.value)
+      document.querySelector<HTMLElement>(".nav-pane .nav-item")?.focus();
+    return;
+  }
+  collapsed.value = !paneCompact.value;
+  try {
+    localStorage.setItem(PANE_KEY, collapsed.value ? "1" : "0");
+  } catch {}
+}
+function go(target: View) {
+  view.value = target;
+  if (paneOpen.value) {
+    paneOpen.value = false;
+    document.querySelector<HTMLElement>(".topbar-menu")?.focus();
+  }
+}
+const onNarrow = (e: MediaQueryListEvent) => {
+  narrow.value = e.matches;
+  if (!e.matches) paneOpen.value = false;
+};
+const onMid = (e: MediaQueryListEvent) => (mid.value = e.matches);
+narrowQuery.addEventListener("change", onNarrow);
+midQuery.addEventListener("change", onMid);
+onUnmounted(() => {
+  narrowQuery.removeEventListener("change", onNarrow);
+  midQuery.removeEventListener("change", onMid);
+});
 
 const theme = ref<"dark" | "light">("dark");
 try {
@@ -135,64 +194,115 @@ async function hide() {
 </script>
 
 <template>
-  <header class="topbar">
-    <a class="brand" href="#" @click.prevent="view = 'tasks'"
-      ><span class="brand-icon"><Check :size="18" /></span>todo<span
-        >track</span
-      ></a
-    >
+  <!-- Lewy panel według Windows NavigationView: rozwinięty od 1008 px, same
+       ikony (LeftCompact) przy 641–1007 px, schowany pod przyciskiem menu
+       (LeftMinimal) poniżej. Przycisk menu zwija i rozwija panel ręcznie;
+       wybór jest zapamiętany. Ustawienia na dole panelu jak w Windows. -->
+  <div
+    v-if="paneOpen"
+    class="nav-scrim"
+    aria-hidden="true"
+    @click="paneOpen = false"
+  />
+  <aside
+    class="nav-pane"
+    :class="{ compact: paneCompact, open: paneOpen }"
+    @keydown.esc="paneOpen && go(view)"
+  >
+    <div class="nav-pane-inner">
+    <div class="nav-pane-head">
+      <button
+        class="icon-button nav-toggle"
+        :aria-label="toggleLabel"
+        :aria-expanded="narrow ? paneOpen : !paneCompact"
+        @click="togglePane"
+      >
+        <Menu :size="20" />
+      </button>
+      <a class="brand" href="#" @click.prevent="go('tasks')"
+        ><span class="brand-icon"><Check :size="18" /></span
+        ><span class="brand-text">todo<span>track</span></span></a
+      >
+    </div>
     <nav aria-label="Nawigacja główna">
       <button
+        class="nav-item"
         :class="{ selected: view === 'tasks' }"
         :aria-current="view === 'tasks' ? 'page' : undefined"
-        @click="view = 'tasks'"
+        :title="paneCompact ? 'Zadania' : undefined"
+        @click="go('tasks')"
       >
-        <ListTodo :size="16" />Zadania
+        <ListTodo :size="20" aria-hidden="true" /><span class="nav-label">Zadania</span>
       </button>
       <button
+        class="nav-item"
         :class="{ selected: view === 'dashboard' }"
         :aria-current="view === 'dashboard' ? 'page' : undefined"
-        @click="view = 'dashboard'"
+        :title="paneCompact ? 'Dashboard' : undefined"
+        @click="go('dashboard')"
       >
-        <LayoutDashboard :size="16" />Dashboard
+        <LayoutDashboard :size="20" aria-hidden="true" /><span class="nav-label">Dashboard</span>
       </button>
       <button
+        class="nav-item"
         :class="{ selected: view === 'journal' }"
         :aria-current="view === 'journal' ? 'page' : undefined"
-        @click="view = 'journal'"
+        :title="paneCompact ? 'Plan i historia' : undefined"
+        @click="go('journal')"
       >
-        <CalendarRange :size="16" />Plan i historia
+        <CalendarRange :size="20" aria-hidden="true" /><span class="nav-label">Plan i historia</span>
       </button>
       <button
+        class="nav-item"
         :class="{ selected: view === 'reports' }"
         :aria-current="view === 'reports' ? 'page' : undefined"
-        @click="view = 'reports'"
+        :title="paneCompact ? 'Raporty dzienne' : undefined"
+        @click="go('reports')"
       >
-        <CalendarDays :size="16" />Raporty dzienne
+        <CalendarDays :size="20" aria-hidden="true" /><span class="nav-label">Raporty dzienne</span>
       </button>
       <button
+        class="nav-item"
         :class="{ selected: view === 'jira' }"
         :aria-current="view === 'jira' ? 'page' : undefined"
-        @click="view = 'jira'"
+        :title="paneCompact ? 'Jira' : undefined"
+        @click="go('jira')"
       >
-        <Ticket :size="16" />Jira
+        <Ticket :size="20" aria-hidden="true" /><span class="nav-label">Jira</span>
       </button>
       <button
+        class="nav-item"
         :class="{ selected: view === 'library' }"
         :aria-current="view === 'library' ? 'page' : undefined"
-        @click="view = 'library'"
+        :title="paneCompact ? 'Historia i kopie' : undefined"
+        @click="go('library')"
       >
-        <History :size="16" />Historia i kopie
+        <History :size="20" aria-hidden="true" /><span class="nav-label">Historia i kopie</span>
       </button>
       <button
+        class="nav-item nav-footer"
         :class="{ selected: view === 'settings' }"
         :aria-current="view === 'settings' ? 'page' : undefined"
         title="Ustawienia (Ctrl+,)"
-        @click="view = 'settings'"
+        @click="go('settings')"
       >
-        <Settings :size="16" />Ustawienia
+        <Settings :size="20" aria-hidden="true" /><span class="nav-label">Ustawienia</span>
       </button>
     </nav>
+    </div>
+  </aside>
+  <header class="topbar">
+    <button
+      class="icon-button nav-toggle topbar-menu"
+      aria-label="Pokaż nawigację"
+      :aria-expanded="paneOpen"
+      @click="togglePane"
+    >
+      <Menu :size="20" />
+    </button>
+    <a class="brand topbar-brand" href="#" @click.prevent="go('tasks')"
+      ><span class="brand-icon"><Check :size="18" /></span
+    ></a>
     <div class="header-actions">
       <!-- Wzorzec paska timera z Toggl Track i Clockify: mierzone zadanie i Stop
            są widoczne na każdym widoku. Nazwa i czas idą przez atrybuty, żeby nie

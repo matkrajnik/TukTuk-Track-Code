@@ -1,13 +1,169 @@
 /* Pasek okna, nawigacja, układ strony i okna modalne. */
+/* Układ: lewy panel nawigacji (Windows NavigationView) i kolumna treści z
+   paskiem poleceń 48 px nad widokiem. */
+.app-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+}
+.app-body > .nav-pane {
+  grid-row: 1 / -1;
+}
+.app-body > .topbar,
+.app-body > main {
+  grid-column: 2;
+  min-width: 0;
+}
+/* Automatyczne marginesy w siatce zwężają element do treści; szerokość 100%
+   komórki z limitem 1120 px i wyśrodkowaniem. */
+.app-body > main {
+  width: 100%;
+  justify-self: center;
+}
 .topbar {
   display: flex;
   align-items: center;
-  gap: var(--space-6);
+  gap: var(--space-3);
   padding: 0 var(--space-6);
-  /* Fluent NavigationView: górny pasek 48 px. */
   height: 48px;
   border-bottom: 1px solid var(--line);
+}
+/* Tło panelu sięga do końca strony, a zawartość przykleja się do okna. */
+.nav-pane {
+  width: 240px;
+  border-right: 1px solid var(--line);
   background: var(--surface);
+}
+.nav-pane-inner {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  padding: var(--space-1) var(--space-1) var(--space-2);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.nav-pane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 48px;
+  padding-left: 4px;
+  flex-shrink: 0;
+}
+.nav-toggle {
+  width: 40px;
+  height: 40px;
+}
+.nav-pane nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  margin-top: var(--space-2);
+}
+/* Pozycja: 40 px wysokości, ikona 20 px, wskaźnik wyboru jako pionowa kreska
+   3×16 px w kolorze akcentu i tło (Fluent: jeden wskaźnik wyboru). */
+.nav-item {
+  position: relative;
+  justify-content: flex-start;
+  gap: var(--space-3);
+  height: 40px;
+  padding: 0 14px;
+  color: var(--muted);
+  font-size: var(--fs-base);
+  white-space: nowrap;
+}
+.nav-item:hover:not(:disabled) {
+  color: var(--text);
+}
+.nav-item.selected {
+  background: var(--raised);
+  color: var(--text);
+  font-weight: 600;
+}
+.nav-item.selected::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 12px;
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.nav-item.nav-footer {
+  margin-top: auto;
+}
+.nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* LeftCompact: same ikony, etykieta zostaje dla czytników i testów. */
+.nav-pane.compact {
+  width: 56px;
+}
+.nav-pane.compact .brand-text {
+  display: none;
+}
+.nav-pane.compact .nav-pane-head .brand {
+  display: none;
+}
+.nav-pane.compact .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+.nav-pane.compact .nav-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.topbar .topbar-menu,
+.topbar .topbar-brand {
+  display: none;
+}
+/* LeftMinimal (poniżej 641 px): panel schowany, otwierany przyciskiem menu
+   nad treścią; Esc albo wybór pozycji go zamyka. */
+@media (max-width: 640px) {
+  .app-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .app-body > .topbar,
+  .app-body > main {
+    grid-column: 1;
+  }
+  .nav-pane {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 15;
+    transform: translateX(-100%);
+    visibility: hidden;
+    box-shadow: 0 16px 32px #0006;
+  }
+  .nav-pane.open {
+    transform: none;
+    visibility: visible;
+  }
+  .topbar .topbar-menu,
+  .topbar .topbar-brand {
+    display: inline-flex;
+  }
+  .topbar {
+    padding: 0 var(--space-2);
+  }
+}
+.nav-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 14;
+  background: #0006;
 }
 .brand {
   display: inline-flex;
@@ -19,7 +175,7 @@
   font-weight: 650;
   letter-spacing: -0.5px;
 }
-.brand > span:last-child {
+.brand-text > span {
   font-weight: 400;
   color: var(--muted);
 }
@@ -32,23 +188,6 @@
   display: inline-grid;
   place-items: center;
   margin-right: 9px;
-}
-nav {
-  display: flex;
-  align-self: stretch;
-  gap: 2px;
-}
-nav button {
-  padding: 0 10px;
-  white-space: nowrap;
-  border-radius: 0;
-  color: var(--muted);
-  border-bottom: 2px solid transparent;
-}
-nav button.selected {
-  border-bottom-color: var(--accent);
-  color: var(--text);
-  font-weight: 600;
 }
 .header-actions {
   margin-left: auto;
@@ -74,41 +213,11 @@ main {
 }
 @media (max-width: 900px) {
   .topbar {
-    gap: 12px;
     padding-left: 16px;
     padding-right: 16px;
   }
-  nav button {
-    padding-left: 9px;
-    padding-right: 9px;
-  }
   .preview-label {
     display: none;
-  }
-  .brand {
-    font-size: 0;
-    gap: 0;
-  }
-  .brand > span:last-child {
-    font-size: 0;
-  }
-  .brand-icon {
-    margin: 0;
-  }
-  nav {
-    overflow-x: auto;
-    min-width: 0;
-  }
-  nav button {
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-size: var(--fs-base);
-  }
-  nav button svg {
-    display: none;
-  }
-  .header-actions {
-    margin-left: auto;
   }
 }
 .modal-overlay {
@@ -192,10 +301,6 @@ main {
   color: var(--danger);
 }
 @media (max-width: 850px) {
-  .topbar {
-    padding: 0 20px;
-    gap: 22px;
-  }
   main {
     padding: 24px 20px;
   }
@@ -204,20 +309,6 @@ main {
   }
 }
 @media (max-width: 600px) {
-  .topbar {
-    gap: 10px;
-    padding: 12px 16px;
-    height: auto;
-    flex-wrap: wrap;
-  }
-  nav {
-    order: 3;
-    width: 100%;
-  }
-  nav button {
-    padding: 10px;
-    flex: 1;
-  }
   main {
     padding: 22px 16px;
   }
@@ -252,23 +343,6 @@ main {
 .window-controls .window-close:hover {
   background: #b43b3b;
   color: white;
-}
-@media (max-width: 850px) {
-  .topbar {
-    gap: 14px;
-  }
-  nav {
-    gap: 2px;
-  }
-  nav button {
-    padding: 0 10px;
-    font-size: var(--fs-base);
-  }
-}
-@media (max-width: 600px) {
-  nav button {
-    padding: 10px 8px;
-  }
 }
 .widget-switch.on {
   color: var(--accent);
@@ -358,17 +432,15 @@ main:focus {
     display: none;
   }
 }
-/* 1100–1439 px: jeden rząd mieści się dopiero bez ikon
-   nawigacji i bez nazwy w mierzonym zadaniu (zostaje kropka, czas i Stop;
-   nazwa jest w podpowiedzi i w aria-label). */
-@media (min-width: 1100px) and (max-width: 1439px) {
-  nav button svg {
-    display: none;
-  }
-  .topbar {
-    gap: var(--space-4);
-  }
-  .topbar-timer-task::before {
-    display: none;
-  }
+/* Aplikacja desktopowa: pasek tytułu zostaje u góry przy przewijaniu (przyciski
+   okna zawsze w zasięgu), a panel nawigacji przykleja się pod nim. */
+.app-shell > .titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 12;
+}
+.app-shell:has(> .titlebar) .nav-pane-inner {
+  top: 32px;
+  height: calc(100vh - 32px);
+  height: calc(100dvh - 32px);
 }

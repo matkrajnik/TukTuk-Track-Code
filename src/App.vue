@@ -276,6 +276,7 @@ onUnmounted(() => {
       >Przejdź do treści</a
     >
     <TitleBar v-if="desktop" @error="error = $event" />
+    <div class="app-body">
     <AppNav
       v-model:view="view"
       :running="running"
@@ -385,6 +386,7 @@ onUnmounted(() => {
         @stop="act('stop')"
       />
     </main>
+    </div>
     <SessionEditor
       v-if="editingSession"
       v-model:busy="busy"
