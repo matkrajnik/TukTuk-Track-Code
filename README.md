@@ -4,6 +4,36 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
+### Nowości 1.7.2
+
+Przebudowa interfejsu oparta na standardach (heurystyki Nielsena, WCAG 2.2 AA, Fluent 2 i wytyczne Windows) i wzorcach z Toggl Track, Clockify, Sunsama i Jiry. Każda zmiana ze źródłem jest opisana w `UX_AUDIT.md`. Funkcje i reguły się nie zmieniły: timer przełącza się tylko po kliknięciu, a zapisy do Jiry mają wyłącznik.
+
+- **Lewy panel nawigacji** zamiast paska u góry (Windows NavigationView):
+  - od 1008 px panel jest rozwinięty;
+  - przy 641–1007 px ma same ikony, a nazwy są w podpowiedziach;
+  - poniżej 641 px chowa się pod przyciskiem menu i otwiera nad treścią;
+  - przycisk menu zwija i rozwija panel ręcznie, a wybór zostaje zapamiętany;
+  - Ustawienia są na dole panelu;
+  - nazwy pozycji się nie zmieniły.
+- **Mierzone zadanie na każdym widoku**: w pasku nad treścią są nazwa, czas i Stop. Kliknięcie nazwy wraca do Zadań.
+- **Banery w stylu Windows InfoBar**: bezczynność, agenci AI, skupienie i Jira mają ikonę i rodzaj komunikatu, a główną odpowiedź jako wyróżniony przycisk (np. „Przełącz”, „Przesuń”).
+- **Czytelniejsze przyciski**: akcje zapisujące to przyciski, a nie linki, np. „Oznacz dzień jako sprawdzony”, „Zapisz wnioski”, „Zapisz notatki dnia”, „Dodaj do planu”. Start w kartach nie wygląda już na wyłączony.
+- **Dostępność**:
+  - kontrast tekstu co najmniej 4.5:1, ramki pól 3:1;
+  - obszary klikania co najmniej 24 px;
+  - widoczny fokus także w polach daty i wyszukiwaniu ustawień;
+  - link „Przejdź do treści” jako pierwszy przystanek klawisza Tab;
+  - nawigacja oznacza bieżący widok przez `aria-current`;
+  - tablica tygodnia ogłasza czytnikowi ekranu przeniesienie karty.
+- **Wygląd Windows 11**:
+  - typografia według rampy Fluent (12/14/16/24/28 px, Segoe UI Variable);
+  - zaokrąglenia 4/8 px;
+  - pasek tytułu 32 px przyklejony u góry okna.
+- **Drobniejsze**:
+  - Rano → Dziś pisze, o ile plan przekracza czas na pracę;
+  - opisy w Ustawieniach stoją bliżej swoich opcji;
+  - nagłówki kroków w Rano i Zamknięciu dnia są mniejsze niż tytuł karty.
+
 ### Nowości 1.7.1
 
 - **Przypięte zadania („w toku”)**: przy pracy nad kilkoma zadaniami na zmianę (np. dwa zgłoszenia z Jiry) w rozwiniętym kafelku jest „Przypnij do widgetu”. Można przypiąć najwyżej 3 otwarte zadania (pole `pinnedAt` w `task_details`, bez nowej tabeli). Mini-widget pokazuje je drugim rzędem przycisków (okno rośnie z 320×64 do 320×96), a menu ikony w trayu jako pozycje pod „Mierzone: …”. Kliknięcie zatrzymuje bieżący pomiar i startuje wybrane zadanie, więc czas nadal liczy się tylko raz, a oś dnia pokazuje kolejne odcinki. Zadanie z Jiry pokazuje klucz, mierzone jest wyróżnione (w trayu „▶”). Ukończone albo zarchiwizowane zadanie znika z listy i zwalnia miejsce; kopia zadania cyklicznego nie dziedziczy przypięcia.
@@ -187,7 +217,7 @@ Widok **Tydzień** obejmuje poniedziałek–niedzielę, sumy dni i projektów or
 
 ## Instalacja i aktualizacje
 
-Wersja w repozytorium: 1.7.1 (przypięte zadania w widgecie i menu traya; bez nowych tabel i ustawień), wcześniej 1.7.0 (kalendarz Microsoft i pojemność dnia, zakładka Ustawienia, „Rozłóż”, poranny przegląd, cykle miesięczne i „Czekam na”, czas agentów, przegląd tygodnia, podpowiedzi z okna i z rozszerzenia przeglądarki, przesuwanie i tablica zgłoszeń Jiry; nowe tabele `calendar_events`, `agent_sessions`, `week_notes`, `jira_board_columns`, `jira_statuses` i `jira_board_meta` tworzone przy starcie przez `IF NOT EXISTS`, nowe ustawienia dostają wartości domyślne). Instalator dołącza `todo-track-bridge.exe` i folder `browser-extension`; odinstalowanie usuwa manifest hosta rozszerzenia i oba wpisy w `HKCU`. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.7.1_x64-setup.exe`; gotowe instalatory (1.2.0, 1.3.0, 1.4.0, 1.5.0, 1.6.0, 1.7.0 i 1.7.1) leżą w repozytorium w `releases/`. Instalatory 1.2.0–1.7.1 nie były jeszcze instalowane, więc przyciski w powiadomieniach, szybkie dodawanie, szablony, propozycje agentów, eksport, tryb skupienia, kalendarz, rozszerzenie przeglądarki i zapisy do Jiry nie są sprawdzone natywnie. Od 1.6.0 tabele `focus_blocks` i `focus_queue` powstają przy starcie (`IF NOT EXISTS`). Od 1.5.0 tabela `agent_bindings` powstaje przy starcie (`IF NOT EXISTS`). Od 1.4.0 tabela `task_templates` powstaje przy starcie (`IF NOT EXISTS`). Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
+Wersja w repozytorium: 1.7.2 (przebudowa interfejsu według `UX_AUDIT.md`: lewy panel nawigacji, mierzone zadanie w pasku, banery, kontrast i klawiatura; bez nowych tabel i ustawień poza zapamiętanym zwinięciem panelu w pamięci WebView), wcześniej 1.7.1 (przypięte zadania w widgecie i menu traya; bez nowych tabel i ustawień) i 1.7.0 (kalendarz Microsoft i pojemność dnia, zakładka Ustawienia, „Rozłóż”, poranny przegląd, cykle miesięczne i „Czekam na”, czas agentów, przegląd tygodnia, podpowiedzi z okna i z rozszerzenia przeglądarki, przesuwanie i tablica zgłoszeń Jiry; nowe tabele `calendar_events`, `agent_sessions`, `week_notes`, `jira_board_columns`, `jira_statuses` i `jira_board_meta` tworzone przy starcie przez `IF NOT EXISTS`, nowe ustawienia dostają wartości domyślne). Instalator dołącza `todo-track-bridge.exe` i folder `browser-extension`; odinstalowanie usuwa manifest hosta rozszerzenia i oba wpisy w `HKCU`. Build NSIS tworzy `src-tauri/target/release/bundle/nsis/Todo Track_1.7.2_x64-setup.exe`; gotowe instalatory (1.2.0, 1.3.0, 1.4.0, 1.5.0, 1.6.0, 1.7.0, 1.7.1 i 1.7.2) leżą w repozytorium w `releases/`. Instalatory 1.2.0–1.7.2 nie były jeszcze instalowane, więc przyciski w powiadomieniach, szybkie dodawanie, szablony, propozycje agentów, eksport, tryb skupienia, kalendarz, rozszerzenie przeglądarki i zapisy do Jiry nie są sprawdzone natywnie. Od 1.6.0 tabele `focus_blocks` i `focus_queue` powstają przy starcie (`IF NOT EXISTS`). Od 1.5.0 tabela `agent_bindings` powstaje przy starcie (`IF NOT EXISTS`). Od 1.4.0 tabela `task_templates` powstaje przy starcie (`IF NOT EXISTS`). Od 1.1.0 nowa tabela `jira_issues` (statusy i ostatnie przypisania) powstaje przy starcie (`IF NOT EXISTS`). Otwarte z 1.0: aktualizacja przez instalator z działającego 0.3.0 przy aktywnym timerze (PLAN_1.0.md, etap 5 pkt 4) nie jest sprawdzona i blokuje wydanie 1.0.0.
 
 Przy pierwszym uruchomieniu 1.0.0 na bazie z 0.3.0 powstaje kopia `before-1.0.0-<czas>.sqlite` (opis niżej). Nowe indeksy i tabela `notifications_sent` są tworzone przy starcie (`IF NOT EXISTS`) bez zmiany istniejących danych.
 
@@ -272,6 +302,19 @@ Usunięcie zadania usuwa też jego sesje (z potwierdzeniem). Ukończenie zadania
 Raporty dzielą sesję przez lokalną północ i uwzględniają zmianę czasu (doby 23- i 25-godzinne). W rozwiniętym raporcie wyświetlany jest pełny przedział, a obok czas przypadający wyłącznie na wybrany dzień. Usunięte zadania i ich sesje znikają również z raportów. Edycja przedziałów korzysta z dotychczasowej bazy; aktualizacja aplikacji nie wymaga migracji danych.
 
 ## Sprawdzenie
+
+Weryfikacja 1.7.2 (19 października 2026, gałąź `master`):
+
+- `npm run build`: przechodzi.
+- Playwright: 257 testów z zrzutami wzorcowymi przechodzi. Nowy `tests/navigation.spec.ts` sprawdza tryby panelu, a wzorce widoków zregenerowano świadomie dla nowego wyglądu.
+- `cargo fmt --check` i 236 testów Rust (`cargo test --locked`): przechodzą.
+- `npm run tauri build -- -- --locked`: przechodzi.
+
+Nie sprawdzono w natywnej aplikacji:
+
+- przyklejony pasek tytułu i panel przy przewijaniu;
+- przeciąganie okna;
+- wygląd przy skalowaniu Windows.
 
 Weryfikacja 1.7.1 (19 października 2026, gałąź `release/1.0`): `npm run build`, 254 testy Playwright (nowy: przypinanie z kafelka i przełączanie w widgecie; zrzuty wzorcowe bez zmian), `cargo fmt --check`, 236 testów Rust (nowe: limit przypięć i pozycje menu traya) i `npm run tauri build -- -- --locked` przechodzą. Zmiana rozmiaru okna widgetu i menu traya nie były sprawdzone w natywnej aplikacji.
 

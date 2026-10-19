@@ -1,4 +1,16 @@
-# Todo Track — stan po 1.7.1
+# Todo Track — stan po 1.7.2
+
+## Stan po 1.7.2 (19 października 2026)
+
+Gałąź `master`. 1.7.2 to przebudowa UX z gałęzi `claude/hungry-pare-c0cad4`. Gałąź przeniesiono rebase'em na 1.7.1 bez konfliktów. Audyt ze źródłami jest w `UX_AUDIT.md` (uwagi U1–U19 wdrożone, U6 jako lewy panel nawigacji według Windows NavigationView, U20–U27 opisane). Instalator: `releases/Todo Track_1.7.2_x64-setup.exe`, lokalny tag `v1.7.2`.
+
+Do ręcznego sprawdzenia po instalacji (użytkownik testuje sam):
+- pasek tytułu 32 px: przeciąganie, dwuklik (maksymalizacja), przyciski okna; pasek tytułu i lewy panel zostają na miejscu przy przewijaniu (`:has()` w WebView2);
+- tryby panelu przy zmianie szerokości okna (1008 i 641 px), zwinięcie przyciskiem menu przeżywa restart;
+- mierzone zadanie w pasku: czas, Stop, kliknięcie nazwy wraca do Zadań; Segoe UI Variable przy skalowaniu 125–150%;
+- link „Przejdź do treści” po pierwszym Tab.
+
+Uwagi niskie U20–U27 z `UX_AUDIT.md` (formaty dat, ściąga składni szybkiego dodawania, `aria-describedby` w Ustawieniach, skróty jednoklawiszowe) i ewentualna zmiana nazw pozycji nawigacji (np. „Dashboard”) czekają na decyzję.
 
 ## Stan po 1.7.1 (19 października 2026)
 
@@ -8,7 +20,7 @@ Do ręcznego sprawdzenia po instalacji:
 - okno widgetu rośnie do 96 px po przypięciu i wraca do 64 px po odpięciu ostatniego; pozycja okna zostaje;
 - menu traya wymienia pozycje po przypięciu, odpięciu, ukończeniu i starcie innego zadania (odświeżenie do 5 s), klik startuje zadanie i pokazuje „Start: …” w dymku i widgecie.
 
-Gałąź `claude/hungry-pare-c0cad4` (7 commitów UX, `UX_AUDIT.md`) nie weszła do 1.7.1; scala się z `release/1.0` bez konfliktów, ale po scaleniu trzeba uruchomić pełne testy.
+Gałąź `claude/hungry-pare-c0cad4` (commity UX, `UX_AUDIT.md`) nie weszła do 1.7.1; weszła w 1.7.2.
 
 ## Stan po 1.7.0 (16 października 2026)
 
