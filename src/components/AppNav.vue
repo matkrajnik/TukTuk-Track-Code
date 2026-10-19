@@ -16,7 +16,6 @@ import {
   ArrowLeftRight,
   CalendarDays,
   CalendarRange,
-  Check,
   History,
   LayoutDashboard,
   ListTodo,
@@ -28,6 +27,7 @@ import {
   Sun,
   Ticket,
 } from "lucide-vue-next";
+import BrandIcon from "./BrandIcon.vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   desktop,
@@ -220,7 +220,7 @@ async function hide() {
         <Menu :size="20" />
       </button>
       <a class="brand" href="#" @click.prevent="go('tasks')"
-        ><span class="brand-icon"><Check :size="18" /></span
+        ><span class="brand-icon"><BrandIcon :size="20" /></span
         ><span class="brand-text">todo<span>track</span></span></a
       >
     </div>
@@ -301,7 +301,7 @@ async function hide() {
       <Menu :size="20" />
     </button>
     <a class="brand topbar-brand" href="#" @click.prevent="go('tasks')"
-      ><span class="brand-icon"><Check :size="18" /></span
+      ><span class="brand-icon"><BrandIcon :size="20" /></span
     ></a>
     <div class="header-actions">
       <!-- Wzorzec paska timera z Toggl Track i Clockify: mierzone zadanie i Stop
