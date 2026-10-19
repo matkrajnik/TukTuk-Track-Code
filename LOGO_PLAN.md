@@ -77,7 +77,9 @@ powershell -File design/logo/preview-ico.ps1 -Dirs "$env:TEMP\icons-kiwi-a" -Out
 - Dwa kształty główne (tułów, dziób), bez piór, faktury, konturów ani cieni; każdy detal
   cieńszy niż ~30/512 (1 px w 16 px) znika przy skalowaniu i tak ma być (oko, przerwa między nogami).
 - Dziób u podstawy ma ~60/512 (2 px w 16 px), nogi 34/512; cieńsze rozmywały się w 16 px.
-- Sylwetka ma ≥ 40/512 marginesu od krawędzi kafelka, żeby zaokrąglone rogi jej nie ścinały.
+- Sylwetka ma ≥ 32/512 marginesu od krawędzi kafelka (czubek dzioba), tułów ≥ 90/512, żeby zaokrąglone
+  rogi jej nie ścinały. Środek optyczny: tułów stoi lekko na lewo od środka (ok. 237/512), bo długi dziób
+  po prawej równoważy masę; dziób ma ok. 0,8 długości pierwszego szkicu, żeby nie dotykał krawędzi.
 - Kontrast sylwetki do kafelka ≥ 4,5:1 (krem na granacie ≈ 13:1, krem na zieleni ≈ 4,6:1,
   granat na błękicie ≈ 7:1). Kafelek odcina się i od jasnego (`#eef0f4`), i od ciemnego (`#202228`) paska.
 - Czyste SVG bez osadzonych rastrów, bez filtrów i gradientów (resvg w `tauri icon` je obsługuje,
