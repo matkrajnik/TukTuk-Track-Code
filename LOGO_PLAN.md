@@ -1,6 +1,7 @@
 # Plan nowego logo Todo Track (kiwi / tukan)
 
-Stan: propozycja do wyboru. `app-icon.svg` i `src-tauri/icons/` są jeszcze bez zmian.
+Stan: wdrożony wariant A (kiwi). `app-icon.svg` to kopia `design/logo/kiwi-a.svg`, ikony w `src-tauri/icons/`
+i `icon-active.ico` zregenerowane (19.10.2026). Pozostałe warianty zostają w `design/logo/` do porównania.
 Pliki wariantów i podgląd: `design/logo/`.
 
 ## 1. Gdzie logo jest używane i co z tego wynika

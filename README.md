@@ -229,7 +229,7 @@ Przy aktualizacji **z wersji starszej niż 0.2.0** zakończ aplikację z menu tr
 
 Przed pierwszym otwarciem istniejącej bazy przez nową wersję powstaje spójna kopia SQLite (także danych WAL) w `%APPDATA%\pl.todotrack.desktop\backups\before-<wersja>-<czas>.sqlite`. Kopie nie są automatycznie usuwane. Nowe pola są w dodatkowej tabeli `task_details`; istniejące zadania i przedziały pozostają bez zmian. Usuwanie zadania usuwa także jego plan i notatki.
 
-Szablon instalatora pochodzi z [Tauri CLI 2.12.2](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.2/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi), z lokalnymi zmianami w `src-tauri/installer/template.nsi`. Przy zmianie wersji Tauri należy porównać szablon z upstreamem. Grafiki można odtworzyć skryptem `src-tauri/installer/make-artwork.ps1`; tłumaczenia są w `Polish.nsh`.
+Szablon instalatora pochodzi z [Tauri CLI 2.12.2](https://github.com/tauri-apps/tauri/blob/tauri-cli-v2.12.2/crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi), z lokalnymi zmianami w `src-tauri/installer/template.nsi`. Przy zmianie wersji Tauri należy porównać szablon z upstreamem. Grafiki można odtworzyć skryptem `src-tauri/installer/make-artwork.ps1`; tłumaczenia są w `Polish.nsh`. Logo aplikacji (kiwi) ma źródło w `app-icon.svg`; ikony w `src-tauri/icons/` generuje `npm run tauri icon app-icon.svg`, a ikonę traya z kropką pomiaru (`icon-active.ico`) ten sam `make-artwork.ps1`. Plan i warianty logo: `LOGO_PLAN.md`, `design/logo/`.
 
 ## Jira
 
