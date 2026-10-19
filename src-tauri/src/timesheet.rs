@@ -41,6 +41,11 @@ pub const API_URL_ERROR: &str =
     "Podaj główny adres API TS z https, bez ścieżki i parametrów, np. https://api.ts.ideo.pl.";
 const DATE_ERROR: &str = "Niepoprawny dzień (oczekiwany format RRRR-MM-DD).";
 const BAD_RESPONSE: &str = "TS zwrócił niepoprawną odpowiedź.";
+/// Zapis przyjęty, ale ponowny odczyt dnia się nie udał.
+pub const READ_BACK_WARNING: &str =
+    "Zapisano w TS, ale nie udało się odczytać dnia — sprawdź w przeglądarce.";
+/// Odczyt po zapisie nie zawiera wysłanych wpisów.
+pub const NOT_CONFIRMED: &str = "TS nie potwierdził zapisu — sprawdź dzień w przeglądarce.";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -125,6 +130,10 @@ impl Mode {
 pub struct SendResult {
     filled: Vec<Filled>,
     sent_at: i64,
+    /// Ostrzeżenie, gdy zapis przyjęto, ale odczyt dnia po zapisie się nie udał
+    /// (`filled` jest wtedy puste).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    warning: Option<String>,
 }
 /// Ostatnia wysyłka dnia (`ts_sent_days`).
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -308,6 +317,63 @@ pub fn merge_keep(entries: &[Entry], filled: &[Filled]) -> Vec<Entry> {
             .map(Entry::from),
     );
     out
+}
+/// Czy odczyt po zapisie zawiera każde wysłane zadanie z niezerowymi godzinami
+/// (wiersz z 0 h TS może pominąć).
+pub fn confirmed(sent: &[Entry], filled: &[Filled]) -> bool {
+    sent.iter()
+        .filter(|e| {
+            e.hours
+                .trim()
+                .replace(',', ".")
+                .parse::<f64>()
+                .is_ok_and(|v| v > 0.0)
+        })
+        .all(|e| filled.iter().any(|f| f.id.trim() == e.task_id.trim()))
+}
+/// Suma godzin wysłanych wpisów (gdy odczytu po zapisie brak).
+pub fn sent_total(entries: &[Entry]) -> String {
+    let rows: Vec<Filled> = entries
+        .iter()
+        .map(|e| Filled {
+            id: e.task_id.clone(),
+            hours: e.hours.clone(),
+            overtime: e.overtime.clone(),
+            description: String::new(),
+        })
+        .collect();
+    hours_total(&rows)
+}
+/// Przekierowanie po zapisie oznacza przyjęcie tylko wtedy, gdy wraca na formularz
+/// dnia (albo nie ma `Location`); inne (np. strona logowania) to wygasła sesja.
+pub fn save_redirect_ok(location: Option<&str>) -> bool {
+    let Some(location) = location.map(str::trim).filter(|l| !l.is_empty()) else {
+        return true;
+    };
+    let path = match Url::parse(location) {
+        Ok(url) => url.path().to_owned(),
+        Err(_) => location
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default()
+            .to_owned(),
+    };
+    path.trim_end_matches('/').ends_with("/timesheet/wypelnij")
+}
+/// Wynik po przyjętym zapisie: odczyt bez wysłanych wpisów → błąd (bez znacznika
+/// wysyłki); nieudany odczyt → znacznik z sumą wysłanych godzin i ostrzeżenie.
+pub fn sent_outcome(
+    sent: &[Entry],
+    read: Result<Vec<Filled>, String>,
+) -> Result<(Vec<Filled>, String, Option<String>), String> {
+    match read {
+        Ok(filled) if confirmed(sent, &filled) => {
+            let hours = hours_total(&filled);
+            Ok((filled, hours, None))
+        }
+        Ok(_) => Err(NOT_CONFIRMED.into()),
+        Err(_) => Ok((Vec::new(), sent_total(sent), Some(READ_BACK_WARNING.into()))),
+    }
 }
 fn valid_device_id(id: &str) -> bool {
     id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())
@@ -626,8 +692,13 @@ impl Api {
         }
         let mut next = s.clone();
         Self::apply(&mut next, Self::tokens(response).await?);
-        if let Some(cookie) = self.identity(&next).await? {
-            next.cookie = cookie;
+        // Jak `refreshOnce` w konektorze: odrzucone identity (401 albo przekierowanie
+        // na logowanie) po odświeżeniu też kończy się pełnym logowaniem hasłem.
+        match self.identity(&next).await {
+            Ok(Some(cookie)) => next.cookie = cookie,
+            Ok(None) => {}
+            Err(e) if e.unauthorized() => return self.login(s).await,
+            Err(e) => return Err(e),
         }
         *s = next;
         Ok(())
@@ -641,8 +712,10 @@ impl Api {
             Ok(())
         }
     }
-    /// Odpowiednik `withAuthentication`: świeża sesja, operacja, a przy 401 (albo
-    /// przekierowaniu na logowanie) jednorazowe odświeżenie i powtórka.
+    /// Odpowiednik `withAuthentication`: świeża sesja, operacja, a przy 401
+    /// jednorazowe odświeżenie i powtórka. Przekierowanie (strona logowania przy
+    /// ważnym tokenie = wygasło ciasteczko) → pełne logowanie po nowe ciasteczko
+    /// i jedna powtórka.
     pub async fn with_auth<T, F, Fut>(&self, s: &mut Session, op: F) -> Result<T, TsError>
     where
         F: Fn(Session) -> Fut,
@@ -650,6 +723,10 @@ impl Api {
     {
         self.ensure_fresh(s).await?;
         match op(s.clone()).await {
+            Err(TsError::Status(status)) if status.is_redirection() => {
+                self.login(s).await?;
+                op(s.clone()).await
+            }
             Err(e) if e.unauthorized() => {
                 self.refresh(s).await?;
                 op(s.clone()).await
@@ -672,7 +749,9 @@ impl Api {
             .await
             .map_err(|_| TsError::Message(BAD_RESPONSE.into()))
     }
-    /// `POST /timesheet/wypelnij?dzien=` multipartem; 2xx i 3xx = przyjęte.
+    /// `POST /timesheet/wypelnij?dzien=` multipartem; 2xx albo 3xx z powrotem na
+    /// formularz dnia = przyjęte. Inne przekierowanie (logowanie) to błąd 3xx, po
+    /// którym `with_auth` loguje się ponownie i powtarza zapis raz.
     pub async fn save_day(
         &self,
         s: &Session,
@@ -695,7 +774,11 @@ impl Api {
         )
         .await?;
         let status = response.status();
-        if status.is_success() || status.is_redirection() {
+        let location = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok());
+        if status.is_success() || (status.is_redirection() && save_redirect_ok(location)) {
             Ok(())
         } else {
             Err(TsError::Status(status))
@@ -862,22 +945,29 @@ pub async fn ts_send(
     })
     .await
     .map_err(TsError::text)?;
-    let html = api
+    // Zapis przyjęty: od tej chwili dane są w TS, więc nieudany odczyt nie może
+    // wyglądać jak nieudana wysyłka.
+    let read = api
         .with_auth(&mut session, |s| {
             let api = &api;
             async move { api.fill_page(&s, date).await }
         })
         .await
-        .map_err(TsError::text)?;
+        .map_err(TsError::text)
+        .and_then(|html| parse_filled(&html));
     drop(session);
-    let filled = parse_filled(&html)?;
+    let (filled, hours, warning) = sent_outcome(to_send, read)?;
     let sent_at = crate::db::now();
     {
         let db_state = app.state::<Database>();
         let db = db_state.0.lock().map_err(|e| e.to_string())?;
-        save_sent(&db, date, sent_at, &hours_total(&filled)).map_err(|e| e.to_string())?;
+        save_sent(&db, date, sent_at, &hours).map_err(|e| e.to_string())?;
     }
-    Ok(SendResult { filled, sent_at })
+    Ok(SendResult {
+        filled,
+        sent_at,
+        warning,
+    })
 }
 #[tauri::command]
 pub fn ts_sent(app: tauri::AppHandle, day: String) -> Result<Option<Sent>, String> {
@@ -1465,5 +1555,161 @@ mod tests {
         assert_eq!(message, "TS odrzucił logowanie. Sprawdź login i hasło.");
         assert!(!message.contains("sekret-123"));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn save_redirect_is_accepted_only_back_to_the_form() {
+        assert!(save_redirect_ok(None));
+        assert!(save_redirect_ok(Some("")));
+        assert!(save_redirect_ok(Some(
+            "/timesheet/wypelnij?dzien=2026-10-15"
+        )));
+        assert!(save_redirect_ok(Some(
+            "https://api.ts.ideo.pl/timesheet/wypelnij/?dzien=2026-10-15"
+        )));
+        assert!(!save_redirect_ok(Some("/login")));
+        assert!(!save_redirect_ok(Some(
+            "https://api.ts.ideo.pl/logowanie?powrot=/timesheet/wypelnij"
+        )));
+    }
+
+    #[test]
+    fn read_back_confirms_or_warns() {
+        let sent = vec![entry("101", "1,50", "a"), entry("102", "0", "b")];
+        let row = |id: &str, hours: &str| Filled {
+            id: id.into(),
+            hours: hours.into(),
+            overtime: "0".into(),
+            description: String::new(),
+        };
+        // Wiersz z 0 h może zniknąć; wiersz z godzinami musi być w odczycie.
+        assert!(confirmed(&sent, &[row(" 101 ", "1.5")]));
+        assert!(!confirmed(&sent, &[row("102", "0")]));
+        assert!(!confirmed(&sent, &[]));
+
+        let (filled, hours, warning) =
+            sent_outcome(&sent, Ok(vec![row("101", "1,5"), row("900", "2")])).unwrap();
+        assert_eq!(filled.len(), 2);
+        assert_eq!(hours, "3,50");
+        assert_eq!(warning, None);
+
+        assert_eq!(
+            sent_outcome(&sent, Ok(vec![row("900", "8")])).unwrap_err(),
+            NOT_CONFIRMED
+        );
+
+        let (filled, hours, warning) = sent_outcome(&sent, Err(NETWORK_ERROR.into())).unwrap();
+        assert!(filled.is_empty());
+        assert_eq!(hours, "1,50");
+        assert_eq!(warning.as_deref(), Some(READ_BACK_WARNING));
+        assert_eq!(
+            sent_total(&[entry("1", "1.25", ""), entry("2", "2,5", "")]),
+            "3,75"
+        );
+    }
+
+    fn live_session(api: &Api) -> Session {
+        Session {
+            owner: api.owner(),
+            token: "t0".into(),
+            refresh: "r0".into(),
+            expires_at: crate::db::now() + 3_600_000,
+            cookie: "sid=s0".into(),
+        }
+    }
+
+    #[test]
+    fn save_redirected_to_login_logs_in_again_and_repeats_once() {
+        let (base, server) = fake_server(vec![
+            reply("302 Found", &["Location: /login"], ""),
+            reply(
+                "200 OK",
+                &["Content-Type: application/json"],
+                r#"{"token":"t1","refresh":"r1","expires":1800}"#,
+            ),
+            reply("200 OK", &["Set-Cookie: sid=s1; path=/"], "{}"),
+            reply(
+                "302 Found",
+                &["Location: /timesheet/wypelnij?dzien=2026-10-15"],
+                "",
+            ),
+        ]);
+        let api = Api::new(&base, &Config::default(), "x".into()).unwrap();
+        let mut session = live_session(&api);
+        let entries = [entry("101", "1,50", "Opis")];
+        tauri::async_runtime::block_on(api.with_auth(&mut session, |s| {
+            let api = &api;
+            let entries = &entries;
+            async move { api.save_day(&s, "2026-10-15", entries).await }
+        }))
+        .unwrap();
+        assert_eq!(session.token, "t1");
+        assert_eq!(session.cookie, "sid=s1");
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].starts_with("POST /timesheet/wypelnij?dzien=2026-10-15 "));
+        assert!(requests[0].contains("cookie: sid=s0"));
+        assert!(requests[1].starts_with("POST /api/login "));
+        assert!(requests[2].starts_with("GET /api/user/identity "));
+        assert!(requests[3].starts_with("POST /timesheet/wypelnij?dzien=2026-10-15 "));
+        assert!(requests[3].contains("cookie: sid=s1"));
+
+        // Druga odmowa po ponownym logowaniu → błąd, bez kolejnych powtórek.
+        let (base, server) = fake_server(vec![
+            reply("302 Found", &["Location: /login"], ""),
+            reply(
+                "200 OK",
+                &["Content-Type: application/json"],
+                r#"{"token":"t1","refresh":"r1"}"#,
+            ),
+            reply("200 OK", &["Set-Cookie: sid=s1"], "{}"),
+            reply("302 Found", &["Location: /login"], ""),
+        ]);
+        let api = Api::new(&base, &Config::default(), "x".into()).unwrap();
+        let mut session = live_session(&api);
+        let error = tauri::async_runtime::block_on(api.with_auth(&mut session, |s| {
+            let api = &api;
+            let entries = &entries;
+            async move { api.save_day(&s, "2026-10-15", entries).await }
+        }))
+        .unwrap_err();
+        assert_eq!(error, TsError::Status(StatusCode::FOUND));
+        assert_eq!(server.join().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn rejected_identity_after_refresh_falls_back_to_login() {
+        for rejected in [
+            reply("401 Unauthorized", &[], ""),
+            reply("302 Found", &["Location: /login"], ""),
+        ] {
+            let (base, server) = fake_server(vec![
+                reply(
+                    "200 OK",
+                    &["Content-Type: application/json"],
+                    r#"{"token":"t1","refresh":"r1"}"#,
+                ),
+                rejected,
+                reply(
+                    "200 OK",
+                    &["Content-Type: application/json"],
+                    r#"{"token":"t2","refresh":"r2"}"#,
+                ),
+                reply("200 OK", &["Set-Cookie: sid=s2"], "{}"),
+            ]);
+            let api = Api::new(&base, &Config::default(), "x".into()).unwrap();
+            let mut session = Session {
+                expires_at: 0,
+                ..live_session(&api)
+            };
+            tauri::async_runtime::block_on(api.ensure_fresh(&mut session)).unwrap();
+            assert_eq!(session.token, "t2");
+            assert_eq!(session.cookie, "sid=s2");
+            let requests = server.join().unwrap();
+            assert!(requests[0].starts_with("GET /api/token/refresh?"));
+            assert!(requests[1].starts_with("GET /api/user/identity "));
+            assert!(requests[2].starts_with("POST /api/login "));
+            assert!(requests[3].starts_with("GET /api/user/identity "));
+        }
     }
 }

@@ -5,6 +5,9 @@ import {
   tsNormalizeApi,
   tsValidateEntries,
   tsValidHours,
+  tsSentOutcome,
+  tsNotConfirmed,
+  tsReadBackWarning,
   type TsEntry,
 } from "../src/store";
 
@@ -68,4 +71,24 @@ test("ts: api address like timesheet::normalize_api", () => {
     "api.ts.ideo.pl",
   ])
     expect(() => tsNormalizeApi(bad), bad).toThrow("adres API");
+});
+
+test("ts: read back after save like timesheet::sent_outcome", () => {
+  const sent = [entry("101", "1,50", "a"), entry("102", "0", "b")];
+  const row = (id: string, hours: string) => ({
+    id,
+    hours,
+    overtime: "0",
+    description: "",
+  });
+  const ok = tsSentOutcome(sent, [row("101", "1,5"), row("900", "2")]);
+  expect(ok.hours).toBe("3,50");
+  expect(ok.filled).toHaveLength(2);
+  expect(ok.warning).toBeUndefined();
+  expect(() => tsSentOutcome(sent, [row("900", "8")])).toThrow(tsNotConfirmed);
+  expect(tsSentOutcome(sent, null)).toEqual({
+    filled: [],
+    hours: "1,50",
+    warning: tsReadBackWarning,
+  });
 });

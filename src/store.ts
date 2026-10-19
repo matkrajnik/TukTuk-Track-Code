@@ -3037,6 +3037,8 @@ export type TsMode = "replace" | "keep";
 export interface TsSendResult {
   filled: TsFilled[];
   sentAt: number;
+  /** Zapis przyjęty, ale odczyt dnia po zapisie się nie udał (`filled` puste). */
+  warning?: string;
 }
 export interface TsSent {
   day: string;
@@ -3048,11 +3050,17 @@ export const tsNotConnected = "Połącz konto TS: podaj login i hasło.";
 export const tsSendDisabled =
   "Wysyłka do TS jest wyłączona w Ustawieniach → Timesheet.";
 export const tsLoginRejected = "TS odrzucił logowanie. Sprawdź login i hasło.";
+export const tsReadBackWarning =
+  "Zapisano w TS, ale nie udało się odczytać dnia — sprawdź w przeglądarce.";
+export const tsNotConfirmed =
+  "TS nie potwierdził zapisu — sprawdź dzień w przeglądarce.";
 const tsApiError =
   "Podaj główny adres API TS z https, bez ścieżki i parametrów, np. https://api.ts.ideo.pl.";
 /**
  * Symulowany TS podglądu. `failLogin` wymusza odrzucenie logowania; hasło „zle”
- * odrzuca zawsze. `tasks` nadpisuje przykładową listę zadań.
+ * odrzuca zawsze. `tasks` nadpisuje przykładową listę zadań. `failReadBack`:
+ * zapis przyjęty, odczyt po zapisie nieudany. `ignoreSave`: TS przyjmuje zapis,
+ * ale dzień się nie zmienia (odczyt bez wysłanych wpisów).
  */
 export const previewTsKey = "todo-track-preview-ts-v1";
 interface PreviewTs {
@@ -3061,6 +3069,8 @@ interface PreviewTs {
   apiUrl?: string;
   deviceId?: string;
   failLogin?: boolean;
+  failReadBack?: boolean;
+  ignoreSave?: boolean;
   tasks?: TsProject[];
   filled?: Record<string, TsFilled[]>;
   sent?: Record<string, { sentAt: number; hours: string }>;
@@ -3165,6 +3175,33 @@ export function tsHoursTotal(filled: TsFilled[]): string {
   }, 0);
   return `${Math.trunc(hundredths / 100)},${String(hundredths % 100).padStart(2, "0")}`;
 }
+const tsEntryRow = (e: TsEntry): TsFilled => ({
+  id: e.taskId.trim(),
+  hours: e.hours,
+  overtime: e.overtime,
+  description: e.description,
+});
+/**
+ * Jak `timesheet::sent_outcome`: odczyt po zapisie musi zawierać każde wysłane
+ * zadanie z niezerowymi godzinami (inaczej błąd, bez znacznika wysyłki); brak
+ * odczytu (`null`) → znacznik z sumą wysłanych godzin i ostrzeżenie.
+ */
+export function tsSentOutcome(
+  sent: TsEntry[],
+  read: TsFilled[] | null,
+): { filled: TsFilled[]; hours: string; warning?: string } {
+  if (read === null)
+    return {
+      filled: [],
+      hours: tsHoursTotal(sent.map(tsEntryRow)),
+      warning: tsReadBackWarning,
+    };
+  const ok = sent
+    .filter((e) => Number(e.hours.trim().replace(",", ".")) > 0)
+    .every((e) => read.some((f) => f.id.trim() === e.taskId.trim()));
+  if (!ok) throw new Error(tsNotConfirmed);
+  return { filled: read, hours: tsHoursTotal(read) };
+}
 function previewTsSettings(): TsSettings {
   const state = previewTs();
   return {
@@ -3255,17 +3292,17 @@ export async function tsSend(
   const state = previewTsConnected();
   const current = state.filled?.[date] ?? [];
   const saved = mode === "keep" ? tsMergeKeep(entries, current) : entries;
-  const filled: TsFilled[] = saved.map((e) => ({
-    id: e.taskId.trim(),
-    hours: e.hours,
-    overtime: e.overtime,
-    description: e.description,
-  }));
-  const sentAt = Date.now();
-  state.filled = { ...state.filled, [date]: filled };
-  state.sent = { ...state.sent, [date]: { sentAt, hours: tsHoursTotal(filled) } };
+  if (!state.ignoreSave)
+    state.filled = { ...state.filled, [date]: saved.map(tsEntryRow) };
   savePreviewTs(state);
-  return { filled: structuredClone(filled), sentAt };
+  const read = state.failReadBack ? null : (state.filled?.[date] ?? []);
+  const { filled, hours, warning } = tsSentOutcome(saved, read);
+  const sentAt = Date.now();
+  state.sent = { ...state.sent, [date]: { sentAt, hours } };
+  savePreviewTs(state);
+  const result: TsSendResult = { filled: structuredClone(filled), sentAt };
+  if (warning) result.warning = warning;
+  return result;
 }
 /** `ts_sent`: ostatnia wysyłka dnia albo null. */
 export async function tsSent(day: string): Promise<TsSent | null> {
