@@ -12,7 +12,8 @@
     "test:visual": "playwright test tests/visual.spec.ts",
     "test:visual:update": "playwright test tests/visual.spec.ts --update-snapshots",
     "check": "node scripts/check.mjs",
-    "release": "node scripts/release.mjs"
+    "release": "node scripts/release.mjs",
+    "ship": "node scripts/ship.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
