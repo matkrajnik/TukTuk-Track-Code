@@ -12,6 +12,7 @@ Pliki wariantów i podgląd: `design/logo/`.
 | Tray, stan spoczynku | ikona okna (`default_window_icon` w `src-tauri/src/tray.rs`) | 16 px (24 px przy 150% DPI) |
 | Tray, trwa pomiar | `src-tauri/icons/icon-active.ico` = `icon.png` + czerwona kropka, generuje `src-tauri/installer/make-artwork.ps1` | 16 px |
 | Instalator NSIS | `icons/icon.ico` (`installerIcon`); `sidebar.bmp` i `header.bmp` rysuje osobno `make-artwork.ps1` (miętowe kółko z ptaszkiem) | 32–48 px |
+| Nagłówek paska bocznego i topbar (`AppNav.vue`) | `src/components/BrandIcon.vue` – sylwetka z `design/logo/kiwi-mono.svg` w kolorze akcentu | 20 px |
 | Mini-widget, pasek tytułu | nie rysują własnego logo (pasek tytułu to tekst „Todo Track”), dostają ikonę okna | 16 px |
 | Sklep / MSIX | `Square*Logo.png`, `StoreLogo.png` | 30–310 px |
 
