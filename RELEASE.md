@@ -149,7 +149,9 @@ było zainstalowane na tej maszynie.)
    npm run release -- --notes-file notes.md
    ```
 
-   albo z jedną linią notatek: `npm run release -- --notes "Poprawki tablicy tygodnia"`.
+   Szkic notatek na bieżące wydanie leży w `notes.md` w katalogu głównym (ten sam tekst
+   trafia do release'u w GitHubie i do pola `notes` w `latest.json`, czyli do banera
+   w aplikacji). Można też podać jedną linię wprost: `npm run release -- --notes "Poprawki tablicy tygodnia"`.
    Wielowierszowe notatki podawaj z pliku: `npm run` w Windows ucina argument na
    końcu pierwszej linii. Skrypt (`scripts/release.mjs`):
    - sprawdza zgodność wersji w trzech plikach i adres repozytorium wydań w konfiguracji;
