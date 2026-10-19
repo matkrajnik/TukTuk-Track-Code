@@ -481,9 +481,14 @@ pub fn status_error(status: StatusCode) -> String {
     }
 }
 fn client() -> Result<Client, String> {
-    Client::builder()
+    let builder = Client::builder()
         .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
+        .redirect(reqwest::redirect::Policy::none());
+    // Testy rozmawiają wyłącznie z lokalnym serwerem na 127.0.0.1, bez proxy
+    // systemowego, żeby żadne żądanie nie opuściło maszyny.
+    #[cfg(test)]
+    let builder = builder.no_proxy();
+    builder
         .build()
         .map_err(|_| "Nie udało się utworzyć połączenia HTTPS.".into())
 }
@@ -515,6 +520,12 @@ pub struct Api {
 }
 impl Api {
     fn new(base: &str, c: &Config, password: String) -> Result<Self, String> {
+        // W testach dozwolony jest tylko lokalny serwer z fixtures, nigdy prawdziwy TS.
+        #[cfg(test)]
+        assert!(
+            base.starts_with("http://127.0.0.1:"),
+            "testy nie mogą łączyć się z serwerem TS: {base}"
+        );
         Ok(Self {
             http: client()?,
             base: base.to_owned(),
