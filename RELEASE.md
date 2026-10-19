@@ -70,13 +70,16 @@ Polecenie pyta o hasło klucza (puste jest dozwolone) i zapisuje
 `~/.tauri/todotrack.key` (prywatny) oraz `~/.tauri/todotrack.key.pub` (publiczny).
 Treść pliku `.pub` wklej do `plugins.updater.pubkey`.
 
-Stan na 19 października 2026: para kluczy została wygenerowana na tej maszynie
-(`C:\Users\m.krajnik\.tauri\todotrack.key`) poleceniem z flagą `--ci`, czyli **bez
-hasła**, a jej klucz publiczny jest już w `tauri.conf.json`. Jeśli wolisz klucz z hasłem,
-wygeneruj nowy (`-f` nadpisuje plik), podmień `pubkey` w konfiguracji i zrób to przed
-pierwszym wydaniem z updaterem: zainstalowane wersje przyjmują tylko podpisy pasujące
-do klucza publicznego, z którym zostały zbudowane. Zmiana klucza po wydaniu oznacza
-jedną ręczną instalację u każdego użytkownika.
+Stan na 19 października 2026: para kluczy leży w `C:\Users\m.krajnik\.tauri\todotrack.key`
+(wygenerowana tym poleceniem, z hasłem podanym przy generowaniu), a jej klucz publiczny
+(`4BE1126377195BA2`) jest w `tauri.conf.json`. Zainstalowane wersje przyjmują tylko podpisy
+pasujące do klucza publicznego, z którym zostały zbudowane, więc zmiana klucza po wydaniu
+oznacza jedną ręczną instalację u każdego użytkownika; nowy klucz generuj tylko przed
+pierwszym wydaniem z updaterem (`-f` nadpisuje plik) i od razu podmień `pubkey`.
+
+W PowerShellu `~` nie jest rozwijane dla programów natywnych (`npx`), więc podaj pełną
+ścieżkę, np. `-w $HOME\.tauri\todotrack.key`; z `~/.tauri/...` klucz ląduje w folderze
+o nazwie `~` w bieżącym katalogu.
 
 **Zrób kopię zapasową klucza prywatnego (i hasła).** Bez niego nie da się podpisać
 kolejnego wydania, a zainstalowane aplikacje nie przyjmą aktualizacji.
