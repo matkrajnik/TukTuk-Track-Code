@@ -1,7 +1,7 @@
 # Wydania i automatyczne aktualizacje
 
 Kod Todo Track jest w prywatnym repozytorium (`github.com/matkrajnik/todo-track-private`),
-a wydania idą do osobnego **publicznego** repozytorium `matkrajnik/todo-track-releases`,
+a wydania idą do osobnego **publicznego** repozytorium `matkrajnik/todo-track`,
 które zawiera tylko release'y z trzema plikami: instalator `.exe`, podpis `.sig`
 i `latest.json`. Zainstalowana aplikacja pyta o `latest.json` przy starcie i raz dziennie,
 pokazuje baner „Dostępna jest nowa wersja” i po kliknięciu pobiera oraz instaluje
@@ -10,7 +10,7 @@ aktualizację (plugin `tauri-plugin-updater`, instalator NSIS w trybie pasywnym)
 ## Jak to działa
 
 - **Konfiguracja**: `src-tauri/tauri.conf.json` → `plugins.updater` (adres
-  `https://github.com/matkrajnik/todo-track-releases/releases/latest/download/latest.json`,
+  `https://github.com/matkrajnik/todo-track/releases/latest/download/latest.json`,
   klucz publiczny `pubkey`, `windows.installMode: "passive"`) i
   `bundle.createUpdaterArtifacts: true` (build tworzy podpis `.exe.sig` obok instalatora).
   Uprawnienia `updater:default` i `process:default` są w `src-tauri/capabilities/default.json`.
@@ -49,7 +49,7 @@ Przykład:
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkK…",
-      "url": "https://github.com/matkrajnik/todo-track-releases/releases/download/v1.7.4/TodoTrack_1.7.4_x64-setup.exe"
+      "url": "https://github.com/matkrajnik/todo-track/releases/download/v1.7.4/TodoTrack_1.7.4_x64-setup.exe"
     }
   }
 }
@@ -110,8 +110,8 @@ bez zmiennej kończy się błędem o braku klucza.
 
 ### 3. Publiczne repozytorium wydań
 
-Utwórz publiczne repozytorium `todo-track-releases` na koncie `matkrajnik` (strona GitHub
-albo `gh repo create matkrajnik/todo-track-releases --public --add-readme`). Repozytorium
+Utwórz publiczne repozytorium `todo-track` na koncie `matkrajnik` (strona GitHub
+albo `gh repo create matkrajnik/todo-track --public --add-readme`). Repozytorium
 musi mieć co najmniej jeden commit (np. README z informacją „tu są tylko wydania Todo
 Track”), bo release tworzy tag na gałęzi domyślnej. Nie oznaczaj wydań jako draft ani
 pre-release: adres `releases/latest/download/latest.json` wskazuje najnowszy zwykły release.
@@ -129,7 +129,7 @@ gh auth login
 ```
 
 Logowanie: GitHub.com, protokół HTTPS, przeglądarka. Konto musi mieć prawo zapisu do
-`todo-track-releases`. Sprawdzenie: `gh auth status`. (19 października 2026 `gh` nie
+`todo-track`. Sprawdzenie: `gh auth status`. (19 października 2026 `gh` nie
 było zainstalowane na tej maszynie.)
 
 ## Wydanie krok po kroku
@@ -160,7 +160,7 @@ było zainstalowane na tej maszynie.)
      `latest.json` i zapisuje notatki do `notes.md`;
    - kopiuje instalator pod oryginalną nazwą do `releases/` i usuwa stamtąd starsze
      instalatory (folder trzyma tylko najnowszy);
-   - wywołuje `gh release create v<wersja> --repo matkrajnik/todo-track-releases
+   - wywołuje `gh release create v<wersja> --repo matkrajnik/todo-track
      --title "Todo Track <wersja>" --notes-file … <exe> <sig> latest.json`.
 
    Opcje: `--dry-run` robi wszystko poza publikacją (bez kopii w `releases/`) i wypisuje

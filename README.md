@@ -6,7 +6,7 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ### Nowości 1.7.4 (w przygotowaniu)
 
-- **Automatyczne aktualizacje**: przy starcie (i raz dziennie) aplikacja pyta publiczne repozytorium wydań `matkrajnik/todo-track-releases` o `latest.json`. Nowa wersja pokazuje baner z numerem i notatkami z wydania oraz przyciskami „Zainstaluj i uruchom ponownie” (pasek postępu pobierania, podpisany instalator NSIS w trybie pasywnym, restart aplikacji) i „Później”. Brak sieci jest ignorowany bez komunikatu. Ustawienia → Uruchamianie → Aktualizacje: „Sprawdzaj aktualizacje automatycznie” (nowe ustawienie `autoUpdateCheck`, domyślnie włączone) i „Sprawdź teraz” z wynikiem. Wydanie publikuje `npm run release` (`RELEASE.md`). Ścieżka aktualizacji nie była jeszcze sprawdzona natywnie z własnym szablonem NSIS (lista w `RELEASE.md`).
+- **Automatyczne aktualizacje**: przy starcie (i raz dziennie) aplikacja pyta publiczne repozytorium wydań `matkrajnik/todo-track` o `latest.json`. Nowa wersja pokazuje baner z numerem i notatkami z wydania oraz przyciskami „Zainstaluj i uruchom ponownie” (pasek postępu pobierania, podpisany instalator NSIS w trybie pasywnym, restart aplikacji) i „Później”. Brak sieci jest ignorowany bez komunikatu. Ustawienia → Uruchamianie → Aktualizacje: „Sprawdzaj aktualizacje automatycznie” (nowe ustawienie `autoUpdateCheck`, domyślnie włączone) i „Sprawdź teraz” z wynikiem. Wydanie publikuje `npm run release` (`RELEASE.md`). Ścieżka aktualizacji nie była jeszcze sprawdzona natywnie z własnym szablonem NSIS (lista w `RELEASE.md`).
 
 ### Nowości 1.7.3
 
@@ -235,7 +235,7 @@ Od 0.2.1 minimalizacja pozostawia okno na pasku zadań; krzyżyk chowa do zasobn
 
 Instalator ma polski interfejs, własne grafiki i instaluje dla bieżącego użytkownika. Gdy wykryje istniejącą instalację, wyświetla potwierdzenie wersji i aktualizuje program w dotychczasowym katalogu, bez odinstalowywania. Zachowuje skróty i dane, a po zwykłej aktualizacji uruchamia aplikację ponownie. Nowszej wersji nie zastąpi starszą.
 
-Od 1.7.4 aplikacja sama sprawdza aktualizacje: wydania leżą w publicznym repozytorium `matkrajnik/todo-track-releases` (instalator, podpis i `latest.json`), a aplikacja pyta o nową wersję przy starcie i raz dziennie, pokazuje baner z notatkami z wydania i po „Zainstaluj i uruchom ponownie” pobiera podpisany instalator oraz uruchamia go w trybie pasywnym. Wyłącznik i „Sprawdź teraz” są w Ustawieniach → Uruchamianie. Publikacja wydania: `npm run release` i opis w `RELEASE.md`.
+Od 1.7.4 aplikacja sama sprawdza aktualizacje: wydania leżą w publicznym repozytorium `matkrajnik/todo-track` (instalator, podpis i `latest.json`), a aplikacja pyta o nową wersję przy starcie i raz dziennie, pokazuje baner z notatkami z wydania i po „Zainstaluj i uruchom ponownie” pobiera podpisany instalator oraz uruchamia go w trybie pasywnym. Wyłącznik i „Sprawdź teraz” są w Ustawieniach → Uruchamianie. Publikacja wydania: `npm run release` i opis w `RELEASE.md`.
 
 Przy aktualizacji **z wersji starszej niż 0.2.0** zakończ aplikację z menu traya. Od 0.2.0 instalator wywołuje `--prepare-update`: aplikacja zapisuje koniec bieżącej sesji i kończy proces. Jeżeli nadal działa, instalator czeka na ręczne zamknięcie lub pozwala anulować; nie wymusza ubicia procesu w trybie aktualizacji.
 
