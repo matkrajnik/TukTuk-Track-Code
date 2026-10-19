@@ -48,6 +48,11 @@ export interface TauriOptions {
     /** Lista pól do wyboru w Ustawieniach (`jira_fields`). */
     fields?: { id: string; name: string; custom: boolean; kind: string }[];
   };
+  /**
+   * Plugin updater (`plugin:updater|check`): nowa wersja z notatkami, `"offline"`
+   * (sprawdzenie kończy się błędem sieci) albo brak aktualizacji (domyślnie).
+   */
+  update?: { version: string; notes?: string; date?: string } | "offline" | null;
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -61,6 +66,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     suggestions: options.suggestions ?? [],
     window: options.window ?? "main",
     site: JIRA_SITE,
+    update: options.update ?? null,
   });
   await page.goto("/");
 }
@@ -86,6 +92,7 @@ function install(init: {
   suggestions: any[];
   window: string;
   site: string;
+  update: { version: string; notes?: string; date?: string } | "offline" | null;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -677,6 +684,55 @@ function install(init: {
           emit("data-changed");
           return clone(snapshot);
         }
+        // Plugin updater: `check()` zwraca metadane z identyfikatorem zasobu
+        // (albo null, gdy nie ma nowszej wersji), `download()` zgłasza postęp
+        // kanałem (`Channel` z @tauri-apps/api: `__CHANNEL__:<id>`) i zwraca
+        // identyfikator pobranych bajtów, `prepare_update` (main.rs) kończy
+        // pomiar, a `install()` w Windows kończy proces po starcie instalatora;
+        // tutaj kończy się na wywołaniu `plugin:process|restart` z `relaunch()`.
+        case "plugin:updater|check": {
+          if (init.update === "offline")
+            throw "Could not fetch a valid release JSON from the remote";
+          if (!init.update) return null;
+          return {
+            rid: 1,
+            currentVersion: "test",
+            version: init.update.version,
+            date: init.update.date ?? null,
+            body: init.update.notes ?? null,
+            rawJson: {},
+          };
+        }
+        case "plugin:updater|download": {
+          if (args.rid !== 1) throw "Nieznany zasób aktualizacji w teście.";
+          const channel = args.onEvent;
+          const id =
+            typeof channel === "string"
+              ? Number(channel.split(":")[1])
+              : Number(channel?.id);
+          const deliver = (index: number, message: unknown) =>
+            callbacks.get(id)?.({ index, message });
+          const wait = (ms: number) =>
+            new Promise((resolve) => setTimeout(resolve, ms));
+          deliver(0, { event: "Started", data: { contentLength: 4_194_304 } });
+          await wait(60);
+          deliver(1, { event: "Progress", data: { chunkLength: 2_097_152 } });
+          await wait(60);
+          deliver(2, { event: "Progress", data: { chunkLength: 2_097_152 } });
+          await wait(60);
+          deliver(3, { event: "Finished" });
+          return 2;
+        }
+        case "prepare_update":
+          stopAll(now);
+          emit("data-changed");
+          return null;
+        case "plugin:updater|install":
+          if (args.updateRid !== 1 || args.bytesRid !== 2)
+            throw "Instalacja bez pobranej aktualizacji w teście.";
+          return null;
+        case "plugin:process|restart":
+          return null;
         case "inspect_backup":
           return init.backup ? clone(init.backup.preview) : null;
         case "restore_backup":

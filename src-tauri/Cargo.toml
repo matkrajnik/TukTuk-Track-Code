@@ -38,6 +38,8 @@ rust_xlsxwriter = "=0.99.1"
 sha2 = "=0.10.9"
 base64 = "=0.22.1"
 getrandom = "=0.3.4"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 [dev-dependencies]
 chrono-tz = "=0.10.4"

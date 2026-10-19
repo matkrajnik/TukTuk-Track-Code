@@ -2273,3 +2273,24 @@ html.widget-root body {
   width: 100%;
   margin-bottom: 10px;
 }
+/* Baner aktualizacji (UpdateBanner.vue): notatki z wydania i pasek pobierania. */
+.update-notes {
+  white-space: pre-wrap;
+  color: var(--muted);
+  margin: 4px 0 0;
+  max-height: 9em;
+  overflow: auto;
+}
+.update-progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+.update-progress progress {
+  flex: 1 1 200px;
+  max-width: 320px;
+  height: 8px;
+  accent-color: var(--accent);
+}

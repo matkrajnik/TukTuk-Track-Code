@@ -75,6 +75,9 @@ pub struct AppSettings {
     pub notify_week_review: bool,
     /// Godzina powiadomienia „Przegląd tygodnia” (`GG:MM`, domyślnie 15:00).
     pub week_review_time: String,
+    /// Sprawdzaj aktualizacje przy starcie i raz dziennie (`src/updater.ts`);
+    /// wyłączone zostawia tylko „Sprawdź teraz” w Ustawieniach.
+    pub auto_update_check: bool,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -141,6 +144,7 @@ impl Default for AppSettings {
             waiting_jira_statuses: default_waiting_statuses(),
             notify_week_review: true,
             week_review_time: "15:00".into(),
+            auto_update_check: true,
         }
     }
 }
@@ -492,6 +496,21 @@ mod tests {
         let s = load(&db);
         assert!(!s.idle_enabled);
         assert_eq!(s.target_day_minutes, 480);
+        // Automatyczne sprawdzanie aktualizacji jest domyślnie włączone i zapisuje się
+        // pod kluczem snake_case jak pozostałe pola.
+        assert!(s.auto_update_check);
+        let mut db = db;
+        let saved = save(&mut db, &json!({ "autoUpdateCheck": false })).unwrap();
+        assert!(!saved.auto_update_check);
+        let raw: String = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='auto_update_check'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "false");
+        assert!(!load(&db).auto_update_check);
     }
 
     #[test]

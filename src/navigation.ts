@@ -200,6 +200,10 @@ export const settingsSections = [
       "Uruchamiaj schowane do traya",
       "tray",
       "wersja",
+      "aktualizacje",
+      "nowa wersja",
+      "Sprawdzaj aktualizacje automatycznie",
+      "Sprawdź teraz",
     ],
   },
 ] as const;

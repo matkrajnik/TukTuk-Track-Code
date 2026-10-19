@@ -1,5 +1,11 @@
 # Todo Track — stan po 1.7.2
 
+## W toku: automatyczne aktualizacje (19 października 2026)
+
+Gałąź `claude/upbeat-allen-2f6245` (worktree), wersja nadal 1.7.2. Plugin `tauri-plugin-updater` i `tauri-plugin-process` (`src-tauri/src/main.rs`, uprawnienia `updater:default` i `process:default`), konfiguracja `plugins.updater` w `tauri.conf.json` (adres `latest.json` w publicznym repozytorium `matkrajnik/todo-track-releases`, klucz publiczny, `createUpdaterArtifacts`), sprawdzanie przy starcie i raz dziennie w `src/updater.ts`, baner `UpdateBanner.vue`, ustawienie `autoUpdateCheck` z przełącznikiem i „Sprawdź teraz” w Ustawieniach → Uruchamianie, komenda `prepare_update` (koniec pomiaru i zapis stanu okien przed `install()`), zastępczy plugin w `tests/fixtures/tauri.ts` i `tests/updater.spec.ts`, skrypt `scripts/release.mjs` (`npm run release`) oraz opis w `RELEASE.md`. Klucz prywatny podpisu: `%USERPROFILE%\.tauri\todotrack.key` (bez hasła), poza repozytorium.
+
+Do zrobienia przed pierwszym wydaniem z updaterem (opis w `RELEASE.md`): publiczne repozytorium `todo-track-releases` z jednym commitem, instalacja i logowanie `gh`, ewentualnie nowy klucz z hasłem (i podmiana `pubkey`). Do ręcznego sprawdzenia natywnie: cała ścieżka aktualizacji z własnym szablonem NSIS w trybie pasywnym (pominięte pytanie o wersję, `--prepare-update`, restart z `/R`, aktywny pomiar, start z `--hidden`); lista w `RELEASE.md`.
+
 ## W toku: pola Jiry na kafelku i priorytet z Jiry (19 października 2026)
 
 Gałąź `master`, zmiany niezacommitowane, wersja nadal 1.7.2 (wydanie 1.7.3 do zrobienia). Zakres: Ustawienia → Jira → „Pola Jiry na kafelku” (`jiraCardFields`, domyślnie `labels` i `assignee`, do 6 pól, lista z `GET /rest/api/3/field` w tabeli `jira_fields`), wartości w tabeli `jira_issue_fields` zapisywane przy liście, tablicy, obserwacji co 5 min i od razu po zmianie listy (`jira_refresh_fields`), chipy (`JiraFieldChips.vue`) w kafelku, na karcie tygodnia i w widoku Jira, odświeżanie zgłoszeń otwartych zadań po kluczach (`POST /rest/api/3/issue/bulkfetch`, `jira_fields::fetch_linked`) oraz priorytet z Jiry jako pasmo priorytetu zadania (`jira_fields::priority_band`, przy imporcie, „Rozpocznij” i zmianie w Jirze). Nowy moduł `src-tauri/src/jira_fields.rs`, test e2e `tests/jira-fields.spec.ts`, opis w README („Nowości 1.7.3”).

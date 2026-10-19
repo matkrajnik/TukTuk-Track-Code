@@ -64,6 +64,8 @@ export interface AppSettings {
   notifyWeekReview: boolean;
   /** Godzina powiadomienia „Przegląd tygodnia” (GG:MM). */
   weekReviewTime: string;
+  /** Sprawdzaj aktualizacje przy starcie i raz dziennie (`updater.ts`). */
+  autoUpdateCheck: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -119,6 +121,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   ],
   notifyWeekReview: true,
   weekReviewTime: "15:00",
+  autoUpdateCheck: true,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";

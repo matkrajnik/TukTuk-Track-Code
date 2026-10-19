@@ -9,6 +9,8 @@ import IdleBanner from "./components/IdleBanner.vue";
 import AgentSuggestions from "./components/AgentSuggestions.vue";
 import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
+import UpdateBanner from "./components/UpdateBanner.vue";
+import { startAutoChecks } from "./updater";
 import { refreshFocus } from "./focus";
 import TasksView from "./views/TasksView.vue";
 import ReportsView from "./views/ReportsView.vue";
@@ -260,6 +262,12 @@ onMounted(async () => {
     } catch (e) {
       error.value = String(e);
     }
+    // Sprawdzanie aktualizacji (updater.ts): brak sieci bez komunikatu.
+    try {
+      unsubscribers.push(await startAutoChecks());
+    } catch {
+      /* aplikacja działa bez sprawdzania aktualizacji */
+    }
   } else {
     // Podgląd: symulowana Jira zmienia dane poza widokiem (priorytet, pola).
     window.addEventListener(previewDataEvent, refresh);
@@ -313,6 +321,7 @@ onUnmounted(() => {
         @updated="updated"
         @error="error = $event"
       />
+      <UpdateBanner />
       <div v-if="error && !modalOpen" class="error" role="alert">
         {{ error
         }}<button

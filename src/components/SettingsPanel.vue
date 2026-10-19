@@ -5,6 +5,7 @@ import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
 import BrowserExtensionStatus from "./BrowserExtensionStatus.vue";
 import { openView, type SettingsSection } from "../navigation";
+import { checkForUpdate } from "../updater";
 import {
   defaultSettings,
   maxCardFields,
@@ -74,6 +75,23 @@ async function save(patch: Partial<AppSettings>) {
 }
 const checked = (e: Event) => (e.target as HTMLInputElement).checked;
 const text = (e: Event) => (e.target as HTMLInputElement).value;
+
+/** „Sprawdź teraz” (Uruchamianie → Aktualizacje): wynik pod przyciskiem. */
+const updateBusy = ref(false),
+  updateMessage = ref("");
+async function checkNow() {
+  updateBusy.value = true;
+  updateMessage.value = "";
+  try {
+    const result = await checkForUpdate();
+    updateMessage.value =
+      result.status === "latest" && info.value.version
+        ? `Masz najnowszą wersję (${info.value.version}).`
+        : result.message;
+  } finally {
+    updateBusy.value = false;
+  }
+}
 
 /** Pola Jiry na kafelku: lista pól z Jiry, wybór i kolejność. */
 const catalog = ref<JiraFieldInfo[]>([]);
@@ -845,6 +863,32 @@ onUnmounted(() => {
       <p class="hint">
         Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
         trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
+      </p>
+      <h3>Aktualizacje</h3>
+      <label class="inline-check"
+        ><input
+          :checked="settings.autoUpdateCheck"
+          type="checkbox"
+          :disabled="busy"
+          @change="save({ autoUpdateCheck: checked($event) })"
+        />Sprawdzaj aktualizacje automatycznie</label
+      >
+      <p class="hint">
+        Przy starcie i raz dziennie aplikacja pyta serwer wydań o nową wersję.
+        Pobranie i instalacja zaczynają się dopiero po kliknięciu w banerze.
+      </p>
+      <div class="planning-actions">
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="updateBusy"
+          @click="checkNow"
+        >
+          {{ updateBusy ? "Sprawdzanie…" : "Sprawdź teraz" }}
+        </button>
+      </div>
+      <p v-if="updateMessage" class="hint" role="status">
+        {{ updateMessage }}
       </p>
     </template>
     <small v-if="info.version">Todo Track {{ info.version }}</small>
