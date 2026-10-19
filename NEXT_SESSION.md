@@ -1,8 +1,8 @@
-# Todo Track — stan po 1.7.2
+# Todo Track — stan po 1.7.3
 
-## W toku: pola Jiry na kafelku i priorytet z Jiry (19 października 2026)
+## Stan po 1.7.3 (19 października 2026)
 
-Gałąź `master`, zmiany niezacommitowane, wersja nadal 1.7.2 (wydanie 1.7.3 do zrobienia). Zakres: Ustawienia → Jira → „Pola Jiry na kafelku” (`jiraCardFields`, domyślnie `labels` i `assignee`, do 6 pól, lista z `GET /rest/api/3/field` w tabeli `jira_fields`), wartości w tabeli `jira_issue_fields` zapisywane przy liście, tablicy, obserwacji co 5 min i od razu po zmianie listy (`jira_refresh_fields`), chipy (`JiraFieldChips.vue`) w kafelku, na karcie tygodnia i w widoku Jira, odświeżanie zgłoszeń otwartych zadań po kluczach (`POST /rest/api/3/issue/bulkfetch`, `jira_fields::fetch_linked`) oraz priorytet z Jiry jako pasmo priorytetu zadania (`jira_fields::priority_band`, przy imporcie, „Rozpocznij” i zmianie w Jirze). Nowy moduł `src-tauri/src/jira_fields.rs`, test e2e `tests/jira-fields.spec.ts`, opis w README („Nowości 1.7.3”).
+Gałąź `master`, wypchnięta z tagiem `v1.7.3`. Instalator `releases/Todo Track_1.7.3_x64-setup.exe` (nie instalowany); starsze instalatory usunięto z `releases/` przy tym wydaniu. 1.7.3 zawiera też nowe logo kiwi (wariant A z `LOGO_PLAN.md`, gałąź `claude/logo-kiwi-tukan-605c42` zmergowana do master), nieoglądane w działającej aplikacji ani instalatorze. Zakres zmian Jiry: Ustawienia → Jira → „Pola Jiry na kafelku” (`jiraCardFields`, domyślnie `labels` i `assignee`, do 6 pól, lista z `GET /rest/api/3/field` w tabeli `jira_fields`), wartości w tabeli `jira_issue_fields` zapisywane przy liście, tablicy, obserwacji co 5 min i od razu po zmianie listy (`jira_refresh_fields`), chipy (`JiraFieldChips.vue`) w kafelku, na karcie tygodnia i w widoku Jira, odświeżanie zgłoszeń otwartych zadań po kluczach (`POST /rest/api/3/issue/bulkfetch`, `jira_fields::fetch_linked`) oraz priorytet z Jiry jako pasmo priorytetu zadania (`jira_fields::priority_band`, przy imporcie, „Rozpocznij” i zmianie w Jirze). Nowy moduł `src-tauri/src/jira_fields.rs`, test e2e `tests/jira-fields.spec.ts`, opis w README („Nowości 1.7.3”).
 
 Do ręcznego sprawdzenia z prawdziwą Jirą (nic nie było uruchamiane natywnie):
 - `GET /rest/api/3/field` zwraca listę z nazwami pól niestandardowych; „Pobierz listę pól z Jiry” pokazuje je w wyborze;
