@@ -29,7 +29,7 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
 | U3 | wysoka | Akcje zapisujące wyglądają jak linki tekstowe, brak hierarchii przycisków | wdrożone (a06dcd3) |
 | U4 | wysoka | Banery: jednakowe niebieskie tło, brak rodzaju komunikatu, akcje jako linki | wdrożone (a06dcd3) |
 | U5 | wysoka | 11 przystanków Tab przed treścią; nawigacja jako przełączniki `aria-pressed` | wdrożone (6401946) |
-| U6 | wysoka | Siedem pozycji w górnym pasku, mylące nazwy, przepełnienie paska | **do decyzji** (część wdrożona w 6401946) |
+| U6 | wysoka | Siedem pozycji w górnym pasku, mylące nazwy, przepełnienie paska | wdrożony wariant (a), lewy panel (dbdf426); nazwy bez zmian |
 | U7 | średnia | Obramowania pól 1.25–1.52:1 | wdrożone (60a6e98, acea4c4) |
 | U8 | średnia | Tekst z przezroczystością: zera, ukończone karty (2.35–3.30:1) | wdrożone (acea4c4) |
 | U9 | średnia | Skala typografii poza rampą Fluent, tekst 11.5 px | wdrożone (60a6e98) |
@@ -131,7 +131,7 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
   - Wybrana pozycja ma podkreślenie i pogrubienie.
   - Testy sprawdzające `aria-pressed` nawigacji przeszły na `aria-current`. Etykiety się nie zmieniły.
 
-### U6. Nawigacja główna: siedem pozycji i mylące nazwy (wysoka) — DO DECYZJI
+### U6. Nawigacja główna: siedem pozycji i mylące nazwy (wysoka)
 
 - **Miejsce:** pasek nawigacji.
 - **Obserwacja:**
@@ -146,11 +146,10 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
   - [NN/g — zakładki](https://www.nngroup.com/articles/tabs-used-right/): mało pozycji, 1–2 słowa, proste nazwy.
   - [Nielsen, heurystyka 2: język użytkownika](https://www.nngroup.com/articles/ten-usability-heuristics/).
   - [Prawo Millera](https://lawsofux.com/millers-law/) i [Prawo Jakoba](https://lawsofux.com/jakobs-law/): użytkownicy Windows znają lewy panel z Ustawień, Outlooka i Teams.
-- **Wdrożone bez zmiany sposobu pracy:**
+- **Pierwszy krok (6401946), bez zmiany sposobu pracy:**
   - Pasek 48 px.
-  - Przy 1100–1439 px etykiety bez ikon (pasek mieści się w jednym rzędzie, sprawdzone przy 760, 1000, 1100, 1180, 1280, 1366 i 1440 px).
-  - Poniżej 1100 px dwa wyrównane rzędy 48 + 40 px z etykietami 14 px.
-- **Propozycja do decyzji użytkownika** (zmienia nawigację główną, więc wymaga zgody):
+  - Przy 1100–1439 px etykiety bez ikon, poniżej 1100 px dwa rzędy 48 + 40 px.
+- **Propozycja przedstawiona użytkownikowi:**
   - (a) Lewy panel nawigacji według NavigationView: rozwinięty od 1008 px, same ikony poniżej, Ustawienia na dole panelu jak w Windows.
   - (b) Albo zostaje pasek górny, ale z 5 pozycjami i polskimi nazwami. Przykład:
     - „Zadania”;
@@ -160,7 +159,18 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
     - „Jira”;
     - „Historia i kopie” przeniesione do Ustawień albo do menu „Więcej”;
     - „Ustawienia” w prawym rogu jako ikona z etykietą.
-  - W obu wariantach zmieniają się widoczne nazwy używane w testach (np. `getByRole("button", { name: "Raporty dzienne" })`), więc testy trzeba przepisać.
+  - Wariant (b) zmienia widoczne nazwy używane w testach (np. `getByRole("button", { name: "Raporty dzienne" })`), więc testy trzeba by przepisać.
+- **Decyzja użytkownika (19 października 2026): wariant (a). Wdrożone w dbdf426:**
+  - Od 1008 px panel rozwinięty: 240 px, ikona 20 px i etykieta 14 px, pozycje 40 px.
+  - Przy 641–1007 px panel z samymi ikonami (LeftCompact, 56 px). Nazwa jest w podpowiedzi i w dostępnej nazwie przycisku.
+  - Poniżej 641 px panel jest schowany (LeftMinimal). Przycisk menu w pasku otwiera go nad treścią: fokus trafia na pierwszą pozycję, Esc albo wybór pozycji zamyka panel, a fokus wraca na przycisk menu ([APG — Dialog](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/)).
+  - Przycisk menu na górze panelu zwija i rozwija go ręcznie, a wybór zostaje zapamiętany.
+  - Ustawienia stoją na dole panelu jak w Windows.
+  - Wybrana pozycja ma pionową kreskę akcentu 3×16 px i tło. NavigationView pokazuje jeden wskaźnik wyboru.
+  - Pasek 48 px nad widokiem zostaje dla mierzonego zadania i akcji (szybkie przełączanie, mini-widget, motyw, tray).
+  - Pasek tytułu jest przyklejony u góry okna, a panel stoi pod nim.
+  - Nazwy pozycji się nie zmieniły. Zmiana nazw (np. „Dashboard” na polską nazwę, „Raporty dzienne” na „Raporty”) jest osobną decyzją. Nie wdrożyłem jej, bo nazwy są używane w testach i w README.
+  - Nowy test `tests/navigation.spec.ts` sprawdza trzy tryby, zapamiętanie i klawiaturę. Przy 480, 640, 760, 1007, 1008, 1180 i 1280 px (podgląd i aplikacja, pięć widoków) strona nie przewija się w poziomie.
 
 ### U7. Obramowania pól (średnia)
 
@@ -221,8 +231,8 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
 
 - **Obserwacja:** w aplikacji desktopowej pasek tytułu (34 px, tylko napis „Todo Track”) i pasek nawigacji (64 px) zajmowały 98 px, czyli 12% wysokości okna 800 px.
 - **Standard:** [Pasek tytułu Windows](https://learn.microsoft.com/en-us/windows/apps/design/basics/titlebar-design) ma 32 px. Górny pasek [NavigationView](https://learn.microsoft.com/en-us/windows/apps/design/controls/navigationview) ma 48 px.
-- **Zmiana:** 32 + 48 = 80 px.
-- **Dalszy krok (niewdrożony):** wpuszczenie nawigacji w pasek tytułu (jeden pasek 48 px). To zmienia obszary przeciągania okna w Tauri i wymaga sprawdzenia w natywnej aplikacji.
+- **Zmiana:** pasek tytułu 32 px, a nad treścią pasek poleceń 48 px. Od dbdf426 nawigacja jest w lewym panelu (U6), więc nad treścią zostaje 80 px.
+- **Dalszy krok (niewdrożony):** wpuszczenie paska poleceń w pasek tytułu (jeden pasek 48 px). To zmienia obszary przeciągania okna w Tauri i wymaga sprawdzenia w natywnej aplikacji.
 
 ### U12. Pasek przy 760 px (średnia)
 
@@ -233,8 +243,8 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
   - [Fluent 2 — layout](https://fluent2.microsoft.design/layout): siatka 4 px, odstępy z rampy.
   - [Prawo bliskości](https://lawsofux.com/law-of-proximity/).
 - **Zmiana:**
-  - Rząd 48 px (marka, mierzone zadanie, akcje) i rząd 40 px z nawigacją.
-  - Etykiety 14 px; poniżej 600 px nawigacja przewija się poziomo jak wcześniej.
+  - Najpierw (6401946): rząd 48 px (marka, mierzone zadanie, akcje) i rząd 40 px z nawigacją, etykiety 14 px.
+  - Od dbdf426 przy 760 px panel ma same ikony (U6) i drugi rząd nie jest potrzebny.
 
 ### U13. Niewidoczny fokus (średnia)
 
@@ -323,7 +333,7 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
 | [Windows InfoBar](https://learn.microsoft.com/en-us/windows/apps/design/controls/infobar) | Pasek i ikona rodzaju, neutralne tło, jeden przycisk akcji | U4, banery | Oficjalny wzorzec Windows dla trwałych komunikatów w aplikacji |
 | [Linear — „A calmer interface”](https://linear.app/now/behind-the-latest-design-refresh), [„How we redesigned the Linear UI”](https://linear.app/now/how-we-redesigned-the-linear-ui) | Mniej koloru marki w ramach, neutralne powierzchnie, akcent tylko dla wyróżnionej akcji | U3, U4 (banery bez niebieskiego tła), mniej ikon przy ciasnym pasku | Spokojniejsze otoczenie zostawia uwagę na timerze i planie dnia |
 | [Typografia](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/typography) i [geometria Windows 11](https://learn.microsoft.com/en-us/windows/apps/design/signature-experiences/geometry), [Fluent 2 — layout](https://fluent2.microsoft.design/layout) | Rampa 12/14/16/24/28, Segoe UI Variable, zaokrąglenia 4/8, siatka 4 px | U9, U19 | Aplikacja ma wyglądać jak program Windows (prawo Jakoba) |
-| [Windows NavigationView](https://learn.microsoft.com/en-us/windows/apps/design/controls/navigationview) | Pasek 48 px, progi szerokości; propozycja lewego panelu | U6, U11, U12 | Siedem pozycji przekracza zalecenie dla nawigacji górnej |
+| [Windows NavigationView](https://learn.microsoft.com/en-us/windows/apps/design/controls/navigationview) | Lewy panel w trzech trybach (rozwinięty od 1008 px, same ikony przy 641–1007 px, schowany poniżej), Ustawienia na dole, pasek 48 px | U6, U11, U12 | Siedem pozycji przekracza zalecenie dla nawigacji górnej |
 | [Radix Colors — skala](https://www.radix-ui.com/colors/docs/palette-composition/understanding-the-scale) | Osobny stopień neutralny dla ramek kontrolek | U7 (`--line-strong`) | Rozdziela dekoracyjne linie kart od granic pól (WCAG 1.4.11) |
 | [Atlassian — drag and drop](https://atlassian.design/components/pragmatic-drag-and-drop/accessibility-guidelines/) | „Move to…” w menu karty (było) i ogłoszenie przeniesienia | U17 | Wzorzec z tablicy Jiry, którą użytkownicy znają |
 | [Sunsama — planowanie dnia](https://help.sunsama.com/docs/usage-guides/daily-planning) | Słowne ostrzeżenie o przeładowanym planie | U16 | Rytuał „Rano” jest wzorowany na tym samym procesie |
@@ -332,7 +342,7 @@ Uwag krytycznych nie znaleziono: każdą funkcję da się wykonać myszą i klaw
 
 ## Zrzuty wzorcowe
 
-Wszystkie wzorce w `tests/visual.spec.ts-snapshots` zostały świadomie zregenerowane (`npm run test:visual:update`, Windows 11, lokalnie). Zmiany dotyczą każdego widoku: typografia, zaokrąglenia, pasek 48 px, ramki pól, a w widokach innych niż Zadania także mierzone zadanie w pasku. Lista:
+Wszystkie wzorce w `tests/visual.spec.ts-snapshots` zostały świadomie zregenerowane (`npm run test:visual:update`, Windows 11, lokalnie). Zmiany dotyczą każdego widoku: typografia, zaokrąglenia, pasek 48 px, ramki pól, a w widokach innych niż Zadania także mierzone zadanie w pasku. Wzorce widoków zregenerowałem jeszcze raz w dbdf426 dla lewego panelu nawigacji; widget się nie zmienił. Lista:
 
 - **Widoki w motywie ciemnym i jasnym, przy 760 i 1280 px, po 4 pliki na widok (32 pliki):** `zadania`, `dashboard`, `plan-dzien`, `plan-tablica-tygodnia`, `zamkniecie-dnia`, `ustawienia`, `jira`, `jira-tablica`.
 - **Mini-widget (2 pliki):** `widget-dark`, `widget-light`.
@@ -341,20 +351,22 @@ Wszystkie wzorce w `tests/visual.spec.ts-snapshots` zostały świadomie zregener
 
 ## Weryfikacja
 
-Wyniki na gałęzi po ostatnim commicie poprawek:
+Wyniki po dbdf426 (lewy panel):
 
 - `npm run build`: przechodzi (vue-tsc i Vite).
 - `cargo fmt --check`: przechodzi.
 - `cargo test --locked`: 234 z 234 testów.
-- Playwright z `--workers=2`, bez zrzutów (`--grep-invert @visual`): 219 z 219, bez powtórek.
-- Zrzuty wzorcowe (`tests/visual.spec.ts`) po świadomej regeneracji: 34 z 34. Razem 253 z 253, jak przy 1.7.0.
+- Playwright z `--workers=2`, bez zrzutów (`--grep-invert @visual`): 219 z 219, bez powtórek, plus 3 z 3 w nowym `tests/navigation.spec.ts`.
+- Zrzuty wzorcowe (`tests/visual.spec.ts`) po świadomej regeneracji: 34 z 34.
+- Razem 256 z 256 (253 z 1.7.0 i 3 nowe).
 - Ponowny pomiar audytu po zmianach:
   - w żadnym widoku i motywie nie ma tekstu poniżej 4.5:1;
   - poza wyjątkami opisanymi w U10 i U26 nie ma obszaru klikania poniżej 24 px;
-  - pasek nie przepełnia się przy 760, 1000, 1100, 1180, 1280, 1366 i 1440 px, w podglądzie i w aplikacji.
+  - strona nie przewija się w poziomie przy 480, 640, 760, 1007, 1008, 1180 i 1280 px, w podglądzie i w aplikacji.
 
 Nie sprawdzono w natywnej aplikacji (WebView2):
 
 - pasek tytułu 32 px i przeciąganie okna;
+- przyklejony pasek tytułu i panel nawigacji przy przewijaniu oraz `:has()` w WebView2;
 - Segoe UI Variable przy różnych DPI;
 - wygląd mierzonego zadania w pasku po zmianie skali Windows.
