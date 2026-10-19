@@ -135,6 +135,31 @@ Logowanie: GitHub.com, protokół HTTPS, przeglądarka. Konto musi mieć prawo z
 `todo-track`. Sprawdzenie: `gh auth status`. (19 października 2026 `gh` nie
 było zainstalowane na tej maszynie.)
 
+## Wydanie jednym poleceniem
+
+Po jednorazowej konfiguracji kolejne wydanie to:
+
+1. Nadpisz `notes.md` notatkami nowej wersji (pierwsza linia staje się tytułem commitu)
+   i dopisz „Nowości X.Y.Z” w `README.md`. Wszystko inne ma być zacommitowane, na `master`.
+2. Uruchom z katalogu głównego:
+
+   ```powershell
+   npm run ship -- 1.7.5
+   ```
+
+   albo kliknij dwa razy `wydanie.cmd` (zapyta o numer wersji). Skrypt (`scripts/ship.mjs`)
+   pyta o hasło klucza bez echa (chyba że ustawiona jest
+   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), a potem po kolei: podnosi wersję w trzech plikach
+   i obu lockach, uruchamia `npm run check`, publikuje przez `npm run release`, robi commit
+   `X.Y.Z: <pierwsza linia notatek>`, tag `vX.Y.Z` i `git push <remote GitHub> master --tags`.
+3. Nic nie instalujesz ręcznie: zainstalowane aplikacje pokażą baner.
+
+Opcje: `--skip-check` (bez testów), `--skip-build` (gotowy instalator w `target/`, np. powtórka
+po błędzie `gh`), `--no-push` (commit i tag bez pusha), `--dry-run` (wszystko poza publikacją,
+commitem, tagiem i pushem; na końcu cofa zmiany wersji), `--branch nazwa` (wydanie z innej
+gałęzi). Po błędzie w połowie pliki wersji zostają podniesione; powtórka z tą samą wersją
+pomija ten krok. Ręczne kroki poniżej robią to samo.
+
 ## Wydanie krok po kroku
 
 1. **Wersja** w trzech plikach: `src-tauri/tauri.conf.json`, `package.json`,

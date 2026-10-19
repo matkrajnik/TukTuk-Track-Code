@@ -53,9 +53,10 @@ function run(command, args, options = {}) {
 /** Polecenie z przechwyconym wyjściem (git, gh). */
 function read(command, args) {
   const result = spawnSync(command, args, { cwd: root, env, encoding: "utf8" });
+  // Bez przycinania z lewej: linie `git status --porcelain` zaczynają się od spacji.
   return {
     ok: result.status === 0,
-    out: (result.stdout ?? "").trim(),
+    out: (result.stdout ?? "").trimEnd(),
     err: result.error
       ? `nie znaleziono programu „${command}” (${result.error.message})`
       : (result.stderr ?? "").trim(),
