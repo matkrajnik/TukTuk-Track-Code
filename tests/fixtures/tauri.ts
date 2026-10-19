@@ -42,7 +42,11 @@ export interface TauriOptions {
       summary: string;
       status: string;
       boards: string[];
+      /** Wartości pól z ustawień (`jira_fields::FieldValue`). */
+      fields?: { id: string; name: string; value: string }[];
     }[];
+    /** Lista pól do wyboru w Ustawieniach (`jira_fields`). */
+    fields?: { id: string; name: string; custom: boolean; kind: string }[];
   };
 }
 
@@ -408,9 +412,16 @@ function install(init: {
             issues: (init.jira?.issues ?? []).map((i: any) => ({
               ...i,
               url: `${init.site}/browse/${i.key}`,
+              fields: i.fields ?? [],
             })),
             warnings: [],
           };
+        // Lista pól Jiry (`jira_fields`) i odświeżenie wartości po zmianie
+        // ustawień (`jira_refresh_fields`): w fixture stała lista, bez odświeżania.
+        case "jira_fields":
+          return clone(init.jira?.fields ?? []);
+        case "jira_refresh_fields":
+          return 0;
         // Tablica Jiry (J2) na danych fixture: kolumny jak w Jirze, karta
         // w kolumnie swojego statusu (przypisanie spoza kolumn testuje Rust
         // `jira_board::column_for` i e2e na podglądzie).
@@ -445,6 +456,7 @@ function install(init: {
                 assignee: i.assignee ?? null,
                 url: `${init.site}/browse/${i.key}`,
                 column,
+                fields: i.fields ?? [],
               };
             });
           return {

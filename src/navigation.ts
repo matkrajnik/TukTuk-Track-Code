@@ -97,6 +97,13 @@ export const settingsSections = [
       "przejścia",
       "gałąź",
       "Prefiks nazwy gałęzi",
+      "Pola Jiry na kafelku",
+      "etykiety",
+      "przypisany",
+      "priorytet",
+      "pola niestandardowe",
+      "Dodaj pole…",
+      "Pobierz listę pól z Jiry",
     ],
   },
   {

@@ -468,3 +468,31 @@ h3.details-heading {
 .today-meetings li.now small {
   color: var(--accent);
 }
+/* Pola z Jiry na kafelku, karcie tygodnia i kartach widoku Jira (JiraFieldChips). */
+.jira-field {
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--text);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.jira-field-name {
+  color: var(--muted);
+}
+.jira-field-label {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.jira-issue-fields,
+.jira-card-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin-top: 6px;
+}

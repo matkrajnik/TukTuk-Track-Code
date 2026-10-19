@@ -1,3 +1,4 @@
+use crate::jira_fields::{self, FieldValue, BASE_FIELDS};
 use crate::{db, Database};
 use keyring::Entry;
 use reqwest::{Client, StatusCode, Url};
@@ -48,6 +49,10 @@ pub struct Issue {
     status: String,
     boards: Vec<String>,
     url: String,
+    /// Nazwa priorytetu w Jirze (pasmo zadania, `jira_fields::priority_band`).
+    priority: String,
+    /// Wartości pól z ustawień (`jira_card_fields`) na karcie listy.
+    fields: Vec<FieldValue>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -93,6 +98,8 @@ pub fn remember(app: &tauri::AppHandle, rows: &[(String, String, String)], board
             status: status.clone(),
             boards: vec![],
             url: format!("{}/browse/{}", c.site, key),
+            priority: String::new(),
+            fields: vec![],
         });
         row.summary = summary.clone();
         row.status = status.clone();
@@ -198,6 +205,33 @@ pub(crate) async fn get(
         .basic_auth(&c.email, Some(secret))
         .header("Accept", "application/json")
         .query(query)
+        .send()
+        .await
+        .map_err(|_| {
+            "Nie można połączyć się z Jirą. Sprawdź Internet i adres serwera.".to_owned()
+        })?;
+    if !response.status().is_success() {
+        return Err(status_error(response.status()));
+    }
+    response
+        .json()
+        .await
+        .map_err(|_| "Jira zwróciła niepoprawną odpowiedź.".into())
+}
+/// Odczyt przez `POST` z treścią JSON (np. `issue/bulkfetch`); to nie zapis do
+/// Jiry, więc bez głównego przełącznika `jira_write`.
+pub(crate) async fn post(
+    client: &Client,
+    c: &Config,
+    secret: &str,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    let response = client
+        .post(format!("{}{}", c.site, path))
+        .basic_auth(&c.email, Some(secret))
+        .header("Accept", "application/json")
+        .json(body)
         .send()
         .await
         .map_err(|_| {
@@ -356,6 +390,8 @@ fn merge_issues(
     value: &Value,
     c: &Config,
     board: &Board,
+    extra: &[String],
+    names: &HashMap<String, String>,
 ) -> Result<(), String> {
     let issues = value["issues"]
         .as_array()
@@ -377,6 +413,8 @@ fn merge_issues(
                 .to_owned(),
             boards: vec![],
             url: format!("{}/browse/{}", c.site, key),
+            priority: jira_fields::format_field(&issue["fields"]["priority"]),
+            fields: jira_fields::field_values(&issue["fields"], extra, names),
         });
         if !row.boards.contains(&board.name) {
             row.boards.push(board.name.clone());
@@ -431,6 +469,8 @@ async fn board_issues(
     secret: &str,
     board: &Board,
     open_only: bool,
+    extra: &[String],
+    names: &HashMap<String, String>,
 ) -> Result<BTreeMap<String, Issue>, String> {
     let jql = if open_only {
         "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
@@ -439,8 +479,9 @@ async fn board_issues(
     };
     let mut result = BTreeMap::new();
     let path = format!("/rest/software/1.0/board/{}/issue", board.id);
-    pages(client, c, secret, &path, jql, "summary,status", |value| {
-        merge_issues(&mut result, value, c, board).map(|_| true)
+    let fields = jira_fields::fields_param(&BASE_FIELDS, extra);
+    pages(client, c, secret, &path, jql, &fields, |value| {
+        merge_issues(&mut result, value, c, board, extra, names).map(|_| true)
     })
     .await?;
     Ok(result)
@@ -453,10 +494,11 @@ pub async fn jira_issues(app: tauri::AppHandle, open_only: bool) -> Result<Issue
     }
     let secret = token(&app, &c)?;
     let client = client()?;
+    let (extra, names) = jira_fields::card_context(&app, &c.site);
     let mut result: BTreeMap<String, Issue> = BTreeMap::new();
     let mut warnings = vec![];
     for board in &c.boards {
-        match board_issues(&client, &c, &secret, board, open_only).await {
+        match board_issues(&client, &c, &secret, board, open_only, &extra, &names).await {
             Ok(rows) => {
                 for (key, row) in rows {
                     if let Some(existing) = result.get_mut(&key) {
@@ -487,6 +529,11 @@ pub async fn jira_issues(app: tauri::AppHandle, open_only: bool) -> Result<Issue
             &c.site,
             issues.iter().map(|i| (i.key.as_str(), i.status.as_str())),
         )
+        .and_then(|_| {
+            issues.iter().try_for_each(|i| {
+                jira_fields::save_fields(&tx, &c.site, &i.key, &i.priority, &i.fields)
+            })
+        })
         .and_then(|_| tx.commit())
         .map_err(|e| e.to_string())?;
     }
@@ -616,6 +663,22 @@ fn start_issue(
             params![id, site, key],
         )
         .map_err(|e| e.to_string())?;
+        // Nowe zadanie dostaje pasmo priorytetu z ostatnio pobranego priorytetu.
+        let priority: Option<String> = tx
+            .query_row(
+                "SELECT value FROM jira_issue_fields WHERE site=?1 AND issue_key=?2 AND field_id='priority'",
+                params![site, key],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(band) = priority.as_deref().and_then(jira_fields::priority_band) {
+            tx.execute(
+                "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?2)",
+                params![id, band],
+            )
+            .map_err(|e| e.to_string())?;
+        }
         id
     };
     tx.execute("UPDATE tasks SET done=0 WHERE id=?1", [id])
@@ -652,16 +715,24 @@ const WATCH_TICK: Duration = Duration::from_secs(20);
 const WATCH_JQL: &str =
     "assignee = currentUser() AND (statusCategory != Done OR updated >= -14d) ORDER BY created DESC";
 
-/// Zgłoszenie z odpowiedzi wyszukiwania: klucz, tytuł, status i czy jest otwarte.
+/// Zgłoszenie z odpowiedzi wyszukiwania (także `bulkfetch`): klucz, tytuł,
+/// status, czy jest otwarte, priorytet i wartości pól z ustawień.
 #[derive(Clone, Debug, PartialEq)]
-struct Assigned {
-    key: String,
-    summary: String,
-    status: String,
-    open: bool,
+pub(crate) struct Assigned {
+    pub key: String,
+    pub summary: String,
+    pub status: String,
+    pub open: bool,
+    pub priority: String,
+    pub fields: Vec<FieldValue>,
 }
 
-fn assigned_rows(value: &Value, out: &mut Vec<Assigned>) -> Result<(), String> {
+pub(crate) fn assigned_rows(
+    value: &Value,
+    extra: &[String],
+    names: &HashMap<String, String>,
+    out: &mut Vec<Assigned>,
+) -> Result<(), String> {
     let issues = value["issues"]
         .as_array()
         .ok_or("Jira nie zwróciła listy zgłoszeń.")?;
@@ -669,6 +740,9 @@ fn assigned_rows(value: &Value, out: &mut Vec<Assigned>) -> Result<(), String> {
         let Some(key) = issue["key"].as_str().filter(|k| valid_key(k)) else {
             continue;
         };
+        if out.iter().any(|r| r.key == key) {
+            continue;
+        }
         let status = &issue["fields"]["status"];
         out.push(Assigned {
             key: key.to_owned(),
@@ -678,6 +752,8 @@ fn assigned_rows(value: &Value, out: &mut Vec<Assigned>) -> Result<(), String> {
                 .to_owned(),
             status: status["name"].as_str().unwrap_or("").to_owned(),
             open: status["statusCategory"]["key"].as_str() != Some("done"),
+            priority: jira_fields::format_field(&issue["fields"]["priority"]),
+            fields: jira_fields::field_values(&issue["fields"], extra, names),
         });
     }
     Ok(())
@@ -687,16 +763,19 @@ async fn fetch_assigned(
     client: &Client,
     c: &Config,
     secret: &str,
+    extra: &[String],
+    names: &HashMap<String, String>,
 ) -> Result<Vec<Assigned>, String> {
     let mut rows = Vec::new();
+    let fields = jira_fields::fields_param(&BASE_FIELDS, extra);
     pages(
         client,
         c,
         secret,
         "/rest/api/3/search/jql",
         WATCH_JQL,
-        "summary,status",
-        |value| assigned_rows(value, &mut rows).map(|_| true),
+        &fields,
+        |value| assigned_rows(value, extra, names, &mut rows).map(|_| true),
     )
     .await?;
     Ok(rows)
@@ -759,6 +838,11 @@ fn sync_assigned(
         )
         .map_err(|e| e.to_string())?;
         imported.push(row.clone());
+    }
+    // Pola i priorytet po dodaniu zadań, żeby nowe zadanie dostało pasmo z Jiry.
+    for row in rows {
+        jira_fields::save_fields(&tx, site, &row.key, &row.priority, &row.fields)
+            .map_err(|e| e.to_string())?;
     }
     tx.execute("UPDATE jira_issues SET assigned=0 WHERE site=?1", [site])
         .map_err(|e| e.to_string())?;
@@ -853,9 +937,19 @@ fn watch_once(app: &tauri::AppHandle) -> Option<Result<(Vec<Assigned>, Vec<i64>)
         return None;
     }
     let secret = token(app, &c).ok()?;
-    let fetched =
-        tauri::async_runtime::block_on(async { fetch_assigned(&client()?, &c, &secret).await });
-    Some(fetched.and_then(|rows| {
+    let (extra, names) = jira_fields::card_context(app, &c.site);
+    let fetched = tauri::async_runtime::block_on(async {
+        let client = client()?;
+        let rows = fetch_assigned(&client, &c, &secret, &extra, &names).await?;
+        // Zgłoszenia zadań przekazane komuś innemu: status i pola bez importu;
+        // błąd tego pobrania nie przerywa importu przypisanych.
+        let skip: HashSet<String> = rows.iter().map(|r| r.key.clone()).collect();
+        let linked = jira_fields::fetch_linked(app, &client, &c, &secret, &skip)
+            .await
+            .unwrap_or_default();
+        Ok::<_, String>((rows, linked))
+    });
+    Some(fetched.and_then(|(rows, linked)| {
         let current = config(app)?;
         if current.site != c.site || current.email != c.email {
             return Ok((Vec::new(), Vec::new()));
@@ -872,6 +966,7 @@ fn watch_once(app: &tauri::AppHandle) -> Option<Result<(Vec<Assigned>, Vec<i64>)
             .as_deref()
             != Some(watch.as_str());
         let imported = sync_assigned(&mut db, &c.site, &rows, baseline, db::now())?;
+        jira_fields::store_rows(&mut db, &c.site, &linked).map_err(|e| e.to_string())?;
         db.execute(
             "INSERT INTO settings(key,value) VALUES('jira_watch',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             [watch],
@@ -1256,11 +1351,11 @@ mod tests {
                     query["jql"],
                     "assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"
                 );
-                assert_eq!(query["fields"], "summary,status");
+                assert_eq!(query["fields"], "summary,status,priority,labels");
                 if page == 1 {
                     assert_eq!(query["nextPageToken"], "second page");
                 }
-                let body = serde_json::json!({"isLast":page == 1,"nextPageToken":if page == 0 {Some("second page")}else{None},"issues":[{"key":format!("WMS-{}",page+1),"fields":{"summary":"Test","status":{"name":"Open"}}}]}).to_string();
+                let body = serde_json::json!({"isLast":page == 1,"nextPageToken":if page == 0 {Some("second page")}else{None},"issues":[{"key":format!("WMS-{}",page+1),"fields":{"summary":"Test","status":{"name":"Open"},"priority":{"name":"High"},"labels":["a","b"]}}]}).to_string();
                 write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
             }
         });
@@ -1278,9 +1373,20 @@ mod tests {
                 name: "Test".into(),
             },
             true,
+            &["labels".into()],
+            &HashMap::new(),
         ))
         .unwrap();
         assert_eq!(rows.len(), 2);
+        assert_eq!(rows["WMS-1"].priority, "High");
+        assert_eq!(
+            rows["WMS-1"].fields,
+            vec![FieldValue {
+                id: "labels".into(),
+                name: "Etykiety".into(),
+                value: "a, b".into()
+            }]
+        );
         server.join().unwrap();
     }
     #[test]
@@ -1344,17 +1450,20 @@ mod tests {
             summary: format!("Zgłoszenie {key}"),
             status: status.into(),
             open,
+            priority: String::new(),
+            fields: vec![],
         }
     }
     #[test]
     fn reads_status_and_category_from_search() {
         let value = serde_json::json!({"issues":[
-            {"key":"WMS-1","fields":{"summary":"A","status":{"name":"W toku","statusCategory":{"key":"indeterminate"}}}},
+            {"key":"WMS-1","fields":{"summary":"A","status":{"name":"W toku","statusCategory":{"key":"indeterminate"}},"priority":{"name":"Low"},"assignee":{"accountId":"1","displayName":"Anna Nowak"}}},
             {"key":"WMS-2","fields":{"summary":"B","status":{"name":"Gotowe","statusCategory":{"key":"done"}}}},
+            {"key":"WMS-1","fields":{"summary":"Powtórka"}},
             {"key":"../x","fields":{}}
         ]});
         let mut rows = Vec::new();
-        assigned_rows(&value, &mut rows).unwrap();
+        assigned_rows(&value, &["assignee".into()], &HashMap::new(), &mut rows).unwrap();
         assert_eq!(
             rows,
             vec![
@@ -1362,16 +1471,74 @@ mod tests {
                     key: "WMS-1".into(),
                     summary: "A".into(),
                     status: "W toku".into(),
-                    open: true
+                    open: true,
+                    priority: "Low".into(),
+                    fields: vec![FieldValue {
+                        id: "assignee".into(),
+                        name: "Przypisany".into(),
+                        value: "Anna Nowak".into()
+                    }],
                 },
                 Assigned {
                     key: "WMS-2".into(),
                     summary: "B".into(),
                     status: "Gotowe".into(),
-                    open: false
+                    open: false,
+                    priority: String::new(),
+                    fields: vec![],
                 },
             ]
         );
+    }
+    #[test]
+    fn sync_stores_fields_and_priority_for_imported_and_known_issues() {
+        let site = "https://a.atlassian.net";
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&connection).unwrap();
+        sync_assigned(&mut connection, site, &[], true, 100).unwrap();
+        let mut high = row("WMS-1", "Do zrobienia", true);
+        high.priority = "High".into();
+        high.fields = vec![FieldValue {
+            id: "labels".into(),
+            name: "Etykiety".into(),
+            value: "pilne".into(),
+        }];
+        let imported = sync_assigned(&mut connection, site, &[high.clone()], false, 200).unwrap();
+        assert_eq!(imported.len(), 1);
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks[0].details.priority, 1);
+        assert_eq!(s.tasks[0].jira_fields, high.fields);
+        // Zmiana priorytetu w Jirze przenosi się na istniejące zadanie.
+        let mut low = high.clone();
+        low.priority = "Low".into();
+        low.fields.clear();
+        sync_assigned(&mut connection, site, &[low], false, 300).unwrap();
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks[0].details.priority, -1);
+        assert!(s.tasks[0].jira_fields.is_empty());
+        // `store_rows` (zgłoszenia przekazane komuś innemu): status i pola, bez importu.
+        let mut other = row("WMS-1", "Code review", true);
+        other.priority = "Low".into();
+        other.fields = vec![FieldValue {
+            id: "assignee".into(),
+            name: "Przypisany".into(),
+            value: "Anna Nowak".into(),
+        }];
+        let mut new = row("WMS-9", "Do zrobienia", true);
+        new.priority = "Highest".into();
+        jira_fields::store_rows(&mut connection, site, &[other.clone(), new]).unwrap();
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].jira_status.as_deref(), Some("Code review"));
+        assert_eq!(s.tasks[0].jira_fields, other.fields);
+        // „Rozpocznij” dla zgłoszenia z pobranym priorytetem: nowe zadanie z pasmem.
+        let s = start_issue(&mut connection, site, "WMS-9", "Nowe", 400).unwrap();
+        let nine = s
+            .tasks
+            .iter()
+            .find(|t| t.jira_key.as_deref() == Some("WMS-9"))
+            .unwrap();
+        assert_eq!(nine.details.priority, 1);
     }
     #[test]
     fn sync_imports_only_new_assignments_and_keeps_statuses() {
@@ -1781,6 +1948,8 @@ mod tests {
                 id: 1,
                 name: "A".into(),
             },
+            &[],
+            &HashMap::new(),
         )
         .unwrap();
         merge_issues(
@@ -1791,6 +1960,8 @@ mod tests {
                 id: 2,
                 name: "B".into(),
             },
+            &[],
+            &HashMap::new(),
         )
         .unwrap();
         assert_eq!(rows.len(), 1);

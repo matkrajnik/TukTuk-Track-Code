@@ -12,6 +12,7 @@
 //! komunikatami błędów; komendy dodatkowo sprawdzają przełącznik przed odczytem
 //! z sieci, więc przy wyłączonych zapisach backend odrzuca je od razu.
 use crate::jira::{self, Config};
+use crate::jira_fields::{self, FieldValue};
 use crate::{db, Database};
 use reqwest::{Client, Method};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -24,8 +25,8 @@ use tauri::{Emitter, Manager};
 pub const ISSUE_LIMIT: usize = 300;
 /// Co ile odświeżać kolumny i statusy bez „Odśwież” (raz na dobę).
 const CACHE_TTL: i64 = 24 * 3_600_000;
-/// Pola zgłoszeń na kartach tablicy.
-const BOARD_FIELDS: &str = "summary,status,issuetype,priority,assignee";
+/// Pola zgłoszeń na kartach tablicy (plus pola z ustawień).
+const BOARD_FIELDS: [&str; 5] = ["summary", "status", "issuetype", "priority", "assignee"];
 /// Najdłuższy komentarz (znaki).
 pub const COMMENT_LIMIT: usize = 5000;
 /// Najdłuższa nazwa gałęzi bez prefiksu (klucz i tytuł).
@@ -80,6 +81,8 @@ pub struct BoardIssue {
     pub url: String,
     /// Indeks kolumny (`column_for`).
     pub column: usize,
+    /// Wartości pól z ustawień (`jira_card_fields`).
+    pub fields: Vec<FieldValue>,
 }
 
 #[derive(Serialize)]
@@ -296,6 +299,8 @@ pub fn collect_issues(
     categories: &HashMap<String, String>,
     out: &mut Vec<BoardIssue>,
     limit: usize,
+    extra: &[String],
+    names: &HashMap<String, String>,
 ) -> Result<bool, String> {
     let issues = value["issues"]
         .as_array()
@@ -325,6 +330,7 @@ pub fn collect_issues(
             priority: short(f["priority"]["name"].as_str().unwrap_or(""), 60),
             assignee: person(&f["assignee"]),
             url: format!("{site}/browse/{key}"),
+            fields: jira_fields::field_values(f, extra, names),
         });
     }
     Ok(out.len() <= limit)
@@ -837,6 +843,8 @@ pub async fn jira_board(
     let client = jira::client()?;
     let layout = layout(&app, &client, &c, &secret, board_id, refresh).await?;
     let categories = layout.categories();
+    let (extra, names) = jira_fields::card_context(&app, &c.site);
+    let fields = jira_fields::fields_param(&BOARD_FIELDS, &extra);
     let mut issues = Vec::new();
     jira::pages(
         &client,
@@ -844,7 +852,7 @@ pub async fn jira_board(
         &secret,
         &format!("/rest/software/1.0/board/{board_id}/issue"),
         jql,
-        BOARD_FIELDS,
+        &fields,
         |value| {
             collect_issues(
                 value,
@@ -853,6 +861,8 @@ pub async fn jira_board(
                 &categories,
                 &mut issues,
                 ISSUE_LIMIT,
+                &extra,
+                &names,
             )
         },
     )
@@ -868,6 +878,11 @@ pub async fn jira_board(
             &c.site,
             issues.iter().map(|i| (i.key.as_str(), i.status.as_str())),
         )
+        .and_then(|_| {
+            issues.iter().try_for_each(|i| {
+                jira_fields::save_fields(&tx, &c.site, &i.key, &i.priority, &i.fields)
+            })
+        })
         .and_then(|_| tx.commit())
         .map_err(|e| e.to_string())?;
     }
@@ -1036,6 +1051,11 @@ pub async fn jira_assign(
         &json!({"accountId": who.account_id}),
     )
     .await?;
+    // Kafelek pokazuje nową osobę od razu (znana nazwa tylko przy „Przypisz do mnie”).
+    if let Ok(c) = jira::config(&app) {
+        jira_fields::store_value(&app, &c.site, &key, "assignee", &who.display_name);
+        let _ = app.emit("data-changed", ());
+    }
     Ok(who)
 }
 
@@ -1415,19 +1435,31 @@ mod tests {
             {"key": "../3", "fields": {}}
         ]});
         let mut out = Vec::new();
+        let none = HashMap::new();
         assert!(collect_issues(
             &value,
             "https://a.atlassian.net",
             &columns,
             &categories,
             &mut out,
-            300
+            300,
+            &["assignee".into(), "labels".into()],
+            &none,
         )
         .unwrap());
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].column, 1);
         assert_eq!(out[0].issue_type, "Zadanie");
         assert_eq!(out[0].priority, "High");
+        assert_eq!(
+            out[0].fields,
+            vec![FieldValue {
+                id: "assignee".into(),
+                name: "Przypisany".into(),
+                value: "Anna Nowak".into()
+            }]
+        );
+        assert!(out[1].fields.is_empty());
         assert_eq!(
             out[0].assignee,
             Some(Person {
@@ -1441,9 +1473,29 @@ mod tests {
         assert_eq!(out[1].column, 3);
         assert_eq!(out[1].assignee, None);
         // Powyżej limitu: koniec pobierania; powtórzony klucz nie dubluje karty.
-        assert!(!collect_issues(&value, "s", &columns, &categories, &mut Vec::new(), 1).unwrap());
+        assert!(!collect_issues(
+            &value,
+            "s",
+            &columns,
+            &categories,
+            &mut Vec::new(),
+            1,
+            &[],
+            &none
+        )
+        .unwrap());
         let before = out.len();
-        collect_issues(&value, "s", &columns, &categories, &mut out, 300).unwrap();
+        collect_issues(
+            &value,
+            "s",
+            &columns,
+            &categories,
+            &mut out,
+            300,
+            &[],
+            &none,
+        )
+        .unwrap();
         assert_eq!(out.len(), before);
         assert!(board_jql("all", true)
             .unwrap()

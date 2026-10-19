@@ -1,5 +1,15 @@
 # Todo Track — stan po 1.7.2
 
+## W toku: pola Jiry na kafelku i priorytet z Jiry (19 października 2026)
+
+Gałąź `master`, zmiany niezacommitowane, wersja nadal 1.7.2 (wydanie 1.7.3 do zrobienia). Zakres: Ustawienia → Jira → „Pola Jiry na kafelku” (`jiraCardFields`, domyślnie `labels` i `assignee`, do 6 pól, lista z `GET /rest/api/3/field` w tabeli `jira_fields`), wartości w tabeli `jira_issue_fields` zapisywane przy liście, tablicy, obserwacji co 5 min i od razu po zmianie listy (`jira_refresh_fields`), chipy (`JiraFieldChips.vue`) w kafelku, na karcie tygodnia i w widoku Jira, odświeżanie zgłoszeń otwartych zadań po kluczach (`POST /rest/api/3/issue/bulkfetch`, `jira_fields::fetch_linked`) oraz priorytet z Jiry jako pasmo priorytetu zadania (`jira_fields::priority_band`, przy imporcie, „Rozpocznij” i zmianie w Jirze). Nowy moduł `src-tauri/src/jira_fields.rs`, test e2e `tests/jira-fields.spec.ts`, opis w README („Nowości 1.7.3”).
+
+Do ręcznego sprawdzenia z prawdziwą Jirą (nic nie było uruchamiane natywnie):
+- `GET /rest/api/3/field` zwraca listę z nazwami pól niestandardowych; „Pobierz listę pól z Jiry” pokazuje je w wyborze;
+- `POST /rest/api/3/issue/bulkfetch` działa na koncie (Jira Cloud); przy braku końcówki obserwacja co 5 min nadal importuje przypisane, a tylko zgłoszenia przekazane innym nie odświeżają się;
+- wartości pól typu sprint, opcja, użytkownik i data na kafelku; pole bez wartości nie pokazuje chipa;
+- priorytet z Jiry ustawia pasmo zadania przy imporcie i po zmianie w Jirze; ręczne pasmo zostaje do kolejnej zmiany w Jirze.
+
 ## Stan po 1.7.2 (19 października 2026)
 
 Gałąź `master`. 1.7.2 to przebudowa UX z gałęzi `claude/hungry-pare-c0cad4`. Gałąź przeniesiono rebase'em na 1.7.1 bez konfliktów. Audyt ze źródłami jest w `UX_AUDIT.md` (uwagi U1–U19 wdrożone, U6 jako lewy panel nawigacji według Windows NavigationView, U20–U27 opisane). Instalator: `releases/Todo Track_1.7.2_x64-setup.exe`, lokalny tag `v1.7.2`.

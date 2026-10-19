@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
@@ -7,6 +7,7 @@ import BrowserExtensionStatus from "./BrowserExtensionStatus.vue";
 import { openView, type SettingsSection } from "../navigation";
 import {
   defaultSettings,
+  maxCardFields,
   onSettingsChanged,
   onShortcutsChanged,
   readAppInfo,
@@ -16,14 +17,18 @@ import {
   type AppSettings,
 } from "../settings";
 import {
+  jiraFieldName,
+  jiraFields,
+  jiraRefreshFields,
   loadTemplates,
   readAutostart,
   templates,
   writeAutostart,
   type Autostart,
+  type JiraFieldInfo,
 } from "../store";
 /** Widoczna sekcja; zakładka Ustawienia pokazuje jedną naraz. */
-defineProps<{ section: SettingsSection }>();
+const props = defineProps<{ section: SettingsSection }>();
 /** Formularz nowego szablonu w sekcji Szablony. */
 const addingTemplate = ref(false);
 const settings = ref<AppSettings>({
@@ -69,6 +74,94 @@ async function save(patch: Partial<AppSettings>) {
 }
 const checked = (e: Event) => (e.target as HTMLInputElement).checked;
 const text = (e: Event) => (e.target as HTMLInputElement).value;
+
+/** Pola Jiry na kafelku: lista pól z Jiry, wybór i kolejność. */
+const catalog = ref<JiraFieldInfo[]>([]);
+const pickingFields = ref(false),
+  fieldsBusy = ref(false),
+  fieldQuery = ref(""),
+  fieldsError = ref(""),
+  fieldsNotice = ref("");
+const fieldName = (id: string) => jiraFieldName(id, catalog.value);
+const visibleFields = computed(() => {
+  const q = fieldQuery.value.trim().toLocaleLowerCase("pl");
+  return catalog.value.filter(
+    (f) =>
+      !["summary", "status"].includes(f.id) &&
+      (!q ||
+        f.name.toLocaleLowerCase("pl").includes(q) ||
+        f.id.toLocaleLowerCase("pl").includes(q)),
+  );
+});
+async function loadFields(refresh: boolean) {
+  fieldsBusy.value = true;
+  fieldsError.value = "";
+  fieldsNotice.value = "";
+  try {
+    catalog.value = await jiraFields(refresh);
+    pickingFields.value = true;
+    if (refresh) fieldsNotice.value = `Pobrano ${catalog.value.length} pól.`;
+  } catch (e) {
+    fieldsError.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    fieldsBusy.value = false;
+  }
+}
+// Nazwy wybranych pól (także niestandardowych) z pamięci podręcznej listy pól,
+// gdy sekcja Jira jest widoczna; błąd (np. konto niepołączone) nic nie pokazuje.
+watch(
+  () => props.section,
+  async (section) => {
+    if (section !== "jira" || catalog.value.length) return;
+    try {
+      catalog.value = await jiraFields(false);
+    } catch {
+      /* identyfikatory zamiast nazw do czasu pobrania listy */
+    }
+  },
+  { immediate: true },
+);
+async function toggleFieldPicker() {
+  if (pickingFields.value) {
+    pickingFields.value = false;
+    return;
+  }
+  if (catalog.value.length) pickingFields.value = true;
+  else await loadFields(false);
+}
+/** Zapis listy pól i od razu odświeżenie wartości na zadaniach. */
+async function saveFields(next: string[]) {
+  fieldsError.value = "";
+  fieldsNotice.value = "";
+  await save({ jiraCardFields: next });
+  if (error.value) return;
+  try {
+    const count = await jiraRefreshFields();
+    fieldsNotice.value = count
+      ? `Odświeżono pola ${count} zgłoszeń.`
+      : "Zapisano. Wartości pojawią się przy najbliższym pobraniu z Jiry.";
+  } catch (e) {
+    fieldsError.value = `Zapisano, ale nie udało się odświeżyć wartości: ${String(
+      e instanceof Error ? e.message : e,
+    )}`;
+  }
+}
+function toggleField(id: string) {
+  const current = settings.value.jiraCardFields;
+  saveFields(
+    current.includes(id) ? current.filter((f) => f !== id) : [...current, id],
+  );
+}
+function removeField(id: string) {
+  saveFields(settings.value.jiraCardFields.filter((f) => f !== id));
+}
+function moveField(index: number, delta: -1 | 1) {
+  const next = [...settings.value.jiraCardFields];
+  const target = index + delta;
+  if (target < 0 || target >= next.length) return;
+  [next[index], next[target]] = [next[target], next[index]];
+  saveFields(next);
+}
 const number = (e: Event) => {
   const value = (e.target as HTMLInputElement).value;
   return value === "" ? NaN : Number(value);
@@ -452,6 +545,108 @@ onUnmounted(() => {
         Gdy zgłoszenie zadania wejdzie w taki status, kafelek proponuje
         oznaczenie „Czekam na”, a gdy z niego wyjdzie — odblokowanie. Nic nie
         zmienia się samo. Wielkość liter nie ma znaczenia.
+      </p>
+      <h3 id="jira-card-fields-heading">Pola Jiry na kafelku</h3>
+      <div
+        class="chosen-boards jira-card-fields"
+        role="list"
+        aria-labelledby="jira-card-fields-heading"
+      >
+        <span
+          v-for="(id, i) in settings.jiraCardFields"
+          :key="id"
+          role="listitem"
+          class="jira-card-field"
+          >{{ fieldName(id) }}
+          <button
+            :aria-label="'Przesuń wyżej: ' + fieldName(id)"
+            title="Wyżej"
+            :disabled="busy || i === 0"
+            @click="moveField(i, -1)"
+          >
+            ↑</button
+          ><button
+            :aria-label="'Przesuń niżej: ' + fieldName(id)"
+            title="Niżej"
+            :disabled="busy || i === settings.jiraCardFields.length - 1"
+            @click="moveField(i, 1)"
+          >
+            ↓</button
+          ><button
+            :aria-label="'Usuń pole: ' + fieldName(id)"
+            title="Usuń"
+            :disabled="busy"
+            @click="removeField(id)"
+          >
+            ×
+          </button></span
+        >
+        <span v-if="!settings.jiraCardFields.length" class="hint"
+          >Brak pól: kafelek pokazuje tylko klucz i status.</span
+        >
+      </div>
+      <div class="connection-actions">
+        <button
+          class="secondary-button"
+          :disabled="busy || fieldsBusy"
+          :aria-expanded="pickingFields"
+          @click="toggleFieldPicker()"
+        >
+          {{ pickingFields ? "Zwiń listę pól" : "Dodaj pole…" }}</button
+        ><button
+          class="secondary-button"
+          :disabled="busy || fieldsBusy"
+          @click="loadFields(true)"
+        >
+          Pobierz listę pól z Jiry</button
+        ><span class="hint"
+          >Wybrano {{ settings.jiraCardFields.length }} / {{ maxCardFields }}</span
+        >
+      </div>
+      <p v-if="fieldsError" class="error" role="alert">{{ fieldsError }}</p>
+      <p v-else-if="fieldsNotice" class="hint" role="status">
+        {{ fieldsNotice }}
+      </p>
+      <div v-if="pickingFields" class="board-picker jira-field-picker">
+        <input
+          v-model="fieldQuery"
+          aria-label="Szukaj pola"
+          placeholder="Nazwa pola…"
+          :disabled="busy || fieldsBusy"
+        />
+        <div class="board-options">
+          <label v-for="f in visibleFields" :key="f.id"
+            ><input
+              type="checkbox"
+              :checked="settings.jiraCardFields.includes(f.id)"
+              :disabled="
+                busy ||
+                fieldsBusy ||
+                (settings.jiraCardFields.length >= maxCardFields &&
+                  !settings.jiraCardFields.includes(f.id))
+              "
+              @change="toggleField(f.id)"
+            />{{ f.name }}
+            <small>{{ f.custom ? f.id : "systemowe" }}</small></label
+          >
+          <p v-if="fieldsBusy" class="hint" role="status">Proszę czekać…</p>
+          <p v-else-if="!visibleFields.length" class="hint">
+            {{
+              catalog.length
+                ? "Brak pól pasujących do wyszukiwania."
+                : "Lista pól nie jest pobrana."
+            }}
+          </p>
+        </div>
+      </div>
+      <p class="hint">
+        Wybrane pola (także niestandardowe) widać w zwiniętym kafelku zadania,
+        na karcie tygodnia i na kartach w widoku Jira. Wartości odświeżają się
+        przy pobraniu listy lub tablicy, co 5 minut dla zgłoszeń otwartych zadań
+        (także przekazanych komuś innemu) i od razu po zmianie tej listy.
+        Priorytet z Jiry zawsze ustawia pasmo priorytetu zadania (Highest i High
+        → wysoki, Medium → normalny, Low i Lowest → niski); ręczna zmiana pasma
+        zostaje do kolejnej zmiany priorytetu w Jirze.
       </p>
       <p class="hint">
         Konto Jiry (adres, e-mail, token API) i tablice ustawiasz w widoku Jira.

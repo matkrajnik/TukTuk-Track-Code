@@ -19,6 +19,7 @@ import TaskPlanning from "../TaskPlanning.vue";
 import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
 import JiraIssueActions from "./JiraIssueActions.vue";
+import JiraFieldChips from "./JiraFieldChips.vue";
 import {
   desktop,
   duration,
@@ -253,6 +254,7 @@ async function openJira(url: string) {
               :title="'Status w Jirze: ' + task.jiraStatus"
               >{{ task.jiraStatus }}</span
             >
+            <JiraFieldChips v-if="task.jiraKey" :fields="task.jiraFields" />
             <span v-if="task.details?.waiting && !task.done" class="task-status"
               >Czekam na: {{ task.details.waiting
               }}<template v-if="waitingSince"> · {{ waitingSince }}</template></span

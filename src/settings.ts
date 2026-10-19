@@ -36,6 +36,8 @@ export interface AppSettings {
   jiraMoveStatus: string;
   /** Prefiks nazwy gałęzi w „Kopiuj nazwę gałęzi” (J2). */
   jiraBranchPrefix: string;
+  /** Pola Jiry na kafelku zadania, karcie tygodnia i kartach widoku Jira (identyfikatory, w kolejności). */
+  jiraCardFields: string[];
   shortcutQuick: string;
   shortcutToggle: string;
   /** Długość bloku skupienia w minutach (1–240). */
@@ -96,6 +98,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   jiraAskMove: true,
   jiraMoveStatus: "In Progress",
   jiraBranchPrefix: "feature/",
+  jiraCardFields: ["labels", "assignee"],
   shortcutQuick: "Control+Shift+Space",
   shortcutToggle: "Control+Alt+Space",
   focusBlockMinutes: 25,
@@ -226,7 +229,15 @@ const fresh = (): AppSettings => ({
   workDays: [...defaultSettings.workDays],
   agentMutedFolders: [],
   waitingJiraStatuses: [...defaultSettings.waitingJiraStatuses],
+  jiraCardFields: [...defaultSettings.jiraCardFields],
 });
+/** Najwięcej pól Jiry na kafelku (`settings::MAX_CARD_FIELDS`). */
+export const maxCardFields = 6;
+/** Komunikat dla niepoprawnej listy pól (`settings::CARD_FIELDS_ERROR`). */
+export const cardFieldsError =
+  "Pola Jiry na kafelku: najwyżej 6 identyfikatorów pól (np. labels, customfield_10020), bez summary i status.";
+/** Identyfikator pola Jiry jak `jira_fields::valid_field_id`. */
+export const validFieldId = (id: string) => /^[A-Za-z][A-Za-z0-9_]{0,59}$/.test(id);
 /** Folder do porównań jak `agents::norm_folder`. */
 export const normFolder = (folder: string) =>
   folder.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -314,6 +325,16 @@ function applyFields(
     throw new Error("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.");
   s.jiraBranchPrefix = s.jiraBranchPrefix.trim();
   if (!validBranchPrefix(s.jiraBranchPrefix)) throw new Error(branchPrefixError);
+  // Jak w Rust: poprawne identyfikatory, bez powtórek, bez summary i status.
+  const fields: string[] = [];
+  for (const raw of s.jiraCardFields) {
+    const id = typeof raw === "string" ? raw.trim() : "";
+    if (!validFieldId(id) || id === "summary" || id === "status")
+      throw new Error(cardFieldsError);
+    if (!fields.includes(id)) fields.push(id);
+  }
+  if (fields.length > maxCardFields) throw new Error(cardFieldsError);
+  s.jiraCardFields = fields;
   if (!time.test(s.dayStart))
     throw new Error("Początek dnia musi mieć format GG:MM.");
   if (s.morningReviewDay !== "" && !validDay(s.morningReviewDay))

@@ -14,6 +14,7 @@ mod holidays;
 mod idle;
 mod jira;
 mod jira_board;
+mod jira_fields;
 mod jira_move;
 mod maintenance;
 mod native_msg;
@@ -493,6 +494,8 @@ fn main() {
             jira_board::jira_issue_types,
             jira_board::jira_issue_type_fields,
             jira_board::jira_create,
+            jira_fields::jira_fields,
+            jira_fields::jira_refresh_fields,
             calendar::calendar_status,
             calendar::calendar_connect,
             calendar::calendar_disconnect,

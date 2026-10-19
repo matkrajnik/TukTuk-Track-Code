@@ -29,6 +29,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   change,
+  previewDataEvent,
   read,
   desktop,
   onNavigate,
@@ -259,6 +260,12 @@ onMounted(async () => {
     } catch (e) {
       error.value = String(e);
     }
+  } else {
+    // Podgląd: symulowana Jira zmienia dane poza widokiem (priorytet, pola).
+    window.addEventListener(previewDataEvent, refresh);
+    unsubscribers.push(() =>
+      window.removeEventListener(previewDataEvent, refresh),
+    );
   }
   await refresh();
 });

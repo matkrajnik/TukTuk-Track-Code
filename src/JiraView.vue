@@ -48,6 +48,7 @@ import { openSettings } from "./navigation";
 import { useSettings } from "./target";
 import { dayKey, dayText } from "./time";
 import JiraIssueActions from "./components/JiraIssueActions.vue";
+import JiraFieldChips from "./components/JiraFieldChips.vue";
 
 const props = defineProps<{
   activeUrl?: string | null;
@@ -901,6 +902,9 @@ onMounted(async () => {
               </div>
               <h2>{{ issue.summary }}</h2>
               <p>{{ issue.boards.join(" · ") }}</p>
+              <div v-if="issue.fields?.length" class="jira-issue-fields">
+                <JiraFieldChips :fields="issue.fields" />
+              </div>
             </div>
             <button
               v-if="props.activeUrl === issue.url"
@@ -1037,6 +1041,9 @@ onMounted(async () => {
                 >
               </div>
               <h3>{{ card.summary }}</h3>
+              <div v-if="card.fields?.length" class="jira-card-fields">
+                <JiraFieldChips :fields="card.fields" />
+              </div>
               <div class="jira-card-local">
                 <span
                   v-if="props.activeUrl === card.url"

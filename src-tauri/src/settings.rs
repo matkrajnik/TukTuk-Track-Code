@@ -44,6 +44,10 @@ pub struct AppSettings {
     pub jira_move_status: String,
     /// Prefiks nazwy gałęzi z „Kopiuj nazwę gałęzi” (J2), np. `feature/`.
     pub jira_branch_prefix: String,
+    /// Pola Jiry pokazywane na kafelku zadania, karcie tygodnia i kartach widoku
+    /// Jira (identyfikatory, np. `labels`, `assignee`, `customfield_10020`),
+    /// w kolejności wyświetlania; najwyżej [`MAX_CARD_FIELDS`].
+    pub jira_card_fields: Vec<String>,
     pub shortcut_quick: String,
     pub shortcut_toggle: String,
     /// Długość bloku skupienia w minutach (1–240, domyślnie 25).
@@ -86,6 +90,16 @@ pub fn default_waiting_statuses() -> Vec<String> {
     .to_vec()
 }
 
+/// Domyślne pola Jiry na kafelku: etykiety i przypisany.
+pub fn default_card_fields() -> Vec<String> {
+    vec!["labels".into(), "assignee".into()]
+}
+/// Najwięcej pól Jiry na kafelku.
+pub const MAX_CARD_FIELDS: usize = 6;
+/// Komunikat dla niepoprawnej listy pól Jiry.
+pub const CARD_FIELDS_ERROR: &str =
+    "Pola Jiry na kafelku: najwyżej 6 identyfikatorów pól (np. labels, customfield_10020), bez summary i status.";
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -112,6 +126,7 @@ impl Default for AppSettings {
             jira_ask_move: true,
             jira_move_status: "In Progress".into(),
             jira_branch_prefix: "feature/".into(),
+            jira_card_fields: default_card_fields(),
             shortcut_quick: "Control+Shift+Space".into(),
             shortcut_toggle: "Control+Alt+Space".into(),
             focus_block_minutes: 25,
@@ -296,6 +311,21 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     if !valid_branch_prefix(&s.jira_branch_prefix) {
         return Err(BRANCH_PREFIX_ERROR.into());
     }
+    // Pola Jiry na kafelku: poprawne identyfikatory, bez powtórek, bez pól
+    // pokazywanych zawsze (tytuł i status).
+    let mut fields: Vec<String> = Vec::new();
+    for id in s.jira_card_fields.iter().map(|v| v.trim()) {
+        if !crate::jira_fields::valid_field_id(id) || matches!(id, "summary" | "status") {
+            return Err(CARD_FIELDS_ERROR.into());
+        }
+        if !fields.iter().any(|f| f == id) {
+            fields.push(id.to_string());
+        }
+    }
+    if fields.len() > MAX_CARD_FIELDS {
+        return Err(CARD_FIELDS_ERROR.into());
+    }
+    s.jira_card_fields = fields;
     if !valid_time(&s.day_start) {
         return Err("Początek dnia musi mieć format GG:MM.".into());
     }
@@ -694,6 +724,44 @@ mod tests {
         )
         .unwrap();
         assert_eq!(load(&db).week_review_time, "15:00");
+    }
+
+    #[test]
+    fn jira_card_fields_are_validated_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert_eq!(base.jira_card_fields, vec!["labels", "assignee"]);
+        for bad in [
+            json!({"jiraCardFields": ["summary"]}),
+            json!({"jiraCardFields": ["status"]}),
+            json!({"jiraCardFields": [""]}),
+            json!({"jiraCardFields": ["custom field"]}),
+            json!({"jiraCardFields": ["1abc"]}),
+            json!({"jiraCardFields": ["a", "b", "c", "d", "e", "f", "g"]}),
+            json!({"jiraCardFields": "labels"}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad} powinno być odrzucone");
+        }
+        let saved = save(
+            &mut db,
+            &json!({"jiraCardFields": [" customfield_10020 ", "labels", "customfield_10020", "assignee"]}),
+        )
+        .unwrap();
+        assert_eq!(
+            saved.jira_card_fields,
+            vec!["customfield_10020", "labels", "assignee"]
+        );
+        assert_eq!(load(&db), saved);
+        let none = save(&mut db, &json!({"jiraCardFields": []})).unwrap();
+        assert!(none.jira_card_fields.is_empty());
+        assert!(load(&db).jira_card_fields.is_empty());
+        // Uszkodzona zapisana lista wraca do domyślnej.
+        db.execute(
+            "UPDATE settings SET value='[\"summary\"]' WHERE key='jira_card_fields'",
+            [],
+        )
+        .unwrap();
+        assert_eq!(load(&db).jira_card_fields, vec!["labels", "assignee"]);
     }
 
     #[test]

@@ -13,6 +13,9 @@ pub struct Task {
     pub jira_url: Option<String>,
     /// Ostatni znany status zgłoszenia w Jirze (`jira_issues`).
     pub jira_status: Option<String>,
+    /// Wartości pól z Jiry na kafelku (`jira_card_fields`, `jira_issue_fields`),
+    /// w kolejności z ustawień, tylko niepuste.
+    pub jira_fields: Vec<crate::jira_fields::FieldValue>,
     pub details: crate::planner::Details,
     pub archived: bool,
 }
@@ -68,9 +71,12 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS week_notes (week TEXT PRIMARY KEY, text TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS jira_board_columns (board_id INTEGER NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, status_ids TEXT NOT NULL DEFAULT '[]', PRIMARY KEY(board_id, position));
         CREATE TABLE IF NOT EXISTS jira_statuses (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
-        CREATE TABLE IF NOT EXISTS jira_board_meta (board_id INTEGER PRIMARY KEY, site TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', fetched_at INTEGER NOT NULL);")
+        CREATE TABLE IF NOT EXISTS jira_board_meta (board_id INTEGER PRIMARY KEY, site TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', fetched_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS jira_fields (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, custom INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
+        CREATE TABLE IF NOT EXISTS jira_issue_fields (site TEXT NOT NULL, issue_key TEXT NOT NULL, field_id TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, issue_key, field_id));")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
+    let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
     let tasks = db
         .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,'') FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
         .query_map([], |r| {
@@ -82,6 +88,7 @@ pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
                 jira_key: r.get(4)?,
                 jira_url: r.get(5)?,
                 jira_status: r.get(9)?,
+                jira_fields: card_fields.remove(&r.get::<_, i64>(0)?).unwrap_or_default(),
                 details: serde_json::from_str(&r.get::<_, String>(6)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?,
                 archived: r.get(7)?,
             },r.get::<_,bool>(8)?))

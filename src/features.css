@@ -2238,3 +2238,38 @@ html.widget-root body {
 .settings-panel .hint {
   max-width: 72ch;
 }
+/* Ustawienia → Jira → Pola Jiry na kafelku: wybrane pola z kolejnością i lista do wyboru. */
+.jira-card-fields .jira-card-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  padding: 3px 4px 3px 9px;
+  font-size: var(--fs-xs);
+}
+.jira-card-field button {
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.jira-card-field button:hover:not(:disabled) {
+  background: var(--surface);
+  color: var(--text);
+}
+.jira-card-field button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.jira-field-picker {
+  margin-top: 12px;
+}
+.jira-field-picker > input {
+  width: 100%;
+  margin-bottom: 10px;
+}

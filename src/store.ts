@@ -21,8 +21,23 @@ export interface Task {
   jiraUrl?: string | null;
   /** Ostatni znany status zgłoszenia w Jirze. */
   jiraStatus?: string | null;
+  /** Wartości pól z Jiry na kafelku (z ustawień `jiraCardFields`, tylko niepuste). */
+  jiraFields?: JiraFieldValue[];
   details?: TaskDetails;
   archived?: boolean;
+}
+/** Wartość pola Jiry na kafelku (`jira_fields::FieldValue`). */
+export interface JiraFieldValue {
+  id: string;
+  name: string;
+  value: string;
+}
+/** Pole z listy pól Jiry (`jira_fields::FieldInfo`). */
+export interface JiraFieldInfo {
+  id: string;
+  name: string;
+  custom: boolean;
+  kind: string;
 }
 export interface TaskDetails {
   priority: number;
@@ -129,6 +144,7 @@ export async function read(): Promise<Snapshot> {
   const raw = localStorage.getItem(key);
   const data: Snapshot = raw ? JSON.parse(raw) : { tasks: [], sessions: [] };
   if (generateRecurring(data)) localStorage.setItem(key, JSON.stringify(data));
+  attachPreviewJiraFields(data);
   return data;
 }
 export async function change(
@@ -1967,6 +1983,8 @@ export interface JiraListIssue {
   status: string;
   boards: string[];
   url: string;
+  /** Wartości pól z ustawień `jiraCardFields`. */
+  fields: JiraFieldValue[];
 }
 export interface JiraColumn {
   name: string;
@@ -1988,6 +2006,8 @@ export interface JiraBoardIssue {
   assignee: JiraPerson | null;
   url: string;
   column: number;
+  /** Wartości pól z ustawień `jiraCardFields`. */
+  fields: JiraFieldValue[];
 }
 export interface JiraBoardView {
   boardId: number;
@@ -2181,12 +2201,105 @@ interface PreviewIssue {
   priority: string;
   assignee: JiraPerson | null;
   boards: number[];
+  /** Inne pola (identyfikator → tekst), np. etykiety, sprint, pola niestandardowe. */
+  fields?: Record<string, string>;
 }
 interface PreviewBoardState {
   issues?: PreviewIssue[];
   comments?: Record<string, string[]>;
   next?: number;
   boards?: JiraBoardRef[];
+  /** Ostatni priorytet z Jiry przeniesiony na zadanie (klucz → nazwa). */
+  priorities?: Record<string, string>;
+}
+/** Lista pól symulowanej Jiry (`/rest/api/3/field`), jak `jira_fields::FieldInfo`. */
+export const previewFieldCatalog: readonly JiraFieldInfo[] = Object.freeze([
+  { id: "assignee", name: "Przypisany", custom: false, kind: "user" },
+  { id: "components", name: "Komponenty", custom: false, kind: "array:component" },
+  { id: "duedate", name: "Termin", custom: false, kind: "date" },
+  { id: "labels", name: "Etykiety", custom: false, kind: "array:string" },
+  { id: "priority", name: "Priorytet", custom: false, kind: "priority" },
+  { id: "reporter", name: "Zgłaszający", custom: false, kind: "user" },
+  { id: "customfield_10016", name: "Story points", custom: true, kind: "number" },
+  { id: "customfield_10020", name: "Sprint", custom: true, kind: "array:json" },
+  { id: "customfield_10031", name: "Środowisko", custom: true, kind: "option" },
+]);
+/** Polskie nazwy pól systemowych bez pobranej listy (`jira_fields::system_name`). */
+const systemFieldNames: Record<string, string> = {
+  labels: "Etykiety",
+  assignee: "Przypisany",
+  priority: "Priorytet",
+  reporter: "Zgłaszający",
+  creator: "Autor",
+  duedate: "Termin",
+  components: "Komponenty",
+  fixVersions: "Wersje naprawy",
+  versions: "Wersje",
+  issuetype: "Typ",
+  resolution: "Rozwiązanie",
+  created: "Utworzono",
+  updated: "Zaktualizowano",
+  parent: "Nadrzędne",
+  project: "Projekt",
+  environment: "Środowisko",
+};
+/** Nazwa pola: z listy pól, inaczej polska nazwa systemowa, inaczej identyfikator. */
+export function jiraFieldName(id: string, catalog?: readonly JiraFieldInfo[]): string {
+  return catalog?.find((f) => f.id === id)?.name ?? systemFieldNames[id] ?? id;
+}
+/** Pasmo priorytetu zadania dla nazwy priorytetu Jiry (`jira_fields::priority_band`). */
+export function priorityBand(name: string): number | null {
+  const n = name.trim().toLowerCase();
+  if (!n) return null;
+  if (
+    ["highest", "high", "critical", "blocker", "major", "urgent", "najwyższy", "wysoki", "krytyczny", "pilny"].includes(n)
+  )
+    return 1;
+  if (["lowest", "low", "minor", "trivial", "najniższy", "niski", "drobny"].includes(n))
+    return -1;
+  if (["medium", "normal", "średni", "normalny", "zwykły"].includes(n)) return 0;
+  return null;
+}
+const bandName = (band: number) =>
+  band > 0 ? "High" : band < 0 ? "Low" : "Medium";
+/** Pola z ustawień w podglądzie (jak `jira_fields::card_fields`). */
+function previewCardFields(): string[] {
+  const raw = previewJson(previewSettingsKey).jiraCardFields;
+  return Array.isArray(raw)
+    ? raw.filter((id): id is string => typeof id === "string")
+    : ["labels", "assignee"];
+}
+/** Wartości wybranych pól zgłoszenia symulowanej Jiry (tylko niepuste). */
+function previewIssueFields(
+  issue: PreviewIssue,
+  ids: string[] = previewCardFields(),
+): JiraFieldValue[] {
+  const all: Record<string, string> = {
+    ...(issue.fields ?? {}),
+    assignee: issue.assignee?.displayName ?? "",
+    priority: issue.priority,
+  };
+  return ids
+    .filter((id) => all[id])
+    .map((id) => ({
+      id,
+      name: jiraFieldName(id, previewFieldCatalog),
+      value: all[id],
+    }));
+}
+/**
+ * Pola Jiry na zadaniach z kluczem (jak `db::snapshot` z `jira_issue_fields`):
+ * tylko ze zgłoszeń zapamiętanych w symulowanej tablicy.
+ */
+function attachPreviewJiraFields(data: Snapshot) {
+  const state = previewJson(previewJiraBoardKey) as PreviewBoardState;
+  const issues = Array.isArray(state.issues) ? state.issues : [];
+  const ids = previewCardFields();
+  for (const task of [...data.tasks, ...(data.trash ?? [])]) {
+    if (!task.jiraKey) continue;
+    const issue = issues.find((i) => i.key === task.jiraKey);
+    task.jiraFields = issue ? previewIssueFields(issue, ids) : [];
+  }
 }
 export const previewJiraMe: Readonly<JiraPerson> = Object.freeze({
   accountId: "preview-me",
@@ -2258,6 +2371,12 @@ const previewIssueSeed = (): PreviewIssue[] => [
     priority: "High",
     assignee: { ...previewJiraMe },
     boards: [1, 2],
+    fields: {
+      labels: "magazyn, pilne",
+      duedate: "23.10.2026",
+      customfield_10020: "Sprint 42",
+      customfield_10031: "Produkcja",
+    },
   },
   {
     key: "WMS-40",
@@ -2267,6 +2386,7 @@ const previewIssueSeed = (): PreviewIssue[] => [
     priority: "High",
     assignee: { ...previewPeople[1] },
     boards: [1],
+    fields: { labels: "raporty", customfield_10020: "Sprint 42" },
   },
   {
     key: "WMS-41",
@@ -2317,14 +2437,42 @@ async function previewBoardState(): Promise<{
         summary: task.title,
         status: task.jiraStatus || "Do zrobienia",
         issueType: "Zadanie",
-        priority: "Medium",
+        priority: bandName(task.details?.priority ?? 0),
         assignee: { ...previewJiraMe },
         boards: [1],
       });
     else if (task.jiraStatus) issue.status = task.jiraStatus;
   }
   state.issues = issues;
+  // Priorytet z Jiry na zadanie przy pierwszym pobraniu i każdej zmianie
+  // (jak `jira_fields::save_fields`); ręczne pasmo zostaje, dopóki Jira go nie zmieni.
+  const applied = (state.priorities ??= {});
+  let changed = false;
+  for (const task of data.tasks) {
+    const issue = task.jiraKey
+      ? issues.find((i) => i.key === task.jiraKey)
+      : undefined;
+    if (!issue || applied[issue.key] === issue.priority) continue;
+    applied[issue.key] = issue.priority;
+    const band = priorityBand(issue.priority);
+    if (band !== null && (task.details?.priority ?? 0) !== band) {
+      task.details = { ...detailsOf(task), priority: band };
+      changed = true;
+    }
+  }
+  if (changed) {
+    localStorage.setItem(key, JSON.stringify(data));
+    notifyPreviewData();
+  }
   return { state, data, issues };
+}
+/**
+ * Odpowiednik zdarzenia Rust `data-changed` w podglądzie (to samo okno):
+ * App odczytuje dane na nowo po zmianach z symulowanej Jiry.
+ */
+export const previewDataEvent = "preview-data-changed";
+function notifyPreviewData() {
+  window.dispatchEvent(new Event(previewDataEvent));
 }
 function savePreviewBoard(state: PreviewBoardState) {
   localStorage.setItem(previewJiraBoardKey, JSON.stringify(state));
@@ -2393,6 +2541,23 @@ export async function jiraBoards(
     nextStart: null,
   };
 }
+/** `jira_fields`: lista pól Jiry do wyboru (w podglądzie stała lista). */
+export async function jiraFields(refresh: boolean): Promise<JiraFieldInfo[]> {
+  if (desktop) return invoke("jira_fields", { refresh });
+  return previewFieldCatalog.map((f) => ({ ...f }));
+}
+/**
+ * `jira_refresh_fields`: status i pola zgłoszeń otwartych zadań od razu po
+ * zmianie listy pól; zwraca liczbę odświeżonych zgłoszeń. W podglądzie
+ * wartości biorą się z symulowanej tablicy przy odczycie.
+ */
+export async function jiraRefreshFields(): Promise<number> {
+  if (desktop) return invoke("jira_refresh_fields");
+  const { state, data } = await previewBoardState();
+  savePreviewBoard(state);
+  notifyPreviewData();
+  return data.tasks.filter((t) => t.jiraKey && !t.done).length;
+}
 /** `jira_select_boards`: wybrane tablice (najwyżej 20). */
 export async function jiraSelectBoards(boards: JiraBoardRef[]): Promise<void> {
   if (desktop) return invoke("jira_select_boards", { boards });
@@ -2422,6 +2587,7 @@ export async function jiraIssues(
           .filter((b) => i.boards.includes(b.id))
           .map((b) => b.name),
         url: previewIssueUrl(i.key),
+        fields: previewIssueFields(i),
       }))
       .filter((i) => i.boards.length)
       .sort((a, b) => a.key.localeCompare(b.key, "pl", { numeric: true })),
@@ -2466,6 +2632,11 @@ export async function jiraStart(issueKey: string): Promise<Snapshot> {
       jiraUrl: previewIssueUrl(issueKey),
       jiraStatus: issue.status,
     };
+    // Jak `jira::start_issue`: nowe zadanie z pasmem priorytetu zgłoszenia
+    // i polami z ustawień (w aplikacji dokłada je `db::snapshot`).
+    const band = priorityBand(issue.priority);
+    if (band !== null) task.details = { ...detailsOf(task), priority: band };
+    task.jiraFields = previewIssueFields(issue);
     data.tasks.unshift(task);
   }
   const started = task;
@@ -2552,6 +2723,7 @@ export async function jiraBoard(
           previewColumns,
           previewCategories,
         ),
+        fields: previewIssueFields(i),
       };
     });
   return {

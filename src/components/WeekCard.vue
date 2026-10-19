@@ -4,6 +4,7 @@ import type { Task } from "../store";
 import { hhmm } from "../target";
 import { dayMonth, dayText } from "../time";
 import ReorderHandle from "./ReorderHandle.vue";
+import JiraFieldChips from "./JiraFieldChips.vue";
 
 /**
  * Karta zadania na tablicy tygodnia: tytuł, projekt, szacunek z procentem
@@ -97,6 +98,7 @@ function arrows(event: KeyboardEvent) {
         :title="'Status w Jirze: ' + task.jiraStatus"
         >{{ task.jiraStatus }}</span
       >
+      <JiraFieldChips v-if="task.jiraKey" :fields="task.jiraFields" />
       <span
         v-if="task.details?.estimateMinutes"
         class="mono"
