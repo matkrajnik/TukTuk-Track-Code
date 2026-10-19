@@ -76,7 +76,7 @@
       "endpoints": [
         "https://github.com/matkrajnik/todo-track/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCMzA1QTI0NjU5QTM2RDkKUldUWk5wcGxKRm93eXlOWWZnUjhEaXRaK1l0K254aXBYdEhNKzdMZmRqTUp2QUUzbndBQUsvb1MK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCRTExMjYzNzcxOTVCQTIKUldTaVd4bDNZeExoUzZBSjJ1b1ljMExyZThSRW5CcWJ2eFgvVC96RU1IVkdKTVNJUHhQL0FOTjMK",
       "windows": {
         "installMode": "passive"
       }
