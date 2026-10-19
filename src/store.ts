@@ -2991,3 +2991,286 @@ export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
   }
   return { key: issueKey, url: previewIssueUrl(issueKey), snapshot, warning: null };
 }
+
+// ---------------------------------------------------------------------------
+// Ideo Timesheet (PLAN_1.8.md, T1). W aplikacji komendy z `timesheet.rs`; w
+// podglądzie symulowany TS w localStorage (`previewTsKey`) z tymi samymi
+// regułami walidacji i zapisu (zapis zastępuje cały dzień, `keep` dokleja
+// wpisy TS o zadaniach spoza wysyłanej listy). Hasło nigdy nie jest zapisywane.
+
+export interface TsConfig {
+  apiUrl: string;
+  login: string;
+  deviceId: string;
+  deviceName: string;
+}
+export interface TsSettings {
+  config: TsConfig;
+  /** Hasło jest w magazynie poświadczeń. */
+  connected: boolean;
+  /** Ustawienie „Wysyłaj raport TS” (`tsSend`). */
+  sendEnabled: boolean;
+}
+export interface TsTask {
+  id: string;
+  name: string;
+}
+export interface TsProject {
+  name: string;
+  tasks: TsTask[];
+}
+/** Wpis wypełniony w TS; wartości jako tekst, jak oddał serwer. */
+export interface TsFilled {
+  id: string;
+  hours: string;
+  overtime: string;
+  description: string;
+}
+/** Wpis wysyłany do TS (`timesheet::Entry`). */
+export interface TsEntry {
+  taskId: string;
+  hours: string;
+  overtime: string;
+  description: string;
+}
+export type TsMode = "replace" | "keep";
+export interface TsSendResult {
+  filled: TsFilled[];
+  sentAt: number;
+}
+export interface TsSent {
+  day: string;
+  sentAt: number;
+  hours: string;
+}
+export const tsDefaultApi = "https://api.ts.ideo.pl";
+export const tsNotConnected = "Połącz konto TS: podaj login i hasło.";
+export const tsSendDisabled =
+  "Wysyłka do TS jest wyłączona w Ustawieniach → Timesheet.";
+export const tsLoginRejected = "TS odrzucił logowanie. Sprawdź login i hasło.";
+const tsApiError =
+  "Podaj główny adres API TS z https, bez ścieżki i parametrów, np. https://api.ts.ideo.pl.";
+/**
+ * Symulowany TS podglądu. `failLogin` wymusza odrzucenie logowania; hasło „zle”
+ * odrzuca zawsze. `tasks` nadpisuje przykładową listę zadań.
+ */
+export const previewTsKey = "todo-track-preview-ts-v1";
+interface PreviewTs {
+  connected?: boolean;
+  login?: string;
+  apiUrl?: string;
+  deviceId?: string;
+  failLogin?: boolean;
+  tasks?: TsProject[];
+  filled?: Record<string, TsFilled[]>;
+  sent?: Record<string, { sentAt: number; hours: string }>;
+}
+export const previewTsTasks: readonly TsProject[] = Object.freeze([
+  {
+    name: "WMS",
+    tasks: [
+      { id: "1101", name: "Rozwój" },
+      { id: "1102", name: "Błędy i wsparcie" },
+      { id: "1103", name: "Code review" },
+    ],
+  },
+  {
+    name: "Wewnętrzne",
+    tasks: [
+      { id: "2201", name: "Spotkania" },
+      { id: "2202", name: "Administracja" },
+    ],
+  },
+]);
+function previewTs(): PreviewTs {
+  return previewJson(previewTsKey) as PreviewTs;
+}
+function savePreviewTs(state: PreviewTs) {
+  localStorage.setItem(previewTsKey, JSON.stringify(state));
+}
+/** Adres API jak `timesheet::normalize_api`. */
+export function tsNormalizeApi(value: string): string {
+  const raw = value.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(tsApiError);
+  }
+  if (
+    url.protocol !== "https:" ||
+    !url.hostname ||
+    url.pathname !== "/" ||
+    /[?#]/.test(raw) ||
+    url.username ||
+    url.password
+  )
+    throw new Error(tsApiError);
+  return url.origin;
+}
+const tsValidDay = (value: string) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!m) return false;
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.getUTCMonth() === +m[2] - 1 && d.getUTCDate() === +m[3];
+};
+function tsCheckDate(value: string) {
+  if (!tsValidDay(value))
+    throw new Error("Niepoprawny dzień (oczekiwany format RRRR-MM-DD).");
+}
+/** Godziny jak `timesheet::valid_hours`. */
+export const tsValidHours = (value: string) =>
+  /^\d{1,6}([.,]\d{1,2})?$/.test(value);
+const tsControl = /[\u0000-\u001f\u007f-\u009f]/;
+/** Walidacja wpisów jak `timesheet::validate_entries`. */
+export function tsValidateEntries(entries: TsEntry[]) {
+  if (!entries.length) throw new Error("Brak wpisów do zapisania w TS.");
+  if (entries.length > 50)
+    throw new Error("Jednorazowo można zapisać w TS najwyżej 50 wpisów.");
+  for (const e of entries) {
+    const id = e.taskId.trim();
+    if (!id || [...id].length > 20 || tsControl.test(id))
+      throw new Error("Niepoprawny identyfikator zadania TS.");
+    if (!tsValidHours(e.hours) || !tsValidHours(e.overtime))
+      throw new Error(
+        "Godziny w TS podaj jako liczbę z najwyżej dwoma miejscami po przecinku, np. 1,25.",
+      );
+    if ([...e.description].length > 2000)
+      throw new Error("Opis wpisu TS może mieć najwyżej 2000 znaków.");
+    if (tsControl.test(e.description))
+      throw new Error("Opis wpisu TS nie może zawierać znaków sterujących.");
+  }
+}
+/** `keep` jak `timesheet::merge_keep`: nasze wpisy, potem wpisy TS spoza listy. */
+export function tsMergeKeep(entries: TsEntry[], filled: TsFilled[]): TsEntry[] {
+  const ours = new Set(entries.map((e) => e.taskId.trim()));
+  return [
+    ...entries,
+    ...filled
+      .filter((f) => !ours.has(f.id.trim()))
+      .map((f) => ({
+        taskId: f.id,
+        hours: f.hours,
+        overtime: f.overtime,
+        description: f.description,
+      })),
+  ];
+}
+/** Suma godzin z odczytu TS jak `timesheet::hours_total` („7,50”). */
+export function tsHoursTotal(filled: TsFilled[]): string {
+  const hundredths = filled.reduce((sum, f) => {
+    const raw = f.hours.trim();
+    const v = Number(raw.replace(",", "."));
+    return raw && Number.isFinite(v) ? sum + Math.round(v * 100) : sum;
+  }, 0);
+  return `${Math.trunc(hundredths / 100)},${String(hundredths % 100).padStart(2, "0")}`;
+}
+function previewTsSettings(): TsSettings {
+  const state = previewTs();
+  return {
+    config: {
+      apiUrl: state.apiUrl ?? tsDefaultApi,
+      login: state.login ?? "",
+      deviceId: state.deviceId ?? "",
+      deviceName: "Todo Track",
+    },
+    connected: state.connected === true && !!state.login,
+    sendEnabled: previewJson(previewSettingsKey).tsSend !== false,
+  };
+}
+function previewTsConnected(): PreviewTs {
+  const state = previewTs();
+  if (!(state.connected === true && state.login)) throw new Error(tsNotConnected);
+  return state;
+}
+/** `ts_settings`: konfiguracja bez hasła, stan połączenia i przełącznik wysyłki. */
+export async function tsSettings(): Promise<TsSettings> {
+  if (desktop) return invoke("ts_settings");
+  return previewTsSettings();
+}
+/** `ts_connect`: logowanie, zapis hasła w magazynie i konfiguracji. */
+export async function tsConnect(
+  apiUrl: string,
+  login: string,
+  password: string,
+): Promise<TsSettings> {
+  if (desktop) return invoke("ts_connect", { apiUrl, login, password });
+  const name = login.trim();
+  if (!name || [...name].length > 100 || tsControl.test(name))
+    throw new Error("Podaj login TS (do 100 znaków).");
+  if (!password || [...password].length > 1024)
+    throw new Error("Podaj hasło TS.");
+  const api = tsNormalizeApi(apiUrl);
+  const state = previewTs();
+  if (state.failLogin || password === "zle") throw new Error(tsLoginRejected);
+  state.apiUrl = api;
+  state.login = name;
+  state.connected = true;
+  if (!/^[0-9a-f]{32}$/.test(state.deviceId ?? ""))
+    state.deviceId = Array.from(
+      crypto.getRandomValues(new Uint8Array(16)),
+      (b) => b.toString(16).padStart(2, "0"),
+    ).join("");
+  savePreviewTs(state);
+  return previewTsSettings();
+}
+/** `ts_disconnect`: usuwa hasło, zostawia login i identyfikator urządzenia. */
+export async function tsDisconnect(): Promise<TsSettings> {
+  if (desktop) return invoke("ts_disconnect");
+  const state = previewTs();
+  state.connected = false;
+  savePreviewTs(state);
+  return previewTsSettings();
+}
+/** `ts_tasks`: projekty i zadania TS z formularza dnia. */
+export async function tsTasks(date: string): Promise<TsProject[]> {
+  if (desktop) return invoke("ts_tasks", { date });
+  tsCheckDate(date);
+  const state = previewTsConnected();
+  return structuredClone(state.tasks ?? (previewTsTasks as TsProject[]));
+}
+/** `ts_filled`: wpisy już zapisane w TS na ten dzień. */
+export async function tsFilled(date: string): Promise<TsFilled[]> {
+  if (desktop) return invoke("ts_filled", { date });
+  tsCheckDate(date);
+  const state = previewTsConnected();
+  return structuredClone(state.filled?.[date] ?? []);
+}
+/**
+ * `ts_send`: zapis dnia w TS (zastępuje cały dzień; `keep` dokleja wpisy TS
+ * o zadaniach spoza listy), potem odczyt dnia i znacznik wysyłki.
+ */
+export async function tsSend(
+  date: string,
+  entries: TsEntry[],
+  mode: TsMode,
+): Promise<TsSendResult> {
+  if (desktop) return invoke("ts_send", { date, entries, mode });
+  if (previewJson(previewSettingsKey).tsSend === false)
+    throw new Error(tsSendDisabled);
+  tsCheckDate(date);
+  if (mode !== "replace" && mode !== "keep")
+    throw new Error("Niepoprawny tryb zapisu w TS.");
+  tsValidateEntries(entries);
+  const state = previewTsConnected();
+  const current = state.filled?.[date] ?? [];
+  const saved = mode === "keep" ? tsMergeKeep(entries, current) : entries;
+  const filled: TsFilled[] = saved.map((e) => ({
+    id: e.taskId.trim(),
+    hours: e.hours,
+    overtime: e.overtime,
+    description: e.description,
+  }));
+  const sentAt = Date.now();
+  state.filled = { ...state.filled, [date]: filled };
+  state.sent = { ...state.sent, [date]: { sentAt, hours: tsHoursTotal(filled) } };
+  savePreviewTs(state);
+  return { filled: structuredClone(filled), sentAt };
+}
+/** `ts_sent`: ostatnia wysyłka dnia albo null. */
+export async function tsSent(day: string): Promise<TsSent | null> {
+  if (desktop) return invoke("ts_sent", { day });
+  tsCheckDate(day);
+  const sent = previewTs().sent?.[day];
+  return sent ? { day, ...sent } : null;
+}

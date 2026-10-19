@@ -73,7 +73,9 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS jira_statuses (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, category TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
         CREATE TABLE IF NOT EXISTS jira_board_meta (board_id INTEGER PRIMARY KEY, site TEXT NOT NULL, project TEXT NOT NULL DEFAULT '', fetched_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS jira_fields (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, custom INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
-        CREATE TABLE IF NOT EXISTS jira_issue_fields (site TEXT NOT NULL, issue_key TEXT NOT NULL, field_id TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, issue_key, field_id));")
+        CREATE TABLE IF NOT EXISTS jira_issue_fields (site TEXT NOT NULL, issue_key TEXT NOT NULL, field_id TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, issue_key, field_id));
+        CREATE TABLE IF NOT EXISTS ts_sent_days (day TEXT PRIMARY KEY, sent_at INTEGER NOT NULL, hours TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS ts_project_map (project TEXT PRIMARY KEY COLLATE NOCASE, ts_task_id TEXT NOT NULL, ts_task_name TEXT NOT NULL DEFAULT '');")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;

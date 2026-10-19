@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<!--
+  Zanonimizowany, ręcznie przygotowany fragment strony formularza dnia
+  (GET /timesheet/wypelnij?dzien=2026-10-15) na podstawie selektorów konektora
+  ideo-ts-api (timesheet-html.parser.ts). Nazwy projektów, zadań i opisy są
+  zmyślone. Pełna <table>, bo samotne <tr> parser HTML gubi.
+-->
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <title>Timesheet – wypełnij dzień</title>
+</head>
+<body>
+  <form method="post" action="/timesheet/wypelnij?dzien=2026-10-15" enctype="multipart/form-data">
+    <input type="hidden" name="akcja" value="zapisz">
+    <input type="hidden" name="dzien" value="2026-10-15">
+    <table class="table jq-tabela-ts">
+      <thead>
+        <tr>
+          <th>Zadanie</th>
+          <th>Godziny</th>
+          <th>Nadgodziny</th>
+          <th>Opis</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="jq-wiersz-ts">
+          <td class="jq-zadanie">
+            <select name="zadanie[0]" class="form-control">
+              <option value="">-- wybierz zadanie --</option>
+              <optgroup label=" Projekt Alfa ">
+                <option value="">-- brak --</option>
+                <option value="101" selected="selected"> Analiza wymagań </option>
+                <option value="102">Programowanie</option>
+              </optgroup>
+              <optgroup label="Projekt Beta">
+                <option value="205">Spotkania zespołu</option>
+              </optgroup>
+            </select>
+          </td>
+          <td class="jq-zadanie-godziny"><input type="text" name="zadanie_godziny[0]" value="1,5"></td>
+          <td class="jq-zadanie-nadgodziny"><input type="text" name="zadanie_nadgodziny[0]" value="0"></td>
+          <td class="jq-zadanie-opis"><input type="text" name="zadanie_opis[0]" value="Przegląd zgłoszeń; poprawki w module wysyłki żółć"></td>
+        </tr>
+        <tr class="jq-wiersz-ts">
+          <td class="jq-zadanie">
+            <select name="zadanie[1]" class="form-control">
+              <option value="">-- wybierz zadanie --</option>
+              <optgroup label=" Projekt Alfa ">
+                <option value="">-- brak --</option>
+                <option value="101">Analiza wymagań</option>
+                <option value="102">Programowanie</option>
+              </optgroup>
+              <optgroup label="Projekt Beta">
+                <option value="205" selected>Spotkania zespołu</option>
+              </optgroup>
+            </select>
+          </td>
+          <td class="jq-zadanie-godziny"><input type="text" name="zadanie_godziny[1]" value="0.25"></td>
+          <td class="jq-zadanie-nadgodziny"><input type="text" name="zadanie_nadgodziny[1]" value="0"></td>
+          <td class="jq-zadanie-opis"><input type="text" name="zadanie_opis[1]" value="Daily"></td>
+        </tr>
+        <tr class="jq-wiersz-ts">
+          <td class="jq-zadanie">
+            <select name="zadanie[2]" class="form-control">
+              <option value="">-- wybierz zadanie --</option>
+              <optgroup label=" Projekt Alfa ">
+                <option value="">-- brak --</option>
+                <option value="101">Analiza wymagań</option>
+                <option value="102">Programowanie</option>
+              </optgroup>
+              <optgroup label="Projekt Beta">
+                <option value="205">Spotkania zespołu</option>
+              </optgroup>
+            </select>
+          </td>
+          <td class="jq-zadanie-godziny"><input type="text" name="zadanie_godziny[2]" value=""></td>
+          <td class="jq-zadanie-nadgodziny"><input type="text" name="zadanie_nadgodziny[2]" value=""></td>
+          <td class="jq-zadanie-opis"><input type="text" name="zadanie_opis[2]" value=""></td>
+        </tr>
+      </tbody>
+    </table>
+    <input type="hidden" name="status" value="0">
+    <button type="submit" name="submit" value="Zapisz Timesheet">Zapisz Timesheet</button>
+  </form>
+</body>
+</html>

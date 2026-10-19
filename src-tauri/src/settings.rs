@@ -75,6 +75,9 @@ pub struct AppSettings {
     pub notify_week_review: bool,
     /// Godzina powiadomienia „Przegląd tygodnia” (`GG:MM`, domyślnie 15:00).
     pub week_review_time: String,
+    /// Główny przełącznik wysyłki Raportu TS do Ideo Timesheet (PLAN_1.8.md):
+    /// wyłączony chowa przyciski i blokuje `timesheet::ts_send` w backendzie.
+    pub ts_send: bool,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -141,6 +144,7 @@ impl Default for AppSettings {
             waiting_jira_statuses: default_waiting_statuses(),
             notify_week_review: true,
             week_review_time: "15:00".into(),
+            ts_send: true,
         }
     }
 }
@@ -478,6 +482,23 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         crate::db::init(&db).unwrap();
         db
+    }
+
+    #[test]
+    fn ts_send_defaults_to_on_and_is_saved() {
+        let mut db = db();
+        assert!(load(&db).ts_send);
+        let saved = save(&mut db, &json!({"tsSend": false})).unwrap();
+        assert!(!saved.ts_send);
+        let raw: String = db
+            .query_row("SELECT value FROM settings WHERE key='ts_send'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(raw, "false");
+        assert!(!load(&db).ts_send);
+        assert!(save(&mut db, &json!({"tsSend": "tak"})).is_err());
+        assert!(save(&mut db, &json!({"tsSend": true})).unwrap().ts_send);
     }
 
     #[test]

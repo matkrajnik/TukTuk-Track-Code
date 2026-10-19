@@ -28,6 +28,7 @@ mod shortcuts;
 mod stats;
 mod suggest;
 mod templates;
+mod timesheet;
 mod tray;
 mod week_notes;
 mod widget;
@@ -342,6 +343,7 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
+            timesheet::setup(app.handle());
             jira_move::setup(app.handle());
             calendar::setup(app.handle());
             let tray_refresher = tray::setup(app)?;
@@ -503,7 +505,14 @@ fn main() {
             calendar::calendar_events,
             templates::templates_list,
             templates::template_save,
-            templates::template_delete
+            templates::template_delete,
+            timesheet::ts_settings,
+            timesheet::ts_connect,
+            timesheet::ts_disconnect,
+            timesheet::ts_tasks,
+            timesheet::ts_filled,
+            timesheet::ts_send,
+            timesheet::ts_sent
         ])
         .run(tauri::generate_context!())
         .expect("Nie udało się uruchomić Todo Track");

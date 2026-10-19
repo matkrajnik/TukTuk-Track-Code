@@ -24,7 +24,7 @@ tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
@@ -38,6 +38,8 @@ rust_xlsxwriter = "=0.99.1"
 sha2 = "=0.10.9"
 base64 = "=0.22.1"
 getrandom = "=0.3.4"
+# Parser HTML formularza dnia Ideo Timesheet (PLAN_1.8.md, T1).
+scraper = { version = "=0.27.0", default-features = false }
 
 [dev-dependencies]
 chrono-tz = "=0.10.4"
