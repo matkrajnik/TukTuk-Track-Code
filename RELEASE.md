@@ -43,13 +43,13 @@ Przykład:
 
 ```json
 {
-  "version": "1.7.3",
+  "version": "1.7.4",
   "notes": "- Automatyczne aktualizacje",
-  "pub_date": "2026-10-20T10:00:00Z",
+  "pub_date": "2026-10-21T10:00:00Z",
   "platforms": {
     "windows-x86_64": {
       "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkK…",
-      "url": "https://github.com/matkrajnik/todo-track-releases/releases/download/v1.7.3/TodoTrack_1.7.3_x64-setup.exe"
+      "url": "https://github.com/matkrajnik/todo-track-releases/releases/download/v1.7.4/TodoTrack_1.7.4_x64-setup.exe"
     }
   }
 }
@@ -172,7 +172,7 @@ było zainstalowane na tej maszynie.)
    a w zainstalowanej aplikacji „Sprawdź teraz” pokazuje nową wersję (albo „Masz najnowszą
    wersję”, gdy to ona jest zainstalowana).
 
-Instalacje sprzed wersji z updaterem (1.7.2 i starsze) nie sprawdzają aktualizacji;
+Instalacje sprzed wersji z updaterem (1.7.3 i starsze) nie sprawdzają aktualizacji;
 pierwszą wersję z updaterem trzeba zainstalować ręcznie z `releases/`.
 
 ## Pierwsza aktualizacja przez updater: sprawdzenie natywne
@@ -181,8 +181,8 @@ pierwszą wersję z updaterem trzeba zainstalować ręcznie z `releases/`.
 interfejs (baner, postęp, ustawienia) na zastępczym pluginie, a `cargo test` logikę
 ustawień. Instalator ma własny szablon NSIS z dodatkowym potwierdzeniem wersji i krokiem
 `--prepare-update`, więc **pierwsze wydanie z updaterem wymaga ręcznego sprawdzenia**
-na prawdziwej instalacji (najlepiej dwie wersje testowe, np. 1.7.3 zainstalowana ręcznie
-i 1.7.4 opublikowana jako release):
+na prawdziwej instalacji (najlepiej dwie wersje testowe, np. 1.7.4 zainstalowana ręcznie
+i 1.7.5 opublikowana jako release):
 
 - baner pojawia się po starcie (do kilku sekund) i po „Sprawdź teraz”; „Później” chowa go;
 - „Zainstaluj i uruchom ponownie”: pasek postępu, potem aplikacja znika, a instalator
