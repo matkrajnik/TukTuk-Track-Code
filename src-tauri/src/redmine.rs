@@ -1,0 +1,2028 @@
+//! Redmine obok Jiry (PLAN_1.9.md, R1): konfiguracja w `settings` pod kluczem
+//! `redmine`, klucz API w magazynie poświadczeń Windows, klient HTTP, lista
+//! zgłoszeń, projekty, statusy i powiązanie zgłoszenia z zadaniem
+//! (`redmine_tasks`). Moduł jest niezależny od `jira.rs`: własne połączenie,
+//! poświadczenie, stan i tabele. Klucz API nigdy nie trafia do SQLite, do
+//! komunikatów ani do logów.
+
+use crate::{db, jira_fields, Database};
+use keyring::Entry;
+use reqwest::{Client, StatusCode, Url};
+use rusqlite::{params, Connection, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Mutex,
+    time::Duration,
+};
+use tauri::{Emitter, Manager};
+use tauri_plugin_opener::OpenerExt;
+
+/// Śledzony projekt (odpowiednik `jira::Board`), wybierany w Ustawieniach (R5).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Project {
+    pub id: u64,
+    pub name: String,
+    #[serde(default)]
+    pub identifier: String,
+    #[serde(default)]
+    pub parent_id: Option<u64>,
+}
+/// Konfiguracja połączenia (bez klucza API). Brak domyślnego adresu: adres
+/// firmowego Redmine nie jest znany.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Config {
+    pub site: String,
+    pub login: String,
+    pub user_id: u64,
+    pub display_name: String,
+    pub accept_invalid_cert: bool,
+    pub projects: Vec<Project>,
+}
+#[derive(Serialize)]
+pub struct Settings {
+    config: Config,
+    connected: bool,
+}
+/// Zgłoszenie z `/issues.json` (pola na kartę widoku i kafelek zadania).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Issue {
+    pub id: u64,
+    pub subject: String,
+    pub project_id: u64,
+    pub project: String,
+    pub tracker: String,
+    pub status: String,
+    pub status_id: u64,
+    pub closed: bool,
+    pub priority: String,
+    pub assigned_to_id: Option<u64>,
+    pub assigned_to: String,
+    /// Wersja docelowa (`fixed_version.name`).
+    pub version: String,
+    pub category: String,
+    pub due_date: String,
+    pub updated_on: String,
+    pub url: String,
+}
+/// Status z `/issue_statuses.json` (pamięć podręczna w `redmine_statuses`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    pub id: u64,
+    pub name: String,
+    pub is_closed: bool,
+}
+#[derive(Serialize)]
+pub struct Issues {
+    issues: Vec<Issue>,
+    warnings: Vec<String>,
+}
+/// Ostatnio pobrane zgłoszenia (tytuł do szybkiego dodawania i „Rozpocznij”)
+/// oraz lista projektów do wyboru w Ustawieniach — bez tabel.
+pub struct RedmineState {
+    issues: Mutex<HashMap<u64, Issue>>,
+    projects: Mutex<Vec<Project>>,
+}
+
+pub const NOT_CONNECTED: &str = "Połącz konto Redmine: podaj adres i klucz API.";
+const NETWORK_ERROR: &str =
+    "Nie udało się połączyć z Redmine. Sprawdź adres i połączenie z siecią firmową.";
+pub const CERT_ERROR: &str = "Certyfikat serwera nie jest zaufany. Zainstaluj certyfikat firmowego urzędu w Windows albo włącz opcję w „Zaawansowane”.";
+const HTML_ERROR: &str =
+    "Redmine odpowiedział stroną zamiast danymi. Sprawdź, czy REST API jest włączone.";
+const BAD_RESPONSE: &str = "Redmine zwrócił niepoprawną odpowiedź.";
+const SITE_ERROR: &str = "Podaj adres Redmine, np. https://redmine.firma.pl albo https://firma.pl/redmine (bez parametrów).";
+const KEY_ERROR: &str = "Podaj klucz API Redmine (1–128 znaków, bez spacji).";
+const REFRESH_FIRST: &str = "Odśwież listę zgłoszeń przed rozpoczęciem.";
+/// Maksimum Redmine na stronę.
+const PAGE: u64 = 100;
+/// Najwyżej 5 stron (500 zgłoszeń) z ostrzeżeniem, jak limit 300 na tablicy Jiry.
+const MAX_ISSUE_PAGES: usize = 5;
+const MAX_PROJECT_PAGES: usize = 10;
+/// Statusy odświeżane raz na dobę (poza „Odśwież” i pierwszym użyciem).
+const STATUS_TTL: i64 = 24 * 60 * 60_000;
+const SUBJECT_LIMIT: usize = 1000;
+
+pub fn setup(app: &tauri::AppHandle) {
+    app.manage(RedmineState {
+        issues: Mutex::new(HashMap::new()),
+        projects: Mutex::new(Vec::new()),
+    });
+}
+/// Temat zgłoszenia z ostatnio pobranej listy, jak `jira::cached_summary`.
+#[allow(dead_code)] // szybkie dodawanie `#1234` (R2)
+pub fn cached_subject(app: &tauri::AppHandle, id: u64) -> Option<String> {
+    app.state::<RedmineState>()
+        .issues
+        .lock()
+        .ok()?
+        .get(&id)
+        .map(|issue| issue.subject.clone())
+}
+fn clear_state(app: &tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<RedmineState>();
+    state.issues.lock().map_err(|e| e.to_string())?.clear();
+    state.projects.lock().map_err(|e| e.to_string())?.clear();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Konfiguracja, magazyn poświadczeń, walidacja
+
+fn read_config(db: &Connection) -> Result<Config, String> {
+    let raw: Option<String> = db
+        .query_row("SELECT value FROM settings WHERE key='redmine'", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?;
+    raw.map(|s| {
+        serde_json::from_str(&s).map_err(|_| "Nie można odczytać ustawień Redmine.".to_owned())
+    })
+    .unwrap_or_else(|| Ok(Config::default()))
+}
+fn write_config(db: &Connection, config: &Config) -> Result<(), String> {
+    let raw = serde_json::to_string(config).map_err(|e| e.to_string())?;
+    db.execute(
+        "INSERT INTO settings(key,value) VALUES('redmine',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [raw],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+pub fn config(app: &tauri::AppHandle) -> Result<Config, String> {
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    read_config(&db)
+}
+fn save(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    write_config(&db, config)
+}
+/// Wpis w magazynie poświadczeń Windows: usługa `<identifier>.redmine`,
+/// użytkownik `<adres>|<login>`.
+fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
+    Entry::new(
+        &format!("{}.redmine", app.config().identifier),
+        &format!("{}|{}", c.site, c.login),
+    )
+    .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
+}
+pub(crate) fn api_key(app: &tauri::AppHandle, c: &Config) -> Result<String, String> {
+    if c.login.is_empty() || c.site.is_empty() {
+        return Err(NOT_CONNECTED.into());
+    }
+    entry(app, c)?
+        .get_password()
+        .map_err(|_| NOT_CONNECTED.into())
+}
+fn connected(app: &tauri::AppHandle, c: &Config) -> Result<bool, String> {
+    if c.login.is_empty() || c.site.is_empty() {
+        return Ok(false);
+    }
+    match entry(app, c)?.get_password() {
+        Ok(_) => Ok(true),
+        Err(keyring::Error::NoEntry) => Ok(false),
+        Err(_) => Err("Nie można odczytać klucza API z magazynu poświadczeń Windows.".into()),
+    }
+}
+/// Adres Redmine: `http` albo `https`, host wymagany, dozwolony prefiks ścieżki
+/// (np. `/redmine`) bez końcowego `/`; parametry, fragment i dane logowania
+/// odrzucane. Port jest dozwolony (Redmine w sieci wewnętrznej bywa na porcie).
+pub fn normalize_site(site: &str) -> Result<String, String> {
+    let url = Url::parse(site.trim()).map_err(|_| SITE_ERROR.to_owned())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.cannot_be_a_base()
+        || url.host_str().is_none_or(str::is_empty)
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || !url.username().is_empty()
+        || url.password().is_some()
+    {
+        return Err(SITE_ERROR.into());
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+/// Numer zgłoszenia: od 1 do 10 cyfr.
+pub fn valid_issue_id(id: u64) -> bool {
+    (1..=9_999_999_999).contains(&id)
+}
+/// Klucz API: 1–128 znaków ASCII bez białych znaków (nagłówek HTTP).
+pub fn valid_api_key(key: &str) -> bool {
+    !key.is_empty() && key.len() <= 128 && key.bytes().all(|b| b.is_ascii_graphic())
+}
+/// Link, który aplikacja otwiera w przeglądarce: zgłoszenie
+/// (`<site>/issues/1234`) albo „Moje konto” (`<site>/my/account`) pod hostem
+/// i prefiksem ścieżki skonfigurowanego adresu, bez parametrów, fragmentu i
+/// danych logowania.
+pub fn allowed_link(parsed: &Url, site: &str) -> bool {
+    let Ok(base) = Url::parse(site) else {
+        return false;
+    };
+    if parsed.scheme() != base.scheme()
+        || parsed.host_str().is_none()
+        || parsed.host_str() != base.host_str()
+        || parsed.port_or_known_default() != base.port_or_known_default()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return false;
+    }
+    let prefix = base.path().trim_end_matches('/');
+    let Some(rest) = parsed.path().strip_prefix(prefix) else {
+        return false;
+    };
+    rest == "/my/account"
+        || rest.strip_prefix("/issues/").is_some_and(|n| {
+            !n.is_empty()
+                && n.len() <= 10
+                && n.bytes().all(|b| b.is_ascii_digit())
+                && n.parse::<u64>().is_ok_and(valid_issue_id)
+        })
+}
+/// Link „Gdzie znaleźć klucz API” z Ustawień przed połączeniem: `/my/account`
+/// pod dowolnym poprawnym adresem Redmine wpisanym przez użytkownika.
+fn account_link(parsed: &Url) -> bool {
+    let Some(prefix) = parsed.path().strip_suffix("/my/account") else {
+        return false;
+    };
+    parsed.query().is_none()
+        && parsed.fragment().is_none()
+        && parsed.username().is_empty()
+        && parsed.password().is_none()
+        && parsed.host_str().is_some_and(|host| {
+            normalize_site(&format!("{}://{host}{prefix}", parsed.scheme())).is_ok()
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Klient HTTP i komunikaty
+
+/// Klient per konfiguracja: 30 s na żądanie, bez przekierowań, zaufanie do
+/// certyfikatów z magazynu Windows (`rustls-tls-native-roots`), a
+/// `danger_accept_invalid_certs` tylko przy włączonej opcji w Ustawieniach.
+pub(crate) fn client(c: &Config) -> Result<Client, String> {
+    let mut builder = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+    if c.accept_invalid_cert {
+        builder = builder.danger_accept_invalid_certs(true);
+    }
+    // Testy rozmawiają wyłącznie z lokalnym serwerem na 127.0.0.1, bez proxy
+    // systemowego, żeby żadne żądanie nie opuściło maszyny.
+    #[cfg(test)]
+    let builder = builder.no_proxy();
+    builder
+        .build()
+        .map_err(|_| "Nie udało się utworzyć połączenia z Redmine.".into())
+}
+/// Czy w łańcuchu przyczyn błędu jest błąd certyfikatu TLS (rustls:
+/// `InvalidCertificate(UnknownIssuer)`, „invalid peer certificate” itp.).
+fn certificate_in_chain(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(e) = current {
+        let text = format!("{e} {e:?}").to_ascii_lowercase();
+        if text.contains("certificate") || text.contains("unknownissuer") {
+            return true;
+        }
+        current = e.source();
+    }
+    false
+}
+/// Komunikat dla błędu sieci; treść `reqwest::Error` (z adresem) nigdy nie trafia
+/// do komunikatu, tylko rozpoznanie błędu certyfikatu.
+fn network_error(error: &reqwest::Error) -> String {
+    if certificate_in_chain(error) {
+        CERT_ERROR.into()
+    } else {
+        NETWORK_ERROR.into()
+    }
+}
+/// Treść `errors` z odpowiedzi 422 (`{"errors":["Subject cannot be blank"]}`),
+/// najwyżej 200 znaków; odpowiedź bez JSON daje pusty tekst.
+fn error_details(body: &str) -> String {
+    let value: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+    let parts: Vec<String> = match &value["errors"] {
+        Value::Array(list) => list
+            .iter()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect(),
+        Value::String(s) => vec![s.clone()],
+        Value::Object(map) => map
+            .values()
+            .filter_map(|m| m.as_str().map(str::to_string))
+            .collect(),
+        _ => vec![],
+    };
+    parts
+        .join("; ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(200)
+        .collect()
+}
+/// Polskie komunikaty błędów HTTP Redmine. Nigdy nie zawierają klucza API.
+pub fn status_error(status: StatusCode, body: &str) -> String {
+    match status {
+        StatusCode::UNAUTHORIZED => {
+            "Redmine odrzucił klucz API. Sprawdź klucz w „Moje konto” w Redmine.".into()
+        }
+        StatusCode::FORBIDDEN => "Brak uprawnień w Redmine do tej operacji.".into(),
+        StatusCode::NOT_FOUND => {
+            "Nie znaleziono zgłoszenia albo adres Redmine jest błędny (REST API może być wyłączone)."
+                .into()
+        }
+        StatusCode::UNPROCESSABLE_ENTITY => {
+            let details = error_details(body);
+            if details.is_empty() {
+                "Redmine odrzucił dane.".into()
+            } else {
+                format!("Redmine odrzucił dane: {details}")
+            }
+        }
+        StatusCode::TOO_MANY_REQUESTS => {
+            "Redmine ograniczył liczbę zapytań. Spróbuj ponownie za chwilę.".into()
+        }
+        s if s.is_redirection() => {
+            "Redmine przekierował żądanie. Sprawdź adres (http czy https, prefiks ścieżki)."
+                .into()
+        }
+        s if s.is_server_error() => format!(
+            "Redmine zwrócił błąd HTTP {}. Spróbuj ponownie.",
+            status.as_u16()
+        ),
+        _ => format!("Redmine zwrócił błąd HTTP {}.", status.as_u16()),
+    }
+}
+fn looks_like_html(text: &str) -> bool {
+    let head: String = text
+        .trim_start()
+        .chars()
+        .take(64)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    head.starts_with("<!doctype")
+        || head.starts_with("<html")
+        || head.starts_with("<head")
+        || head.starts_with("<?xml")
+}
+/// Odpowiedź Redmine: błąd HTTP po polsku, JSON przy powodzeniu; strona HTML
+/// (np. logowanie przy wyłączonym API) ma osobny komunikat.
+pub(crate) fn parse_response(status: StatusCode, html: bool, text: &str) -> Result<Value, String> {
+    if !status.is_success() {
+        return Err(status_error(status, text));
+    }
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) if value.is_object() || value.is_array() => Ok(value),
+        _ if html || looks_like_html(text) => Err(HTML_ERROR.into()),
+        _ => Err(BAD_RESPONSE.into()),
+    }
+}
+/// `GET <site><path>?query` z nagłówkami `X-Redmine-API-Key` i `Accept: application/json`.
+pub(crate) async fn get(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    path: &str,
+    query: &[(&str, String)],
+) -> Result<Value, String> {
+    // W testach dozwolony jest tylko lokalny serwer, nigdy prawdziwy Redmine.
+    #[cfg(test)]
+    assert!(
+        c.site.starts_with("http://127.0.0.1:"),
+        "testy nie mogą łączyć się z serwerem Redmine"
+    );
+    let response = client
+        .get(format!("{}{}", c.site, path))
+        .header("X-Redmine-API-Key", key)
+        .header("Accept", "application/json")
+        .query(query)
+        .send()
+        .await
+        .map_err(|e| network_error(&e))?;
+    let status = response.status();
+    let html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().contains("text/html"));
+    let text = response.text().await.unwrap_or_default();
+    parse_response(status, html, &text)
+}
+
+// ---------------------------------------------------------------------------
+// Odczyt odpowiedzi
+
+/// Wynik stronicowania `limit`/`offset`/`total_count`: wiersze listy, łączna
+/// liczba według serwera i czy pobrano wszystko (limit stron).
+#[derive(Debug)]
+pub(crate) struct Paged {
+    pub rows: Vec<Value>,
+    pub total: u64,
+    pub complete: bool,
+}
+/// Pobiera kolejne strony (`offset` 0, 100, 200…) przez `fetch`, najwyżej
+/// `max_pages`. Koniec po pustej stronie, po dojściu do `total_count` albo —
+/// bez `total_count` — po niepełnej stronie.
+pub(crate) async fn paged<F, Fut>(
+    key: &str,
+    missing: &str,
+    max_pages: usize,
+    mut fetch: F,
+) -> Result<Paged, String>
+where
+    F: FnMut(u64) -> Fut,
+    Fut: Future<Output = Result<Value, String>>,
+{
+    let mut rows = Vec::new();
+    let mut offset = 0u64;
+    let mut total = 0u64;
+    for _ in 0..max_pages {
+        let value = fetch(offset).await?;
+        let items = value[key].as_array().ok_or_else(|| missing.to_owned())?;
+        let count = items.len() as u64;
+        rows.extend(items.iter().cloned());
+        offset += count;
+        total = value["total_count"].as_u64().unwrap_or(offset).max(offset);
+        let done = count == 0
+            || value["total_count"]
+                .as_u64()
+                .map_or(count < PAGE, |t| offset >= t);
+        if done {
+            return Ok(Paged {
+                rows,
+                total,
+                complete: true,
+            });
+        }
+    }
+    Ok(Paged {
+        rows,
+        total,
+        complete: false,
+    })
+}
+fn text(value: &Value) -> String {
+    value.as_str().unwrap_or("").trim().to_owned()
+}
+fn name(value: &Value) -> String {
+    text(&value["name"])
+}
+/// Jedno zgłoszenie z odpowiedzi; `closed` to mapa statusów z
+/// `/issue_statuses.json` na wypadek, gdy serwer nie oddaje `status.is_closed`.
+pub(crate) fn parse_issue(value: &Value, site: &str, closed: &HashMap<u64, bool>) -> Option<Issue> {
+    let id = value["id"].as_u64().filter(|id| valid_issue_id(*id))?;
+    let status_id = value["status"]["id"].as_u64().unwrap_or(0);
+    let is_closed = value["status"]["is_closed"]
+        .as_bool()
+        .or_else(|| closed.get(&status_id).copied())
+        .unwrap_or(false);
+    let mut subject: String = text(&value["subject"])
+        .chars()
+        .take(SUBJECT_LIMIT)
+        .collect();
+    if subject.is_empty() {
+        subject = format!("#{id}");
+    }
+    Some(Issue {
+        id,
+        subject,
+        project_id: value["project"]["id"].as_u64().unwrap_or(0),
+        project: name(&value["project"]),
+        tracker: name(&value["tracker"]),
+        status: name(&value["status"]),
+        status_id,
+        closed: is_closed,
+        priority: name(&value["priority"]),
+        assigned_to_id: value["assigned_to"]["id"].as_u64(),
+        assigned_to: name(&value["assigned_to"]),
+        version: name(&value["fixed_version"]),
+        category: name(&value["category"]),
+        due_date: text(&value["due_date"]),
+        updated_on: text(&value["updated_on"]),
+        url: format!("{site}/issues/{id}"),
+    })
+}
+/// Zgłoszenia z listy (`issues`), bez powtórzeń i bez wierszy z niepoprawnym numerem.
+pub(crate) fn parse_issues(items: &[Value], site: &str, closed: &HashMap<u64, bool>) -> Vec<Issue> {
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .filter_map(|v| parse_issue(v, site, closed))
+        .filter(|i| seen.insert(i.id))
+        .collect()
+}
+pub(crate) fn parse_projects(items: &[Value]) -> Vec<Project> {
+    let mut seen = HashSet::new();
+    items
+        .iter()
+        .filter_map(|v| {
+            let id = v["id"].as_u64().filter(|id| *id > 0)?;
+            let name = name(v);
+            if name.is_empty() || !seen.insert(id) {
+                return None;
+            }
+            Some(Project {
+                id,
+                name,
+                identifier: text(&v["identifier"]),
+                parent_id: v["parent"]["id"].as_u64(),
+            })
+        })
+        .collect()
+}
+pub(crate) fn parse_statuses(value: &Value) -> Result<Vec<Status>, String> {
+    let list = value["issue_statuses"]
+        .as_array()
+        .ok_or("Redmine nie zwrócił listy statusów.")?;
+    let mut seen = HashSet::new();
+    Ok(list
+        .iter()
+        .filter_map(|s| {
+            let id = s["id"].as_u64()?;
+            let name = name(s);
+            if name.is_empty() || !seen.insert(id) {
+                return None;
+            }
+            Some(Status {
+                id,
+                name,
+                is_closed: s["is_closed"].as_bool().unwrap_or(false),
+            })
+        })
+        .collect())
+}
+/// `/users/current.json` → (id, login, „Imię Nazwisko”).
+pub(crate) fn parse_user(value: &Value) -> Result<(u64, String, String), String> {
+    let user = &value["user"];
+    let id = user["id"]
+        .as_u64()
+        .filter(|id| *id > 0)
+        .ok_or("Nie udało się potwierdzić konta Redmine.")?;
+    let login = text(&user["login"]);
+    if login.is_empty() {
+        return Err("Nie udało się potwierdzić konta Redmine.".into());
+    }
+    let mut display = format!("{} {}", text(&user["firstname"]), text(&user["lastname"]))
+        .trim()
+        .to_owned();
+    if display.is_empty() {
+        display = login.clone();
+    }
+    Ok((id, login, display))
+}
+/// Parametry `/issues.json`: projekt (Redmine dołącza podprojekty), „Moje”
+/// (`assigned_to_id=me`), otwarte (`status_id=open`) albo wszystkie
+/// (`status_id=*`, opcjonalnie zmienione od dnia `since`).
+pub(crate) fn issues_query(
+    project_id: Option<u64>,
+    mine: bool,
+    open_only: bool,
+    since: Option<&str>,
+) -> Vec<(&'static str, String)> {
+    let mut query = Vec::new();
+    if let Some(id) = project_id {
+        query.push(("project_id", id.to_string()));
+    }
+    if mine {
+        query.push(("assigned_to_id", "me".to_owned()));
+    }
+    if open_only {
+        query.push(("status_id", "open".to_owned()));
+    } else {
+        query.push(("status_id", "*".to_owned()));
+        if let Some(day) = since {
+            query.push(("updated_on", format!(">={day}")));
+        }
+    }
+    query.push(("sort", "updated_on:desc".to_owned()));
+    query
+}
+/// Parametry pobrania po numerach (`issue_id=1,2,3&status_id=*`), paczka ≤ 100.
+#[allow(dead_code)] // używane od R3 (status zadań przekazanych innym)
+pub(crate) fn ids_query(ids: &[u64]) -> Vec<(&'static str, String)> {
+    let list = ids
+        .iter()
+        .filter(|id| valid_issue_id(**id))
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    vec![("issue_id", list), ("status_id", "*".to_owned())]
+}
+fn truncated_warning(shown: usize, total: u64) -> String {
+    format!(
+        "Pokazano pierwsze {shown} z {total} zgłoszeń. Zawęź zakres (np. „Moje” albo tylko otwarte)."
+    )
+}
+/// Wszystkie strony `/issues.json` dla `query` (do 5 stron); ostrzeżenie, gdy
+/// wynik został obcięty.
+pub(crate) async fn fetch_issues(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    query: &[(&str, String)],
+    closed: &HashMap<u64, bool>,
+) -> Result<(Vec<Issue>, Option<String>), String> {
+    let page = paged(
+        "issues",
+        "Redmine nie zwrócił listy zgłoszeń.",
+        MAX_ISSUE_PAGES,
+        |offset| {
+            let mut q = query.to_vec();
+            q.push(("limit", PAGE.to_string()));
+            q.push(("offset", offset.to_string()));
+            async move { get(client, c, key, "/issues.json", &q).await }
+        },
+    )
+    .await?;
+    let issues = parse_issues(&page.rows, &c.site, closed);
+    let warning = (!page.complete).then(|| truncated_warning(page.rows.len(), page.total));
+    Ok((issues, warning))
+}
+/// Zgłoszenia po numerach, paczkami po 100 (R3: status zadań przekazanych innym).
+#[allow(dead_code)]
+pub(crate) async fn fetch_by_ids(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    ids: &[u64],
+    closed: &HashMap<u64, bool>,
+) -> Result<Vec<Issue>, String> {
+    let mut out = Vec::new();
+    for chunk in ids.chunks(PAGE as usize) {
+        let mut q = ids_query(chunk);
+        q.push(("limit", PAGE.to_string()));
+        let value = get(client, c, key, "/issues.json", &q).await?;
+        let items = value["issues"]
+            .as_array()
+            .ok_or("Redmine nie zwrócił listy zgłoszeń.")?;
+        out.extend(parse_issues(items, &c.site, closed));
+    }
+    Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Tabele: redmine_issues, redmine_statuses, redmine_tasks
+
+/// Zapisuje pobrane zgłoszenia (`redmine_issues`, bez `assigned` — to pole
+/// obserwacji z R3). Zmiana priorytetu w Redmine przenosi pasmo na powiązane
+/// zadanie, jak `jira_fields::save_fields`.
+pub(crate) fn save_issues(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    issues: &[Issue],
+) -> rusqlite::Result<()> {
+    for issue in issues {
+        let previous: Option<String> = tx
+            .query_row(
+                "SELECT priority FROM redmine_issues WHERE site=?1 AND issue_id=?2",
+                params![site, issue.id as i64],
+                |r| r.get(0),
+            )
+            .optional()?;
+        tx.execute(
+            "INSERT INTO redmine_issues(site,issue_id,subject,status,status_id,closed,project,tracker,priority,due_date)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+             ON CONFLICT(site,issue_id) DO UPDATE SET subject=excluded.subject, status=excluded.status,
+             status_id=excluded.status_id, closed=excluded.closed, project=excluded.project,
+             tracker=excluded.tracker, priority=excluded.priority, due_date=excluded.due_date",
+            params![
+                site,
+                issue.id as i64,
+                issue.subject,
+                issue.status,
+                issue.status_id as i64,
+                issue.closed,
+                issue.project,
+                issue.tracker,
+                issue.priority,
+                issue.due_date
+            ],
+        )?;
+        if previous.as_deref() != Some(issue.priority.as_str()) {
+            if let Some(band) = jira_fields::priority_band(&issue.priority) {
+                tx.execute(
+                    "INSERT INTO task_details(task_id,json) SELECT task_id, json_object('priority',?3) FROM redmine_tasks WHERE site=?1 AND issue_id=?2
+                     ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?3)",
+                    params![site, issue.id as i64, band],
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+/// Zastępuje statusy adresu w `redmine_statuses` (kolejność jak z serwera,
+/// po `rowid`) i zapamiętuje czas pobrania.
+pub(crate) fn save_statuses(
+    tx: &rusqlite::Transaction,
+    site: &str,
+    statuses: &[Status],
+    now: i64,
+) -> rusqlite::Result<()> {
+    tx.execute("DELETE FROM redmine_statuses WHERE site=?1", [site])?;
+    for s in statuses {
+        tx.execute(
+            "INSERT INTO redmine_statuses(site,id,name,is_closed) VALUES(?1,?2,?3,?4)",
+            params![site, s.id as i64, s.name, s.is_closed],
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO settings(key,value) VALUES('redmine_statuses_at',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [format!("{site}|{now}")],
+    )?;
+    Ok(())
+}
+pub(crate) fn read_statuses(db: &Connection, site: &str) -> rusqlite::Result<Vec<Status>> {
+    db.prepare("SELECT id, name, is_closed FROM redmine_statuses WHERE site=?1 ORDER BY rowid")?
+        .query_map([site], |r| {
+            Ok(Status {
+                id: r.get::<_, i64>(0)? as u64,
+                name: r.get(1)?,
+                is_closed: r.get(2)?,
+            })
+        })?
+        .collect()
+}
+/// Czy statusy adresu pobrano mniej niż dobę temu.
+fn statuses_fresh(db: &Connection, site: &str, now: i64) -> rusqlite::Result<bool> {
+    let raw: Option<String> = db
+        .query_row(
+            "SELECT value FROM settings WHERE key='redmine_statuses_at'",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(raw
+        .and_then(|v| {
+            let (saved_site, at) = v.rsplit_once('|')?;
+            let at: i64 = at.parse().ok()?;
+            Some(saved_site == site && now >= at && now - at < STATUS_TTL)
+        })
+        .unwrap_or(false))
+}
+fn closed_map(statuses: &[Status]) -> HashMap<u64, bool> {
+    statuses.iter().map(|s| (s.id, s.is_closed)).collect()
+}
+/// Statusy z pamięci podręcznej, a przy pierwszym użyciu, po dobie albo na
+/// żądanie (`force`) z `/issue_statuses.json`.
+async fn ensure_statuses(
+    app: &tauri::AppHandle,
+    client: &Client,
+    c: &Config,
+    key: &str,
+    force: bool,
+) -> Result<Vec<Status>, String> {
+    let now = db::now();
+    if !force {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        let cached = read_statuses(&db, &c.site).map_err(|e| e.to_string())?;
+        if !cached.is_empty() && statuses_fresh(&db, &c.site, now).map_err(|e| e.to_string())? {
+            return Ok(cached);
+        }
+    }
+    let value = get(client, c, key, "/issue_statuses.json", &[]).await?;
+    let list = parse_statuses(&value)?;
+    let state = app.state::<Database>();
+    let mut db = state.0.lock().map_err(|e| e.to_string())?;
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    save_statuses(&tx, &c.site, &list, now).map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(list)
+}
+/// Czysta część `redmine_select_projects`: walidacja, bez powtórzeń, zapis.
+pub(crate) fn select_projects(db: &Connection, projects: Vec<Project>) -> Result<Config, String> {
+    if projects.len() > 50
+        || projects.iter().any(|p| {
+            p.id == 0 || p.name.trim().is_empty() || p.name.len() > 1000 || p.identifier.len() > 255
+        })
+    {
+        return Err("Wybierz maksymalnie 50 projektów.".into());
+    }
+    let mut c = read_config(db)?;
+    let mut unique = HashSet::new();
+    c.projects = projects
+        .into_iter()
+        .filter(|p| unique.insert(p.id))
+        .map(|p| Project {
+            name: p.name.trim().to_owned(),
+            identifier: p.identifier.trim().to_owned(),
+            ..p
+        })
+        .collect();
+    write_config(db, &c)?;
+    Ok(c)
+}
+/// „Rozpocznij” dla zgłoszenia: istniejące zadanie z `redmine_tasks` wraca z
+/// kosza i archiwum do „do zrobienia”, nowe dostaje tytuł równy tematowi
+/// (numer pokazuje chip) i pasmo priorytetu z `redmine_issues`; poprzedni
+/// pomiar zatrzymany, nowy wystartowany. Jedna transakcja.
+pub(crate) fn start_issue(
+    connection: &mut Connection,
+    site: &str,
+    id: u64,
+    subject: &str,
+    now: i64,
+) -> Result<db::Snapshot, String> {
+    if !valid_issue_id(id) {
+        return Err("Niepoprawny numer zgłoszenia Redmine.".into());
+    }
+    let tx = connection.transaction().map_err(|e| e.to_string())?;
+    let existing: Option<i64> = tx
+        .query_row(
+            "SELECT task_id FROM redmine_tasks WHERE site=?1 AND issue_id=?2",
+            params![site, id as i64],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let task_id = if let Some(task_id) = existing {
+        task_id
+    } else {
+        let mut title: String = subject.trim().chars().take(240).collect();
+        if title.is_empty() {
+            title = format!("#{id}");
+        }
+        tx.execute(
+            "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
+            params![title, now],
+        )
+        .map_err(|e| e.to_string())?;
+        let task_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(?1,?2,?3)",
+            params![task_id, site, id as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        let priority: Option<String> = tx
+            .query_row(
+                "SELECT priority FROM redmine_issues WHERE site=?1 AND issue_id=?2",
+                params![site, id as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some(band) = priority.as_deref().and_then(jira_fields::priority_band) {
+            tx.execute(
+                "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?2)",
+                params![task_id, band],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        task_id
+    };
+    tx.execute("UPDATE tasks SET done=0 WHERE id=?1", [task_id])
+        .map_err(|e| e.to_string())?;
+    crate::planner::clear_waiting(&tx, task_id).map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE task_lifecycle SET archived=0,deleted_at=NULL WHERE task_id=?1",
+        [task_id],
+    )
+    .map_err(|e| e.to_string())?;
+    let active: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE task_id=?1 AND ended_at IS NULL)",
+            [task_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !active {
+        db::stop(&tx, now).map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO sessions(task_id,started_at) VALUES(?1,?2)",
+            params![task_id, now],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(connection).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Komendy
+
+#[tauri::command]
+pub fn redmine_settings(app: tauri::AppHandle) -> Result<Settings, String> {
+    let c = config(&app)?;
+    let connected = connected(&app, &c)?;
+    Ok(Settings {
+        config: c,
+        connected,
+    })
+}
+/// Połączenie: adres i klucz API sprawdzone przez `/users/current.json`; klucz
+/// trafia do magazynu poświadczeń, login i nazwa do konfiguracji. Zmiana adresu
+/// lub konta usuwa stare poświadczenie i czyści stan.
+#[tauri::command]
+pub async fn redmine_connect(
+    app: tauri::AppHandle,
+    site: String,
+    api_key: String,
+    accept_invalid_cert: bool,
+) -> Result<Settings, String> {
+    let old = config(&app)?;
+    let key = api_key.trim();
+    let mut c = Config {
+        site: normalize_site(&site)?,
+        accept_invalid_cert,
+        ..Config::default()
+    };
+    if !valid_api_key(key) {
+        return Err(KEY_ERROR.into());
+    }
+    let user = get(&client(&c)?, &c, key, "/users/current.json", &[]).await?;
+    let (user_id, login, display_name) = parse_user(&user)?;
+    c.user_id = user_id;
+    c.login = login;
+    c.display_name = display_name;
+    if c.site == old.site {
+        c.projects = old.projects.clone();
+    }
+    entry(&app, &c)?.set_password(key).map_err(|_| {
+        "Nie udało się zapisać klucza API w magazynie poświadczeń Windows.".to_owned()
+    })?;
+    save(&app, &c)?;
+    if !old.login.is_empty() && (c.site != old.site || c.login != old.login) {
+        let _ = entry(&app, &old)?.delete_credential();
+    }
+    clear_state(&app)?;
+    Ok(Settings {
+        config: c,
+        connected: true,
+    })
+}
+/// „Testuj połączenie”: `/users/current.json` z zapisanym kluczem.
+#[tauri::command]
+pub async fn redmine_test(app: tauri::AppHandle) -> Result<String, String> {
+    let c = config(&app)?;
+    let key = api_key(&app, &c)?;
+    let user = get(&client(&c)?, &c, &key, "/users/current.json", &[]).await?;
+    let (user_id, login, display_name) = parse_user(&user)?;
+    if login == c.login && (user_id != c.user_id || display_name != c.display_name) {
+        let current = config(&app)?;
+        if current.site == c.site && current.login == c.login {
+            save(
+                &app,
+                &Config {
+                    user_id,
+                    display_name: display_name.clone(),
+                    ..current
+                },
+            )?;
+        }
+    }
+    Ok(format!(
+        "Połączono jako {display_name} ({login}), Redmine odpowiada."
+    ))
+}
+/// Rozłączenie: usuwa klucz z magazynu i czyści stan; konfiguracja (adres,
+/// projekty) i powiązania zadań zostają.
+#[tauri::command]
+pub fn redmine_disconnect(app: tauri::AppHandle) -> Result<Settings, String> {
+    let c = config(&app)?;
+    if !c.login.is_empty() {
+        match entry(&app, &c)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => {}
+            Err(_) => {
+                return Err(
+                    "Nie udało się usunąć klucza API z magazynu poświadczeń Windows.".into(),
+                )
+            }
+        }
+    }
+    clear_state(&app)?;
+    Ok(Settings {
+        config: c,
+        connected: false,
+    })
+}
+/// Lista zgłoszeń: projektu (`project_id`) albo moich ze wszystkich projektów
+/// (`project_id` puste). Statusy przy pierwszym użyciu i raz na dobę.
+#[tauri::command]
+pub async fn redmine_issues(
+    app: tauri::AppHandle,
+    project_id: Option<u64>,
+    mine: bool,
+    open_only: bool,
+) -> Result<Issues, String> {
+    let c = config(&app)?;
+    let key = api_key(&app, &c)?;
+    let client = client(&c)?;
+    let mut warnings = Vec::new();
+    let closed = match ensure_statuses(&app, &client, &c, &key, false).await {
+        Ok(list) => closed_map(&list),
+        Err(e) => {
+            warnings.push(format!("Statusy: {e}"));
+            let state = app.state::<Database>();
+            let db = state.0.lock().map_err(|e| e.to_string())?;
+            closed_map(&read_statuses(&db, &c.site).map_err(|e| e.to_string())?)
+        }
+    };
+    let (issues, warning) = fetch_issues(
+        &client,
+        &c,
+        &key,
+        &issues_query(project_id, mine || project_id.is_none(), open_only, None),
+        &closed,
+    )
+    .await?;
+    warnings.extend(warning);
+    let current = config(&app)?;
+    if current.site != c.site || current.login != c.login {
+        return Err("Ustawienia zmieniły się podczas pobierania. Odśwież wyniki.".into());
+    }
+    {
+        let state = app.state::<Database>();
+        let mut db = state.0.lock().map_err(|e| e.to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        save_issues(&tx, &c.site, &issues)
+            .and_then(|_| tx.commit())
+            .map_err(|e| e.to_string())?;
+    }
+    let _ = app.emit("data-changed", ());
+    // Dopisanie do pamięci (nie zastąpienie): widok pobiera osobno projekt i
+    // zgłoszenia spoza śledzonych projektów, a „Rozpocznij” ma działać z obu list.
+    app.state::<RedmineState>()
+        .issues
+        .lock()
+        .map_err(|e| e.to_string())?
+        .extend(issues.iter().map(|i| (i.id, i.clone())));
+    Ok(Issues { issues, warnings })
+}
+/// Projekty do wyboru śledzonych (do 10 stron po 100), w kolejności z serwera.
+#[tauri::command]
+pub async fn redmine_projects(app: tauri::AppHandle) -> Result<Vec<Project>, String> {
+    let c = config(&app)?;
+    let key = api_key(&app, &c)?;
+    let client = client(&c)?;
+    let page = paged(
+        "projects",
+        "Redmine nie zwrócił listy projektów.",
+        MAX_PROJECT_PAGES,
+        |offset| {
+            let q = vec![("limit", PAGE.to_string()), ("offset", offset.to_string())];
+            let client = &client;
+            let c = &c;
+            let key = &key;
+            async move { get(client, c, key, "/projects.json", &q).await }
+        },
+    )
+    .await?;
+    let projects = parse_projects(&page.rows);
+    *app.state::<RedmineState>()
+        .projects
+        .lock()
+        .map_err(|e| e.to_string())? = projects.clone();
+    Ok(projects)
+}
+#[tauri::command]
+pub fn redmine_select_projects(
+    app: tauri::AppHandle,
+    projects: Vec<Project>,
+) -> Result<(), String> {
+    {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        select_projects(&db, projects)?;
+    }
+    app.state::<RedmineState>()
+        .issues
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clear();
+    Ok(())
+}
+/// Statusy z pamięci podręcznej albo z serwera (`refresh`, pierwsze użycie, po dobie).
+#[tauri::command]
+pub async fn redmine_statuses(app: tauri::AppHandle, refresh: bool) -> Result<Vec<Status>, String> {
+    let c = config(&app)?;
+    let key = api_key(&app, &c)?;
+    ensure_statuses(&app, &client(&c)?, &c, &key, refresh).await
+}
+#[tauri::command]
+pub fn redmine_start(app: tauri::AppHandle, id: u64) -> Result<db::Snapshot, String> {
+    let c = config(&app)?;
+    let issue = app
+        .state::<RedmineState>()
+        .issues
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&id)
+        .cloned()
+        .ok_or(REFRESH_FIRST)?;
+    let state = app.state::<Database>();
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = start_issue(
+        &mut connection,
+        &c.site,
+        issue.id,
+        &issue.subject,
+        db::now(),
+    )?;
+    crate::reminder::reset(&app);
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
+/// „Rozpocznij” spoza widoku (szybkie dodawanie, rozszerzenie przeglądarki —
+/// R2, R3): jak `redmine_start`, a gdy zgłoszenia nie ma w pobranej liście,
+/// temat pobiera wprost z `/issues/{id}.json`.
+#[allow(dead_code)] // wołane od R2 (szybkie dodawanie) i R3 (rozszerzenie)
+pub async fn start_by_id(app: &tauri::AppHandle, id: u64) -> Result<db::Snapshot, String> {
+    if !valid_issue_id(id) {
+        return Err("Niepoprawny numer zgłoszenia Redmine.".into());
+    }
+    if cached_subject(app, id).is_some() {
+        return redmine_start(app.clone(), id);
+    }
+    let c = config(app)?;
+    if c.login.is_empty() {
+        return Err("Połącz konto Redmine, żeby rozpocząć zgłoszenie.".into());
+    }
+    let key = api_key(app, &c)?;
+    let value = get(&client(&c)?, &c, &key, &format!("/issues/{id}.json"), &[]).await?;
+    let issue = parse_issue(&value["issue"], &c.site, &HashMap::new()).ok_or(BAD_RESPONSE)?;
+    let state = app.state::<Database>();
+    let result = {
+        let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+        let tx = connection.transaction().map_err(|e| e.to_string())?;
+        save_issues(&tx, &c.site, std::slice::from_ref(&issue))
+            .and_then(|_| tx.commit())
+            .map_err(|e| e.to_string())?;
+        start_issue(
+            &mut connection,
+            &c.site,
+            issue.id,
+            &issue.subject,
+            db::now(),
+        )?
+    };
+    app.state::<RedmineState>()
+        .issues
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(issue.id, issue);
+    crate::reminder::reset(app);
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
+/// Otwiera w przeglądarce tylko adresy pod hostem i ścieżką skonfigurowanego
+/// Redmine (zgłoszenie, „Moje konto”) albo `/my/account` wpisanego adresu.
+#[tauri::command]
+pub fn redmine_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|_| "Niepoprawny link.".to_owned())?;
+    let c = config(&app)?;
+    let allowed = (!c.site.is_empty() && allowed_link(&parsed, &c.site)) || account_link(&parsed);
+    if !allowed {
+        return Err("Niepoprawny link Redmine.".into());
+    }
+    app.opener()
+        .open_url(url, None::<String>)
+        .map_err(|_| "Nie można otworzyć przeglądarki.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const ISSUES: &str = include_str!("../tests/fixtures/redmine_issues.json");
+    const PROJECTS: &str = include_str!("../tests/fixtures/redmine_projects.json");
+    const STATUSES: &str = include_str!("../tests/fixtures/redmine_statuses.json");
+    const USER: &str = include_str!("../tests/fixtures/redmine_user.json");
+    const SITE: &str = "https://redmine.example.pl";
+
+    fn fixture_issues() -> Vec<Issue> {
+        let value: Value = serde_json::from_str(ISSUES).unwrap();
+        let statuses = parse_statuses(&serde_json::from_str(STATUSES).unwrap()).unwrap();
+        parse_issues(
+            value["issues"].as_array().unwrap(),
+            SITE,
+            &closed_map(&statuses),
+        )
+    }
+    fn memory() -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db
+    }
+
+    #[test]
+    fn parses_issues_fixture_with_due_date_closed_unassigned_and_version() {
+        let issues = fixture_issues();
+        assert_eq!(issues.len(), 4);
+        let first = &issues[0];
+        assert_eq!(first.id, 1234);
+        assert_eq!(
+            first.subject,
+            "Eksport faktur – błąd przy polskich znakach (ąęśćżźńół)"
+        );
+        assert_eq!(
+            (first.project_id, first.project.as_str()),
+            (7, "Magazyn WMS")
+        );
+        assert_eq!(first.tracker, "Błąd");
+        assert_eq!(
+            (first.status.as_str(), first.status_id, first.closed),
+            ("New", 1, false)
+        );
+        assert_eq!(first.priority, "High");
+        assert_eq!(first.assigned_to_id, Some(12));
+        assert_eq!(first.assigned_to, "Mateusz Krajnik");
+        assert_eq!(first.version, "2.4");
+        assert_eq!(first.category, "Integracje");
+        assert_eq!(first.due_date, "2026-10-30");
+        assert_eq!(first.updated_on, "2026-10-19T14:22:10Z");
+        assert_eq!(first.url, "https://redmine.example.pl/issues/1234");
+        // Bez terminu (`due_date: null`) i bez wersji.
+        assert_eq!(issues[1].due_date, "");
+        assert_eq!(issues[1].version, "");
+        // Zamknięte z `is_closed` serwera.
+        assert!(issues[2].closed);
+        assert_eq!(issues[2].status, "Closed");
+        // Bez `assigned_to`; `is_closed` spoza odpowiedzi — z listy statusów.
+        assert_eq!(issues[3].assigned_to_id, None);
+        assert_eq!(issues[3].assigned_to, "");
+        assert!(!issues[3].closed);
+        assert_eq!(issues[3].priority, "Immediate");
+        // Bez mapy statusów nieznany `is_closed` to „otwarte”; zamknięty status z mapy.
+        let value: Value = serde_json::from_str(ISSUES).unwrap();
+        let items = value["issues"].as_array().unwrap();
+        assert!(
+            !parse_issue(&items[3], SITE, &HashMap::new())
+                .unwrap()
+                .closed
+        );
+        let closed: HashMap<u64, bool> = [(1, true)].into_iter().collect();
+        assert!(parse_issue(&items[3], SITE, &closed).unwrap().closed);
+        // Niepoprawny numer i powtórka są pomijane; pusty temat to „#id”.
+        let items = vec![
+            serde_json::json!({"id": 0, "subject": "zero"}),
+            serde_json::json!({"id": "x"}),
+            serde_json::json!({"id": 5}),
+            serde_json::json!({"id": 5, "subject": "powtórka"}),
+        ];
+        let parsed = parse_issues(&items, SITE, &HashMap::new());
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].subject, "#5");
+    }
+    #[test]
+    fn parses_projects_statuses_and_user_fixtures() {
+        let value: Value = serde_json::from_str(PROJECTS).unwrap();
+        let projects = parse_projects(value["projects"].as_array().unwrap());
+        assert_eq!(
+            projects,
+            vec![
+                Project {
+                    id: 7,
+                    name: "Magazyn WMS".into(),
+                    identifier: "wms".into(),
+                    parent_id: None,
+                },
+                Project {
+                    id: 8,
+                    name: "WMS – integracje".into(),
+                    identifier: "wms-integracje".into(),
+                    parent_id: Some(7),
+                },
+                Project {
+                    id: 9,
+                    name: "Portal klienta".into(),
+                    identifier: "portal".into(),
+                    parent_id: None,
+                },
+            ]
+        );
+        let statuses = parse_statuses(&serde_json::from_str(STATUSES).unwrap()).unwrap();
+        assert_eq!(statuses.len(), 5);
+        assert_eq!(
+            statuses[2],
+            Status {
+                id: 3,
+                name: "Feedback".into(),
+                is_closed: false
+            }
+        );
+        assert_eq!(
+            statuses[4],
+            Status {
+                id: 5,
+                name: "Closed".into(),
+                is_closed: true
+            }
+        );
+        assert!(parse_statuses(&serde_json::json!({"issues": []})).is_err());
+        let (id, login, display) = parse_user(&serde_json::from_str(USER).unwrap()).unwrap();
+        assert_eq!(
+            (id, login.as_str(), display.as_str()),
+            (12, "mkrajnik", "Mateusz Krajnik")
+        );
+        // Bez imienia i nazwiska nazwa to login; bez loginu błąd.
+        let (_, _, display) =
+            parse_user(&serde_json::json!({"user": {"id": 3, "login": "jan"}})).unwrap();
+        assert_eq!(display, "jan");
+        assert!(parse_user(&serde_json::json!({"user": {"id": 3}})).is_err());
+        assert!(parse_user(&serde_json::json!({"error": "x"})).is_err());
+        // Nowe nazwy priorytetów Redmine dają pasmo „wysoki”.
+        assert_eq!(jira_fields::priority_band("Immediate"), Some(1));
+        assert_eq!(jira_fields::priority_band("natychmiastowy"), Some(1));
+        assert_eq!(jira_fields::priority_band("Urgent"), Some(1));
+        assert_eq!(jira_fields::priority_band("Normal"), Some(0));
+        assert_eq!(jira_fields::priority_band("Low"), Some(-1));
+    }
+    #[test]
+    fn select_projects_saves_overwrites_and_clears() {
+        let db = memory();
+        write_config(
+            &db,
+            &Config {
+                site: SITE.into(),
+                login: "mkrajnik".into(),
+                user_id: 12,
+                display_name: "Mateusz Krajnik".into(),
+                ..Config::default()
+            },
+        )
+        .unwrap();
+        let project = |id: u64, name: &str| Project {
+            id,
+            name: name.into(),
+            identifier: format!("p{id}"),
+            parent_id: None,
+        };
+        let c =
+            select_projects(&db, vec![project(7, " Magazyn WMS "), project(7, "Dubel")]).unwrap();
+        assert_eq!(c.projects.len(), 1);
+        assert_eq!(c.projects[0].name, "Magazyn WMS");
+        // Reszta konfiguracji nietknięta, wybór zapisany w `settings`.
+        let saved = read_config(&db).unwrap();
+        assert_eq!(
+            (saved.site.as_str(), saved.login.as_str(), saved.user_id),
+            (SITE, "mkrajnik", 12)
+        );
+        assert_eq!(saved.projects, c.projects);
+        // Nadpisanie innym zestawem.
+        let c = select_projects(&db, vec![project(9, "Portal"), project(8, "Integracje")]).unwrap();
+        assert_eq!(
+            c.projects.iter().map(|p| p.id).collect::<Vec<_>>(),
+            vec![9, 8]
+        );
+        assert_eq!(read_config(&db).unwrap().projects.len(), 2);
+        // Pusta lista czyści wybór.
+        let c = select_projects(&db, vec![]).unwrap();
+        assert!(c.projects.is_empty());
+        assert!(read_config(&db).unwrap().projects.is_empty());
+        // Walidacja: id 0, pusta nazwa, za dużo.
+        assert!(select_projects(&db, vec![project(0, "Zero")]).is_err());
+        assert!(select_projects(&db, vec![project(1, "  ")]).is_err());
+        let many: Vec<_> = (1..=51).map(|i| project(i, "P")).collect();
+        assert!(select_projects(&db, many).is_err());
+        // Brak konfiguracji w bazie to konfiguracja domyślna (bez adresu).
+        let fresh = memory();
+        let c = read_config(&fresh).unwrap();
+        assert!(c.site.is_empty() && c.login.is_empty() && c.projects.is_empty());
+        assert!(!c.accept_invalid_cert && c.user_id == 0);
+        // Stara konfiguracja bez nowych pól czyta się z wartościami domyślnymi.
+        fresh
+            .execute(
+                "INSERT INTO settings(key,value) VALUES('redmine','{\"site\":\"https://r.example.pl\"}')",
+                [],
+            )
+            .unwrap();
+        assert_eq!(read_config(&fresh).unwrap().site, "https://r.example.pl");
+    }
+    #[test]
+    fn paging_follows_total_count_and_stops_at_page_limit() {
+        fn page(offset: u64, total: u64) -> Value {
+            let n = (total.saturating_sub(offset)).min(PAGE);
+            let issues: Vec<Value> = (0..n)
+                .map(|i| serde_json::json!({"id": offset + i + 1, "subject": "x"}))
+                .collect();
+            serde_json::json!({"issues": issues, "total_count": total, "offset": offset, "limit": PAGE})
+        }
+        // 250 zgłoszeń: 3 strony (0, 100, 200), wszystko pobrane.
+        let mut offsets = Vec::new();
+        let out =
+            tauri::async_runtime::block_on(paged("issues", "brak", MAX_ISSUE_PAGES, |offset| {
+                offsets.push(offset);
+                async move { Ok(page(offset, 250)) }
+            }))
+            .unwrap();
+        assert_eq!(offsets, vec![0, 100, 200]);
+        assert_eq!(out.rows.len(), 250);
+        assert!(out.complete);
+        assert_eq!(out.total, 250);
+        // 1000 zgłoszeń: limit 5 stron, 500 wierszy i ostrzeżenie.
+        let mut calls = 0;
+        let out =
+            tauri::async_runtime::block_on(paged("issues", "brak", MAX_ISSUE_PAGES, |offset| {
+                calls += 1;
+                async move { Ok(page(offset, 1000)) }
+            }))
+            .unwrap();
+        assert_eq!(calls, 5);
+        assert_eq!(out.rows.len(), 500);
+        assert!(!out.complete);
+        let warning = truncated_warning(out.rows.len(), out.total);
+        assert!(
+            warning.starts_with("Pokazano pierwsze 500 z 1000 zgłoszeń."),
+            "{warning}"
+        );
+        // Dokładnie 100: jedna strona, bo offset == total_count.
+        let mut calls = 0;
+        let out =
+            tauri::async_runtime::block_on(paged("issues", "brak", MAX_ISSUE_PAGES, |offset| {
+                calls += 1;
+                async move { Ok(page(offset, 100)) }
+            }))
+            .unwrap();
+        assert_eq!((calls, out.rows.len()), (1, 100));
+        // Pusta lista i brak listy.
+        let out =
+            tauri::async_runtime::block_on(paged("issues", "brak", MAX_ISSUE_PAGES, |_| async {
+                Ok(serde_json::json!({"issues": [], "total_count": 0}))
+            }))
+            .unwrap();
+        assert!(out.rows.is_empty() && out.complete);
+        let err = tauri::async_runtime::block_on(paged(
+            "issues",
+            "brak listy",
+            MAX_ISSUE_PAGES,
+            |_| async { Ok(serde_json::json!({"projects": []})) },
+        ))
+        .unwrap_err();
+        assert_eq!(err, "brak listy");
+        // Błąd strony przerywa pobieranie.
+        let err =
+            tauri::async_runtime::block_on(paged("issues", "brak", MAX_ISSUE_PAGES, |_| async {
+                Err::<Value, String>("sieć".into())
+            }))
+            .unwrap_err();
+        assert_eq!(err, "sieć");
+    }
+    #[test]
+    fn builds_issue_queries() {
+        assert_eq!(
+            issues_query(Some(7), true, true, None),
+            vec![
+                ("project_id", "7".to_string()),
+                ("assigned_to_id", "me".to_string()),
+                ("status_id", "open".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        assert_eq!(
+            issues_query(None, true, false, Some("2026-10-06")),
+            vec![
+                ("assigned_to_id", "me".to_string()),
+                ("status_id", "*".to_string()),
+                ("updated_on", ">=2026-10-06".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        assert_eq!(
+            issues_query(Some(9), false, false, None),
+            vec![
+                ("project_id", "9".to_string()),
+                ("status_id", "*".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        assert_eq!(
+            ids_query(&[1, 2, 0, 3]),
+            vec![
+                ("issue_id", "1,2,3".to_string()),
+                ("status_id", "*".to_string())
+            ]
+        );
+    }
+    #[test]
+    fn validates_site_issue_ids_and_links() {
+        assert_eq!(
+            normalize_site("https://redmine.example.pl/").unwrap(),
+            "https://redmine.example.pl"
+        );
+        assert_eq!(
+            normalize_site(" http://redmine.local "),
+            Ok("http://redmine.local".into())
+        );
+        assert_eq!(
+            normalize_site("https://firma.pl/redmine/").unwrap(),
+            "https://firma.pl/redmine"
+        );
+        assert_eq!(
+            normalize_site("https://firma.pl/redmine").unwrap(),
+            "https://firma.pl/redmine"
+        );
+        assert_eq!(
+            normalize_site("http://10.0.0.5:3000").unwrap(),
+            "http://10.0.0.5:3000"
+        );
+        assert_eq!(
+            normalize_site("HTTPS://Redmine.Example.PL/Redmine").unwrap(),
+            "https://redmine.example.pl/Redmine"
+        );
+        for bad in [
+            "",
+            "redmine.example.pl",
+            "ftp://redmine.example.pl",
+            "https://",
+            "https://redmine.example.pl/?key=1",
+            "https://redmine.example.pl?x=1",
+            "https://redmine.example.pl/#top",
+            "https://user:pass@redmine.example.pl",
+            "https://user@redmine.example.pl",
+            "mailto:a@b",
+        ] {
+            assert!(normalize_site(bad).is_err(), "{bad}");
+        }
+        assert!(valid_issue_id(1));
+        assert!(valid_issue_id(9_999_999_999));
+        assert!(!valid_issue_id(0));
+        assert!(!valid_issue_id(10_000_000_000));
+        assert!(valid_api_key("abcdef0123456789"));
+        assert!(valid_api_key(&"a".repeat(128)));
+        assert!(!valid_api_key(""));
+        assert!(!valid_api_key(&"a".repeat(129)));
+        assert!(!valid_api_key("abc def"));
+        assert!(!valid_api_key("abc\tdef"));
+        assert!(!valid_api_key("klucz-ą"));
+        let link = |u: &str, site: &str| allowed_link(&Url::parse(u).unwrap(), site);
+        assert!(link("https://redmine.example.pl/issues/1234", SITE));
+        assert!(link("https://redmine.example.pl/my/account", SITE));
+        assert!(link(
+            "https://firma.pl/redmine/issues/1",
+            "https://firma.pl/redmine"
+        ));
+        assert!(link(
+            "http://10.0.0.5:3000/issues/7",
+            "http://10.0.0.5:3000"
+        ));
+        assert!(!link(
+            "https://firma.pl/issues/1",
+            "https://firma.pl/redmine"
+        ));
+        assert!(!link(
+            "https://firma.pl/redmineX/issues/1",
+            "https://firma.pl/redmine"
+        ));
+        assert!(!link("https://redmine.example.pl/issues/1234?x=1", SITE));
+        assert!(!link("https://redmine.example.pl/issues/1234#note-3", SITE));
+        assert!(!link("https://redmine.example.pl/issues/abc", SITE));
+        assert!(!link("https://redmine.example.pl/issues/0", SITE));
+        assert!(!link("https://redmine.example.pl/issues/", SITE));
+        assert!(!link("https://redmine.example.pl/projects/wms", SITE));
+        assert!(!link("http://redmine.example.pl/issues/1234", SITE));
+        assert!(!link("https://redmine.example.pl:8443/issues/1234", SITE));
+        assert!(!link("https://evil.example.pl/issues/1234", SITE));
+        assert!(!link("https://user@redmine.example.pl/issues/1234", SITE));
+        assert!(!link("https://redmine.example.pl/issues/1234", ""));
+        // „Gdzie znaleźć klucz API” przed połączeniem: tylko `/my/account`.
+        let account = |u: &str| account_link(&Url::parse(u).unwrap());
+        assert!(account("https://firma.pl/redmine/my/account"));
+        assert!(account("http://redmine.local/my/account"));
+        assert!(!account("https://firma.pl/redmine/my/account?x=1"));
+        assert!(!account("https://firma.pl/redmine/issues/1"));
+        assert!(!account("ftp://firma.pl/my/account"));
+    }
+    #[test]
+    fn start_issue_creates_restores_and_switches_measurement() {
+        let mut db = memory();
+        db::change(&mut db, "add", None, Some("Lokalne".into()), 0).unwrap();
+        db::change(&mut db, "start", Some(1), None, 100).unwrap();
+        // Nowe zadanie: tytuł = temat, poprzedni pomiar zatrzymany, nowy wystartowany.
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 200).unwrap();
+        assert_eq!(s.tasks.len(), 2);
+        assert_eq!(s.tasks[0].title, "Eksport faktur");
+        assert_eq!(s.tasks[0].jira_key, None);
+        let active: Vec<_> = s.sessions.iter().filter(|x| x.ended_at.is_none()).collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].task_id, s.tasks[0].id);
+        assert_eq!(
+            s.sessions.iter().find(|x| x.task_id == 1).unwrap().ended_at,
+            Some(200)
+        );
+        let linked: (String, i64) = db
+            .query_row(
+                "SELECT site, issue_id FROM redmine_tasks WHERE task_id=?1",
+                [s.tasks[0].id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(linked, (SITE.to_string(), 1234));
+        let id = s.tasks[0].id;
+        // Ponowny start tego samego zgłoszenia nie dubluje zadania ani pomiaru.
+        let s = start_issue(&mut db, SITE, 1234, "Inny temat", 300).unwrap();
+        assert_eq!(s.tasks.len(), 2);
+        assert_eq!(s.tasks[0].title, "Eksport faktur");
+        assert_eq!(s.sessions.len(), 2);
+        // Ukończone wraca do zrobienia.
+        db::change(&mut db, "toggle", Some(id), None, 400).unwrap();
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 500).unwrap();
+        assert!(!s.tasks[0].done);
+        assert_eq!(s.sessions.len(), 3);
+        // Z kosza.
+        db::change(&mut db, "delete", Some(id), None, 600).unwrap();
+        assert_eq!(db::snapshot(&db).unwrap().trash.len(), 1);
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 700).unwrap();
+        assert!(s.trash.is_empty());
+        assert_eq!(s.tasks.len(), 2);
+        assert_eq!(s.sessions.len(), 4);
+        // Z archiwum.
+        db::change(&mut db, "archive", Some(id), None, 800).unwrap();
+        assert!(
+            db::snapshot(&db)
+                .unwrap()
+                .tasks
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .archived
+        );
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 900).unwrap();
+        let task = s.tasks.iter().find(|t| t.id == id).unwrap();
+        assert!(!task.archived);
+        let active: Vec<_> = s.sessions.iter().filter(|x| x.ended_at.is_none()).collect();
+        assert_eq!((active.len(), active[0].task_id), (1, id));
+        // Ten sam numer pod innym adresem to osobne zadanie; zły numer i pusty temat.
+        let s = start_issue(&mut db, "https://inny.example.pl", 1234, "  ", 1000).unwrap();
+        assert_eq!(s.tasks.len(), 3);
+        assert_eq!(s.tasks[0].title, "#1234");
+        assert!(start_issue(&mut db, SITE, 0, "x", 1100).is_err());
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM redmine_tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        // Usunięcie zadania na stałe kasuje powiązanie (ON DELETE CASCADE).
+        db.execute("DELETE FROM tasks WHERE id=?1", [id]).unwrap();
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM redmine_tasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+    #[test]
+    fn saves_issues_statuses_and_priority_band() {
+        let mut db = memory();
+        let issues = fixture_issues();
+        let statuses = parse_statuses(&serde_json::from_str(STATUSES).unwrap()).unwrap();
+        let tx = db.transaction().unwrap();
+        save_issues(&tx, SITE, &issues).unwrap();
+        save_statuses(&tx, SITE, &statuses, 1_000).unwrap();
+        tx.commit().unwrap();
+        let row: (String, String, i64, bool, String, String, String, String, i64) = db
+            .query_row(
+                "SELECT subject,status,status_id,closed,project,tracker,priority,due_date,assigned FROM redmine_issues WHERE site=?1 AND issue_id=1234",
+                [SITE],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?, r.get(8)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "Eksport faktur – błąd przy polskich znakach (ąęśćżźńół)".into(),
+                "New".into(),
+                1,
+                false,
+                "Magazyn WMS".into(),
+                "Błąd".into(),
+                "High".into(),
+                "2026-10-30".into(),
+                0
+            )
+        );
+        let closed: bool = db
+            .query_row(
+                "SELECT closed FROM redmine_issues WHERE site=?1 AND issue_id=1301",
+                [SITE],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(closed);
+        assert_eq!(read_statuses(&db, SITE).unwrap(), statuses);
+        assert!(read_statuses(&db, "https://inny.example.pl")
+            .unwrap()
+            .is_empty());
+        assert!(statuses_fresh(&db, SITE, 1_000 + STATUS_TTL - 1).unwrap());
+        assert!(!statuses_fresh(&db, SITE, 1_000 + STATUS_TTL).unwrap());
+        assert!(!statuses_fresh(&db, SITE, 500).unwrap());
+        assert!(!statuses_fresh(&db, "https://inny.example.pl", 2_000).unwrap());
+        // Ponowny zapis zastępuje listę statusów (bez dubli), zachowując kolejność.
+        let fewer = vec![
+            Status {
+                id: 2,
+                name: "W toku".into(),
+                is_closed: false,
+            },
+            Status {
+                id: 1,
+                name: "Nowy".into(),
+                is_closed: false,
+            },
+        ];
+        let tx = db.transaction().unwrap();
+        save_statuses(&tx, SITE, &fewer, 2_000).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(read_statuses(&db, SITE).unwrap(), fewer);
+        // „Rozpocznij” z pobranym priorytetem: nowe zadanie z pasmem „wysoki”.
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 100).unwrap();
+        assert_eq!(s.tasks[0].details.priority, 1);
+        // Zmiana priorytetu w Redmine przenosi pasmo na istniejące zadanie.
+        let mut low = issues[0].clone();
+        low.priority = "Low".into();
+        low.status = "In Progress".into();
+        let tx = db.transaction().unwrap();
+        save_issues(&tx, SITE, &[low]).unwrap();
+        tx.commit().unwrap();
+        let s = db::snapshot(&db).unwrap();
+        assert_eq!(s.tasks[0].details.priority, -1);
+        let status: String = db
+            .query_row(
+                "SELECT status FROM redmine_issues WHERE site=?1 AND issue_id=1234",
+                [SITE],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "In Progress");
+        // Ręczna zmiana pasma zostaje, dopóki priorytet w Redmine się nie zmieni.
+        db.execute(
+            "UPDATE task_details SET json=json_set(json,'$.priority',0) WHERE task_id=?1",
+            [s.tasks[0].id],
+        )
+        .unwrap();
+        let mut same = issues[0].clone();
+        same.priority = "Low".into();
+        let tx = db.transaction().unwrap();
+        save_issues(&tx, SITE, &[same]).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(db::snapshot(&db).unwrap().tasks[0].details.priority, 0);
+        // Wiersze Jiry nietknięte.
+        let jira: i64 = db
+            .query_row("SELECT COUNT(*) FROM jira_issues", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(jira, 0);
+    }
+    #[test]
+    fn status_errors_are_polish_without_secrets() {
+        let e = |s: u16, body: &str| {
+            parse_response(StatusCode::from_u16(s).unwrap(), false, body).unwrap_err()
+        };
+        assert_eq!(
+            e(401, "{}"),
+            "Redmine odrzucił klucz API. Sprawdź klucz w „Moje konto” w Redmine."
+        );
+        assert_eq!(e(403, ""), "Brak uprawnień w Redmine do tej operacji.");
+        assert_eq!(
+            e(404, "<html><body>Not found</body></html>"),
+            "Nie znaleziono zgłoszenia albo adres Redmine jest błędny (REST API może być wyłączone)."
+        );
+        assert_eq!(
+            e(
+                422,
+                r#"{"errors":["Status is invalid","Assignee cannot be blank"]}"#
+            ),
+            "Redmine odrzucił dane: Status is invalid; Assignee cannot be blank"
+        );
+        assert_eq!(e(422, ""), "Redmine odrzucił dane.");
+        assert_eq!(e(422, "<html>x</html>"), "Redmine odrzucił dane.");
+        let long = format!(r#"{{"errors":["{}"]}}"#, "x".repeat(500));
+        assert_eq!(
+            e(422, &long).chars().count(),
+            "Redmine odrzucił dane: ".chars().count() + 200
+        );
+        assert_eq!(
+            e(429, ""),
+            "Redmine ograniczył liczbę zapytań. Spróbuj ponownie za chwilę."
+        );
+        assert_eq!(
+            e(500, ""),
+            "Redmine zwrócił błąd HTTP 500. Spróbuj ponownie."
+        );
+        assert_eq!(
+            e(503, ""),
+            "Redmine zwrócił błąd HTTP 503. Spróbuj ponownie."
+        );
+        assert!(e(302, "").starts_with("Redmine przekierował żądanie."));
+        assert_eq!(e(418, ""), "Redmine zwrócił błąd HTTP 418.");
+        // 200 ze stroną logowania zamiast JSON (API wyłączone).
+        let html = "<!DOCTYPE html>\n<html><head><title>Redmine</title></head></html>";
+        assert_eq!(
+            parse_response(StatusCode::OK, false, html).unwrap_err(),
+            HTML_ERROR
+        );
+        assert_eq!(
+            parse_response(StatusCode::OK, true, "nie json").unwrap_err(),
+            HTML_ERROR
+        );
+        assert_eq!(
+            parse_response(StatusCode::OK, false, "nie json").unwrap_err(),
+            BAD_RESPONSE
+        );
+        assert_eq!(
+            parse_response(StatusCode::OK, false, "null").unwrap_err(),
+            BAD_RESPONSE
+        );
+        assert_eq!(
+            parse_response(StatusCode::OK, false, r#"{"user":{"id":1}}"#).unwrap()["user"]["id"],
+            1
+        );
+        // Błąd certyfikatu rozpoznawany w łańcuchu przyczyn.
+        #[derive(Debug)]
+        struct Wrapped(std::io::Error);
+        impl std::fmt::Display for Wrapped {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "error sending request")
+            }
+        }
+        impl std::error::Error for Wrapped {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+        let cert = Wrapped(std::io::Error::other(
+            "invalid peer certificate: UnknownIssuer",
+        ));
+        assert!(certificate_in_chain(&cert));
+        let refused = Wrapped(std::io::Error::other("connection refused"));
+        assert!(!certificate_in_chain(&refused));
+        assert!(CERT_ERROR.contains("Zaawansowane"));
+    }
+    /// Serwer HTTP na jedno połączenie (127.0.0.1): zwraca otrzymane żądanie.
+    fn serve_once(
+        status: &'static str,
+        content_type: &'static str,
+        body: String,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            write!(socket,"HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (format!("http://{address}"), server)
+    }
+    #[test]
+    fn get_sends_api_key_header_and_maps_html_page() {
+        let (site, server) = serve_once("200 OK", "application/json; charset=utf-8", USER.into());
+        let c = Config {
+            site,
+            ..Config::default()
+        };
+        let value = tauri::async_runtime::block_on(get(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            "/users/current.json",
+            &[
+                ("limit", "100".into()),
+                ("updated_on", ">=2026-10-06".into()),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(value["user"]["login"], "mkrajnik");
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with("GET /users/current.json?limit=100&updated_on=%3E%3D2026-10-06 "),
+            "{request}"
+        );
+        let lower = request.to_ascii_lowercase();
+        assert!(lower.contains("x-redmine-api-key: test-only-key\r\n"));
+        assert!(lower.contains("accept: application/json\r\n"));
+        assert!(!lower.contains("authorization:"));
+        // Strona logowania zamiast JSON przy wyłączonym API.
+        let (site, server) = serve_once(
+            "200 OK",
+            "text/html; charset=utf-8",
+            "<!DOCTYPE html><html><body>Zaloguj się</body></html>".into(),
+        );
+        let c = Config {
+            site,
+            ..Config::default()
+        };
+        let e = tauri::async_runtime::block_on(get(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            "/users/current.json",
+            &[],
+        ))
+        .unwrap_err();
+        assert_eq!(e, HTML_ERROR);
+        server.join().unwrap();
+        // 401 bez klucza w komunikacie.
+        let (site, server) = serve_once("401 Unauthorized", "application/json", "{}".into());
+        let c = Config {
+            site,
+            ..Config::default()
+        };
+        let e = tauri::async_runtime::block_on(get(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            "/issues.json",
+            &[],
+        ))
+        .unwrap_err();
+        assert!(e.starts_with("Redmine odrzucił klucz API."));
+        assert!(!e.contains("test-only-key"));
+        server.join().unwrap();
+        // Zamknięty port: błąd sieci bez adresu i bez klucza.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let c = Config {
+            site: format!("http://{address}"),
+            ..Config::default()
+        };
+        let e = tauri::async_runtime::block_on(get(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            "/issues.json",
+            &[],
+        ))
+        .unwrap_err();
+        assert_eq!(e, NETWORK_ERROR);
+    }
+    #[test]
+    fn fetch_issues_reads_pages_from_local_server() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut paths = Vec::new();
+            for page in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                paths.push(request.lines().next().unwrap().to_string());
+                let issues: Vec<Value> = (0..if page == 0 { 100 } else { 20 })
+                    .map(|i| serde_json::json!({"id": page * 100 + i + 1, "subject": format!("Z {}", i), "status": {"id": 1, "name": "New"}}))
+                    .collect();
+                let body = serde_json::json!({"issues": issues, "total_count": 120, "offset": page * 100, "limit": 100}).to_string();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            }
+            paths
+        });
+        let c = Config {
+            site: format!("http://{address}"),
+            ..Config::default()
+        };
+        let closed: HashMap<u64, bool> = [(1, false)].into_iter().collect();
+        let (issues, warning) = tauri::async_runtime::block_on(fetch_issues(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            &issues_query(Some(7), true, true, None),
+            &closed,
+        ))
+        .unwrap();
+        assert_eq!(issues.len(), 120);
+        assert_eq!(warning, None);
+        assert_eq!(issues[0].url, format!("http://{address}/issues/1"));
+        let paths = server.join().unwrap();
+        assert_eq!(
+            paths[0],
+            "GET /issues.json?project_id=7&assigned_to_id=me&status_id=open&sort=updated_on%3Adesc&limit=100&offset=0 HTTP/1.1"
+        );
+        assert!(
+            paths[1].ends_with("&limit=100&offset=100 HTTP/1.1"),
+            "{}",
+            paths[1]
+        );
+    }
+}

@@ -204,10 +204,13 @@ pub fn priority_band(name: &str) -> Option<i32> {
         "blocker",
         "major",
         "urgent",
+        // Priorytety Redmine (PLAN_1.9.md, R2).
+        "immediate",
         "najwyższy",
         "wysoki",
         "krytyczny",
         "pilny",
+        "natychmiastowy",
     ]
     .contains(&n.as_str())
     {

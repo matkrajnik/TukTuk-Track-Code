@@ -22,6 +22,7 @@ mod notify;
 mod planner;
 mod quickadd;
 mod recurrence;
+mod redmine;
 mod reminder;
 mod settings;
 mod shortcuts;
@@ -363,6 +364,8 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
+            // Redmine obok Jiry (PLAN_1.9.md): osobny stan, niezależny od Jiry.
+            redmine::setup(app.handle());
             timesheet::setup(app.handle());
             jira_move::setup(app.handle());
             calendar::setup(app.handle());
@@ -519,6 +522,16 @@ fn main() {
             jira_board::jira_create,
             jira_fields::jira_fields,
             jira_fields::jira_refresh_fields,
+            redmine::redmine_settings,
+            redmine::redmine_connect,
+            redmine::redmine_test,
+            redmine::redmine_disconnect,
+            redmine::redmine_issues,
+            redmine::redmine_projects,
+            redmine::redmine_select_projects,
+            redmine::redmine_statuses,
+            redmine::redmine_start,
+            redmine::redmine_open,
             calendar::calendar_status,
             calendar::calendar_connect,
             calendar::calendar_disconnect,

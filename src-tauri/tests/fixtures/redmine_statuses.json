@@ -1,0 +1,9 @@
+{
+  "issue_statuses": [
+    { "id": 1, "name": "New", "is_closed": false },
+    { "id": 2, "name": "In Progress", "is_closed": false },
+    { "id": 3, "name": "Feedback" },
+    { "id": 4, "name": "Resolved", "is_closed": true },
+    { "id": 5, "name": "Closed", "is_closed": true }
+  ]
+}

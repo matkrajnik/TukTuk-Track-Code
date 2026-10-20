@@ -75,7 +75,10 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS jira_fields (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, custom INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
         CREATE TABLE IF NOT EXISTS jira_issue_fields (site TEXT NOT NULL, issue_key TEXT NOT NULL, field_id TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, issue_key, field_id));
         CREATE TABLE IF NOT EXISTS ts_sent_days (day TEXT PRIMARY KEY, sent_at INTEGER NOT NULL, hours TEXT NOT NULL DEFAULT '');
-        CREATE TABLE IF NOT EXISTS ts_project_map (project TEXT PRIMARY KEY COLLATE NOCASE, ts_task_id TEXT NOT NULL, ts_task_name TEXT NOT NULL DEFAULT '');")
+        CREATE TABLE IF NOT EXISTS ts_project_map (project TEXT PRIMARY KEY COLLATE NOCASE, ts_task_id TEXT NOT NULL, ts_task_name TEXT NOT NULL DEFAULT '');
+        CREATE TABLE IF NOT EXISTS redmine_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_id INTEGER NOT NULL, UNIQUE(site, issue_id));
+        CREATE TABLE IF NOT EXISTS redmine_issues (site TEXT NOT NULL, issue_id INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', status_id INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '', tracker TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, issue_id));
+        CREATE TABLE IF NOT EXISTS redmine_statuses (site TEXT NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, is_closed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, id));")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
