@@ -279,6 +279,58 @@ fn account_link(parsed: &Url) -> bool {
             normalize_site(&format!("{}://{host}{prefix}", parsed.scheme())).is_ok()
         })
 }
+/// Host, jawny port i prefiks ścieżki adresu Redmine (bez schematu: ten sam
+/// Redmine bywa otwierany przez `http` i `https`).
+fn site_parts(url: &Url) -> Option<(String, Option<u16>, Vec<&str>)> {
+    let host = url.host_str().filter(|h| !h.is_empty())?;
+    let path = url
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()).collect())
+        .unwrap_or_default();
+    Some((
+        host.trim_end_matches('.').to_ascii_lowercase(),
+        url.port(),
+        path,
+    ))
+}
+/// Czy dwa adresy wskazują ten sam Redmine: host, port i prefiks ścieżki
+/// (schemat bez znaczenia). Pusty albo niepoprawny adres nie pasuje do niczego.
+pub fn same_site(a: &str, b: &str) -> bool {
+    let (Ok(a), Ok(b)) = (Url::parse(a), Url::parse(b)) else {
+        return false;
+    };
+    matches!((site_parts(&a), site_parts(&b)), (Some(x), Some(y)) if x == y)
+}
+/// Numer zgłoszenia ze strony Redmine pod adresem `site`: tylko ścieżka
+/// `<prefiks>/issues/<numer>[/...]` na tym samym hoście i porcie (PLAN_1.9.md,
+/// R3, rozszerzenie przeglądarki). Inne strony tego hosta (np. GitLab pod
+/// `/gitlab/.../issues/42`) nie są zgłoszeniami Redmine.
+pub fn issue_page(url: &Url, site: &str) -> Option<u64> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let base = Url::parse(site).ok()?;
+    let (host, port, prefix) = site_parts(&base)?;
+    let (page_host, page_port, path) = site_parts(url)?;
+    if page_host != host || page_port != port || !path.starts_with(&prefix) {
+        return None;
+    }
+    match &path[prefix.len()..] {
+        ["issues", number, ..]
+            if !number.is_empty()
+                && number.len() <= 10
+                && number.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            number.parse::<u64>().ok().filter(|id| valid_issue_id(*id))
+        }
+        _ => None,
+    }
+}
+/// Skonfigurowany adres Redmine z bazy (pusty bez konfiguracji): dopasowanie
+/// `#1234` z rozszerzenia przeglądarki tylko do zgłoszeń tego Redmine.
+pub fn current_site(db: &Connection) -> String {
+    read_config(db).map(|c| c.site).unwrap_or_default()
+}
 
 // ---------------------------------------------------------------------------
 // Klient HTTP i komunikaty
@@ -2053,6 +2105,82 @@ mod tests {
         assert!(!account("https://firma.pl/redmine/my/account?x=1"));
         assert!(!account("https://firma.pl/redmine/issues/1"));
         assert!(!account("ftp://firma.pl/my/account"));
+    }
+    #[test]
+    fn same_site_and_issue_pages_respect_host_port_and_path_prefix() {
+        // Ten sam Redmine: schemat i końcowy `/` bez znaczenia, host bez wielkości liter.
+        assert!(same_site(
+            "https://redmine.example.pl",
+            "http://Redmine.example.pl/"
+        ));
+        assert!(same_site(
+            "https://firma.pl/redmine",
+            "https://firma.pl/redmine/"
+        ));
+        assert!(!same_site("https://firma.pl/redmine", "https://firma.pl"));
+        assert!(!same_site(
+            "https://firma.pl/redmine",
+            "https://firma.pl/redmine2"
+        ));
+        assert!(!same_site(
+            "https://redmine.example.pl",
+            "https://redmine.example.pl:8443"
+        ));
+        assert!(!same_site(
+            "https://redmine.example.pl",
+            "https://inny.example.pl"
+        ));
+        assert!(!same_site("", ""));
+        assert!(!same_site("zły adres", "zły adres"));
+        // Strona zgłoszenia: tylko `<prefiks>/issues/<numer>[/...]`.
+        let page = |u: &str, site: &str| issue_page(&Url::parse(u).unwrap(), site);
+        assert_eq!(
+            page(
+                "https://firma.pl/redmine/issues/42",
+                "https://firma.pl/redmine"
+            ),
+            Some(42)
+        );
+        assert_eq!(
+            page(
+                "http://firma.pl/redmine/issues/42/edit",
+                "https://firma.pl/redmine"
+            ),
+            Some(42)
+        );
+        assert_eq!(
+            page(
+                "https://firma.pl/gitlab/g/p/-/issues/42",
+                "https://firma.pl/redmine"
+            ),
+            None
+        );
+        assert_eq!(
+            page("https://firma.pl/issues/42", "https://firma.pl/redmine"),
+            None
+        );
+        assert_eq!(
+            page(
+                "https://firma.pl/redmine/issues/0",
+                "https://firma.pl/redmine"
+            ),
+            None
+        );
+        assert_eq!(
+            page(
+                "https://firma.pl/redmine/issues/x1",
+                "https://firma.pl/redmine"
+            ),
+            None
+        );
+        assert_eq!(page("https://firma.pl/redmine/issues/42", ""), None);
+        assert_eq!(
+            page(
+                "ftp://firma.pl/redmine/issues/42",
+                "https://firma.pl/redmine"
+            ),
+            None
+        );
     }
     #[test]
     fn start_issue_creates_restores_and_switches_measurement() {

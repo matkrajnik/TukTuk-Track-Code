@@ -264,28 +264,37 @@ pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Resul
 
 /// Dopasowanie `#1234`: lokalne zadanie z `redmine_tasks` (poza koszem), a bez
 /// niego zgłoszenie znane z `redmine_issues` (start przez `redmine::start_by_id`).
+/// Tylko zgłoszenia skonfigurowanego Redmine: rozszerzenie rozpoznaje `#1234`
+/// wyłącznie pod jego adresem, a numer z innego (np. starego) Redmine to inne
+/// zgłoszenie.
 fn resolve_redmine(db: &Connection, key: &str, number: &str) -> rusqlite::Result<Option<Match>> {
     let Some(id) = number.parse::<u64>().ok().filter(|id| {
         number.bytes().all(|b| b.is_ascii_digit()) && crate::redmine::valid_issue_id(*id)
     }) else {
         return Ok(None);
     };
+    let site = crate::redmine::current_site(db);
+    if site.is_empty() {
+        return Ok(None);
+    }
     let local = db
-        .query_row(
-            "SELECT t.id,t.title,t.done FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
+        .prepare(
+            "SELECT t.id,t.title,t.done,r.site FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
              LEFT JOIN task_lifecycle l ON l.task_id=t.id
-             WHERE r.issue_id=?1 AND l.deleted_at IS NULL ORDER BY t.done, t.id DESC LIMIT 1",
-            [id as i64],
-            |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, bool>(2)?,
-                ))
-            },
-        )
-        .optional()?;
-    if let Some((task_id, title, done)) = local {
+             WHERE r.issue_id=?1 AND l.deleted_at IS NULL ORDER BY t.done, t.id DESC",
+        )?
+        .query_map([id as i64], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, bool>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .find(|(.., s)| crate::redmine::same_site(s, &site));
+    if let Some((task_id, title, done, _)) = local {
         return Ok(Some(Match {
             task_id: Some(task_id),
             title,
@@ -294,11 +303,12 @@ fn resolve_redmine(db: &Connection, key: &str, number: &str) -> rusqlite::Result
             done,
         }));
     }
-    let known: bool = db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM redmine_issues WHERE issue_id=?1)",
-        [id as i64],
-        |r| r.get(0),
-    )?;
+    let known = db
+        .prepare("SELECT site FROM redmine_issues WHERE issue_id=?1")?
+        .query_map([id as i64], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .iter()
+        .any(|s| crate::redmine::same_site(s, &site));
     Ok(known.then(|| Match {
         task_id: None,
         title: String::new(),
@@ -1169,7 +1179,8 @@ mod tests {
     fn folder_binding_shows_redmine_number_and_keeps_key_matching_for_jira() {
         let db = open();
         db.execute_batch(
-            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(2,'https://redmine.example.pl',1234);",
+            r#"INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(2,'https://redmine.example.pl',1234);
+               INSERT INTO settings(key,value) VALUES('redmine','{"site":"https://redmine.example.pl"}');"#,
         )
         .unwrap();
         bind(&db, "C:\\Projekty\\redmine", 2).unwrap();
@@ -1192,5 +1203,24 @@ mod tests {
             (Some(2), Some("#1234"), "task")
         );
         assert_eq!(resolve(&db, "C:\\inne", Some("#4321")).unwrap(), None);
+        let set_site = |site: &str| {
+            db.execute(
+                "UPDATE settings SET value=?1 WHERE key='redmine'",
+                [serde_json::json!({ "site": site }).to_string()],
+            )
+            .unwrap()
+        };
+        // Inny Redmine (np. nowy adres po zmianie w Ustawieniach): ten sam numer
+        // to inne zgłoszenie, bez dopasowania.
+        set_site("https://firma.example.pl/redmine");
+        assert_eq!(resolve(&db, "C:\\inne", Some("#1234")).unwrap(), None);
+        // Ten sam Redmine przez http: to samo zgłoszenie.
+        set_site("http://redmine.example.pl");
+        let m = resolve(&db, "C:\\inne", Some("#1234")).unwrap().unwrap();
+        assert_eq!(m.task_id, Some(2));
+        // Bez konfiguracji Redmine `#1234` nie wskazuje niczego.
+        db.execute("DELETE FROM settings WHERE key='redmine'", [])
+            .unwrap();
+        assert_eq!(resolve(&db, "C:\\inne", Some("#1234")).unwrap(), None);
     }
 }

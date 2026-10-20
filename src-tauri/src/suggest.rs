@@ -694,10 +694,13 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         db::init(&conn).unwrap();
         conn.execute_batch(
-            "INSERT INTO tasks(title,created_at) VALUES('Redmine',0),('Jira',0);
+            r#"INSERT INTO tasks(title,created_at) VALUES('Redmine',0),('Jira',0),('Stary',0);
              INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl',12);
+             INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(3,'https://stary.example.pl',77);
              INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(2,'https://x.atlassian.net','WMS-12');
-             INSERT INTO redmine_issues(site,issue_id,subject) VALUES('https://redmine.example.pl',1234,'Import');",
+             INSERT INTO redmine_issues(site,issue_id,subject) VALUES('https://redmine.example.pl',1234,'Import');
+             INSERT INTO redmine_issues(site,issue_id,subject) VALUES('https://stary.example.pl',1300,'Stary');
+             INSERT INTO settings(key,value) VALUES('redmine','{"site":"https://redmine.example.pl"}');"#,
         )
         .unwrap();
         let m = agents::resolve(&conn, "", Some("#12")).unwrap().unwrap();
@@ -715,6 +718,10 @@ mod tests {
         assert!(agents::resolve(&conn, "", Some("#999")).unwrap().is_none());
         assert!(agents::resolve(&conn, "", Some("#abc")).unwrap().is_none());
         assert!(agents::resolve(&conn, "", Some("12")).unwrap().is_none());
+        // Zadanie i zgłoszenie z innego (starego) Redmine nie są zgłoszeniami
+        // skonfigurowanego Redmine o tym numerze.
+        assert!(agents::resolve(&conn, "", Some("#77")).unwrap().is_none());
+        assert!(agents::resolve(&conn, "", Some("#1300")).unwrap().is_none());
     }
 
     #[test]

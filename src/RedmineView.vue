@@ -8,6 +8,7 @@ import {
   redmineIssues,
   redmineOpen,
   redmineStart,
+  redmineStatuses,
   type RedmineAccount,
   type RedmineIssue,
   type RedmineStatusGroup,
@@ -42,7 +43,8 @@ const issues = ref<RedmineIssue[]>([]),
   groups = ref<RedmineStatusGroup[]>([]),
   warnings = ref<string[]>([]),
   outside = ref<RedmineIssue[]>([]),
-  outsideWarnings = ref<string[]>([]);
+  outsideWarnings = ref<string[]>([]),
+  outsideError = ref("");
 const query = ref(""),
   trackers = ref<string[]>([]),
   collapsed = ref<string[]>([]);
@@ -92,9 +94,13 @@ const project = computed(
 );
 /** Przy kilku projektach zakładki, przy wielu pole wyboru. */
 const manyProjects = computed(() => projects.value.length > 4);
-/** „Wszystkie otwarte” zawsze bez zamkniętych; „Tylko otwarte” dotyczy „Moich”. */
-const effectiveOpenOnly = computed(
-  () => !project.value || scope.value === "all" || openOnly.value,
+/**
+ * „Wszystkie otwarte” w projekcie zawsze bez zamkniętych; „Tylko otwarte”
+ * dotyczy „Moich” w projekcie i moich zgłoszeń ze wszystkich projektów (bez
+ * śledzonych projektów).
+ */
+const effectiveOpenOnly = computed(() =>
+  scope.value === "all" && !!project.value ? true : openOnly.value,
 );
 
 const fold = (text: string) => text.toLocaleLowerCase("pl");
@@ -164,6 +170,7 @@ const local = computed(() => {
   return out;
 });
 
+const errorText = (e: unknown) => String(e instanceof Error ? e.message : e);
 async function run(fn: () => Promise<void>) {
   if (busy.value) return;
   busy.value = true;
@@ -171,7 +178,7 @@ async function run(fn: () => Promise<void>) {
   try {
     await fn();
   } catch (e) {
-    error.value = String(e instanceof Error ? e.message : e);
+    error.value = errorText(e);
   } finally {
     busy.value = false;
   }
@@ -185,6 +192,7 @@ async function fetchIssues() {
   loaded.value = false;
   warnings.value = [];
   outsideWarnings.value = [];
+  outsideError.value = "";
   updatedAt.value = "";
   if (!account.value?.connected) return;
   const list = projects.value;
@@ -192,13 +200,15 @@ async function fetchIssues() {
     projectId.value = list[0].id;
   if (!list.length) {
     // Bez śledzonych projektów: moje zgłoszenia ze wszystkich projektów.
-    const result = await redmineIssues(null, true, openOnly.value);
+    const result = await redmineIssues(null, true, effectiveOpenOnly.value);
     issues.value = result.issues;
     groups.value = result.groups;
     warnings.value = result.warnings;
     outside.value = [];
   } else {
-    const [main, mine] = await Promise.all([
+    // Sekcja „spoza śledzonych projektów” to dodatek: jej błąd (np. 403 na
+    // zapytaniu po wszystkich projektach) nie ukrywa listy projektu.
+    const [main, mine] = await Promise.allSettled([
       redmineIssues(
         projectId.value,
         scope.value === "mine",
@@ -206,19 +216,50 @@ async function fetchIssues() {
       ),
       redmineIssues(null, true, true),
     ]);
-    issues.value = main.issues;
-    groups.value = main.groups;
-    warnings.value = main.warnings;
-    outside.value = mine.issues.filter(
-      (i) => !mine.tracked.includes(i.projectId),
-    );
-    outsideWarnings.value = mine.warnings;
+    if (main.status === "rejected") {
+      issues.value = [];
+      groups.value = [];
+      outside.value = [];
+      throw main.reason;
+    }
+    issues.value = main.value.issues;
+    groups.value = main.value.groups;
+    warnings.value = main.value.warnings;
+    if (mine.status === "fulfilled") {
+      const tracked = mine.value.tracked;
+      outside.value = mine.value.issues.filter(
+        (i) => !tracked.includes(i.projectId),
+      );
+      outsideWarnings.value = mine.value.warnings;
+    } else {
+      outside.value = [];
+      outsideError.value = errorText(mine.reason);
+    }
   }
   trackers.value = trackers.value.filter((t) => trackerChips.value.includes(t));
   loaded.value = true;
   updatedAt.value = stamp();
 }
 const refresh = () => run(fetchIssues);
+/**
+ * Ręczne „Odśwież”: najpierw statusy prosto z Redmine (nowy albo przestawiony
+ * status trafia od razu do właściwej grupy), potem lista. Wejście do widoku i
+ * zmiana projektu korzystają z pamięci statusów (raz na dobę).
+ */
+const refreshAll = () =>
+  run(async () => {
+    let statusWarning = "";
+    if (account.value?.connected) {
+      try {
+        await redmineStatuses(true);
+      } catch (e) {
+        statusWarning = `Statusy: ${errorText(e)}`;
+      }
+    }
+    await fetchIssues();
+    if (statusWarning && !warnings.value.includes(statusWarning))
+      warnings.value = [...warnings.value, statusWarning];
+  });
 function selectProject(id: number) {
   if (projectId.value === id) return;
   projectId.value = id;
@@ -345,7 +386,7 @@ onMounted(() =>
             :disabled="busy"
             @change="refresh"
           />Tylko otwarte</label
-        ><button class="secondary-button" :disabled="busy" @click="refresh">
+        ><button class="secondary-button" :disabled="busy" @click="refreshAll">
           <RefreshCw :size="15" />Odśwież
         </button>
       </div>
@@ -451,6 +492,10 @@ onMounted(() =>
         <p v-for="warning in outsideWarnings" :key="warning" class="hint">
           {{ warning }}
         </p>
+        <p v-if="outsideError" class="error" role="alert">
+          Nie udało się pobrać zgłoszeń spoza śledzonych projektów:
+          {{ outsideError }}
+        </p>
         <div v-if="visibleOutside.length" class="redmine-cards">
           <RedmineIssueCard
             v-for="issue in visibleOutside"
@@ -466,7 +511,7 @@ onMounted(() =>
             @open="open"
           />
         </div>
-        <p v-else class="hint">
+        <p v-else-if="!outsideError" class="hint">
           Brak otwartych zgłoszeń przypisanych do Ciebie w innych projektach.
         </p>
       </section>

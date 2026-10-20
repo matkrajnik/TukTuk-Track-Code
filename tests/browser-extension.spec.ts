@@ -347,3 +347,62 @@ test("baner ze źródłem „Przeglądarka”: „Pracujesz teraz przy WMS-12?�
     key: "WMS-12",
   });
 });
+
+test("baner ze zgłoszeniem Redmine bez zadania: „zadanie powstanie z Redmine”", async ({
+  page,
+}) => {
+  const now = Date.parse(NOW);
+  await openDesktop(page, {
+    settings: { browserExtension: true },
+    suggestions: [
+      {
+        task: {
+          taskId: null,
+          title: "Import CSV zamówień",
+          key: "#1234",
+          source: "redmine",
+        },
+        agents: [
+          {
+            kind: "browser",
+            name: "Google Chrome",
+            cwd: "",
+            since: now - 180_000,
+          },
+        ],
+      },
+      {
+        task: {
+          taskId: null,
+          title: "Nowe zgłoszenie",
+          key: "WMS-99",
+          source: "jira",
+        },
+        agents: [
+          {
+            kind: "browser",
+            name: "Microsoft Edge",
+            cwd: "",
+            since: now - 180_000,
+          },
+        ],
+      },
+    ],
+  });
+  const banner = page.getByRole("region", { name: "Propozycja przełączenia" });
+  await expect(
+    banner.getByRole("listitem", { name: "Propozycja: Import CSV zamówień" }),
+  ).toContainText("#1234: Import CSV zamówień (zadanie powstanie z Redmine)");
+  // Zgłoszenie Jiry bez zadania: tekst bez zmian.
+  await expect(
+    banner.getByRole("listitem", { name: "Propozycja: Nowe zgłoszenie" }),
+  ).toContainText("WMS-99: Nowe zgłoszenie (zadanie powstanie z Jiry)");
+  await banner
+    .getByRole("button", { name: "Przełącz na: Import CSV zamówień" })
+    .click();
+  const calls = await backend<any[]>(page, "calls");
+  expect(calls.find((c) => c.cmd === "agent_switch")?.args).toEqual({
+    taskId: null,
+    key: "#1234",
+  });
+});

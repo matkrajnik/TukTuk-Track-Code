@@ -355,6 +355,8 @@ interface PreviewRedmine {
   /** Śledzone projekty (`redmine_select_projects`); brak = pierwszy z przykładu. */
   selectedProjects?: RedmineProject[];
   statuses?: RedmineStatus[];
+  /** Błąd zapytania o moje zgłoszenia ze wszystkich projektów (testy). */
+  failMine?: string;
 }
 /** Użytkownik symulowanego Redmine (`/users/current.json`). */
 export const previewRedmineMe = Object.freeze({
@@ -3897,6 +3899,7 @@ export async function redmineIssues(
   if (desktop) return invoke("redmine_issues", { projectId, mine, openOnly });
   if (projectId === 0) throw new Error("Niepoprawny projekt Redmine.");
   const state = previewRedmineConnected();
+  if (projectId === null && state.failMine) throw new Error(state.failMine);
   const statuses = previewRedmineStatusList(state);
   const projects = previewRedmineProjectList(state);
   const scope =

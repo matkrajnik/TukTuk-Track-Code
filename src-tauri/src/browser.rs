@@ -85,10 +85,20 @@ fn exact_key(text: &str) -> Option<String> {
         .filter(|k| k == text)
 }
 
-/// Rozpoznanie zgłoszenia z karty: `/browse/KEY`, `selectedIssue=KEY`,
+/// Rozpoznanie zgłoszenia Jiry z karty: `/browse/KEY`, `selectedIssue=KEY`,
 /// `/issues/KEY`, a na końcu klucz w tytule. `None` dla adresów spoza
-/// dozwolonych domen, innych schematów niż http(s) i stron bez klucza.
+/// dozwolonych domen, innych schematów niż http(s) i stron bez klucza. Strony
+/// zgłoszeń Redmine rozpoznaje [`page_key`] z adresem Redmine (aplikacja
+/// używa tylko `page_key`; ta postać zostaje dla testów Jiry).
+#[cfg(test)]
 pub fn issue_key(url: &str, title: &str, patterns: &[String]) -> Option<String> {
+    page_key(url, title, patterns, "")
+}
+
+/// Jak [`issue_key`], a do tego strona zgłoszenia Redmine pod adresem
+/// `redmine_site` (host, port i prefiks ścieżki z konfiguracji) jako `#1234`.
+/// Pusty `redmine_site` = bez Redmine.
+pub fn page_key(url: &str, title: &str, patterns: &[String], redmine_site: &str) -> Option<String> {
     let url = Url::parse(url).ok()?;
     if !matches!(url.scheme(), "http" | "https") {
         return None;
@@ -117,30 +127,15 @@ pub fn issue_key(url: &str, title: &str, patterns: &[String]) -> Option<String> 
     if let Some(key) = after("issues") {
         return Some(key);
     }
-    // Redmine (PLAN_1.9.md, R3): `/issues/1234`, także pod prefiksem ścieżki
-    // (`/redmine/issues/1234`), jako `#1234`. Jira Cloud nie ma takich adresów,
-    // więc `*.atlassian.net` jest pomijane.
-    if !host_matches(host, DEFAULT_DOMAIN) {
-        if let Some(id) = segments
-            .windows(2)
-            .find(|w| w[0] == "issues")
-            .and_then(|w| redmine_number(w[1]))
-        {
+    // Redmine (PLAN_1.9.md, R3): tylko `<prefiks>/issues/1234` pod
+    // skonfigurowanym adresem Redmine, jako `#1234`. Inne ścieżki tego samego
+    // hosta (np. GitLab pod innym prefiksem) i `*.atlassian.net` są pomijane.
+    if !redmine_site.is_empty() && !host_matches(host, DEFAULT_DOMAIN) {
+        if let Some(id) = crate::redmine::issue_page(&url, redmine_site) {
             return Some(format!("#{id}"));
         }
     }
     crate::agents::jira_key(title)
-}
-
-/// Numer zgłoszenia Redmine z członu ścieżki: same cyfry (1–10).
-fn redmine_number(segment: &str) -> Option<u64> {
-    if segment.is_empty() || segment.len() > 10 || !segment.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    segment
-        .parse::<u64>()
-        .ok()
-        .filter(|id| crate::redmine::valid_issue_id(*id))
 }
 
 /// Ostatnia strona z rozszerzenia: tylko rozpoznany klucz i chwila odbioru.
@@ -176,6 +171,8 @@ pub struct Bridge {
     last_message: Option<i64>,
     /// Ostatni rozpoznany klucz i kiedy przyszedł.
     last_key: Option<(String, i64)>,
+    /// Skonfigurowany adres Redmine (strony zgłoszeń jako `#1234`); pusty = bez Redmine.
+    redmine_site: String,
 }
 
 impl Bridge {
@@ -202,6 +199,11 @@ impl Bridge {
         self.pages.clear();
     }
 
+    /// Adres Redmine z konfiguracji dla kolejnych wiadomości (pusty = bez Redmine).
+    pub fn set_redmine_site(&mut self, site: &str) {
+        site.clone_into(&mut self.redmine_site);
+    }
+
     /// Jedna wiadomość z rozszerzenia (przez host). Zwraca odpowiedź dla
     /// rozszerzenia. `patterns` z [`allowed_patterns`].
     pub fn handle(&mut self, msg: &Value, enabled: bool, patterns: &[String], now: i64) -> Value {
@@ -224,7 +226,7 @@ impl Bridge {
                     self.pages.remove(browser);
                     return json!({ "ok": false, "connected": true, "enabled": true, "error": "Za długi adres albo tytuł." });
                 }
-                let key = issue_key(url, title, patterns);
+                let key = page_key(url, title, patterns, &self.redmine_site);
                 if let Some(key) = &key {
                     self.last_key = Some((key.clone(), now));
                 }
@@ -476,15 +478,18 @@ pub fn fresh_key(app: &tauri::AppHandle, now: i64, process: &str) -> Option<Stri
 }
 
 /// Witryny znane aplikacji: Jira (połączone konto i zadania z kluczem) oraz
-/// Redmine (skonfigurowany adres i zadania z numerem, PLAN_1.9.md R3).
-fn known_sites(app: &tauri::AppHandle) -> Vec<String> {
+/// Redmine (skonfigurowany adres i zadania z numerem, PLAN_1.9.md R3), a obok
+/// skonfigurowany adres Redmine (pusty bez konfiguracji) do rozpoznawania stron
+/// zgłoszeń: tylko pod nim `/issues/1234` jest zgłoszeniem Redmine.
+fn known_sites(app: &tauri::AppHandle) -> (Vec<String>, String) {
     let mut sites: Vec<String> = crate::jira::config(app)
         .map(|c| vec![c.site])
         .unwrap_or_default();
-    if let Ok(c) = crate::redmine::config(app) {
-        if !c.site.is_empty() {
-            sites.push(c.site);
-        }
+    let redmine_site = crate::redmine::config(app)
+        .map(|c| c.site)
+        .unwrap_or_default();
+    if !redmine_site.is_empty() {
+        sites.push(redmine_site.clone());
     }
     if let Ok(db) = app.state::<crate::Database>().0.lock() {
         for query in [
@@ -498,7 +503,7 @@ fn known_sites(app: &tauri::AppHandle) -> Vec<String> {
             }
         }
     }
-    sites
+    (sites, redmine_site)
 }
 
 /// Odpowiedź na jedną ramkę od hosta.
@@ -507,17 +512,21 @@ fn on_message(app: &tauri::AppHandle, body: &[u8]) -> Value {
         return json!({ "ok": false, "error": "Niepoprawna wiadomość." });
     };
     let settings = crate::settings::current(app);
-    let patterns = allowed_patterns(&known_sites(app));
+    let (sites, redmine_site) = known_sites(app);
+    let patterns = allowed_patterns(&sites);
     let Some(state) = app.try_state::<State>() else {
         return json!({ "ok": false, "error": "Aplikacja jeszcze startuje." });
     };
     let reply = match state.bridge.lock() {
-        Ok(mut b) => b.handle(
-            &msg,
-            settings.browser_extension,
-            &patterns,
-            crate::db::now(),
-        ),
+        Ok(mut b) => {
+            b.set_redmine_site(&redmine_site);
+            b.handle(
+                &msg,
+                settings.browser_extension,
+                &patterns,
+                crate::db::now(),
+            )
+        }
         Err(_) => json!({ "ok": false, "error": "Błąd stanu aplikacji." }),
     };
     reply
@@ -939,29 +948,31 @@ mod tests {
 
     #[test]
     fn recognizes_redmine_issue_pages_as_hash_number() {
-        let p = allowed_patterns(&[
-            "https://redmine.example.pl".into(),
-            "https://firma.example.pl/redmine".into(),
-        ]);
+        let site = "https://redmine.example.pl";
+        let p = allowed_patterns(&[site.into()]);
+        let key = |url: &str, title: &str| page_key(url, title, &p, site);
         assert_eq!(
-            issue_key("https://redmine.example.pl/issues/1234", "", &p).as_deref(),
+            key("https://redmine.example.pl/issues/1234", "").as_deref(),
             Some("#1234")
         );
-        // Prefiks ścieżki, parametry i fragment.
+        // Parametry, fragment, dalsza ścieżka i ten sam Redmine przez http.
         assert_eq!(
-            issue_key(
-                "https://firma.example.pl/redmine/issues/1234?x=1#note-3",
-                "Funkcja #1234: Import - Redmine",
-                &p
+            key(
+                "https://redmine.example.pl/issues/1234?x=1#note-3",
+                "Funkcja #1234: Import - Redmine"
             )
             .as_deref(),
             Some("#1234")
         );
         assert_eq!(
-            issue_key("https://redmine.example.pl/issues/77/edit", "", &p).as_deref(),
+            key("https://redmine.example.pl/issues/77/edit", "").as_deref(),
             Some("#77")
         );
-        // Nie numer: brak klucza (tytuł bez klucza Jiry).
+        assert_eq!(
+            key("http://Redmine.Example.pl/issues/5", "").as_deref(),
+            Some("#5")
+        );
+        // Nie numer albo nie strona zgłoszenia: brak klucza (tytuł bez klucza Jiry).
         for url in [
             "https://redmine.example.pl/issues/abc",
             "https://redmine.example.pl/issues/",
@@ -969,37 +980,94 @@ mod tests {
             "https://redmine.example.pl/issues/12345678901",
             "https://redmine.example.pl/projects/wms/issues",
             "https://redmine.example.pl/issues/new",
+            "https://redmine.example.pl/projects/wms/issues/12",
+            "https://redmine.example.pl:8443/issues/12",
         ] {
-            assert_eq!(issue_key(url, "Zgłoszenia - Redmine", &p), None, "{url}");
+            assert_eq!(key(url, "Zgłoszenia - Redmine"), None, "{url}");
         }
         // Host spoza listy.
+        assert_eq!(key("https://inny.example.pl/issues/1234", ""), None);
         assert_eq!(
-            issue_key("https://inny.example.pl/issues/1234", "", &p),
-            None
-        );
-        assert_eq!(
-            issue_key(
-                "https://redmine.example.pl.evil.example/issues/1234",
-                "",
-                &p
-            ),
+            key("https://redmine.example.pl.evil.example/issues/1234", ""),
             None
         );
         // Jira bez zmian: klucz Jiry pod `/issues/` wygrywa, a numer na
         // `*.atlassian.net` nie jest zgłoszeniem Redmine.
         assert_eq!(
-            issue_key("https://x.atlassian.net/issues/WMS-9", "", &p).as_deref(),
+            key("https://x.atlassian.net/issues/WMS-9", "").as_deref(),
             Some("WMS-9")
         );
-        assert_eq!(
-            issue_key("https://x.atlassian.net/issues/1234", "", &p),
-            None
-        );
+        assert_eq!(key("https://x.atlassian.net/issues/1234", ""), None);
         // Bez znanego Redmine numer nie jest rozpoznawany.
         assert_eq!(
             issue_key("https://redmine.example.pl/issues/1234", "", &jira()),
             None
         );
+        assert_eq!(
+            issue_key("https://redmine.example.pl/issues/1234", "", &p),
+            None
+        );
+    }
+
+    #[test]
+    fn redmine_under_a_path_prefix_on_a_shared_host() {
+        // Redmine pod `/redmine` na hoście dzielonym z innymi aplikacjami: host
+        // jest dozwolony w całości, ale zgłoszeniem jest tylko `/redmine/issues/N`.
+        let site = "https://firma.example.pl/redmine";
+        let p = allowed_patterns(&[site.into()]);
+        let key = |url: &str| page_key(url, "", &p, site);
+        assert_eq!(
+            key("https://firma.example.pl/redmine/issues/1234?x=1").as_deref(),
+            Some("#1234")
+        );
+        assert_eq!(
+            key("https://firma.example.pl/redmine/issues/42/time_entries").as_deref(),
+            Some("#42")
+        );
+        for url in [
+            // GitLab na tym samym hoście.
+            "https://firma.example.pl/gitlab/grp/proj/-/issues/42",
+            // Ścieżka bez prefiksu i z innym prefiksem.
+            "https://firma.example.pl/issues/42",
+            "https://firma.example.pl/redmine2/issues/42",
+            "https://firma.example.pl/inny/redmine/issues/42",
+            "https://firma.example.pl/redmine/projects/wms/issues/42",
+        ] {
+            assert_eq!(key(url), None, "{url}");
+        }
+        // Stary host z `redmine_tasks` (po zmianie adresu Redmine) jest wśród
+        // dozwolonych domen, ale jego strony nie dają numeru.
+        let p = allowed_patterns(&[site.into(), "https://stary.example.pl".into()]);
+        assert_eq!(
+            page_key("https://stary.example.pl/issues/42", "", &p, site),
+            None
+        );
+        // Wiadomość z rozszerzenia: adres Redmine z konfiguracji w stanie mostu.
+        let mut b = Bridge::default();
+        let page =
+            |url: &str| json!({ "type": "page", "url": url, "title": "", "browser": "chrome" });
+        let reply = b.handle(
+            &page("https://firma.example.pl/redmine/issues/7"),
+            true,
+            &p,
+            1_000,
+        );
+        assert_eq!(reply["key"], Value::Null);
+        b.set_redmine_site(site);
+        let reply = b.handle(
+            &page("https://firma.example.pl/redmine/issues/7"),
+            true,
+            &p,
+            2_000,
+        );
+        assert_eq!(reply["key"], "#7");
+        let reply = b.handle(
+            &page("https://firma.example.pl/gitlab/grp/proj/-/issues/7"),
+            true,
+            &p,
+            3_000,
+        );
+        assert_eq!(reply["key"], Value::Null);
     }
 
     #[test]

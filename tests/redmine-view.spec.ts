@@ -336,3 +336,49 @@ test("without an account the view links to Settings instead of a form", async ({
     page.getByRole("button", { name: "Ustawienia", exact: true }),
   ).toHaveAttribute("aria-current", "page");
 });
+
+test("without tracked projects unchecking „Tylko otwarte” shows my closed issues", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await setRedmine(page, { selectedProjects: [] });
+  await openRedmine(page);
+  const openOnly = view(page).getByLabel("Tylko otwarte");
+  await expect(openOnly).toBeChecked();
+  await expect(groupNames(page)).toHaveText(["New", "In Progress", "Feedback"]);
+  const info = view(page).locator(".jira-result-info");
+  await expect(info).toContainText("Przypisane do mnie · 5 zgłoszeń");
+  await openOnly.uncheck();
+  await expect(groupNames(page)).toHaveText([
+    "New",
+    "In Progress",
+    "Feedback",
+    "Closed",
+  ]);
+  await expect(numbers(page, "Closed")).toHaveText(["#1245"]);
+  await expect(info).toContainText("Przypisane do mnie · 6 zgłoszeń");
+  await openOnly.check();
+  await expect(groupNames(page)).toHaveText(["New", "In Progress", "Feedback"]);
+});
+
+test("a failing query for issues outside tracked projects keeps the project list", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await setRedmine(page, { failMine: "Brak uprawnień w Redmine do tej operacji." });
+  await openRedmine(page);
+  await expect(numbers(page, "New")).toHaveText(["#1234"]);
+  await expect(groupNames(page)).toHaveText(["New", "In Progress", "Feedback"]);
+  await expect(
+    view(page).locator(".page-heading ~ p.error, .redmine-view > p.error"),
+  ).toHaveCount(0);
+  const section = outside(page);
+  await expect(section.getByRole("alert")).toContainText(
+    "Nie udało się pobrać zgłoszeń spoza śledzonych projektów: Brak uprawnień w Redmine do tej operacji.",
+  );
+  await expect(
+    section.getByText(
+      "Brak otwartych zgłoszeń przypisanych do Ciebie w innych projektach.",
+    ),
+  ).toHaveCount(0);
+});
