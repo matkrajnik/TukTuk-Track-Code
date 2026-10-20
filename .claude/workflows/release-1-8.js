@@ -139,7 +139,7 @@ Zasady:
 function implementPrompt(task) {
   return `${COMMON}
 ZADANIE ${task.id}: ${task.title}
-Nie zmieniaj numeru wersji — wersja 1.8.0 powstaje dopiero w R18. README i NEXT_SESSION.md aktualizuje dopiero R18, ale opisz zmiany dokładnie w summary.
+Nie zmieniaj numeru wersji — wersję 1.8.0 ustawia dopiero \`npm run ship\` po scaleniu do master. README i NEXT_SESSION.md aktualizuje dopiero R18, ale opisz zmiany dokładnie w summary.
 Sekcja planu: "${task.section}" w PLAN_1.8.md.
 Zakres: ${task.scope}
 Kryterium ukończenia: ${task.done}
@@ -153,14 +153,13 @@ Zwróć wynik w schemacie: status, summary, commit (hash), filesChanged, testsAd
 function releasePrompt(task, notes) {
   return `${COMMON}
 ZADANIE ${task.id}: wydanie ${task.release}. ${task.scope}
-Wzorzec: commit a23a70b (wydanie 1.7.3). Kroki:
-1. Wersja ${task.release} w package.json, package-lock.json, src-tauri/Cargo.toml, src-tauri/Cargo.lock i src-tauri/tauri.conf.json.
-2. README: sekcja „Nowości ${task.release.replace(/\.0$/, '')}” nad dotychczasowymi nowościami, opisująca to, co faktycznie zrobiono (git log od tagu v1.7.3), bez obietnic; punkt „Timesheet (TS)” w opisie ustawień; sekcja „Timesheet (Ideo TS)”; wiersz „Wersja w repozytorium” i blok „Weryfikacja ${task.release}” z liczbami testów. NEXT_SESSION.md: nowy wpis „Stan po ${task.release}” na górze z wynikami weryfikacji, odstępstwami i listą rzeczy do ręcznego sprawdzenia: cała sekcja „Do ręcznego sprawdzenia z prawdziwym TS” z PLAN_1.8.md plus uwagi zgłoszone przez zadania:
+Od 1.7.4 wydanie robi użytkownik jednym poleceniem \`npm run ship -- ${task.release}\` na master (RELEASE.md, scripts/ship.mjs): ono podbija wersję, buduje i podpisuje instalator (klucz z hasłem, którego nie masz), publikuje, commituje, taguje i pushuje. Ty tylko PRZYGOTOWUJESZ wydanie na gałęzi release-1-8. NIE zmieniaj wersji w manifestach, NIE uruchamiaj npm run ship / npm run release / npm run tauri build, NIE twórz tagu, NIE ruszaj releases/. Kroki:
+1. notes.md: nadpisz notatkami wydania ${task.release} (po polsku, krótko, dla użytkowników; wzoruj się na obecnym notes.md z 1.7.4).
+2. README: sekcja „Nowości ${task.release.replace(/\.0$/, '')}” nad dotychczasowymi nowościami, opisująca to, co faktycznie zrobiono (git log od tagu v1.7.4), bez obietnic; punkt „Timesheet (TS)” w opisie ustawień; sekcja „Timesheet (Ideo TS)”; wiersz „Wersja w repozytorium” i blok „Weryfikacja ${task.release}” z liczbami testów. NEXT_SESSION.md: nowy wpis „Stan po ${task.release}” na górze z wynikami weryfikacji, odstępstwami i listą rzeczy do ręcznego sprawdzenia: cała sekcja „Do ręcznego sprawdzenia z prawdziwym TS” z PLAN_1.8.md plus uwagi zgłoszone przez zadania:
 ${notes || '(brak zgłoszonych)'}
 3. Pełna weryfikacja: npm run build, npm test, cargo fmt --check, cargo test --locked.
-4. npm run tauri build -- -- --locked. Skopiuj src-tauri/target/release/bundle/nsis/Todo Track_${task.release}_x64-setup.exe do releases/ i usuń z releases/ starsze instalatory — w repozytorium leży tylko najnowszy (tak od 1.7.3).
-5. Commit "${task.release}: <krótki opis>" (bez stopki Co-Authored-By) i lokalny tag v${task.release}. Nie pushuj, nie publikuj.
-Zwróć wynik w schemacie IMPL; w filesChanged wymień też instalator.`
+4. Commit "${task.release}: przygotowanie wydania (README, notes.md, NEXT_SESSION)" (bez stopki Co-Authored-By). Bez tagu, bez pusha. W NEXT_SESSION.md zapisz, że wydanie wymaga scalenia release-1-8 do master i \`npm run ship -- ${task.release}\` przez użytkownika.
+Zwróć wynik w schemacie IMPL.`
 }
 
 function verifyPrompt(task) {
