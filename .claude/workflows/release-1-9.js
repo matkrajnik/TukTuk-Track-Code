@@ -299,7 +299,7 @@ if (opts.until) {
 log(`Do wykonania: ${queue.map(t => t.id).join(', ')} (rundy poprawek: ${maxFixRounds}). Żaden agent nie łączy się z żadnym serwerem Redmine ani Jira.`)
 
 const results = []
-let pendingChecks = []
+let pendingChecks = (opts.carryChecks || []).slice() // uwagi z wcześniejszego uruchomienia (wznowienie od środka)
 for (const task of queue) {
   phase(task.phase)
   const result = task.release
