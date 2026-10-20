@@ -13,16 +13,21 @@ import {
  */
 const map = ref<TsProjectMapping[]>([]);
 let loading: Promise<void> | null = null;
+// Numer ostatniego odczytu lub zapisu: spóźniona odpowiedź starszego odczytu
+// nie nadpisuje nowszej listy.
+let seq = 0;
 
 export function loadTsProjectMap(force = false): Promise<void> {
-  if (!loading || force)
+  if (!loading || force) {
+    const gen = ++seq;
     loading = tsProjectMap()
       .then((list) => {
-        map.value = list;
+        if (gen === seq) map.value = list;
       })
       .catch(() => {
         loading = null;
       });
+  }
   return loading;
 }
 
@@ -32,7 +37,9 @@ export async function setTsProjectMap(
   tsTaskId: string,
   tsTaskName: string,
 ) {
-  map.value = await tsSetProjectMap(project, tsTaskId, tsTaskName);
+  const list = await tsSetProjectMap(project, tsTaskId, tsTaskName);
+  seq++;
+  map.value = list;
 }
 
 let listening = false;

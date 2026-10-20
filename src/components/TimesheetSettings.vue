@@ -194,7 +194,10 @@ onMounted(async () => {
   }
 });
 // Zmiana konta w innym oknie (w podglądzie zdarzenie `storage` symulowanego TS).
+// Zmianę wywołaną tutaj (Połącz, Rozłącz) obsługuje sama akcja, bez
+// drugiego pobrania listy zadań z TS.
 const stopTs = onTsChanged(() => {
+  if (busy.value) return;
   void load()
     .then(() => (alive ? loadTsList() : undefined))
     .catch(() => {});
