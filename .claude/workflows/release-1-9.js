@@ -18,6 +18,10 @@ export const meta = {
 const ROOT = 'C:\\Projekty\\Private\\to-do-track\\.claude\\worktrees\\release-1-9'
 const BRANCH = 'release-1-9'
 
+// Opcjonalny model agentów: args.model (np. 'opus'). Bez niego opcje agentów są bez zmian (cache wznowienia działa).
+const MODEL = (typeof args !== 'undefined' && args && args.model) || null
+function runAgent(prompt, o) { return agent(prompt, MODEL ? { ...o, model: MODEL } : o) }
+
 // ---------------------------------------------------------------------------
 // Lista zadań. Kolejność jest ścisła: jeden implementator naraz w jednym
 // drzewie roboczym, bo zadania dotykają store.ts, main.rs, db.rs, settings
@@ -221,7 +225,7 @@ Jeśli uważasz, że któraś uwaga jest błędna, nie wdrażaj jej i napisz dla
 // ---------------------------------------------------------------------------
 async function verifyWithFixes(task, maxRounds, stageLabel) {
   for (let round = 1; round <= maxRounds + 1; round++) {
-    const v = await agent(verifyPrompt(task), { label: `verify:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: VERIFY, effort: 'low' })
+    const v = await runAgent(verifyPrompt(task), { label: `verify:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: VERIFY, effort: 'low' })
     if (!v) return { ok: false, failures: 'weryfikator nie zwrócił wyniku' }
     if (v.ok) return v
     if (round > maxRounds) return v
@@ -231,7 +235,7 @@ async function verifyWithFixes(task, maxRounds, stageLabel) {
       v.noNetwork === false ? 'UWAGA: weryfikator znalazł ścieżkę łączącą się z prawdziwym serwerem — usuń ją; testy nie mogą wychodzić do sieci.' : '',
       v.jiraUntouched === false ? 'UWAGA: zmieniły się testy Jiry — przywróć je i napraw kod tak, żeby zachowanie Jiry zostało bez zmian.' : '',
     ].filter(Boolean).join('\n')
-    const fix = await agent(fixPrompt(task, v.failures + (extra ? `\n\n${extra}` : ''), round), { label: `fix:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: IMPL })
+    const fix = await runAgent(fixPrompt(task, v.failures + (extra ? `\n\n${extra}` : ''), round), { label: `fix:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: IMPL })
     if (!fix || fix.status === 'blocked') return { ok: false, failures: fix ? fix.blocker : 'agent poprawek nie zwrócił wyniku' }
   }
   return { ok: false, failures: 'wyczerpano rundy poprawek' }
@@ -239,7 +243,7 @@ async function verifyWithFixes(task, maxRounds, stageLabel) {
 
 async function runRelease(task, maxFixRounds, notes) {
   log(`▶ ${task.id}: ${task.title}`)
-  const rel = await agent(releasePrompt(task, notes), { label: `release:${task.id}`, phase: task.phase, schema: IMPL })
+  const rel = await runAgent(releasePrompt(task, notes), { label: `release:${task.id}`, phase: task.phase, schema: IMPL })
   if (!rel) return { task: task.id, status: 'blocked', blocker: 'agent wydania nie zwrócił wyniku' }
   if (rel.status === 'blocked') return { task: task.id, status: 'blocked', blocker: rel.blocker, summary: rel.summary }
   const v = await verifyWithFixes(task, maxFixRounds, 'release')
@@ -249,7 +253,7 @@ async function runRelease(task, maxFixRounds, notes) {
 
 async function runTask(task, maxFixRounds) {
   log(`▶ ${task.id}: ${task.title}`)
-  const impl = await agent(implementPrompt(task), { label: `impl:${task.id}`, phase: task.phase, schema: IMPL })
+  const impl = await runAgent(implementPrompt(task), { label: `impl:${task.id}`, phase: task.phase, schema: IMPL })
   if (!impl) return { task: task.id, status: 'blocked', blocker: 'implementator nie zwrócił wyniku' }
   if (impl.status === 'blocked') return { task: task.id, status: 'blocked', blocker: impl.blocker, summary: impl.summary }
 
@@ -258,13 +262,13 @@ async function runTask(task, maxFixRounds) {
 
   // Przegląd dwiema soczewkami równolegle (tylko odczyt, więc bez konfliktów w drzewie roboczym).
   const reviews = (await parallel(['plan', 'bugs'].map(lens => () =>
-    agent(reviewPrompt(task, lens, impl), { label: `review:${task.id}:${lens}`, phase: task.phase, schema: REVIEW })
+    runAgent(reviewPrompt(task, lens, impl), { label: `review:${task.id}:${lens}`, phase: task.phase, schema: REVIEW })
   ))).filter(Boolean)
   const findings = reviews.flatMap(r => r.findings).filter(f => f.severity !== 'nit')
   let reviewSummary = 'przegląd bez uwag'
   if (findings.length) {
     log(`${task.id}: przegląd zgłosił ${findings.length} uwag (${findings.filter(f => f.severity === 'must').length} must)`)
-    const applied = await agent(applyReviewPrompt(task, findings), { label: `apply-review:${task.id}`, phase: task.phase, schema: IMPL })
+    const applied = await runAgent(applyReviewPrompt(task, findings), { label: `apply-review:${task.id}`, phase: task.phase, schema: IMPL })
     const v2 = await verifyWithFixes(task, maxFixRounds, 'review')
     if (!v2.ok) return { task: task.id, status: 'blocked', blocker: `weryfikacja po przeglądzie: ${v2.failures}`, summary: impl.summary }
     reviewSummary = `${findings.length} uwag wdrożonych; ${applied ? applied.deviations || '' : ''}`
