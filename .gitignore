@@ -10,3 +10,5 @@ playwright-report/
 *.crx
 # Klucz prywatny podpisu aktualizacji (RELEASE.md): trzymany poza repozytorium.
 *.key
+# Stan i wyniki skilla /backlog-run (lokalne, poza repozytorium).
+.claude/backlog-run/
