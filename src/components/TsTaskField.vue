@@ -85,7 +85,11 @@ async function run(action: () => Promise<void>) {
     busy.value = false;
   }
 }
-/** Wybór z listy: zapis w zadaniu (nazwa odświeżana przy każdym wyborze). */
+/**
+ * Wybór z listy: zapis w zadaniu (nazwa odświeżana przy każdym wyborze).
+ * Nie zmienia domyślnego zadania projektu — to osobna akcja pola wyboru,
+ * żeby zmiana w jednym zadaniu nie przestawiała po cichu innych zadań projektu.
+ */
 function choose(event: Event) {
   const select = event.target as HTMLSelectElement;
   const id = select.value;
@@ -103,8 +107,6 @@ function choose(event: Event) {
       select.value = explicitId.value;
       throw e;
     }
-    if (asDefault.value && id && project.value)
-      await setTsProjectMap(project.value, id, name);
   });
 }
 /** „Ustaw jako domyślne dla projektu”: mapowanie projektu na wybrane zadanie. */

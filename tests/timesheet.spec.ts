@@ -183,12 +183,30 @@ test("„Ustaw jako domyślne dla projektu”: mapowanie projektu działa na zad
   // Zadanie z innego projektu nie ma chipa.
   await expect(card(page, "Code review").locator(".task-ts")).toHaveCount(0);
 
-  // Po przeładowaniu pole wyboru jest zaznaczone; zmiana wyboru przy
-  // zaznaczonym polu przenosi też domyślne zadanie projektu.
+  // Po przeładowaniu pole wyboru jest zaznaczone; zmiana wyboru w zadaniu
+  // NIE zmienia domyślnego zadania projektu (pole wyboru się odznacza).
   await page.reload();
   await expand(page, "Wdrożenie etykiet");
   await expect(asDefault).toBeChecked();
   await select.selectOption("1103");
+  await expect(card(page, "Wdrożenie etykiet").locator(".task-ts")).toHaveText(
+    "TS: Code review",
+  );
+  await expect(asDefault).not.toBeChecked();
+  await expect(card(page, "Analiza importu").locator(".task-ts")).toHaveText(
+    "TS: Rozwój (z projektu)",
+  );
+  expect((await tsState(page)).projectMap).toEqual([
+    { project: "WMS", tsTaskId: "1101", tsTaskName: "Rozwój" },
+  ]);
+  // „— brak —” przy zadaniu równym domyślnemu: zadanie dziedziczy z projektu.
+  await select.selectOption("");
+  await expect(card(page, "Wdrożenie etykiet").locator(".task-ts")).toHaveText(
+    "TS: Rozwój (z projektu)",
+  );
+  await select.selectOption("1103");
+  // Dopiero zaznaczenie pola przenosi domyślne zadanie projektu.
+  await asDefault.check();
   await expect(card(page, "Analiza importu").locator(".task-ts")).toHaveText(
     "TS: Code review (z projektu)",
   );
