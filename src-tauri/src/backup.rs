@@ -21,6 +21,30 @@ fn copy(source: &Connection, target: &mut Connection) -> Result<(), String> {
         .run_to_completion(100, Duration::from_millis(10), None)
         .map_err(|e| e.to_string())
 }
+/// Wiersze `settings`, które przy przywracaniu kopii zostają z bieżącej
+/// instalacji: konfiguracja Jiry i Redmine (poświadczenie w Menedżerze
+/// poświadczeń należy do bieżącej konfiguracji, nigdy do kopii) oraz znacznik
+/// świeżości statusów Redmine (`site|czas`, spójny z konfiguracją).
+const CARRIED_KEYS: [&str; 3] = ["jira", "redmine", "redmine_statuses_at"];
+/// Przenosi do `staged` wartości `CARRIED_KEYS` z bieżącej bazy; klucz bez
+/// wartości w bieżącej bazie znika także z kopii.
+fn carry_connections(current: &Connection, staged: &Connection) -> rusqlite::Result<()> {
+    for key in CARRIED_KEYS {
+        let value: Option<String> = current
+            .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .ok();
+        staged.execute("DELETE FROM settings WHERE key=?1", [key])?;
+        if let Some(value) = value {
+            staged.execute(
+                "INSERT INTO settings(key,value) VALUES(?1,?2)",
+                [key, value.as_str()],
+            )?;
+        }
+    }
+    Ok(())
+}
 pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
     let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|_| "Nie można otworzyć kopii SQLite.")?;
@@ -153,23 +177,7 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
         let safety = dir.join(format!("before-restore-{}.sqlite", crate::db::now()));
         db.execute("VACUUM INTO ?1", [safety.to_string_lossy().as_ref()])
             .map_err(|e| e.to_string())?;
-        // Carry current installation's Jira configuration; imported credentials are never assumed.
-        let jira: Option<String> = db
-            .query_row("SELECT value FROM settings WHERE key='jira'", [], |r| {
-                r.get(0)
-            })
-            .ok();
-        staged
-            .execute("DELETE FROM settings WHERE key='jira'", [])
-            .map_err(|e| e.to_string())?;
-        if let Some(config) = jira {
-            staged
-                .execute(
-                    "INSERT INTO settings(key,value) VALUES('jira',?1)",
-                    [config],
-                )
-                .map_err(|e| e.to_string())?;
-        }
+        carry_connections(&db, &staged).map_err(|e| e.to_string())?;
         copy(&staged, &mut db)?;
         let result = db::snapshot(&db).map_err(|e| e.to_string())?;
         drop(db);
@@ -341,5 +349,69 @@ mod tests {
         drop(staged);
         drop(current);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Przywracanie zostawia konfigurację Jiry i Redmine bieżącej instalacji
+    /// (poświadczenia w Menedżerze poświadczeń pasują do niej, nie do kopii),
+    /// a pozostałe ustawienia bierze z kopii.
+    #[test]
+    fn restore_carries_current_jira_and_redmine_connections() {
+        let value = |db: &Connection, key: &str| -> Option<String> {
+            db.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .ok()
+        };
+        let current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        current
+            .execute_batch(
+                "INSERT INTO settings(key,value) VALUES
+                 ('jira','{\"site\":\"https://biezaca.atlassian.net\"}'),
+                 ('redmine','{\"site\":\"https://redmine.example.pl\",\"login\":\"mk\"}'),
+                 ('redmine_statuses_at','https://redmine.example.pl|1000'),
+                 ('theme','light');",
+            )
+            .unwrap();
+        let staged = Connection::open_in_memory().unwrap();
+        db::init(&staged).unwrap();
+        staged
+            .execute_batch(
+                "INSERT INTO settings(key,value) VALUES
+                 ('jira','{\"site\":\"https://kopia.atlassian.net\"}'),
+                 ('redmine','{\"site\":\"https://stary.example.pl\",\"login\":\"inny\"}'),
+                 ('redmine_statuses_at','https://stary.example.pl|5'),
+                 ('theme','dark');",
+            )
+            .unwrap();
+        carry_connections(&current, &staged).unwrap();
+        assert_eq!(
+            value(&staged, "jira").as_deref(),
+            Some("{\"site\":\"https://biezaca.atlassian.net\"}")
+        );
+        assert_eq!(
+            value(&staged, "redmine").as_deref(),
+            Some("{\"site\":\"https://redmine.example.pl\",\"login\":\"mk\"}")
+        );
+        assert_eq!(
+            value(&staged, "redmine_statuses_at").as_deref(),
+            Some("https://redmine.example.pl|1000")
+        );
+        assert_eq!(value(&staged, "theme").as_deref(), Some("dark"));
+        // Bieżąca instalacja bez Redmine: konfiguracja z kopii nie zostaje
+        // (osierocony wpis bez klucza w magazynie poświadczeń).
+        current
+            .execute(
+                "DELETE FROM settings WHERE key IN ('redmine','redmine_statuses_at')",
+                [],
+            )
+            .unwrap();
+        carry_connections(&current, &staged).unwrap();
+        assert_eq!(value(&staged, "redmine"), None);
+        assert_eq!(value(&staged, "redmine_statuses_at"), None);
+        assert_eq!(
+            value(&staged, "jira").as_deref(),
+            Some("{\"site\":\"https://biezaca.atlassian.net\"}")
+        );
     }
 }

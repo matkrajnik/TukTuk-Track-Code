@@ -100,6 +100,7 @@ const BAD_RESPONSE: &str = "Redmine zwrócił niepoprawną odpowiedź.";
 const SITE_ERROR: &str = "Podaj adres Redmine, np. https://redmine.firma.pl albo https://firma.pl/redmine (bez parametrów).";
 const KEY_ERROR: &str = "Podaj klucz API Redmine (1–128 znaków, bez spacji).";
 const REFRESH_FIRST: &str = "Odśwież listę zgłoszeń przed rozpoczęciem.";
+const BAD_PROJECT: &str = "Niepoprawny projekt Redmine.";
 /// Maksimum Redmine na stronę.
 const PAGE: u64 = 100;
 /// Najwyżej 5 stron (500 zgłoszeń) z ostrzeżeniem, jak limit 300 na tablicy Jiry.
@@ -774,6 +775,45 @@ fn statuses_fresh(db: &Connection, site: &str, now: i64) -> rusqlite::Result<boo
 fn closed_map(statuses: &[Status]) -> HashMap<u64, bool> {
     statuses.iter().map(|s| (s.id, s.is_closed)).collect()
 }
+/// Mapa `status_id → is_closed` do parsowania zgłoszeń (Redmine przed 5.x nie
+/// oddaje `status.is_closed` w zgłoszeniu): z `ensure_statuses`, a gdy serwer
+/// nie odda statusów — z pamięci podręcznej, z ostrzeżeniem.
+async fn closed_statuses(
+    app: &tauri::AppHandle,
+    client: &Client,
+    c: &Config,
+    key: &str,
+) -> Result<(HashMap<u64, bool>, Option<String>), String> {
+    match ensure_statuses(app, client, c, key, false).await {
+        Ok(list) => Ok((closed_map(&list), None)),
+        Err(e) => {
+            let state = app.state::<Database>();
+            let db = state.0.lock().map_err(|e| e.to_string())?;
+            let cached = read_statuses(&db, &c.site).map_err(|e| e.to_string())?;
+            Ok((closed_map(&cached), Some(format!("Statusy: {e}"))))
+        }
+    }
+}
+/// `project_id` dla listy zgłoszeń: puste (moje ze wszystkich projektów) albo
+/// dodatnie; `0` nie jest identyfikatorem projektu w Redmine i dałoby mylące 404.
+pub(crate) fn check_project(project_id: Option<u64>) -> Result<(), String> {
+    match project_id {
+        Some(0) => Err(BAD_PROJECT.into()),
+        _ => Ok(()),
+    }
+}
+/// Jedno zgłoszenie z `/issues/{id}.json`, parsowane z tą samą mapą statusów
+/// co listy (inaczej zamknięte zgłoszenie trafiłoby do `redmine_issues` jako otwarte).
+pub(crate) async fn fetch_issue(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    id: u64,
+    closed: &HashMap<u64, bool>,
+) -> Result<Issue, String> {
+    let value = get(client, c, key, &format!("/issues/{id}.json"), &[]).await?;
+    parse_issue(&value["issue"], &c.site, closed).ok_or(BAD_RESPONSE.into())
+}
 /// Statusy z pamięci podręcznej, a przy pierwszym użyciu, po dobie albo na
 /// żądanie (`force`) z `/issue_statuses.json`.
 async fn ensure_statuses(
@@ -1016,19 +1056,12 @@ pub async fn redmine_issues(
     mine: bool,
     open_only: bool,
 ) -> Result<Issues, String> {
+    check_project(project_id)?;
     let c = config(&app)?;
     let key = api_key(&app, &c)?;
     let client = client(&c)?;
-    let mut warnings = Vec::new();
-    let closed = match ensure_statuses(&app, &client, &c, &key, false).await {
-        Ok(list) => closed_map(&list),
-        Err(e) => {
-            warnings.push(format!("Statusy: {e}"));
-            let state = app.state::<Database>();
-            let db = state.0.lock().map_err(|e| e.to_string())?;
-            closed_map(&read_statuses(&db, &c.site).map_err(|e| e.to_string())?)
-        }
-    };
+    let (closed, status_warning) = closed_statuses(&app, &client, &c, &key).await?;
+    let mut warnings: Vec<String> = status_warning.into_iter().collect();
     let (issues, warning) = fetch_issues(
         &client,
         &c,
@@ -1150,8 +1183,11 @@ pub async fn start_by_id(app: &tauri::AppHandle, id: u64) -> Result<db::Snapshot
         return Err("Połącz konto Redmine, żeby rozpocząć zgłoszenie.".into());
     }
     let key = api_key(app, &c)?;
-    let value = get(&client(&c)?, &c, &key, &format!("/issues/{id}.json"), &[]).await?;
-    let issue = parse_issue(&value["issue"], &c.site, &HashMap::new()).ok_or(BAD_RESPONSE)?;
+    let client = client(&c)?;
+    // Mapa statusów jak dla list: bez niej zamknięte zgłoszenie (Redmine bez
+    // `status.is_closed`) trafiłoby do `redmine_issues` jako otwarte.
+    let (closed, _) = closed_statuses(app, &client, &c, &key).await?;
+    let issue = fetch_issue(&client, &c, &key, id, &closed).await?;
     let state = app.state::<Database>();
     let result = {
         let mut connection = state.0.lock().map_err(|e| e.to_string())?;
@@ -2024,5 +2060,101 @@ mod tests {
             "{}",
             paths[1]
         );
+    }
+    /// `project_id` dla listy: puste i dodatnie przechodzą, `0` nie trafia do
+    /// serwera (Redmine odpowiedziałby mylącym 404).
+    #[test]
+    fn rejects_zero_project_id() {
+        assert_eq!(check_project(None), Ok(()));
+        assert_eq!(check_project(Some(7)), Ok(()));
+        assert_eq!(check_project(Some(0)), Err(BAD_PROJECT.to_string()));
+    }
+    /// Pojedyncze zgłoszenie (szybkie dodawanie, rozszerzenie) z Redmine bez
+    /// `status.is_closed`: zamknięcie z mapy statusów, jak przy listach.
+    #[test]
+    fn fetch_issue_uses_status_map_and_reports_missing_issue() {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let mut paths = Vec::new();
+            for _ in 0..3 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 4096];
+                while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = socket.read(&mut buffer).unwrap();
+                    assert!(n > 0);
+                    request.extend_from_slice(&buffer[..n]);
+                }
+                let request = String::from_utf8(request).unwrap();
+                let path = request.lines().next().unwrap().to_string();
+                let (status, body) = if path.starts_with("GET /issues/1236.json") {
+                    (
+                        "200 OK",
+                        serde_json::json!({"issue": {"id": 1236, "subject": "Zamknięte", "status": {"id": 5, "name": "Closed"}}}).to_string(),
+                    )
+                } else {
+                    (
+                        "404 Not Found",
+                        serde_json::json!({"errors": ["Not found"]}).to_string(),
+                    )
+                };
+                paths.push(path);
+                write!(socket,"HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",status,body.len(),body).unwrap();
+            }
+            paths
+        });
+        let c = Config {
+            site: format!("http://{address}"),
+            ..Config::default()
+        };
+        let client = client(&c).unwrap();
+        let closed: HashMap<u64, bool> = [(1, false), (5, true)].into_iter().collect();
+        let issue = tauri::async_runtime::block_on(fetch_issue(
+            &client,
+            &c,
+            "test-only-key",
+            1236,
+            &closed,
+        ))
+        .unwrap();
+        assert_eq!((issue.id, issue.subject.as_str()), (1236, "Zamknięte"));
+        assert_eq!((issue.status.as_str(), issue.status_id), ("Closed", 5));
+        assert!(issue.closed, "zamknięcie z mapy statusów");
+        assert_eq!(issue.url, format!("http://{address}/issues/1236"));
+        // Bez mapy (pusta pamięć podręczna) zgłoszenie uchodzi za otwarte.
+        let open = tauri::async_runtime::block_on(fetch_issue(
+            &client,
+            &c,
+            "test-only-key",
+            1236,
+            &HashMap::new(),
+        ))
+        .unwrap();
+        assert!(!open.closed);
+        // Nieistniejący numer: komunikat 404 bez klucza API.
+        let err = tauri::async_runtime::block_on(fetch_issue(
+            &client,
+            &c,
+            "test-only-key",
+            999_999,
+            &closed,
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "Nie znaleziono zgłoszenia albo adres Redmine jest błędny (REST API może być wyłączone)."
+        );
+        assert!(!err.contains("test-only-key"));
+        let paths = server.join().unwrap();
+        assert_eq!(paths[0], "GET /issues/1236.json HTTP/1.1");
+        assert_eq!(paths[2], "GET /issues/999999.json HTTP/1.1");
     }
 }

@@ -24,7 +24,7 @@ tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls-native-roots"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "rustls-tls-native-roots"] }
 keyring = { version = "3", features = ["windows-native"] }
 tauri-plugin-opener = "2"
 tauri-plugin-global-shortcut = "2"
