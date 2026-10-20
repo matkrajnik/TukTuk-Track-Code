@@ -1,9 +1,10 @@
-Todo Track 1.8.0: wysyłka Raportu TS do Ideo Timesheet.
+Todo Track 1.9.0: Redmine obok Jiry.
 
-- „Wyślij do TS” w Zamknięciu dnia i w Raporcie dnia otwiera podgląd wpisów dnia. Godziny pochodzą z pomiarów jak w Raporcie TS (dziesiętne, dwa miejsca, przecinek), opis to notatka dnia zadania albo jego tytuł. Kilka zadań przypisanych do tego samego zadania TS daje jeden wpis z sumą czasu.
-- Zapis w TS zastępuje cały dzień. Podgląd pokazuje wpisy, które już są w TS, i pozwala wybrać „Zachowaj pozostałe wpisy TS” (domyślnie) albo „Zastąp wszystko”. Nic nie trafia do TS bez kliknięcia „Zapisz w TS”; zamknięcie dnia niczego nie wysyła.
-- Po zapisie aplikacja odczytuje dzień z TS, porównuje go z wysłanymi wpisami i pokazuje znacznik „Wysłano do TS” z godziną i sumą.
-- Rozwinięty kafelek zadania ma pole „Zadanie TS”, a projekt może mieć domyślne zadanie TS (pole „Ustaw jako domyślne dla projektu”).
-- Nowa sekcja Ustawienia → Timesheet (TS): połączenie konta (hasło w Menedżerze poświadczeń Windows, sesja tylko w pamięci), „Testuj połączenie”, „Rozłącz”, przełącznik „Wysyłaj raport TS” i lista domyślnych zadań TS dla projektów.
+- Nowa sekcja Ustawienia → Redmine. Połączenie z własnym Redmine przez adres (także z prefiksem ścieżki, np. https://firma.pl/redmine) i klucz API z „Moje konto”. Klucz jest przechowywany w Menedżerze poświadczeń Windows. Są też przyciski „Testuj połączenie” i „Rozłącz”. Aplikacja ufa certyfikatom z magazynu Windows; w „Zaawansowane” jest opcja dla niezaufanego certyfikatu w sieci wewnętrznej.
+- Nowy widok Redmine. Wybierasz śledzone projekty, a zgłoszenia każdego z nich są pogrupowane według statusu. Do tego zakres „Moje” albo „Wszystkie otwarte”, filtr trackera, wyszukiwanie, „Rozpocznij” i „Otwórz w Redmine”. Na dole jest sekcja zgłoszeń przypisanych do Ciebie spoza śledzonych projektów.
+- Co 5 minut nowe zgłoszenia przypisane do Ciebie trafiają do „Do zaplanowania” i pojawia się powiadomienie. Odświeżają się też statusy na kafelkach. Pierwsze sprawdzenie niczego nie importuje.
+- Kafelek zadania pokazuje #1234, status, tracker i termin. Szybkie dodawanie rozumie „#1234”, gdy Redmine jest połączony. Zadanie może mieć jedno zgłoszenie: z Jiry albo z Redmine.
+- Start pracy nad zgłoszeniem w statusie początkowym pyta, czy przesunąć je do „In Progress” (nazwę ustawisz w Ustawieniach). Kafelek i karta w widoku mają też „Przesuń do…”, „Przypisz do mnie”, „Dodaj komentarz” i „Kopiuj nazwę gałęzi”. Do Redmine nic nie zapisuje się bez Twojego kliknięcia, a zapisy wyłącza jeden przełącznik.
+- Jira i Redmine działają niezależnie. Można połączyć jedno, oba albo żadne.
 
-Wysyłka nie była jeszcze sprawdzona z prawdziwym serwerem TS. Pierwszą wysyłkę najlepiej zrobić na dniu testowym, bo zapis zastępuje cały dzień.
+Integracja nie była jeszcze sprawdzana z prawdziwym serwerem Redmine. Przy polskich nazwach statusów (np. „Nowy”, „W toku”) wpisz je w Ustawienia → Redmine; pomoże przycisk „Wstaw statusy z Redmine”.
