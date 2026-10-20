@@ -65,6 +65,36 @@ pub fn target(task_id: Option<i64>, key: Option<&str>) -> String {
 fn target_of(m: &Match) -> String {
     target(m.task_id, m.key.as_deref())
 }
+/// Zgłoszenie z klucza propozycji: `#1234` (rozszerzenie przeglądarki na
+/// stronie zgłoszenia Redmine, R3) albo klucz Jiry (`WMS-12`), jak dotąd.
+#[derive(Clone, Debug, PartialEq)]
+pub enum IssueKey {
+    Jira(String),
+    Redmine(u64),
+}
+/// Rozdział klucza: zaczynający się od `#` to numer Redmine (błąd, gdy po `#`
+/// nie ma poprawnego numeru), każdy inny idzie ścieżką Jiry bez zmian.
+pub fn issue_key(key: &str) -> Result<IssueKey, String> {
+    match key.strip_prefix('#') {
+        Some(number) => number
+            .parse::<u64>()
+            .ok()
+            .filter(|id| {
+                number.bytes().all(|b| b.is_ascii_digit()) && crate::redmine::valid_issue_id(*id)
+            })
+            .map(IssueKey::Redmine)
+            .ok_or_else(|| "Niepoprawny numer zgłoszenia Redmine.".to_owned()),
+        None => Ok(IssueKey::Jira(key.to_owned())),
+    }
+}
+/// Tytuł zgłoszenia bez lokalnego zadania z ostatnio pobranej listy: temat
+/// Redmine dla `#1234`, podsumowanie Jiry dla pozostałych.
+pub fn cached_title(app: &tauri::AppHandle, key: &str) -> Option<String> {
+    match issue_key(key).ok()? {
+        IssueKey::Redmine(id) => crate::redmine::cached_subject(app, id),
+        IssueKey::Jira(key) => crate::jira::cached_summary(app, &key),
+    }
+}
 /// Para (agent, zadanie): rodzaj agenta, jego folder i cel. Okno (W3)
 /// i przeglądarka (W4) to jeden sygnał: źródło zmienia się, gdy odświeżenie
 /// z rozszerzenia chwilę nie dotrze, a „Nie teraz” i wysłane powiadomienie mają
@@ -390,7 +420,9 @@ pub fn agent_suggestions(app: tauri::AppHandle) -> Vec<Suggestion> {
 /// „Przełącz”: start X (poprzedni pomiar staje). Zgłoszenie bez zadania przechodzi
 /// ścieżką „Rozpocznij” z widoku Jira, więc zadanie powstaje dopiero teraz; gdy
 /// listy zgłoszeń nie pobrano od startu aplikacji, tytuł przychodzi wprost z Jiry
-/// (`jira::start_by_key`). Asynchroniczne, bo może czekać na sieć.
+/// (`jira::start_by_key`). `#1234` z rozszerzenia przeglądarki idzie ścieżką
+/// „Rozpocznij” z widoku Redmine (`redmine::start_by_id`, R3). Asynchroniczne,
+/// bo może czekać na sieć.
 #[tauri::command]
 pub async fn agent_switch(
     app: tauri::AppHandle,
@@ -408,7 +440,10 @@ pub async fn agent_switch(
             let _ = app.emit("data-changed", ());
             result
         }
-        (None, Some(key)) => crate::jira::start_by_key(&app, &key).await?,
+        (None, Some(key)) => match issue_key(&key)? {
+            IssueKey::Redmine(id) => crate::redmine::start_by_id(&app, id).await?,
+            IssueKey::Jira(key) => crate::jira::start_by_key(&app, &key).await?,
+        },
         (None, None) => return Err("Brak zadania do przełączenia.".into()),
     };
     refresh(&app, db::now());
@@ -644,6 +679,42 @@ mod tests {
         let mut back = a;
         back.task = agents::resolve(&conn, "C:\\wms", Some("WMS-5")).unwrap();
         assert_eq!(targets(&memory.pending(&[back], None, &s, NOW)), ["t:1"]);
+    }
+
+    #[test]
+    fn hash_number_is_redmine_and_other_keys_stay_jira() {
+        assert_eq!(issue_key("#1234"), Ok(IssueKey::Redmine(1234)));
+        assert_eq!(issue_key("WMS-12"), Ok(IssueKey::Jira("WMS-12".into())));
+        // Klucz bez `#` idzie do Jiry bez zmian (walidację robi Jira).
+        assert_eq!(issue_key("wms-1"), Ok(IssueKey::Jira("wms-1".into())));
+        for bad in ["#", "#abc", "#0", "#12345678901", "#+5", "# 5"] {
+            assert!(issue_key(bad).is_err(), "{bad}");
+        }
+        // Dopasowanie `#1234` szuka w tabelach Redmine, `WMS-12` w tabelach Jiry.
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO tasks(title,created_at) VALUES('Redmine',0),('Jira',0);
+             INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl',12);
+             INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(2,'https://x.atlassian.net','WMS-12');
+             INSERT INTO redmine_issues(site,issue_id,subject) VALUES('https://redmine.example.pl',1234,'Import');",
+        )
+        .unwrap();
+        let m = agents::resolve(&conn, "", Some("#12")).unwrap().unwrap();
+        assert_eq!(
+            (m.task_id, m.key.as_deref(), m.source.as_str()),
+            (Some(1), Some("#12"), "task")
+        );
+        let m = agents::resolve(&conn, "", Some("WMS-12")).unwrap().unwrap();
+        assert_eq!((m.task_id, m.source.as_str()), (Some(2), "task"));
+        // Zgłoszenie Redmine bez zadania, ale z pobranej listy: start przez Redmine.
+        let m = agents::resolve(&conn, "", Some("#1234")).unwrap().unwrap();
+        assert_eq!((m.task_id, m.source.as_str()), (None, "redmine"));
+        assert_eq!(target_of(&m), "k:#1234");
+        // Nieznany numer i `#12` w tabelach Jiry nie dają dopasowania.
+        assert!(agents::resolve(&conn, "", Some("#999")).unwrap().is_none());
+        assert!(agents::resolve(&conn, "", Some("#abc")).unwrap().is_none());
+        assert!(agents::resolve(&conn, "", Some("12")).unwrap().is_none());
     }
 
     #[test]

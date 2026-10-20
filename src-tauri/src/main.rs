@@ -404,6 +404,8 @@ fn main() {
             browser::start(app.handle());
             browser::sync(app.handle(), &settings::current(app.handle()));
             jira::start(app.handle());
+            // Obserwacja przypisań w Redmine (R3): osobny wątek, niezależny od Jiry.
+            redmine::start(app.handle());
             // Pytanie o przesunięcie zgłoszenia przy starcie pracy (J1).
             jira_move::start(app.handle());
             calendar::start(app.handle());

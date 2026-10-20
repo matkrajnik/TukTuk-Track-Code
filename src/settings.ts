@@ -70,6 +70,8 @@ export interface AppSettings {
   tsSend: boolean;
   /** Statusy Redmine oznaczające czekanie (PLAN_1.9.md, R2; pole w Ustawieniach od R5). */
   waitingRedmineStatuses: string[];
+  /** Co 5 min dodawaj nowe zgłoszenia przypisane w Redmine (PLAN_1.9.md, R3; przełącznik w Ustawieniach od R5). */
+  redmineAutoImport: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -128,6 +130,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   autoUpdateCheck: true,
   tsSend: true,
   waitingRedmineStatuses: ["Feedback"],
+  redmineAutoImport: true,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";

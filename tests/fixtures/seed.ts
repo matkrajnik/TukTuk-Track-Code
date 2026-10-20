@@ -28,6 +28,10 @@ export const WEEK = [
   "2026-10-18",
 ];
 export const JIRA_SITE = "https://asistonwms.atlassian.net";
+/** Przykładowy adres Redmine (jak `previewRedmineSite`); żaden test się z nim nie łączy. */
+export const REDMINE_SITE = "https://redmine.example.pl";
+/** Stan symulowanego Redmine w podglądzie (`previewRedmineKey`). */
+export const REDMINE_KEY = "todo-track-preview-redmine-v1";
 export const PREVIEW_KEY = "todo-track-preview-v1";
 export const SETTINGS_KEY = "todo-track-preview-settings-v1";
 export const AGENTS_KEY = "todo-track-preview-agents-v1";

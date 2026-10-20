@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { defaultSettings } from "../../src/settings";
-import { JIRA_SITE, NOW, seed } from "./seed";
+import { JIRA_SITE, NOW, REDMINE_SITE, seed } from "./seed";
 
 /**
  * Zastępcze IPC Tauri dla testów funkcji, które w trybie podglądu są wyłączone
@@ -11,6 +11,7 @@ import { JIRA_SITE, NOW, seed } from "./seed";
  * i opisana odwołaniem do funkcji źródłowej:
  * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`),
  * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
+ * - `redmine::sync_assigned` tak samo, osobno od Jiry (`redmineCheck`, R3),
  * - `planner::set_waiting` (`set_waiting`: blokada „Czekam na” z kafelka),
  * - `suggest::refresh` jako gotowa lista propozycji (`suggest`: zdarzenie
  *   `agent-suggestions`), `agent_switch` i `agent_dismiss`.
@@ -66,6 +67,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     suggestions: options.suggestions ?? [],
     window: options.window ?? "main",
     site: JIRA_SITE,
+    redmineSite: REDMINE_SITE,
     update: options.update ?? null,
   });
   await page.goto("/");
@@ -74,7 +76,13 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
 /** Wywołuje funkcję zastępczego backendu w oknie strony. */
 export function backend<T = unknown>(
   page: Page,
-  name: "idleTick" | "jiraCheck" | "snapshot" | "calls" | "suggest",
+  name:
+    | "idleTick"
+    | "jiraCheck"
+    | "redmineCheck"
+    | "snapshot"
+    | "calls"
+    | "suggest",
   arg?: unknown,
 ) {
   return page.evaluate(([n, a]) => (window as any).__tauriMock[n](a), [
@@ -92,6 +100,7 @@ function install(init: {
   suggestions: any[];
   window: string;
   site: string;
+  redmineSite: string;
   update: { version: string; notes?: string; date?: string } | "offline" | null;
 }) {
   const w = window as any;
@@ -266,6 +275,107 @@ function install(init: {
     return imported;
   }
 
+  // redmine::sync_assigned z ustaleniem pierwszego sprawdzenia jak w
+  // redmine::watch_once; osobny stan i osobny wyłącznik (`redmineAutoImport`).
+  const redmine = {
+    watched: false,
+    issues: new Map<
+      number,
+      { status: string; tracker: string; assigned: boolean }
+    >(),
+  };
+  for (const t of [...snapshot.tasks, ...snapshot.trash])
+    if (t.redmineId)
+      redmine.issues.set(t.redmineId, {
+        status: t.redmineStatus ?? "",
+        tracker: t.redmineTracker ?? "",
+        assigned: false,
+      });
+  // jira_fields::priority_band dla nazw priorytetów Redmine.
+  const band = (priority = "") => {
+    const n = priority.trim().toLowerCase();
+    if (["immediate", "urgent", "high", "natychmiastowy", "pilny", "wysoki"].includes(n))
+      return 1;
+    if (["low", "niski"].includes(n)) return -1;
+    return null;
+  };
+  function redmineCheck(
+    rows: {
+      id: number;
+      subject: string;
+      status: string;
+      tracker?: string;
+      priority?: string;
+      /** Zgłoszenie zamknięte (`is_closed`): bez importu. */
+      closed?: boolean;
+    }[],
+  ) {
+    if (!settings.redmineAutoImport) return [];
+    const baseline = !redmine.watched;
+    const linked = new Set(
+      [...snapshot.tasks, ...snapshot.trash]
+        .map((t: any) => t.redmineId)
+        .filter(Boolean),
+    );
+    const known = new Map(
+      [...redmine.issues].map(([id, issue]) => [id, issue.assigned]),
+    );
+    const imported: number[] = [];
+    const now = Date.now();
+    for (const r of rows.filter((x) => !x.closed)) {
+      if (baseline || known.get(r.id) || linked.has(r.id)) continue;
+      const priority = band(r.priority);
+      snapshot.tasks.unshift({
+        id: nextTaskId(),
+        title: [...r.subject].slice(0, 240).join(""),
+        done: false,
+        createdAt: now,
+        redmineId: r.id,
+        redmineUrl: `${init.redmineSite}/issues/${r.id}`,
+        redmineStatus: r.status,
+        redmineTracker: r.tracker ?? "",
+        redmineDue: "",
+        ...(priority !== null
+          ? {
+              details: {
+                priority,
+                plannedDay: "",
+                dueDay: "",
+                project: "",
+                waiting: "",
+                notes: {},
+                estimateMinutes: 0,
+                checklist: [],
+                repeatDays: [],
+                repeatFrom: "",
+                order: 0,
+                plannedStart: "",
+              },
+            }
+          : {}),
+      });
+      imported.push(r.id);
+    }
+    for (const r of rows)
+      redmine.issues.set(r.id, {
+        status: r.status,
+        tracker: r.tracker ?? redmine.issues.get(r.id)?.tracker ?? "",
+        assigned: false,
+      });
+    redmine.issues.forEach((issue) => (issue.assigned = false));
+    for (const r of rows.filter((x) => !x.closed))
+      redmine.issues.get(r.id)!.assigned = true;
+    // Snapshot w Rust bierze status i tracker z redmine_issues.
+    for (const t of [...snapshot.tasks, ...snapshot.trash])
+      if (t.redmineId && redmine.issues.has(t.redmineId)) {
+        t.redmineStatus = redmine.issues.get(t.redmineId)!.status;
+        t.redmineTracker = redmine.issues.get(t.redmineId)!.tracker;
+      }
+    redmine.watched = true;
+    emit("data-changed");
+    return imported;
+  }
+
   // suggest::refresh: lista propozycji ustawiana z testu; zmiana wysyła zdarzenie.
   let suggestions: any[] = structuredClone(init.suggestions);
   const target = (t: any) =>
@@ -280,6 +390,7 @@ function install(init: {
     suggest,
     idleTick,
     jiraCheck,
+    redmineCheck,
     snapshot: () => clone(snapshot),
     calls: () => clone(calls),
   };

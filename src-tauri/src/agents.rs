@@ -67,7 +67,8 @@ pub struct Match {
     /// Tytuł zadania albo zgłoszenia (pusty, gdy tytuł zgłoszenia nie jest znany).
     pub title: String,
     pub key: Option<String>,
-    /// `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`.
+    /// `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`,
+    /// `redmine` (`#1234` znane z `redmine_issues`, bez zadania).
     pub source: String,
     /// Lokalne zadanie jest ukończone: bez propozycji przełączenia i przypisania
     /// przerwy (start wymagałby przywrócenia go do zrobienia).
@@ -218,6 +219,11 @@ pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Resul
     let Some(key) = key else {
         return Ok(None);
     };
+    // `#1234` (tylko z rozszerzenia przeglądarki, R3) to zgłoszenie Redmine;
+    // klucze z gałęzi i tytułów okien są zawsze kluczami Jiry.
+    if let Some(number) = key.strip_prefix('#') {
+        return resolve_redmine(db, key, number);
+    }
     let local = db
         .query_row(
             "SELECT t.id,t.title,t.done FROM jira_tasks j JOIN tasks t ON t.id=j.task_id
@@ -252,6 +258,52 @@ pub fn resolve(db: &Connection, cwd: &str, key: Option<&str>) -> rusqlite::Resul
         title: String::new(),
         key: Some(key.into()),
         source: "jira".into(),
+        done: false,
+    }))
+}
+
+/// Dopasowanie `#1234`: lokalne zadanie z `redmine_tasks` (poza koszem), a bez
+/// niego zgłoszenie znane z `redmine_issues` (start przez `redmine::start_by_id`).
+fn resolve_redmine(db: &Connection, key: &str, number: &str) -> rusqlite::Result<Option<Match>> {
+    let Some(id) = number.parse::<u64>().ok().filter(|id| {
+        number.bytes().all(|b| b.is_ascii_digit()) && crate::redmine::valid_issue_id(*id)
+    }) else {
+        return Ok(None);
+    };
+    let local = db
+        .query_row(
+            "SELECT t.id,t.title,t.done FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
+             LEFT JOIN task_lifecycle l ON l.task_id=t.id
+             WHERE r.issue_id=?1 AND l.deleted_at IS NULL ORDER BY t.done, t.id DESC LIMIT 1",
+            [id as i64],
+            |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, bool>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((task_id, title, done)) = local {
+        return Ok(Some(Match {
+            task_id: Some(task_id),
+            title,
+            key: Some(key.into()),
+            source: "task".into(),
+            done,
+        }));
+    }
+    let known: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM redmine_issues WHERE issue_id=?1)",
+        [id as i64],
+        |r| r.get(0),
+    )?;
+    Ok(known.then(|| Match {
+        task_id: None,
+        title: String::new(),
+        key: Some(key.into()),
+        source: "redmine".into(),
         done: false,
     }))
 }
@@ -1128,7 +1180,17 @@ mod tests {
             (m.task_id, m.key.as_deref(), m.source.as_str()),
             (Some(2), Some("#1234"), "folder")
         );
-        // Numer Redmine nie jest kluczem do dopasowania po gałęzi.
-        assert_eq!(resolve(&db, "C:\\inne", Some("#1234")).unwrap(), None);
+        // Numer Redmine nie jest kluczem do dopasowania po gałęzi: z nazwy
+        // gałęzi powstają tylko klucze Jiry.
+        assert_eq!(jira_key("feature/1234-import"), None);
+        assert_eq!(jira_key("#1234"), None);
+        // `#1234` przychodzi tylko z rozszerzenia przeglądarki (R3) i wtedy
+        // wskazuje zadanie powiązane z tym zgłoszeniem Redmine.
+        let m = resolve(&db, "C:\\inne", Some("#1234")).unwrap().unwrap();
+        assert_eq!(
+            (m.task_id, m.key.as_deref(), m.source.as_str()),
+            (Some(2), Some("#1234"), "task")
+        );
+        assert_eq!(resolve(&db, "C:\\inne", Some("#4321")).unwrap(), None);
     }
 }

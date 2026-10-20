@@ -84,6 +84,10 @@ pub struct AppSettings {
     /// Statusy Redmine oznaczające czekanie (PLAN_1.9.md, R2; pole w
     /// Ustawieniach → Redmine od R5). Osobna lista od `waiting_jira_statuses`.
     pub waiting_redmine_statuses: Vec<String>,
+    /// Co 5 min dodaje nowe zgłoszenia przypisane w Redmine do „Do zaplanowania”
+    /// (PLAN_1.9.md, R3; przełącznik w Ustawieniach → Redmine od R5). Niezależny
+    /// od `jira_auto_import`.
+    pub redmine_auto_import: bool,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -157,6 +161,7 @@ impl Default for AppSettings {
             auto_update_check: true,
             ts_send: true,
             waiting_redmine_statuses: default_waiting_redmine_statuses(),
+            redmine_auto_import: true,
         }
     }
 }
@@ -562,6 +567,17 @@ mod tests {
                 .waiting_redmine_statuses,
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn redmine_auto_import_defaults_on_and_is_separate_from_jira() {
+        let mut db = db();
+        assert!(load(&db).redmine_auto_import);
+        let saved = save(&mut db, &json!({"redmineAutoImport": false})).unwrap();
+        assert!(!saved.redmine_auto_import);
+        assert!(saved.jira_auto_import, "Jira bez zmian");
+        assert!(!load(&db).redmine_auto_import);
+        assert!(save(&mut db, &json!({"redmineAutoImport": "nie"})).is_err());
     }
 
     #[test]

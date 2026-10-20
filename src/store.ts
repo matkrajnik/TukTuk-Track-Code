@@ -327,19 +327,61 @@ export const previewRedmineSite = "https://redmine.example.pl";
  * Brak klucza w `localStorage` = połączone z przykładowymi zgłoszeniami.
  */
 export const previewRedmineKey = "todo-track-preview-redmine-v1";
-/** Zgłoszenie symulowanego Redmine (podzbiór `redmine::Issue`). */
+/**
+ * Zgłoszenie symulowanego Redmine (podzbiór `redmine::Issue`). Pola widoku
+ * Redmine (R3) są opcjonalne: brak projektu = projekt śledzony z przykładu,
+ * brak osoby = przypisane do mnie.
+ */
 export interface PreviewRedmineIssue {
   id: number;
   subject: string;
   status: string;
   tracker: string;
   dueDate: string;
+  projectId?: number;
+  priority?: string;
+  /** `null` = nieprzypisane; brak pola = przypisane do mnie. */
+  assignedToId?: number | null;
+  assignedTo?: string;
+  version?: string;
+  category?: string;
+  updatedOn?: string;
 }
 interface PreviewRedmine {
   connected?: boolean;
   issues?: PreviewRedmineIssue[];
+  /** Wszystkie projekty (`redmine_projects`). */
+  projects?: RedmineProject[];
+  /** Śledzone projekty (`redmine_select_projects`); brak = pierwszy z przykładu. */
+  selectedProjects?: RedmineProject[];
+  statuses?: RedmineStatus[];
 }
-/** Przykładowe zgłoszenia (tematy do `#1234` w szybkim dodawaniu). */
+/** Użytkownik symulowanego Redmine (`/users/current.json`). */
+export const previewRedmineMe = Object.freeze({
+  id: 12,
+  login: "jkowalski",
+  name: "Jan Kowalski",
+});
+/** Statusy symulowanego Redmine w kolejności z `/issue_statuses.json`. */
+export const previewRedmineStatuses: readonly RedmineStatus[] = Object.freeze([
+  { id: 1, name: "New", isClosed: false },
+  { id: 2, name: "In Progress", isClosed: false },
+  { id: 3, name: "Feedback", isClosed: false },
+  { id: 4, name: "Resolved", isClosed: true },
+  { id: 5, name: "Closed", isClosed: true },
+]);
+/** Projekty symulowanego Redmine: Magazyn WMS z podprojektem i Portal klienta. */
+export const previewRedmineProjects: readonly RedmineProject[] = Object.freeze([
+  { id: 7, name: "Magazyn WMS", identifier: "wms", parentId: null },
+  { id: 8, name: "WMS – integracje", identifier: "wms-integracje", parentId: 7 },
+  { id: 9, name: "Portal klienta", identifier: "portal", parentId: null },
+]);
+/**
+ * Przykładowe zgłoszenia (tematy do `#1234` w szybkim dodawaniu, lista widoku
+ * Redmine): w śledzonym Magazynie WMS cztery moje w trzech statusach (jedno z
+ * terminem), jedno Anny Nowak i jedno zamknięte; jedno w podprojekcie; jedno
+ * moje w nieśledzonym Portalu klienta.
+ */
 export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freeze([
   {
     id: 1234,
@@ -347,6 +389,10 @@ export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freez
     status: "New",
     tracker: "Funkcja",
     dueDate: "2026-10-30",
+    projectId: 7,
+    priority: "High",
+    version: "2.4",
+    updatedOn: "2026-10-14T09:00:00Z",
   },
   {
     id: 1240,
@@ -354,6 +400,9 @@ export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freez
     status: "Feedback",
     tracker: "Błąd",
     dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    updatedOn: "2026-10-13T09:00:00Z",
   },
   {
     id: 1250,
@@ -361,10 +410,58 @@ export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freez
     status: "In Progress",
     tracker: "Wsparcie",
     dueDate: "",
+    projectId: 7,
+    priority: "Low",
+    updatedOn: "2026-10-12T09:00:00Z",
+  },
+  {
+    id: 1251,
+    subject: "Raport stanów magazynowych",
+    status: "New",
+    tracker: "Funkcja",
+    dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    assignedToId: 31,
+    assignedTo: "Anna Nowak",
+    updatedOn: "2026-10-11T09:00:00Z",
+  },
+  {
+    id: 1245,
+    subject: "Eksport faktur do ERP",
+    status: "Closed",
+    tracker: "Błąd",
+    dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    updatedOn: "2026-10-10T09:00:00Z",
+  },
+  {
+    id: 1260,
+    subject: "Mapowanie kodów EDI",
+    status: "In Progress",
+    tracker: "Funkcja",
+    dueDate: "",
+    projectId: 8,
+    priority: "Normal",
+    updatedOn: "2026-10-09T09:00:00Z",
+  },
+  {
+    id: 1270,
+    subject: "Formularz reklamacji",
+    status: "New",
+    tracker: "Błąd",
+    dueDate: "",
+    projectId: 9,
+    priority: "Urgent",
+    updatedOn: "2026-10-08T09:00:00Z",
   },
 ]);
 function previewRedmineState(): PreviewRedmine {
   return previewJson(previewRedmineKey) as PreviewRedmine;
+}
+function savePreviewRedmine(state: PreviewRedmine) {
+  localStorage.setItem(previewRedmineKey, JSON.stringify(state));
 }
 /** Zgłoszenie symulowanego Redmine po numerze (ze stanu albo z listy przykładowej). */
 function previewRedmineIssue(id: number): PreviewRedmineIssue | undefined {
@@ -2393,7 +2490,8 @@ export function priorityBand(name: string): number | null {
   const n = name.trim().toLowerCase();
   if (!n) return null;
   if (
-    ["highest", "high", "critical", "blocker", "major", "urgent", "najwyższy", "wysoki", "krytyczny", "pilny"].includes(n)
+    // „immediate” i „natychmiastowy” to priorytety Redmine (PLAN_1.9.md, R2).
+    ["highest", "high", "critical", "blocker", "major", "urgent", "immediate", "najwyższy", "wysoki", "krytyczny", "pilny", "natychmiastowy"].includes(n)
   )
     return 1;
   if (["lowest", "low", "minor", "trivial", "najniższy", "niski", "drobny"].includes(n))
@@ -3576,4 +3674,378 @@ export function tsTodayTasks(refresh = false): Promise<TsProject[]> {
 /** Czyści pamięć podręczną listy zadań TS (połączenie, rozłączenie). */
 export function tsForgetTasks() {
   tsTaskCache = null;
+}
+
+// --- Redmine: widok „projekt → zgłoszenia” (PLAN_1.9.md, R3) ---------------
+
+/** Śledzony albo dostępny projekt Redmine (`redmine::Project`). */
+export interface RedmineProject {
+  id: number;
+  name: string;
+  identifier: string;
+  parentId: number | null;
+}
+/** Konfiguracja połączenia bez klucza API (`redmine::Config`). */
+export interface RedmineConfig {
+  site: string;
+  login: string;
+  userId: number;
+  displayName: string;
+  acceptInvalidCert: boolean;
+  projects: RedmineProject[];
+}
+/** `redmine_settings`: konfiguracja i czy klucz API jest w magazynie. */
+export interface RedmineAccount {
+  config: RedmineConfig;
+  connected: boolean;
+}
+/** Status z `/issue_statuses.json` (`redmine::Status`). */
+export interface RedmineStatus {
+  id: number;
+  name: string;
+  isClosed: boolean;
+}
+/** Zgłoszenie z `/issues.json` (`redmine::Issue`). */
+export interface RedmineIssue {
+  id: number;
+  subject: string;
+  projectId: number;
+  project: string;
+  tracker: string;
+  status: string;
+  statusId: number;
+  closed: boolean;
+  priority: string;
+  assignedToId: number | null;
+  assignedTo: string;
+  /** Wersja docelowa (`fixed_version.name`). */
+  version: string;
+  category: string;
+  dueDate: string;
+  updatedOn: string;
+  url: string;
+}
+/** Grupa statusu: numery zgłoszeń w kolejności wyświetlania (`redmine::StatusGroup`). */
+export interface RedmineStatusGroup {
+  status: string;
+  closed: boolean;
+  ids: number[];
+}
+/** `redmine_issues`: lista, ostrzeżenia, grupy statusów i śledzone projekty z podprojektami. */
+export interface RedmineIssues {
+  issues: RedmineIssue[];
+  warnings: string[];
+  groups: RedmineStatusGroup[];
+  tracked: number[];
+}
+/** Komunikat bez połączenia (`redmine::NOT_CONNECTED`). */
+export const redmineNotConnected =
+  "Połącz konto Redmine: podaj adres i klucz API.";
+/** Najwięcej zgłoszeń na liście (5 stron po 100, `redmine::MAX_ISSUE_PAGES`). */
+export const redmineIssueLimit = 500;
+/** Ślad linków „Otwórz w Redmine” w podglądzie (dla testów). */
+export const previewRedmineOpenedKey = "todo-track-preview-redmine-opened-v1";
+
+const previewRedmineList = (state: PreviewRedmine) =>
+  Array.isArray(state.issues) ? state.issues : previewRedmineIssues;
+const previewRedmineStatusList = (state: PreviewRedmine) =>
+  Array.isArray(state.statuses) ? state.statuses : previewRedmineStatuses;
+const previewRedmineProjectList = (state: PreviewRedmine) =>
+  Array.isArray(state.projects) ? state.projects : previewRedmineProjects;
+const previewRedmineTracked = (state: PreviewRedmine) =>
+  Array.isArray(state.selectedProjects)
+    ? state.selectedProjects
+    : previewRedmineProjectList(state).slice(0, 1);
+function previewRedmineConnected(): PreviewRedmine {
+  const state = previewRedmineState();
+  if (state.connected === false) throw new Error(redmineNotConnected);
+  return state;
+}
+/** Pełne zgłoszenie z przykładu (jak `redmine::parse_issue`). */
+function previewRedmineFull(
+  issue: PreviewRedmineIssue,
+  state: PreviewRedmine,
+): RedmineIssue {
+  const status = previewRedmineStatusList(state).find(
+    (s) => s.name === issue.status,
+  );
+  const projectId = issue.projectId ?? previewRedmineTracked(state)[0]?.id ?? 0;
+  const mine = issue.assignedToId === undefined;
+  return {
+    id: issue.id,
+    subject: issue.subject,
+    projectId,
+    project:
+      previewRedmineProjectList(state).find((p) => p.id === projectId)?.name ??
+      "",
+    tracker: issue.tracker,
+    status: issue.status,
+    statusId: status?.id ?? 0,
+    closed: status?.isClosed ?? false,
+    priority: issue.priority ?? "",
+    assignedToId: mine ? previewRedmineMe.id : (issue.assignedToId ?? null),
+    assignedTo: mine ? previewRedmineMe.name : (issue.assignedTo ?? ""),
+    version: issue.version ?? "",
+    category: issue.category ?? "",
+    dueDate: issue.dueDate,
+    updatedOn: issue.updatedOn ?? "",
+    url: `${previewRedmineSite}/issues/${issue.id}`,
+  };
+}
+
+/**
+ * Grupy statusów jak `redmine::group_by_status`: kolejność statusów z listy
+ * (`/issue_statuses.json`), status spoza listy na końcu, puste grupy pominięte;
+ * w grupie pasmo priorytetu malejąco, potem termin (bez terminu na końcu),
+ * potem kolejność z serwera.
+ */
+export function redmineGroups(
+  issues: readonly RedmineIssue[],
+  statuses: readonly RedmineStatus[],
+): RedmineStatusGroup[] {
+  const groups = statuses.map((s) => ({
+    status: s.name,
+    closed: s.isClosed,
+    id: s.id as number | null,
+    members: [] as number[],
+  }));
+  issues.forEach((issue, index) => {
+    let slot = groups.findIndex(
+      (g) => issue.statusId !== 0 && g.id === issue.statusId,
+    );
+    if (slot < 0)
+      slot = groups.findIndex(
+        (g) =>
+          g.status === issue.status && (g.id === null || issue.statusId === 0),
+      );
+    if (slot < 0)
+      groups.push({
+        status: issue.status,
+        closed: issue.closed,
+        id: null,
+        members: [index],
+      });
+    else groups[slot].members.push(index);
+  });
+  return groups
+    .filter((g) => g.members.length)
+    .map((g) => {
+      const sorted = [...g.members].sort((a, b) => {
+        const x = issues[a],
+          y = issues[b];
+        const band =
+          (priorityBand(y.priority) ?? 0) - (priorityBand(x.priority) ?? 0);
+        if (band) return band;
+        if (!x.dueDate !== !y.dueDate) return x.dueDate ? -1 : 1;
+        if (x.dueDate !== y.dueDate) return x.dueDate < y.dueDate ? -1 : 1;
+        return a - b;
+      });
+      return {
+        status: g.status,
+        closed: g.closed,
+        ids: sorted.map((i) => issues[i].id),
+      };
+    });
+}
+/** Śledzone projekty z podprojektami jak `redmine::tracked_project_ids`. */
+export function trackedProjectIds(
+  tracked: readonly RedmineProject[],
+  known: readonly RedmineProject[],
+): number[] {
+  const ids: number[] = [];
+  for (const p of tracked) if (!ids.includes(p.id)) ids.push(p.id);
+  for (let before = -1; before !== ids.length; ) {
+    before = ids.length;
+    for (const p of known)
+      if (
+        !ids.includes(p.id) &&
+        p.parentId !== null &&
+        ids.includes(p.parentId)
+      )
+        ids.push(p.id);
+  }
+  return ids;
+}
+
+/** `redmine_settings` (w podglądzie konto przykładowe, chyba że rozłączone). */
+export async function redmineAccount(): Promise<RedmineAccount> {
+  if (desktop) return invoke("redmine_settings");
+  const state = previewRedmineState();
+  const connected = state.connected !== false;
+  return {
+    config: {
+      site: previewRedmineSite,
+      login: connected ? previewRedmineMe.login : "",
+      userId: connected ? previewRedmineMe.id : 0,
+      displayName: connected ? previewRedmineMe.name : "",
+      acceptInvalidCert: false,
+      projects: previewRedmineTracked(state).map((p) => ({ ...p })),
+    },
+    connected,
+  };
+}
+/**
+ * `redmine_issues`: zgłoszenia projektu (z podprojektami, jak Redmine) albo —
+ * bez `projectId` — moje ze wszystkich projektów; „Moje” = przypisane do mnie,
+ * `openOnly` = bez zamkniętych. Najwyżej 500 z ostrzeżeniem.
+ */
+export async function redmineIssues(
+  projectId: number | null,
+  mine: boolean,
+  openOnly: boolean,
+): Promise<RedmineIssues> {
+  if (desktop) return invoke("redmine_issues", { projectId, mine, openOnly });
+  if (projectId === 0) throw new Error("Niepoprawny projekt Redmine.");
+  const state = previewRedmineConnected();
+  const statuses = previewRedmineStatusList(state);
+  const projects = previewRedmineProjectList(state);
+  const scope =
+    projectId === null
+      ? null
+      : trackedProjectIds(
+          [{ id: projectId, name: "", identifier: "", parentId: null }],
+          projects,
+        );
+  const all = previewRedmineList(state)
+    .map((i) => previewRedmineFull(i, state))
+    .filter((i) => scope === null || scope.includes(i.projectId))
+    .filter(
+      (i) =>
+        !(mine || projectId === null) || i.assignedToId === previewRedmineMe.id,
+    )
+    .filter((i) => !openOnly || !i.closed)
+    .sort((a, b) => b.updatedOn.localeCompare(a.updatedOn));
+  const issues = all.slice(0, redmineIssueLimit);
+  return {
+    issues,
+    warnings:
+      all.length > issues.length
+        ? [
+            `Pokazano pierwsze ${issues.length} z ${all.length} zgłoszeń. Zawęź zakres (np. „Moje” albo tylko otwarte).`,
+          ]
+        : [],
+    groups: redmineGroups(issues, statuses),
+    tracked: trackedProjectIds(previewRedmineTracked(state), projects),
+  };
+}
+/** `redmine_projects`: wszystkie projekty (wybór śledzonych w Ustawieniach, R5). */
+export async function redmineProjects(): Promise<RedmineProject[]> {
+  if (desktop) return invoke("redmine_projects");
+  return previewRedmineProjectList(previewRedmineConnected()).map((p) => ({
+    ...p,
+  }));
+}
+/** `redmine_select_projects`: śledzone projekty (najwyżej 50). */
+export async function redmineSelectProjects(
+  projects: RedmineProject[],
+): Promise<void> {
+  if (desktop) return invoke("redmine_select_projects", { projects });
+  if (
+    projects.length > 50 ||
+    projects.some((p) => p.id <= 0 || !p.name.trim())
+  )
+    throw new Error("Wybierz maksymalnie 50 projektów.");
+  const state = previewRedmineState();
+  const seen = new Set<number>();
+  state.selectedProjects = projects
+    .filter((p) => !seen.has(p.id) && Boolean(seen.add(p.id)))
+    .map((p) => ({ ...p, name: p.name.trim() }));
+  savePreviewRedmine(state);
+}
+/** `redmine_statuses`: statusy w kolejności z Redmine. */
+export async function redmineStatuses(
+  refresh: boolean,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_statuses", { refresh });
+  return previewRedmineStatusList(previewRedmineConnected()).map((s) => ({
+    ...s,
+  }));
+}
+/**
+ * `redmine_start`: zadanie zgłoszenia (nowe albo z kosza/archiwum, z powrotem
+ * do „do zrobienia”) i jeden pomiar, jak `redmine::start_issue`.
+ */
+export async function redmineStart(id: number): Promise<Snapshot> {
+  if (desktop) return invoke("redmine_start", { id });
+  const state = previewRedmineConnected();
+  const source = previewRedmineList(state).find((i) => i.id === id);
+  if (!source) throw new Error("Odśwież listę zgłoszeń przed rozpoczęciem.");
+  const issue = previewRedmineFull(source, state);
+  const data = await read();
+  const now = Date.now();
+  let task = data.tasks.find((t) => t.redmineId === id);
+  const trashed = data.trash?.find((t) => t.redmineId === id);
+  if (!task && trashed) {
+    data.trash = data.trash?.filter((t) => t !== trashed);
+    data.sessions.push(
+      ...(data.trashSessions ?? []).filter((s) => s.taskId === trashed.id),
+    );
+    data.trashSessions = data.trashSessions?.filter(
+      (s) => s.taskId !== trashed.id,
+    );
+    data.tasks.unshift(trashed);
+    task = trashed;
+  }
+  if (!task) {
+    task = {
+      id:
+        Math.max(
+          0,
+          ...data.tasks.map((t) => t.id),
+          ...(data.trash ?? []).map((t) => t.id),
+        ) + 1,
+      title: [...issue.subject].slice(0, 240).join(""),
+      done: false,
+      createdAt: now,
+      redmineId: id,
+      redmineUrl: issue.url,
+      redmineStatus: issue.status,
+      redmineTracker: issue.tracker,
+      redmineDue: issue.dueDate,
+    };
+    const band = priorityBand(issue.priority);
+    if (band !== null) task.details = { ...detailsOf(task), priority: band };
+    data.tasks.unshift(task);
+  }
+  const started = task;
+  started.done = false;
+  started.archived = false;
+  started.details = unblocked(started);
+  if (
+    !data.sessions.some((s) => s.taskId === started.id && s.endedAt === null)
+  ) {
+    data.sessions.forEach((s) => {
+      if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
+    });
+    data.sessions.unshift({
+      id:
+        Math.max(
+          0,
+          ...data.sessions.map((s) => s.id),
+          ...(data.trashSessions ?? []).map((s) => s.id),
+        ) + 1,
+      taskId: started.id,
+      startedAt: now,
+      endedAt: null,
+    });
+  }
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
+/** `redmine_open`: zgłoszenie w przeglądarce (w podglądzie tylko zapisany link). */
+export async function redmineOpen(url: string): Promise<void> {
+  if (desktop) return invoke("redmine_open", { url });
+  try {
+    const opened = JSON.parse(
+      localStorage.getItem(previewRedmineOpenedKey) ?? "[]",
+    );
+    localStorage.setItem(
+      previewRedmineOpenedKey,
+      JSON.stringify(
+        [...(Array.isArray(opened) ? opened : []), url].slice(-20),
+      ),
+    );
+  } catch {
+    /* tylko ślad dla testów */
+  }
 }

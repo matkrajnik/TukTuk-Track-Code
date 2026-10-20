@@ -78,10 +78,25 @@ pub struct Status {
     pub name: String,
     pub is_closed: bool,
 }
+/// Grupa statusu w widoku Redmine (R3): numery zgłoszeń w kolejności
+/// wyświetlania (pasmo priorytetu, potem termin).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StatusGroup {
+    pub status: String,
+    pub closed: bool,
+    pub ids: Vec<u64>,
+}
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Issues {
     issues: Vec<Issue>,
     warnings: Vec<String>,
+    /// Zgłoszenia pogrupowane według statusu w kolejności z `redmine_statuses`.
+    groups: Vec<StatusGroup>,
+    /// Projekty śledzone razem z ich podprojektami (znanymi z listy projektów):
+    /// zgłoszenia spoza nich trafiają do sekcji „spoza śledzonych projektów”.
+    tracked: Vec<u64>,
 }
 /// Ostatnio pobrane zgłoszenia (tytuł do szybkiego dodawania i „Rozpocznij”)
 /// oraz lista projektów do wyboru w Ustawieniach — bez tabel.
@@ -611,7 +626,6 @@ pub(crate) fn issues_query(
     query
 }
 /// Parametry pobrania po numerach (`issue_id=1,2,3&status_id=*`), paczka ≤ 100.
-#[allow(dead_code)] // używane od R3 (status zadań przekazanych innym)
 pub(crate) fn ids_query(ids: &[u64]) -> Vec<(&'static str, String)> {
     let list = ids
         .iter()
@@ -652,7 +666,6 @@ pub(crate) async fn fetch_issues(
     Ok((issues, warning))
 }
 /// Zgłoszenia po numerach, paczkami po 100 (R3: status zadań przekazanych innym).
-#[allow(dead_code)]
 pub(crate) async fn fetch_by_ids(
     client: &Client,
     c: &Config,
@@ -775,22 +788,102 @@ fn statuses_fresh(db: &Connection, site: &str, now: i64) -> rusqlite::Result<boo
 fn closed_map(statuses: &[Status]) -> HashMap<u64, bool> {
     statuses.iter().map(|s| (s.id, s.is_closed)).collect()
 }
-/// Mapa `status_id → is_closed` do parsowania zgłoszeń (Redmine przed 5.x nie
+/// Statusy w kolejności z serwera (grupy widoku) i przez `closed_map` mapa
+/// `status_id → is_closed` do parsowania zgłoszeń (Redmine przed 5.x nie
 /// oddaje `status.is_closed` w zgłoszeniu): z `ensure_statuses`, a gdy serwer
 /// nie odda statusów — z pamięci podręcznej, z ostrzeżeniem.
-async fn closed_statuses(
+async fn known_statuses(
     app: &tauri::AppHandle,
     client: &Client,
     c: &Config,
     key: &str,
-) -> Result<(HashMap<u64, bool>, Option<String>), String> {
+) -> Result<(Vec<Status>, Option<String>), String> {
     match ensure_statuses(app, client, c, key, false).await {
-        Ok(list) => Ok((closed_map(&list), None)),
+        Ok(list) => Ok((list, None)),
         Err(e) => {
             let state = app.state::<Database>();
             let db = state.0.lock().map_err(|e| e.to_string())?;
             let cached = read_statuses(&db, &c.site).map_err(|e| e.to_string())?;
-            Ok((closed_map(&cached), Some(format!("Statusy: {e}"))))
+            Ok((cached, Some(format!("Statusy: {e}"))))
+        }
+    }
+}
+/// Zgłoszenia pogrupowane według statusu: kolejność statusów z
+/// `redmine_statuses` (jak z `/issue_statuses.json`), status spoza listy na
+/// końcu (w kolejności pojawienia się), puste grupy pominięte. W grupie pasmo
+/// priorytetu malejąco, potem termin (bez terminu na końcu), potem kolejność
+/// z serwera (ostatnio zmienione najpierw).
+pub(crate) fn group_by_status(issues: &[Issue], statuses: &[Status]) -> Vec<StatusGroup> {
+    let mut groups: Vec<(StatusGroup, Option<u64>, Vec<usize>)> = statuses
+        .iter()
+        .map(|s| {
+            (
+                StatusGroup {
+                    status: s.name.clone(),
+                    closed: s.is_closed,
+                    ids: Vec::new(),
+                },
+                Some(s.id),
+                Vec::new(),
+            )
+        })
+        .collect();
+    for (index, issue) in issues.iter().enumerate() {
+        let known = groups
+            .iter()
+            .position(|(_, id, _)| issue.status_id != 0 && *id == Some(issue.status_id));
+        // Bez numeru statusu (albo numer spoza listy) — po nazwie.
+        let slot = known.or_else(|| {
+            groups.iter().position(|(g, id, _)| {
+                g.status == issue.status && (id.is_none() || issue.status_id == 0)
+            })
+        });
+        match slot {
+            Some(i) => groups[i].2.push(index),
+            None => groups.push((
+                StatusGroup {
+                    status: issue.status.clone(),
+                    closed: issue.closed,
+                    ids: Vec::new(),
+                },
+                None,
+                vec![index],
+            )),
+        }
+    }
+    groups
+        .into_iter()
+        .filter(|(_, _, members)| !members.is_empty())
+        .map(|(mut group, _, mut members)| {
+            members.sort_by_key(|&i| {
+                let issue = &issues[i];
+                let band = jira_fields::priority_band(&issue.priority).unwrap_or(0);
+                (-band, issue.due_date.is_empty(), issue.due_date.clone(), i)
+            });
+            group.ids = members.into_iter().map(|i| issues[i].id).collect();
+            group
+        })
+        .collect()
+}
+/// Śledzone projekty z podprojektami (dowolnego poziomu) według listy `known`
+/// (`/projects.json` z `parent.id`): Redmine dołącza podprojekty do zgłoszeń
+/// projektu, więc ich zgłoszenia nie są „spoza śledzonych projektów”.
+pub(crate) fn tracked_project_ids(tracked: &[Project], known: &[Project]) -> Vec<u64> {
+    let mut ids: Vec<u64> = Vec::new();
+    for p in tracked {
+        if !ids.contains(&p.id) {
+            ids.push(p.id);
+        }
+    }
+    loop {
+        let before = ids.len();
+        for p in known {
+            if !ids.contains(&p.id) && p.parent_id.is_some_and(|parent| ids.contains(&parent)) {
+                ids.push(p.id);
+            }
+        }
+        if ids.len() == before {
+            return ids;
         }
     }
 }
@@ -1060,7 +1153,8 @@ pub async fn redmine_issues(
     let c = config(&app)?;
     let key = api_key(&app, &c)?;
     let client = client(&c)?;
-    let (closed, status_warning) = closed_statuses(&app, &client, &c, &key).await?;
+    let (statuses, status_warning) = known_statuses(&app, &client, &c, &key).await?;
+    let closed = closed_map(&statuses);
     let mut warnings: Vec<String> = status_warning.into_iter().collect();
     let (issues, warning) = fetch_issues(
         &client,
@@ -1071,6 +1165,26 @@ pub async fn redmine_issues(
     )
     .await?;
     warnings.extend(warning);
+    // Sekcja „spoza śledzonych projektów” potrzebuje podprojektów śledzonych
+    // projektów: lista projektów z pamięci, a gdy jej nie ma — pobrana raz
+    // (błąd nie przerywa: wtedy liczą się same śledzone projekty).
+    let mut known = app
+        .state::<RedmineState>()
+        .projects
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    if project_id.is_none() && !c.projects.is_empty() && known.is_empty() {
+        if let Ok(list) = fetch_projects(&client, &c, &key).await {
+            *app.state::<RedmineState>()
+                .projects
+                .lock()
+                .map_err(|e| e.to_string())? = list.clone();
+            known = list;
+        }
+    }
+    let groups = group_by_status(&issues, &statuses);
+    let tracked = tracked_project_ids(&c.projects, &known);
     let current = config(&app)?;
     if current.site != c.site || current.login != c.login {
         return Err("Ustawienia zmieniły się podczas pobierania. Odśwież wyniki.".into());
@@ -1091,7 +1205,26 @@ pub async fn redmine_issues(
         .lock()
         .map_err(|e| e.to_string())?
         .extend(issues.iter().map(|i| (i.id, i.clone())));
-    Ok(Issues { issues, warnings })
+    Ok(Issues {
+        issues,
+        warnings,
+        groups,
+        tracked,
+    })
+}
+/// Wszystkie projekty (do 10 stron po 100), w kolejności z serwera.
+async fn fetch_projects(client: &Client, c: &Config, key: &str) -> Result<Vec<Project>, String> {
+    let page = paged(
+        "projects",
+        "Redmine nie zwrócił listy projektów.",
+        MAX_PROJECT_PAGES,
+        |offset| {
+            let q = vec![("limit", PAGE.to_string()), ("offset", offset.to_string())];
+            async move { get(client, c, key, "/projects.json", &q).await }
+        },
+    )
+    .await?;
+    Ok(parse_projects(&page.rows))
 }
 /// Projekty do wyboru śledzonych (do 10 stron po 100), w kolejności z serwera.
 #[tauri::command]
@@ -1099,20 +1232,7 @@ pub async fn redmine_projects(app: tauri::AppHandle) -> Result<Vec<Project>, Str
     let c = config(&app)?;
     let key = api_key(&app, &c)?;
     let client = client(&c)?;
-    let page = paged(
-        "projects",
-        "Redmine nie zwrócił listy projektów.",
-        MAX_PROJECT_PAGES,
-        |offset| {
-            let q = vec![("limit", PAGE.to_string()), ("offset", offset.to_string())];
-            let client = &client;
-            let c = &c;
-            let key = &key;
-            async move { get(client, c, key, "/projects.json", &q).await }
-        },
-    )
-    .await?;
-    let projects = parse_projects(&page.rows);
+    let projects = fetch_projects(&client, &c, &key).await?;
     *app.state::<RedmineState>()
         .projects
         .lock()
@@ -1170,7 +1290,6 @@ pub fn redmine_start(app: tauri::AppHandle, id: u64) -> Result<db::Snapshot, Str
 /// „Rozpocznij” spoza widoku (szybkie dodawanie, rozszerzenie przeglądarki —
 /// R2, R3): jak `redmine_start`, a gdy zgłoszenia nie ma w pobranej liście,
 /// temat pobiera wprost z `/issues/{id}.json`.
-#[allow(dead_code)] // wołane od R2 (szybkie dodawanie) i R3 (rozszerzenie)
 pub async fn start_by_id(app: &tauri::AppHandle, id: u64) -> Result<db::Snapshot, String> {
     if !valid_issue_id(id) {
         return Err("Niepoprawny numer zgłoszenia Redmine.".into());
@@ -1186,8 +1305,8 @@ pub async fn start_by_id(app: &tauri::AppHandle, id: u64) -> Result<db::Snapshot
     let client = client(&c)?;
     // Mapa statusów jak dla list: bez niej zamknięte zgłoszenie (Redmine bez
     // `status.is_closed`) trafiłoby do `redmine_issues` jako otwarte.
-    let (closed, _) = closed_statuses(app, &client, &c, &key).await?;
-    let issue = fetch_issue(&client, &c, &key, id, &closed).await?;
+    let (statuses, _) = known_statuses(app, &client, &c, &key).await?;
+    let issue = fetch_issue(&client, &c, &key, id, &closed_map(&statuses)).await?;
     let state = app.state::<Database>();
     let result = {
         let mut connection = state.0.lock().map_err(|e| e.to_string())?;
@@ -1225,6 +1344,312 @@ pub fn redmine_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<String>)
         .map_err(|_| "Nie można otworzyć przeglądarki.".into())
+}
+
+// ---------------------------------------------------------------------------
+// Obserwacja przypisań (R3): co 5 minut, jak `jira::start`
+
+/// Co ile sprawdzać nowe przypisania w Redmine.
+const WATCH_EVERY: i64 = 5 * 60_000;
+/// Co ile wątek sprawdza, czy pora na zapytanie (szybka reakcja na włączenie opcji).
+const WATCH_TICK: Duration = Duration::from_secs(20);
+/// Zamknięte zgłoszenia zmienione w tylu ostatnich dniach odświeżają status.
+const WATCH_CLOSED_DAYS: i64 = 14;
+
+/// Zapytania obserwacji: moje otwarte (do importu) i moje zmienione od
+/// `today - 14 dni` w dowolnym statusie (status zamkniętych niedawno).
+pub(crate) fn watch_queries(today: chrono::NaiveDate) -> [Vec<(&'static str, String)>; 2] {
+    let since = (today - chrono::Duration::days(WATCH_CLOSED_DAYS))
+        .format("%Y-%m-%d")
+        .to_string();
+    [
+        issues_query(None, true, true, None),
+        issues_query(None, true, false, Some(&since)),
+    ]
+}
+/// Moje zgłoszenia z obu zapytań bez powtórzeń (pierwsze wystąpienie wygrywa).
+fn merge_assigned(open: Vec<Issue>, recent: Vec<Issue>) -> Vec<Issue> {
+    let mut seen: HashSet<u64> = open.iter().map(|i| i.id).collect();
+    let mut out = open;
+    out.extend(recent.into_iter().filter(|i| seen.insert(i.id)));
+    out
+}
+/// Numery zgłoszeń otwartych (nieukończonych, nie w koszu) zadań powiązanych z
+/// Redmine pod adresem `site`, poza `skip` (już pobrane jako moje).
+fn linked_open_ids(db: &Connection, site: &str, skip: &HashSet<u64>) -> rusqlite::Result<Vec<u64>> {
+    let ids: Vec<i64> = db
+        .prepare(
+            "SELECT r.issue_id FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
+             LEFT JOIN task_lifecycle l ON l.task_id=t.id
+             WHERE r.site=?1 AND t.done=0 AND l.deleted_at IS NULL ORDER BY r.issue_id",
+        )?
+        .query_map([site], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids
+        .into_iter()
+        .map(|id| id as u64)
+        .filter(|id| valid_issue_id(*id) && !skip.contains(id))
+        .collect())
+}
+
+/// Zapisuje zgłoszenia (status, priorytet, tracker, termin; pasmo priorytetu
+/// powiązanych zadań przy zmianie) i dodaje zadania dla otwartych zgłoszeń,
+/// które od ostatniego sprawdzenia zostały przypisane do mnie (`mine`).
+/// `others` to zgłoszenia zadań przekazane komuś innemu: tylko odświeżenie.
+/// `baseline` (pierwsze sprawdzenie dla konta) tylko zapamiętuje obecne
+/// przypisania, bez importu całego backlogu. Nowe zadanie nie ma dnia w planie
+/// ani pomiaru, więc trafia do „Do zaplanowania”; zgłoszenie już powiązane z
+/// zadaniem (także w archiwum lub koszu) nie jest dublowane; zdjęte z listy i
+/// przypisane ponownie (bez zadania) wraca jako nowe. Jak `jira::sync_assigned`.
+pub(crate) fn sync_assigned(
+    connection: &mut Connection,
+    site: &str,
+    mine: &[Issue],
+    others: &[Issue],
+    baseline: bool,
+    now: i64,
+) -> Result<Vec<Issue>, String> {
+    let tx = connection.transaction().map_err(|e| e.to_string())?;
+    let mut imported = Vec::new();
+    for issue in mine.iter().filter(|i| !i.closed) {
+        let known: bool = tx
+            .query_row(
+                "SELECT COALESCE((SELECT assigned FROM redmine_issues WHERE site=?1 AND issue_id=?2),0)=1
+                 OR EXISTS(SELECT 1 FROM redmine_tasks WHERE site=?1 AND issue_id=?2)",
+                params![site, issue.id as i64],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if baseline || known {
+            continue;
+        }
+        let title: String = issue.subject.trim().chars().take(240).collect();
+        tx.execute(
+            "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
+            params![title, now],
+        )
+        .map_err(|e| e.to_string())?;
+        let task_id = tx.last_insert_rowid();
+        tx.execute(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(?1,?2,?3)",
+            params![task_id, site, issue.id as i64],
+        )
+        .map_err(|e| e.to_string())?;
+        // Pasmo z priorytetu zgłoszenia także wtedy, gdy priorytet w
+        // `redmine_issues` się nie zmienił (zgłoszenie widziane wcześniej).
+        if let Some(band) = jira_fields::priority_band(&issue.priority) {
+            tx.execute(
+                "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2))",
+                params![task_id, band],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        imported.push(issue.clone());
+    }
+    let all: Vec<Issue> = mine.iter().chain(others.iter()).cloned().collect();
+    save_issues(&tx, site, &all).map_err(|e| e.to_string())?;
+    tx.execute("UPDATE redmine_issues SET assigned=0 WHERE site=?1", [site])
+        .map_err(|e| e.to_string())?;
+    for issue in mine.iter().filter(|i| !i.closed) {
+        tx.execute(
+            "UPDATE redmine_issues SET assigned=1 WHERE site=?1 AND issue_id=?2",
+            params![site, issue.id as i64],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(imported)
+}
+
+/// Treść powiadomienia o zaimportowanych zgłoszeniach (najwyżej trzy wymienione).
+pub(crate) fn imported_message(rows: &[Issue]) -> (String, String) {
+    let title = if rows.len() == 1 {
+        "Nowe zadanie z Redmine".to_owned()
+    } else {
+        format!("Nowe z Redmine: {}", crate::notify::tasks_word(rows.len()))
+    };
+    let mut lines: Vec<String> = rows
+        .iter()
+        .take(3)
+        .map(|r| crate::notify::short(&format!("#{} · {}", r.id, r.subject)))
+        .collect();
+    if rows.len() > 3 {
+        lines.push(format!("i jeszcze {}", rows.len() - 3));
+    }
+    lines.push("Dodano do „Do zaplanowania”.".into());
+    (title, lines.join("\n"))
+}
+
+/// Lokalne zadania zaimportowanych zgłoszeń, w kolejności `rows`.
+pub(crate) fn imported_task_ids(
+    db: &Connection,
+    site: &str,
+    rows: &[Issue],
+) -> rusqlite::Result<Vec<i64>> {
+    rows.iter()
+        .map(|r| {
+            db.query_row(
+                "SELECT task_id FROM redmine_tasks WHERE site=?1 AND issue_id=?2",
+                params![site, r.id as i64],
+                |row| row.get(0),
+            )
+        })
+        .collect()
+}
+
+/// Powiadomienie z tymi samymi przyciskami co dla Jiry: kliknięcie otwiera
+/// Zadania przy nowych (nierozpoczętych) zadaniach, „Rozpocznij” tylko przy
+/// jednym zgłoszeniu, „Zaplanuj na dziś” dla wszystkich.
+pub(crate) fn imported_notification(rows: &[Issue], ids: &[i64]) -> crate::notify::Message {
+    use crate::notify::{Action, Message, View, PLAN_TODAY, REDMINE_START};
+    let (title, body) = imported_message(rows);
+    let mut actions = Vec::new();
+    if let [id] = ids {
+        actions.push(Action::new(REDMINE_START, "Rozpocznij", id));
+    }
+    if !ids.is_empty() {
+        let list = ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        actions.push(Action::new(PLAN_TODAY, "Zaplanuj na dziś", list));
+    }
+    Message {
+        key: format!(
+            "redmine:{}",
+            rows.iter()
+                .map(|r| r.id.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        title,
+        body,
+        actions,
+        open: View {
+            section: Some("Nierozpoczęte"),
+            task: if ids.len() == 1 { Some(ids[0]) } else { None },
+            ..View::tasks()
+        },
+    }
+}
+
+/// „Rozpocznij” z powiadomienia: start zadania powiązanego ze zgłoszeniem
+/// Redmine (z kosza i archiwum wraca), jak „Rozpocznij” w widoku Redmine.
+pub fn start_task(
+    connection: &mut Connection,
+    task_id: i64,
+    now: i64,
+) -> Result<db::Snapshot, String> {
+    let (site, id, title): (String, i64, String) = connection
+        .query_row(
+            "SELECT r.site, r.issue_id, t.title FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
+             WHERE r.task_id=?1",
+            [task_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or("Nie znaleziono zadania powiązanego ze zgłoszeniem Redmine.")?;
+    start_issue(connection, &site, id as u64, &title, now)
+}
+
+/// Jedno sprawdzenie przypisań; `None`, gdy opcja wyłączona lub brak połączenia.
+/// Wynik: zaimportowane zgłoszenia i ich lokalne zadania.
+#[allow(clippy::type_complexity)]
+fn watch_once(app: &tauri::AppHandle) -> Option<Result<(Vec<Issue>, Vec<i64>), String>> {
+    if !crate::settings::current(app).redmine_auto_import {
+        return None;
+    }
+    let c = config(app).ok()?;
+    if c.login.is_empty() || c.site.is_empty() {
+        return None;
+    }
+    let key = api_key(app, &c).ok()?;
+    let fetched = tauri::async_runtime::block_on(async {
+        let client = client(&c)?;
+        let (statuses, _) = known_statuses(app, &client, &c, &key).await?;
+        let closed = closed_map(&statuses);
+        let [open_query, recent_query] = watch_queries(chrono::Local::now().date_naive());
+        let (open, _) = fetch_issues(&client, &c, &key, &open_query, &closed).await?;
+        let (recent, _) = fetch_issues(&client, &c, &key, &recent_query, &closed).await?;
+        let mine = merge_assigned(open, recent);
+        // Zgłoszenia zadań przekazane komuś innemu: status i priorytet bez
+        // importu; błąd tego pobrania nie przerywa importu przypisanych.
+        let skip: HashSet<u64> = mine.iter().map(|i| i.id).collect();
+        let ids = {
+            let state = app.state::<Database>();
+            let db = state.0.lock().map_err(|e| e.to_string())?;
+            linked_open_ids(&db, &c.site, &skip).map_err(|e| e.to_string())?
+        };
+        let others = if ids.is_empty() {
+            Vec::new()
+        } else {
+            fetch_by_ids(&client, &c, &key, &ids, &closed)
+                .await
+                .unwrap_or_default()
+        };
+        Ok::<_, String>((mine, others))
+    });
+    Some(fetched.and_then(|(mine, others)| {
+        let current = config(app)?;
+        if current.site != c.site || current.login != c.login {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let watch = format!("{}|{}", c.site, c.login);
+        let state = app.state::<Database>();
+        let mut db = state.0.lock().map_err(|e| e.to_string())?;
+        let baseline = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='redmine_watch'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .as_deref()
+            != Some(watch.as_str());
+        let imported = sync_assigned(&mut db, &c.site, &mine, &others, baseline, db::now())?;
+        db.execute(
+            "INSERT INTO settings(key,value) VALUES('redmine_watch',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [watch],
+        )
+        .map_err(|e| e.to_string())?;
+        let ids = imported_task_ids(&db, &c.site, &imported).map_err(|e| e.to_string())?;
+        drop(db);
+        // Tematy do „Rozpocznij” i szybkiego dodawania jak po pobraniu listy.
+        if let Ok(mut cache) = app.state::<RedmineState>().issues.lock() {
+            cache.extend(mine.iter().chain(others.iter()).map(|i| (i.id, i.clone())));
+        }
+        Ok((imported, ids))
+    }))
+}
+
+/// Wątek sprawdzający co 5 min nowe przypisania w Redmine, niezależny od wątku
+/// Jiry. Kończy się, gdy okno main zniknie, więc wołać po `create_windows`.
+pub fn start(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut last: Option<i64> = None;
+        loop {
+            std::thread::sleep(WATCH_TICK);
+            if app.get_webview_window("main").is_none() {
+                break;
+            }
+            let now = db::now();
+            if last.is_some_and(|at| now - at < WATCH_EVERY) {
+                continue;
+            }
+            match watch_once(&app) {
+                None => last = None,
+                Some(result) => {
+                    last = Some(now);
+                    if let Ok((imported, ids)) = result {
+                        let _ = app.emit("data-changed", ());
+                        if !imported.is_empty() {
+                            crate::notify::show(&app, &imported_notification(&imported, &ids));
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 #[cfg(test)]
@@ -2156,5 +2581,412 @@ mod tests {
         let paths = server.join().unwrap();
         assert_eq!(paths[0], "GET /issues/1236.json HTTP/1.1");
         assert_eq!(paths[2], "GET /issues/999999.json HTTP/1.1");
+    }
+
+    // --- R3: widok (grupy statusów, projekty) i obserwacja przypisań --------
+
+    fn issue(id: u64, status: &str, closed: bool, priority: &str) -> Issue {
+        Issue {
+            id,
+            subject: format!("Zgłoszenie {id}"),
+            project_id: 7,
+            project: "Magazyn WMS".into(),
+            tracker: "Błąd".into(),
+            status: status.into(),
+            status_id: match status {
+                "New" => 1,
+                "In Progress" => 2,
+                "Feedback" => 3,
+                "Resolved" => 4,
+                "Closed" => 5,
+                _ => 0,
+            },
+            closed,
+            priority: priority.into(),
+            assigned_to_id: Some(12),
+            assigned_to: "Mateusz Krajnik".into(),
+            version: String::new(),
+            category: String::new(),
+            due_date: String::new(),
+            updated_on: String::new(),
+            url: format!("{SITE}/issues/{id}"),
+        }
+    }
+    fn fixture_statuses() -> Vec<Status> {
+        parse_statuses(&serde_json::from_str(STATUSES).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn watch_and_view_queries() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 20).unwrap();
+        let [open, recent] = watch_queries(today);
+        // Moje otwarte ze wszystkich projektów (bez `project_id`).
+        assert_eq!(
+            open,
+            vec![
+                ("assigned_to_id", "me".to_string()),
+                ("status_id", "open".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        // Moje w dowolnym statusie zmienione w ostatnich 14 dniach.
+        assert_eq!(
+            recent,
+            vec![
+                ("assigned_to_id", "me".to_string()),
+                ("status_id", "*".to_string()),
+                ("updated_on", ">=2026-10-06".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        // Widok: projekt i „Moje” (domyślnie) albo „Wszystkie otwarte”.
+        assert_eq!(
+            issues_query(Some(7), false, true, None),
+            vec![
+                ("project_id", "7".to_string()),
+                ("status_id", "open".to_string()),
+                ("sort", "updated_on:desc".to_string()),
+            ]
+        );
+        // Paczki po 100 numerów dla zgłoszeń przekazanych innym.
+        let ids: Vec<u64> = (1..=250).collect();
+        let chunks: Vec<_> = ids.chunks(PAGE as usize).map(ids_query).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(
+            chunks[2][0].1,
+            (201..=250)
+                .map(|i| i.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        // Powtórki z dwóch zapytań obserwacji są pomijane.
+        let merged = merge_assigned(
+            vec![issue(1, "New", false, ""), issue(2, "New", false, "")],
+            vec![issue(2, "New", false, ""), issue(3, "Closed", true, "")],
+        );
+        assert_eq!(
+            merged.iter().map(|i| i.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[test]
+    fn groups_issues_by_status_in_redmine_order() {
+        let statuses = fixture_statuses();
+        let mut due = issue(4, "New", false, "Normal");
+        due.due_date = "2026-10-30".into();
+        let mut earlier = issue(5, "New", false, "Normal");
+        earlier.due_date = "2026-10-21".into();
+        let mut custom = issue(9, "Oczekuje na klienta", false, "");
+        custom.status_id = 42;
+        let mut nameless = issue(10, "Feedback", false, "");
+        nameless.status_id = 0;
+        let issues = vec![
+            issue(1, "Closed", true, "Low"),
+            issue(2, "In Progress", false, "Normal"),
+            custom,
+            issue(3, "New", false, "Low"),
+            due,
+            issue(6, "New", false, "Immediate"),
+            earlier,
+            issue(7, "In Progress", false, "High"),
+            nameless,
+        ];
+        let groups = group_by_status(&issues, &statuses);
+        assert_eq!(
+            groups
+                .iter()
+                .map(|g| (g.status.as_str(), g.closed, g.ids.clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                // Kolejność z `/issue_statuses.json`; w grupie priorytet, potem termin.
+                ("New", false, vec![6, 5, 4, 3]),
+                ("In Progress", false, vec![7, 2]),
+                // Bez numeru statusu — po nazwie.
+                ("Feedback", false, vec![10]),
+                ("Closed", true, vec![1]),
+                // Status spoza listy na końcu; puste grupy pominięte.
+                ("Oczekuje na klienta", false, vec![9]),
+            ]
+        );
+        // Bez listy statusów: kolejność pojawienia się.
+        let groups = group_by_status(&issues[..3], &[]);
+        assert_eq!(
+            groups.iter().map(|g| g.status.as_str()).collect::<Vec<_>>(),
+            vec!["Closed", "In Progress", "Oczekuje na klienta"]
+        );
+        assert!(group_by_status(&[], &statuses).is_empty());
+    }
+
+    #[test]
+    fn tracked_projects_include_known_subprojects() {
+        let value: Value = serde_json::from_str(PROJECTS).unwrap();
+        let mut known = parse_projects(value["projects"].as_array().unwrap());
+        known.push(Project {
+            id: 10,
+            name: "Integracje – EDI".into(),
+            identifier: "edi".into(),
+            parent_id: Some(8),
+        });
+        let wms = known[0].clone();
+        // Projekt 7 z podprojektem 8 i jego podprojektem 10; portal (9) poza.
+        let mut ids = tracked_project_ids(&[wms.clone()], &known);
+        ids.sort();
+        assert_eq!(ids, vec![7, 8, 10]);
+        // Bez listy projektów tylko same śledzone.
+        assert_eq!(tracked_project_ids(&[wms], &[]), vec![7]);
+        assert!(tracked_project_ids(&[], &known).is_empty());
+    }
+
+    #[test]
+    fn sync_assigned_imports_new_assignments_like_jira() {
+        let mut connection = memory();
+        // Pierwsze sprawdzenie: backlog zapamiętany, nic nie zaimportowane.
+        let first = vec![
+            issue(1, "New", false, "Normal"),
+            issue(9, "Closed", true, "Normal"),
+        ];
+        assert!(sync_assigned(&mut connection, SITE, &first, &[], true, 100)
+            .unwrap()
+            .is_empty());
+        assert!(db::snapshot(&connection).unwrap().tasks.is_empty());
+        // Nowe przypisanie #2 trafia do zadań bez dnia w planie i bez pomiaru.
+        let second = vec![
+            issue(1, "In Progress", false, "Normal"),
+            issue(2, "New", false, "High"),
+        ];
+        let imported = sync_assigned(&mut connection, SITE, &second, &[], false, 200).unwrap();
+        assert_eq!(imported, vec![issue(2, "New", false, "High")]);
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].title, "Zgłoszenie 2");
+        assert_eq!(s.tasks[0].redmine_id, Some(2));
+        assert_eq!(s.tasks[0].redmine_status.as_deref(), Some("New"));
+        assert_eq!(s.tasks[0].redmine_tracker.as_deref(), Some("Błąd"));
+        assert_eq!(s.tasks[0].details.planned_day, "");
+        assert_eq!(s.tasks[0].details.priority, 1, "pasmo z priorytetu");
+        assert!(s.tasks[0].jira_key.is_none());
+        assert!(s.sessions.is_empty());
+        // Kolejne sprawdzenie nie dubluje, ale odświeża status i pasmo.
+        let third = vec![
+            issue(1, "In Progress", false, "Normal"),
+            issue(2, "Feedback", false, "Low"),
+        ];
+        assert!(
+            sync_assigned(&mut connection, SITE, &third, &[], false, 300)
+                .unwrap()
+                .is_empty()
+        );
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].redmine_status.as_deref(), Some("Feedback"));
+        assert_eq!(s.tasks[0].details.priority, -1);
+        // Zadanie w koszu nie wraca, dopóki zgłoszenie jest przypisane.
+        db::change(&mut connection, "delete", Some(s.tasks[0].id), None, 400).unwrap();
+        assert!(
+            sync_assigned(&mut connection, SITE, &third, &[], false, 500)
+                .unwrap()
+                .is_empty()
+        );
+        // Zdjęte z listy, przypisane ponownie: zadanie w koszu nadal blokuje
+        // duplikat, a #1 (bez zadania) wraca jako nowe.
+        let fourth = vec![issue(2, "Feedback", false, "Low")];
+        assert!(
+            sync_assigned(&mut connection, SITE, &fourth, &[], false, 600)
+                .unwrap()
+                .is_empty()
+        );
+        let again = vec![
+            issue(1, "New", false, "Normal"),
+            issue(2, "Feedback", false, "Low"),
+        ];
+        let imported = sync_assigned(&mut connection, SITE, &again, &[], false, 700).unwrap();
+        assert_eq!(imported.iter().map(|i| i.id).collect::<Vec<_>>(), vec![1]);
+        // Zgłoszenie z zadaniem z „Rozpocznij” (zarchiwizowanym) nie jest dublowane.
+        start_issue(&mut connection, SITE, 3, "Ręcznie", 800).unwrap();
+        let task3 = db::snapshot(&connection)
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|t| t.redmine_id == Some(3))
+            .unwrap()
+            .id;
+        db::change(&mut connection, "archive", Some(task3), None, 850).unwrap();
+        let with3 = vec![issue(1, "New", false, "Normal"), issue(3, "New", false, "")];
+        assert!(
+            sync_assigned(&mut connection, SITE, &with3, &[], false, 900)
+                .unwrap()
+                .is_empty()
+        );
+        // Zamknięte zgłoszenie nie jest importowane.
+        let closed = vec![issue(5, "Closed", true, "")];
+        assert!(
+            sync_assigned(&mut connection, SITE, &closed, &[], false, 1000)
+                .unwrap()
+                .is_empty()
+        );
+        // Ten sam numer pod innym adresem Redmine to inne zgłoszenie.
+        let other_site = sync_assigned(
+            &mut connection,
+            "https://inny.example.pl",
+            &[issue(1, "New", false, "")],
+            &[],
+            false,
+            1100,
+        )
+        .unwrap();
+        assert_eq!(other_site.len(), 1);
+    }
+
+    #[test]
+    fn sync_assigned_refreshes_issues_handed_to_someone_else() {
+        let mut connection = memory();
+        sync_assigned(&mut connection, SITE, &[], &[], true, 100).unwrap();
+        sync_assigned(
+            &mut connection,
+            SITE,
+            &[issue(4, "New", false, "Normal")],
+            &[],
+            false,
+            200,
+        )
+        .unwrap();
+        // Przekazane komuś innemu: status, tracker, termin i pasmo odświeżone, bez importu.
+        let mut handed = issue(4, "Resolved", false, "Urgent");
+        handed.assigned_to_id = Some(3);
+        handed.tracker = "Funkcja".into();
+        handed.due_date = "2026-11-02".into();
+        let imported = sync_assigned(&mut connection, SITE, &[], &[handed], false, 300).unwrap();
+        assert!(imported.is_empty());
+        let s = db::snapshot(&connection).unwrap();
+        assert_eq!(s.tasks.len(), 1);
+        assert_eq!(s.tasks[0].redmine_status.as_deref(), Some("Resolved"));
+        assert_eq!(s.tasks[0].redmine_tracker.as_deref(), Some("Funkcja"));
+        assert_eq!(s.tasks[0].redmine_due.as_deref(), Some("2026-11-02"));
+        assert_eq!(s.tasks[0].details.priority, 1);
+        let assigned: i64 = connection
+            .query_row(
+                "SELECT assigned FROM redmine_issues WHERE site=?1 AND issue_id=4",
+                [SITE],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(assigned, 0);
+        // Numery do pobrania: otwarte zadania poza już pobranymi; ukończone i w koszu pominięte.
+        assert_eq!(
+            linked_open_ids(&connection, SITE, &HashSet::new()).unwrap(),
+            vec![4]
+        );
+        assert!(
+            linked_open_ids(&connection, SITE, &[4].into_iter().collect())
+                .unwrap()
+                .is_empty()
+        );
+        let id = s.tasks[0].id;
+        db::change(&mut connection, "toggle", Some(id), None, 400).unwrap();
+        assert!(linked_open_ids(&connection, SITE, &HashSet::new())
+            .unwrap()
+            .is_empty());
+        // Tabele Jiry nietknięte.
+        let jira: i64 = connection
+            .query_row("SELECT COUNT(*) FROM jira_issues", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(jira, 0);
+    }
+
+    #[test]
+    fn imported_notification_for_one_and_many_issues() {
+        use crate::notify::{command, perform, Action, View, PLAN_TODAY, REDMINE_START};
+        let (title, body) = imported_message(&[issue(1234, "New", false, "")]);
+        assert_eq!(title, "Nowe zadanie z Redmine");
+        assert_eq!(
+            body,
+            "#1234 · Zgłoszenie 1234\nDodano do „Do zaplanowania”."
+        );
+        let rows: Vec<_> = (1..=5).map(|i| issue(i, "New", false, "")).collect();
+        let (title, body) = imported_message(&rows);
+        assert_eq!(title, "Nowe z Redmine: 5 zadań");
+        assert!(body
+            .starts_with("#1 · Zgłoszenie 1\n#2 · Zgłoszenie 2\n#3 · Zgłoszenie 3\ni jeszcze 2"));
+
+        let mut connection = memory();
+        db::change(&mut connection, "add", None, Some("Lokalne".into()), 0).unwrap();
+        db::change(&mut connection, "start", Some(1), None, 50).unwrap();
+        sync_assigned(&mut connection, SITE, &[], &[], true, 100).unwrap();
+        let one = sync_assigned(
+            &mut connection,
+            SITE,
+            &[issue(1234, "New", false, "")],
+            &[],
+            false,
+            200,
+        )
+        .unwrap();
+        let ids = imported_task_ids(&connection, SITE, &one).unwrap();
+        let m = imported_notification(&one, &ids);
+        assert_eq!(m.key, "redmine:1234");
+        assert_eq!(m.title, "Nowe zadanie z Redmine");
+        assert_eq!(
+            m.actions,
+            [
+                Action::new(REDMINE_START, "Rozpocznij", ids[0]),
+                Action::new(PLAN_TODAY, "Zaplanuj na dziś", ids[0]),
+            ]
+        );
+        assert_eq!(m.actions[0].argument(), format!("redmine-start:{}", ids[0]));
+        assert_eq!(
+            m.open,
+            View {
+                section: Some("Nierozpoczęte"),
+                task: Some(ids[0]),
+                ..View::tasks()
+            }
+        );
+        let many = sync_assigned(
+            &mut connection,
+            SITE,
+            &[
+                issue(1234, "New", false, ""),
+                issue(1235, "New", false, ""),
+                issue(1236, "New", false, ""),
+            ],
+            &[],
+            false,
+            300,
+        )
+        .unwrap();
+        let many_ids = imported_task_ids(&connection, SITE, &many).unwrap();
+        assert_eq!(many_ids.len(), 2);
+        let m = imported_notification(&many, &many_ids);
+        assert_eq!(m.key, "redmine:1235,1236");
+        assert_eq!(m.actions.len(), 1);
+        assert_eq!(
+            m.actions[0].argument(),
+            format!("plan-today:{},{}", many_ids[0], many_ids[1])
+        );
+        assert_eq!(m.open.task, None);
+        // „Rozpocznij” z powiadomienia: zadanie z kosza wraca, jeden aktywny pomiar.
+        db::change(&mut connection, "delete", Some(ids[0]), None, 400).unwrap();
+        let out = perform(
+            &mut connection,
+            command(Some(&format!("redmine-start:{}", ids[0])), &View::default()),
+            "2026-10-20",
+            500,
+        )
+        .unwrap();
+        assert!(out.changed && out.navigate.is_none());
+        let s = db::snapshot(&connection).unwrap();
+        assert!(s.trash.is_empty());
+        let active: Vec<_> = s.sessions.iter().filter(|x| x.ended_at.is_none()).collect();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].task_id, ids[0]);
+        // Zadanie bez powiązania z Redmine: błąd, bez zmian.
+        assert!(perform(
+            &mut connection,
+            command(Some("redmine-start:1"), &View::default()),
+            "2026-10-20",
+            600,
+        )
+        .is_err());
     }
 }

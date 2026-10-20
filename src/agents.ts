@@ -24,8 +24,11 @@ export interface AgentTask {
   /** Tytuł zadania albo zgłoszenia (pusty, gdy tytuł zgłoszenia nie jest znany). */
   title: string;
   key: string | null;
-  /** `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`. */
-  source: "folder" | "task" | "jira";
+  /**
+   * `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`,
+   * `redmine` (`#1234` z rozszerzenia przeglądarki, bez zadania; R3).
+   */
+  source: "folder" | "task" | "jira" | "redmine";
   /** Lokalne zadanie jest ukończone: bez propozycji i przypisania przerwy. */
   done?: boolean;
 }

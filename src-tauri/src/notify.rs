@@ -97,6 +97,8 @@ impl View {
 pub const STOP: &str = "stop";
 pub const SPLIT: &str = "split";
 pub const JIRA_START: &str = "jira-start";
+/// „Rozpocznij” z powiadomienia o nowym zgłoszeniu z Redmine (id zadania, R3).
+pub const REDMINE_START: &str = "redmine-start";
 pub const PLAN_TODAY: &str = "plan-today";
 /// „Przełącz” z propozycji agenta AI (`suggest`): start zadania o podanym id.
 pub const AGENT_SWITCH: &str = "agent-switch";
@@ -158,6 +160,8 @@ pub enum Command {
     Split(i64),
     /// Start zadania powiązanego ze zgłoszeniem Jiry (jak „Rozpocznij” w widoku Jira).
     JiraStart(i64),
+    /// Start zadania powiązanego ze zgłoszeniem Redmine (jak „Rozpocznij” w widoku Redmine).
+    RedmineStart(i64),
     /// Zaplanuj zadania na dziś.
     PlanToday(Vec<i64>),
     /// Start zadania z propozycji agenta (poprzedni pomiar staje).
@@ -191,6 +195,7 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         STOP => number.map(Command::Stop),
         SPLIT => number.map(Command::Split),
         JIRA_START => number.map(Command::JiraStart),
+        REDMINE_START => number.map(Command::RedmineStart),
         AGENT_SWITCH => number.map(Command::AgentSwitch),
         FOCUS_BREAK => number.map(Command::FocusBreak),
         FOCUS_NEXT => number.map(Command::FocusNext),
@@ -272,6 +277,10 @@ pub fn perform(
         }
         Command::JiraStart(task) => {
             crate::jira::start_task(db, task, now)?;
+            Ok(changed(true))
+        }
+        Command::RedmineStart(task) => {
+            crate::redmine::start_task(db, task, now)?;
             Ok(changed(true))
         }
         Command::PlanToday(ids) => {
