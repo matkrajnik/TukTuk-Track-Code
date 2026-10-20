@@ -1,16 +1,15 @@
 export const meta = {
   name: 'backlog',
-  description: 'Realizuje PLAN_BACKLOG.md zadanie po zadaniu (część B: poprawki i ulepszenia, część A: agenci AI): implementacja, weryfikacja testami, przegląd, poprawki, commit; przygotowanie wydań 1.10.0 i 1.11.0',
-  whenToUse: 'Pełna delegacja prac nad Todo Track według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B12, B2, B6, B11, B8, B9, R110, A0–A6, R111). args: { from?: "B7", only?: ["B3"], until?: "R110", maxFixRounds?: 3, model?: "opus" }',
+  description: 'Realizuje PLAN_BACKLOG.md zadanie po zadaniu (TukTukTrack 2.0: poprawki, agenci AI, nowa nazwa z migracją): implementacja, weryfikacja testami, przegląd, poprawki, commit; przygotowanie wydania 2.0.0',
+  whenToUse: 'Pełna delegacja prac nad TukTukTrack 2.0 (dawniej Todo Track) według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B12, B2, B6, B11, B8, B9, A0–A6, N1, R20). args: { from?: "B7", only?: ["B3"], until?: "B9", maxFixRounds?: 3, model?: "opus" }',
   phases: [
     { title: 'Porządek', detail: 'B7 poprawność backendu, B10 podział store.ts i dużych komponentów' },
     { title: 'Codzienna praca', detail: 'B1 przyciski i SearchSelect, B3 pomiary, B4 wysyłka do TS z nadgodzinami, B5 raporty, B12 ręczne spotkania' },
     { title: 'Układ i wydajność', detail: 'B2 układ i nawigacja, B6 wydajność, B11 drobne funkcje' },
     { title: 'Agenci', detail: 'B8 hooki Claude Code i Codexa, B9 worktree Orki' },
-    { title: 'Wydanie 1.10', detail: 'README, notes.md, NEXT_SESSION dla części B' },
     { title: 'AI: fundamenty', detail: 'A0 filtr danych osobowych, A1 silnik CLI, A2 serwer MCP' },
     { title: 'AI: funkcje', detail: 'A3 czat, A4 asystent przypisań, A5 Zamknięcie dnia, A6 Rano i tydzień' },
-    { title: 'Wydanie 1.11', detail: 'README, notes.md, NEXT_SESSION dla części A' },
+    { title: 'Nazwa i wydanie 2.0', detail: 'N1 TukTukTrack z migracją z Todo Track, R20 przygotowanie wydania 2.0.0' },
   ],
 }
 
@@ -123,12 +122,6 @@ const TASKS = [
     testChanges: 'żadne',
   },
   {
-    id: 'R110', phase: 'Wydanie 1.10', title: 'Przygotowanie wydania 1.10.0', release: '1.10.0', part: 'B',
-    section: 'Wydania (R110)',
-    scope: 'Wydanie obejmuje zadania części B, które weszły na gałąź (git log). README: „Nowości 1.10” (pomiary i luki, wysyłka TS z nadgodzinami i wieloma dniami, raporty z nadgodzinami, ręczne spotkania (także bez kalendarza Microsoft), SearchSelect i czytelne przyciski, plan dnia rano, hooki agentów zamiast plików sesji z instrukcją zatwierdzenia w Codexie przez /hooks, worktree Orki), opis sekcji ustawień „Agenci” i „Skróty”, „Wersja w repozytorium”.',
-    done: '',
-  },
-  {
     id: 'A0', phase: 'AI: fundamenty', title: 'Filtr danych osobowych (ai_privacy.rs)', ai: true,
     section: 'A0 — Filtr danych osobowych (`src-tauri/src/ai_privacy.rs`)',
     scope: 'Całość sekcji: redact(input, &Dictionary) -> (String, Pseudonyms) dla tekstu i JSON; pola osobowe po kształcie danych (przypisany/zgłaszający Jiry, pola osobowe z jira_fields.kind, przypisany w Redmine, autorzy commitów) → „Osoba N” stałe w obrębie wywołania; słownik z nazw osób z Jiry/Redmine (imię i nazwisko osobno), własnego imienia i nazwiska użytkownika oraz ustawienia ai_hidden_names (pole w settings.rs tu, interfejs w A1); dopasowanie bez wielkości liter, po granicy słowa, z polską odmianą przez rdzeń, pomijanie imion < 3 znaków; restore odwracające pseudonimy w odpowiedzi; mapa tylko w pamięci. Moduł bez interfejsu — korzystają z niego A1–A5.',
@@ -178,9 +171,16 @@ const TASKS = [
     testChanges: 'żadne',
   },
   {
-    id: 'R111', phase: 'Wydanie 1.11', title: 'Przygotowanie wydania 1.11.0', release: '1.11.0', part: 'A',
-    section: 'Wydania (R111)',
-    scope: 'Wydanie obejmuje zadania części A, które weszły na gałąź. README: „Nowości 1.11” i nowa sekcja „Asystent AI” (silnik z subskrypcji Claude Code / Codex bez klucza API; wybór przy pierwszym uruchomieniu; co wychodzi do modelu, filtr nazwisk i jego ograniczenie — nazwisko spoza słownika wpisane ręcznie przejdzie; serwer MCP z rejestracją i przykładem wpisu do CLAUDE.md projektu z propose_note_append; czat i karty akcji; model tylko proponuje), opis sekcji ustawień „Asystent AI”, „Wersja w repozytorium”.',
+    id: 'N1', phase: 'Nazwa i wydanie 2.0', title: 'TukTukTrack: nazwa, identyfikator i migracja z Todo Track', migration: true,
+    section: 'N1 — TukTukTrack: nazwa, identyfikator i migracja z Todo Track',
+    scope: 'Wszystkie 6 punktów sekcji. Nazwa widoczna „TukTukTrack” wszędzie (productName, okna, tray, powiadomienia, interfejs, instalator z grafikami z make-artwork.ps1, rozszerzenie, README/RELEASE.md/browser-extension/README.md, scripts/ship.mjs i release.mjs z nazwą pliku TukTukTrack_<wersja>_x64-setup.exe). Nazwy techniczne: pakiet i binaria tuktuktrack / tuktuktrack-bridge / tuktuktrack-hook / tuktuktrack-mcp, potoki \\\\.\\pipe\\tuktuktrack-*, TUKTUKTRACK_AI, serwer MCP tuktuktrack (mcp__tuktuktrack__*), klucze localStorage tuktuktrack-*; identyfikator pl.tuktuktrack.desktop, host pl.tuktuktrack.bridge (klucz key rozszerzenia bez zmian). BEZ ZMIAN: repozytorium wydań matkrajnik/todo-track, adres latest.json, pubkey i plik ~/.tauri/todotrack.key — 1.9 musi znaleźć aktualizację. Moduł legacy.rs przed otwarciem bazy: kopia %APPDATA%\\pl.todotrack.desktop → %APPDATA%\\pl.tuktuktrack.desktop tylko gdy nowy nie ma bazy (stary zostaje z PRZENIESIONO-DO-TUKTUKTRACK.txt, oba z bazą = nic nie nadpisuje, informacja w Ustawieniach), najlepszym wysiłkiem %LOCALAPPDATA%\\pl.todotrack.desktop; poświadczenia jira/calendar/timesheet/redmine przenoszone z odczytem kontrolnym, stary wpis usuwany dopiero po udanym przeniesieniu, błąd jednego nie blokuje reszty; nowy host rozszerzenia zarejestrowany, stare klucze i manifest usunięte; autostart Run\\Todo Track → Run\\TukTukTrack z tymi samymi argumentami; stare wpisy hooków (todo-track-hook.exe) i serwera MCP todo-track usuwane przy rejestracji; znacznik legacy_migrated_at; rejestr, magazyn poświadczeń i katalogi za warstwą testowalną. Instalator (template.nsi): wykrycie Uninstall\\Todo Track, pytanie o aktualizację do TukTukTrack 2.0.0, zamknięcie starej aplikacji, ciche odinstalowanie bez usuwania danych (sprawdź w szablonie, że /S nie kasuje %APPDATA%), usunięcie starych skrótów, instalacja do %LOCALAPPDATA%\\TukTukTrack i uruchomienie. Kontrola kompletności w npm run check albo teście Rust (dozwolone wyjątki z sekcji). Nie buduj instalatora (bez npm run tauri build) — szablon sprawdź czytaniem i, jeśli się da, makensis w trybie samej kompilacji składni, bez instalowania.',
+    done: 'Rust: migracja katalogu (brak starego, stary bez nowego, oba z bazą, ponowne uruchomienie), poświadczenia na zastępczym magazynie (sukces, brak wpisu, błąd zapisu, odczyt kontrolny przed usunięciem), budowa kluczy rejestru hosta i autostartu, usuwanie starych wpisów hooków i MCP, kontrola kompletności. Playwright: TukTukTrack w tytule, nawigacji i Ustawieniach, nowe klucze localStorage. Wszystkie dotychczasowe testy zielone po mechanicznej zmianie nazw; żaden test nie pisze do prawdziwego rejestru HKCU ani Menedżera poświadczeń.',
+    testChanges: 'mechaniczna zmiana nazw w testach i fixture (Todo Track → TukTukTrack, todo-track → tuktuktrack, pl.todotrack → pl.tuktuktrack, klucze localStorage) i zrzuty wzorcowe z nową nazwą; żadnych zmian scenariuszy ani innych oczekiwanych wartości',
+  },
+  {
+    id: 'R20', phase: 'Nazwa i wydanie 2.0', title: 'Przygotowanie wydania 2.0.0', release: '2.0.0', part: 'B, A i N',
+    section: 'Wydanie 2.0.0 (R20)',
+    scope: 'Jedno wydanie z całym planem. notes.md: najpierw nowa nazwa TukTukTrack i to, że dane, ustawienia i logowania przechodzą same z Todo Track, potem najważniejsze nowości. README: tytuł i opis TukTukTrack, „Nowości 2.0” (zmiana nazwy i migracja; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania także bez kalendarza Microsoft; SearchSelect i czytelne przyciski; plan dnia rano; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez /hooks; worktree Orki; Asystent AI: subskrypcja Claude Code / Codex bez klucza API, wybór przy pierwszym uruchomieniu, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z rejestracją i przykładem wpisu do CLAUDE.md z propose_note_append, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, sekcja „Przejście z Todo Track” (co się przenosi, gdzie zostaje stary katalog, rozszerzenie do przeładowania), „Wersja w repozytorium”.',
     done: '',
   },
 ]
@@ -212,7 +212,7 @@ const VERIFY = {
     cargoTest: { type: 'boolean' },
     cargoFmt: { type: 'boolean' },
     noNetwork: { type: 'boolean', description: 'Żaden test ani skrypt nie łączy się z prawdziwym TS, Jirą ani Redmine' },
-    noRealTools: { type: 'boolean', description: 'Żaden test nie uruchamia prawdziwego claude, codex ani orca i nie zapisuje do ~/.claude, ~/.codex ani %APPDATA%\\pl.todotrack.desktop' },
+    noRealTools: { type: 'boolean', description: 'Żaden test nie uruchamia prawdziwego claude, codex ani orca i nie zapisuje do ~/.claude, ~/.codex, rejestru HKCU, Menedżera poświadczeń ani katalogów danych aplikacji' },
     testsIntact: { type: 'boolean', description: 'Istniejące testy zmieniły się wyłącznie w zakresie dozwolonym dla zadania' },
     playwrightCount: { type: 'number' },
     rustCount: { type: 'number' },
@@ -254,7 +254,8 @@ ZAKAZY BEZWZGLĘDNE:
 - Nie uruchamiaj prawdziwego claude, codex ani orca (także --version), ani w testach, ani ręcznie. Kod uruchamiający procesy ma być za cechą (trait) albo parametrem, a testy podstawiają zapisane odpowiedzi.
 - Nie czytaj i nie zmieniaj ~/.claude/settings.json, ~/.claude.json, ~/.codex/* ani rejestracji MCP; nie wywołuj claude mcp / codex mcp. Testy hooków i rejestracji działają na kopiach w katalogu tymczasowym. Ta sesja sama działa w Claude Code — zmiana jego ustawień zepsułaby workflow.
 - Nie uruchamiaj aplikacji desktopowej (npm run tauri dev, todo-track.exe): przy starcie rejestruje hooki i MCP w plikach użytkownika. Wystarcza podgląd przeglądarkowy i testy.
-- Nie dotykaj bazy użytkownika w %APPDATA%\\pl.todotrack.desktop, Menedżera poświadczeń Windows ani zainstalowanej aplikacji. Nie instaluj NSIS.
+- Nie dotykaj bazy użytkownika w %APPDATA%\\pl.todotrack.desktop (ani %APPDATA%\\pl.tuktuktrack.desktop), Menedżera poświadczeń Windows, rejestru HKCU ani zainstalowanej aplikacji. Nie instaluj NSIS i nie uruchamiaj instalatora ani deinstalatora.
+- Aplikacja zmienia w N1 nazwę z Todo Track na TukTukTrack. Zadania przed N1 używają obecnych nazw (todo-track-*, pl.todotrack.*, TODO_TRACK_AI, serwer MCP todo-track) tak, jak opisuje je plan; nowe nazwy wprowadza dopiero N1.
 
 Zasady:
 - Każda nowa komenda Tauri ma odpowiednik w trybie podglądu (store.ts / src/preview/*.ts), bo testy Playwright działają bez Rusta.
@@ -304,7 +305,7 @@ Jesteś weryfikatorem po zadaniu ${task.id} (${task.title}). Nie ufaj deklaracjo
 4. cargo test --manifest-path src-tauri/Cargo.toml --locked
 5. cargo fmt --manifest-path src-tauri/Cargo.toml --check
 6. Brak sieci: przejrzyj diff gałęzi (git diff $(git merge-base master HEAD) -- src src-tauri tests scripts package.json) — w testach i skryptach mogą występować tylko adresy przykładowe i 127.0.0.1; żaden test nie tworzy klienta HTTP do prawdziwego serwera. noNetwork=true tylko gdy to potwierdzisz.
-7. Brak prawdziwych narzędzi: w diffie żaden test (#[cfg(test)], tests/*.spec.ts) nie uruchamia procesu claude, codex ani orca (Command::new z tymi nazwami lub ścieżkami bez podstawienia) i nie używa prawdziwych ścieżek ~/.claude, ~/.codex, %APPDATA%\\pl.todotrack.desktop (zamiast katalogu tymczasowego). noRealTools=true tylko gdy to potwierdzisz.
+7. Brak prawdziwych narzędzi: w diffie żaden test (#[cfg(test)], tests/*.spec.ts) nie uruchamia procesu claude, codex ani orca (Command::new z tymi nazwami lub ścieżkami bez podstawienia) i nie używa prawdziwych ścieżek ~/.claude, ~/.codex, %APPDATA%/%LOCALAPPDATA% aplikacji (zamiast katalogu tymczasowego) ani prawdziwego rejestru HKCU i Menedżera poświadczeń (keyring::Entry, winreg bez warstwy zastępczej). noRealTools=true tylko gdy to potwierdzisz.
 8. Testy nietknięte: git diff $(git merge-base master HEAD) -- tests src-tauri/src (bloki #[cfg(test)]) dla testów istniejących przed gałęzią. Dla zadań wcześniejszych tej gałęzi zmiany już są — oceniaj tylko commity zadania ${task.id} (git log --oneline --grep "^${task.id}:"). Dozwolone dla ${task.id}: ${task.testChanges || 'aktualizacja liczb testów w README'}. Każda inna zmiana oczekiwanej wartości, usunięty test albo zmieniony scenariusz to testsIntact=false z opisem w failures.
 Nie poprawiaj niczego. Zwróć ok=true tylko gdy kroki 1–5 przeszły, noNetwork=true, noRealTools=true, testsIntact=true i nie ma niezacommitowanych zmian. W failures wklej dokładne komunikaty błędów i nazwy testów, które padły. Podaj liczbę testów Playwright i Rust.`
 }
@@ -322,6 +323,7 @@ function reviewPrompt(task, lens, impl) {
   const lenses = {
     plan: `Soczewka: ZGODNOŚĆ Z PLANEM. Porównaj diff commitów zadania ${task.id} (git log --oneline --grep "^${task.id}:", git show) z sekcją "${task.section}" w ${PLAN} i z jego założeniami. Wypisz każdy punkt sekcji, który nie został zrealizowany lub został zrealizowany inaczej bez uzasadnienia w deviations: "${impl.deviations || ''}". Zawsze must: brakujący odpowiednik w podglądzie dla nowej komendy, zapis do TS/Jiry/Redmine/Orki bez kliknięcia, timer przełączany automatycznie, nowe ustawienie bez wartości domyślnej, niszcząca migracja, zmiana istniejącego testu poza dozwolonym zakresem (${task.testChanges || '—'}).`,
     bugs: `Soczewka: POPRAWNOŚĆ. Przeczytaj diff commitów zadania ${task.id} (git log --oneline --grep "^${task.id}:", git show). Szukaj błędów: dzielenie przez lokalną północ i strefy czasu, nakładanie przedziałów, aktywny pomiar, nadpisywanie innych pól JSON w task_details (wzorzec json_set), niespójność między Rust a podglądem, blokowanie wątku głównego lub wątku potoku, wycieki nasłuchów Tauri w onUnmounted, wyścigi przy równoległych akcjach, liczby i przecinki (godziny TS), dostępność (aria, klawiatura, focus w dialogu), regresje we wspólnych komponentach. Zgłaszaj tylko to, co umiesz uzasadnić konkretną ścieżką wykonania.`,
+    migration: `Soczewka: MIGRACJA Z TODO TRACK. Przeczytaj diff commitów zadania ${task.id}. Prześledź pierwszy start 2.0 po instalacji 1.9 i po aktualizacji przez updater: czy baza (z -wal/-shm), kopie i stan okien trafiają do nowego katalogu przed otwarciem bazy; czy nic nie kasuje ani nie nadpisuje danych, gdy oba katalogi istnieją; czy stary katalog zostaje; czy stary wpis poświadczenia jest usuwany dopiero po zapisie i odczycie kontrolnym nowego; czy migracja jest idempotentna i nie powtarza się przy każdym starcie; czy host rozszerzenia, autostart, hooki i MCP po migracji wskazują nowe nazwy i ścieżki, a stare wpisy znikają; czy instalator przy cichym odinstalowaniu Todo Track nie usuwa %APPDATA% i nie zostawia dwóch instalacji; czy updater 1.9 nadal znajdzie 2.0 (endpoint, pubkey, repozytorium wydań bez zmian); czy w kodzie nie zostały stare nazwy poza dozwolonymi wyjątkami. Każde ryzyko utraty danych lub logowań to must.`,
     privacy: `Soczewka: PRYWATNOŚĆ I IZOLACJA AI. Przeczytaj diff commitów zadania ${task.id}. Prześledź każdą ścieżkę, którą dane trafiają do modelu (ai::ask, czat, odpowiedzi MCP, prompty): czy każda przechodzi przez ai_privacy::redact, czy odpowiedź przechodzi przez restore przed UI, czy mapa pseudonimów nie trafia do modelu ani na dysk, czy tytuły spotkań i okien wychodzą tylko przy włączonych przełącznikach, czy autorzy commitów są usunięci. Izolacja: TODO_TRACK_AI=1 i katalog AI przy każdym uruchomieniu CLI, brak narzędzi MCP do TS/Jiry/Redmine/usuwania/ustawień, propozycje bez zapisu do bazy przed kliknięciem, funkcje AI nieaktywne przy ai_engine "" / "off", żaden test nie uruchamia prawdziwego CLI. Każde naruszenie to must.`,
   }
   return `${COMMON}
@@ -380,7 +382,7 @@ async function runTask(task, maxFixRounds) {
   if (!v1.ok) return { task: task.id, status: 'blocked', blocker: `weryfikacja po implementacji: ${v1.failures}`, summary: impl.summary }
 
   // Przegląd soczewkami równolegle (tylko odczyt, więc bez konfliktów w drzewie roboczym).
-  const lenses = task.ai ? ['plan', 'bugs', 'privacy'] : ['plan', 'bugs']
+  const lenses = ['plan', 'bugs'].concat(task.ai ? ['privacy'] : [], task.migration ? ['migration'] : [])
   const reviews = (await parallel(lenses.map(lens => () =>
     runAgent(reviewPrompt(task, lens, impl), { label: `review:${task.id}:${lens}`, phase: task.phase, schema: REVIEW })
   ))).filter(Boolean)
@@ -402,7 +404,7 @@ async function runTask(task, maxFixRounds) {
 // ---------------------------------------------------------------------------
 // Główna pętla: ściśle sekwencyjnie, zatrzymanie na pierwszej blokadzie.
 // args: { from?: id, only?: [ids], until?: id, maxFixRounds?: number, model?: string, carryNotes?: [string] }
-// until: zatrzymaj się po tym zadaniu (np. "R110" — tylko część B).
+// until: zatrzymaj się po tym zadaniu (np. "B9" — tylko część B, bez wydania).
 // carryNotes: wskazówki z wcześniejszego uruchomienia przy wznowieniu od środka części.
 // ---------------------------------------------------------------------------
 const opts = args || {}
