@@ -1,4 +1,84 @@
-# Todo Track — stan po 1.7.3
+# Todo Track — stan po 1.8.0
+
+## Stan po 1.8.0 (20 października 2026, przygotowane, niewydane)
+
+Gałąź `release-1-8` (worktree `.claude/worktrees/release-1-8`), lokalnie, bez pusha i bez tagu. Wydanie 1.8.0 obejmuje wszystkie zadania z `PLAN_1.8.md` (wysyłka Raportu TS do Ideo Timesheet):
+- T1 (backend TS): `src-tauri/src/timesheet.rs` — port konektora `ideo-ts-api/connector` na Rust (`reqwest` z `multipart`, `scraper`): logowanie, identity, refresh, formularz dnia `wypelnij`, parser, zapis multipartem w trybach `replace` / `keep`; hasło w magazynie poświadczeń (`<identifier>.timesheet`), token, refresh i ciasteczko tylko w pamięci (`TsState`); komendy `ts_settings`, `ts_connect`, `ts_disconnect`, `ts_tasks`, `ts_filled`, `ts_send`, `ts_sent`; tabele `ts_sent_days` i `ts_project_map`; ustawienie `ts_send`. Fixture `src-tauri/tests/fixtures/ts_wypelnij.html`; testy sesji tylko na lokalnym serwerze `127.0.0.1` (bez proxy systemowego).
+- T2 (mapowanie): pole „Zadanie TS” w rozwiniętym kafelku (`TsTaskField.vue`, lista z pamięci podręcznej i „Odśwież”), „Ustaw jako domyślne dla projektu”, chip „TS: …”, `tsTaskId` / `tsTaskName` w `task_details`, `resolveTsTask` w `src/timesheet.ts`, komendy `ts_project_map` i `ts_set_project_map`.
+- T3 (podgląd i wysyłka): `TsSendDialog.vue` i `useTsSend.ts`, przycisk „Wyślij do TS” w Zamknięciu dnia i Raporcie dnia, `tsEntries` (scalanie, opisy, ostrzeżenia), „Zachowaj pozostałe wpisy TS” / „Zastąp wszystko”, porównanie odczytu po zapisie, znacznik „Wysłano do TS”.
+- T4 (Ustawienia → Timesheet (TS)): `TimesheetSettings.vue` — połączenie, „Zaawansowane” (adres API, identyfikator urządzenia), „Testuj połączenie”, „Rozłącz” z potwierdzeniem, „Wysyłaj raport TS”, domyślne zadania TS projektów, „Jak to działa”.
+- T5 (podgląd i e2e): symulowany TS w `store.ts` (`todo-track-preview-ts-v1`, powiadamianie innych okien), `tsSeed` / `tsFixture` w `tests/fixtures/seed.ts`, `tests/timesheet.spec.ts`, `tests/timesheet-store.spec.ts`, zrzuty wzorcowe.
+- R18: README („Nowości 1.8”, „Timesheet (TS)” w opisie ustawień, sekcja „Timesheet (Ideo TS)”, wiersz „Wersja w repozytorium”, „Weryfikacja 1.8.0”) i `notes.md` z notatkami wydania 1.8.0.
+
+**Do wydania (użytkownik):** scalić `release-1-8` do `master`, a potem na `master` uruchomić `npm run ship -- 1.8.0` (`RELEASE.md`, `scripts/ship.mjs`): podbija wersję w manifestach (obecnie nadal 1.7.4), buduje i podpisuje instalator kluczem z hasłem, publikuje w `matkrajnik/todo-track` z notatkami z `notes.md`, commituje, taguje `v1.8.0` i pushuje. Przygotowanie wydania nie zmieniało wersji, nie budowało instalatora, nie tworzyło tagu i nie ruszało `releases/`.
+
+Weryfikacja (20 października 2026, gałąź `release-1-8`):
+- `npm run build`: przechodzi.
+- Playwright: 296 testów z zrzutami wzorcowymi przechodzi (22 w `tests/timesheet.spec.ts`, 5 w `tests/timesheet-store.spec.ts`).
+- `cargo fmt --check` i 268 testów Rust (`cargo test --locked`): przechodzą (było 244 w 1.7.4).
+- `npm run tauri build` nie był uruchamiany (robi go `npm run ship`).
+
+Odstępstwa od planu:
+- R18 tylko przygotowuje wydanie: bez podniesienia wersji w pięciu plikach, bez `npm run tauri build`, instalatora w `releases/`, tagu i publikacji, które w `PLAN_1.8.md` są częścią R18 — od 1.7.4 robi to `npm run ship` na `master` (klucz podpisu z hasłem jest tylko u użytkownika).
+- Nic nie łączyło się z prawdziwym TS (`api.ts.ideo.pl`) ani nie było uruchamiane w natywnej aplikacji; zgodnie z planem ręczne testy nie są częścią zadań.
+- Zrzuty wzorcowe zregenerowane lokalnie i świadomie: `ustawienia-*` (nowa pozycja „Timesheet (TS)” na liście sekcji), `zamkniecie-dnia-*` (przycisk „Wyślij do TS”), nowe `ustawienia-timesheet-*` (4 pliki); żaden nie potwierdzony na windows-latest.
+- T5 scalił scenariusze e2e T2–T4 w jednym `tests/timesheet.spec.ts`; `tests/settings-tab.spec.ts` dostał jedną linię dla nowej sekcji.
+- Kropka w godzinach: istniejące wpisy TS zapisane z kropką (np. „1.5”) przy „Zachowaj” wracają do TS bez zmian, z kropką, obok naszych wartości z przecinkiem.
+
+Do ręcznego sprawdzenia z prawdziwym TS (po instalacji, przez użytkownika; najlepiej na dniu testowym, bo zapis zastępuje cały dzień; wymaga natywnej aplikacji i konta w Ideo TS):
+
+Format godzin:
+- Czy serwer przyjmuje godziny **z przecinkiem** („1,37”) i czy po zapisie `ts_filled` oddaje tę samą wartość, czy przelicza (np. na „1.37”, „1,25” albo odrzuca). Jeśli przyjmuje tylko kropkę, `ts_send` ma zamieniać przecinek na kropkę przed POST (jedna linia, bez zmiany raportu).
+- Czy akceptuje **dowolną liczbę miejsc po przecinku** (dwa, jak w raporcie), czy wymaga kroku **0,25 h** (albo 0,5 h). Jeśli wymaga kroku, dochodzi ustawienie „Zaokrąglaj godziny do 0,25 h” w sekcji Timesheet z ostrzeżeniem w podglądzie, że suma różni się od raportu.
+- Czy przyjmuje wartość „0” w `zadanie_godziny` (wpis z samymi nadgodzinami) i jak reaguje na wiersz z zerem — czy taki wpis trzeba pominąć.
+- Jaki jest limit długości `zadanie_opis` i czy średnik oraz polskie znaki przechodzą bez zmian.
+
+Pole `status`:
+- Co oznacza `status=0` w POST (prawdopodobnie „roboczy / niezatwierdzony”) i czy po zapisie formularz da się dalej edytować. Czy istnieje inna wartość (np. `1` = „wyślij do akceptacji”) i czy dzień zatwierdzony przez przełożonego da się nadpisać z aplikacji, czy serwer odpowiada błędem (jakim kodem i treścią) — na tej podstawie komunikat w `status_error`.
+
+Lista zadań:
+- Czy lista zadań w `GET /timesheet/wypelnij?dzien=` **różni się między dniami** (np. zadania zamknięte w połowie miesiąca znikają z późniejszych dni, a są w starszych). Jeśli tak, pamięć podręczna listy w edycji zadania (dla dzisiaj) jest tylko podpowiedzią, a ostrzeżenie „nie występuje na liście tego dnia” w podglądzie ma znaczenie; jeśli nie, można pobierać listę rzadziej.
+- Czy identyfikatory zadań (`option value`) są stabilne w czasie (to one są zapisane w `tsTaskId`).
+
+Zastępowanie dnia:
+- Czy zapis z pominięciem istniejących wpisów **faktycznie je usuwa** (po POST z jednym wpisem na dniu z dwoma, `ts_filled` zwraca jeden). Jeśli serwer scala zamiast zastępować, „Zachowaj pozostałe wpisy TS” jest zbędne i może zostać ukryte, a „Zastąp wszystko” wymaga innego mechanizmu (np. wysłania pustych wierszy).
+- Czy POST bez żadnego wpisu czyści dzień (potrzebne do ewentualnego „Wyczyść dzień w TS”; nie jest w planie).
+- Czy odpowiedź na POST to 3xx (przekierowanie do formularza) czy 200 z HTML, i czy przy błędzie walidacji serwer oddaje 200 ze stroną z komunikatem (wtedy `ts_send` musi wykrywać błąd po odczycie `ts_filled`, nie po kodzie HTTP).
+
+Sesja:
+- Czy logowanie `POST /api/login` z nowym `deviceId` wymaga dodatkowego potwierdzenia (np. e-mail) i czy po restarcie aplikacji logowanie hasłem z magazynu przechodzi bez pytań.
+- Czy ciasteczko z `GET /api/user/identity` wystarcza do stron `/timesheet/*` i czy po `token/refresh` trzeba je odnawiać (konektor odnawia; sprawdzić, czy stare nie przestaje działać).
+- Rzeczywisty czas życia tokenu (`exp` w JWT czy `expires`), żeby potwierdzić wyliczenie z T1; zachowanie po dłuższej przerwie (godzina, noc) — czy pierwsza wysyłka po przerwie przechodzi bez błędu.
+- Hasło po „Rozłącz” znika z Menedżera poświadczeń Windows (`pl.todotrack.desktop.timesheet`).
+
+Uwagi zgłoszone przez zadania:
+
+T2 (mapowanie):
+- Z prawdziwym połączeniem lista „Zadanie TS” w rozwiniętym kafelku ładuje się raz na uruchomienie aplikacji, a „Odśwież” ładuje ją ponownie. Sprawdzić, ile trwa pierwsze rozwinięcie (pobiera formularz dnia z TS).
+- Po restarcie aplikacji (sesja tylko w pamięci) pierwsze rozwinięcie kafelka loguje się ponownie hasłem z Menedżera poświadczeń Windows. Sprawdzić, że w kafelku nie pokazuje się błąd; przy niepowodzeniu komunikat ma postać „Nie udało się pobrać listy zadań TS: …”.
+- W aplikacji desktopowej sprawdzić, że `tsTaskId` i `tsTaskName` przeżywają zapis „Plan i notatki”, zmianę priorytetu, przeciąganie i tablicę tygodnia (wszystko przez `planner::save` albo `json_set`).
+- Nazwy grup (`optgroup`) i zadań z prawdziwego TS: długie nazwy i znaki specjalne w liście wyboru oraz zgodność zapisanej nazwy z tekstem zadania w TS.
+- Mapowanie nazw projektów z polskimi literami w różnej wielkości (np. „Zespół” i „ZESPÓŁ”) daje dwa osobne mapowania (`COLLATE NOCASE` porównuje tylko ASCII); zdecydować, czy to akceptowalne.
+
+T3 (podgląd i wysyłka):
+- Zadanie z bardzo małym czasem (poniżej około 18 s) daje wpis „0,00” h; pomijane są tylko wiersze z dokładnie zerowym czasem. Sprawdzić, czy TS przyjmuje „0,00” w `zadanie_godziny`, czy takie wiersze trzeba pomijać.
+- Po zapisie w trybie „Zachowaj” dialog porównuje odczyt z wpisami odczytanymi przy otwarciu, a backend sam ponownie pobiera `ts_filled`. Jeśli ktoś zmieni dzień w TS między otwarciem a zapisem, może pojawić się fałszywe ostrzeżenie „TS zapisał inne wartości niż wysłane”. Ocenić, czy to akceptowalne.
+- Tolerancja porównania po zapisie to 0,01 h. Jeśli TS zaokrągla do kroku (np. 0,25), ostrzeżenie pojawi się przy prawie każdej wysyłce — potwierdzić prawdziwym zapisem.
+- Znacznik „Wysłano do TS dd.MM HH:mm (Y h)” pokazuje sumę z TS odczytaną po zapisie, a dopisek „raport zmienił się od wysyłki” porównuje z lokalnie zapamiętaną sumą wysłanych wpisów raportu. Sprawdzić na innym komputerze albo po wyczyszczeniu danych WebView2, gdzie porównanie wraca do sumy z TS i może pokazać dopisek mimo niezmienionego raportu.
+- Przycisk pojawia się dopiero po odpowiedzi `ts_settings` (połączono). W natywnej aplikacji sprawdzić, że po połączeniu konta w Ustawieniach przycisk pojawia się po powrocie do okna albo zmianie dnia (odświeżenie przy fokusie okna i zmianie dnia).
+
+T4 (Ustawienia → Timesheet):
+- Po „Połącz” pole „Identyfikator urządzenia” w „Zaawansowane” pokazuje wygenerowany 32-znakowy identyfikator i nie zmienia się po ponownym połączeniu.
+- „Testuj połączenie” pokazuje prawdziwą liczbę zadań i projektów z dzisiejszego formularza; przy złym albo wygasłym haśle polski komunikat z backendu.
+- Po „Rozłącz” wpis dla adresu TS i loginu znika z Menedżera poświadczeń Windows, a login i identyfikator urządzenia zostają w sekcji po restarcie aplikacji.
+- Zmiana „Adres API” w „Zaawansowane” i „Połącz” używa nowego adresu i usuwa poświadczenie dla starego adresu i loginu.
+- Wyłączenie „Wysyłaj raport TS” blokuje też `ts_send` w backendzie: wysyłka rozpoczęta wcześniej z otwartego podglądu kończy się komunikatem „Wysyłka do TS jest wyłączona…”, który prowadzi do Ustawienia → Timesheet.
+- Długie nazwy prawdziwych projektów i zadań TS w tabeli mapowań i listach wyboru.
+
+T5 (podgląd i e2e):
+- W natywnej aplikacji: po „Połącz” albo „Rozłącz” w Ustawieniach → Timesheet otwarty Raport dnia (KeepAlive) i rozwinięty kafelek od razu pokazują albo chowają „Wyślij do TS” i listę „Zadanie TS”, bez zdarzenia fokusu okna. Powiadamiane jest tylko to samo okno; widget i inne okna nie nasłuchują.
+- Po „Zapisz w TS” w aplikacji desktopowej znacznik wysyłki pokazuje czas i sumę z `ts_sent_days` odczytane z prawdziwego TS (4,00 h w teście e2e pochodzi z symulowanego TS, który zapisuje godziny dokładnie jak wysłane).
+- Z prawdziwym TS: istniejący wpis z godzinami z kropką (np. „1.5”) przeniesiony przy „Zachowaj” wraca do TS bez zmian, z kropką. Sprawdzić, czy serwer przyjmuje go obok wartości z przecinkiem w tym samym POST.
 
 ## W toku: automatyczne aktualizacje (19 października 2026)
 
