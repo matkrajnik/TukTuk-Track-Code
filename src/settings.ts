@@ -64,6 +64,8 @@ export interface AppSettings {
   notifyWeekReview: boolean;
   /** Godzina powiadomienia „Przegląd tygodnia” (GG:MM). */
   weekReviewTime: string;
+  /** Sprawdzaj aktualizacje przy starcie i raz dziennie (`updater.ts`). */
+  autoUpdateCheck: boolean;
   /** Główny przełącznik wysyłki Raportu TS (Ideo Timesheet); wyłączony blokuje też backend. */
   tsSend: boolean;
 }
@@ -121,6 +123,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   ],
   notifyWeekReview: true,
   weekReviewTime: "15:00",
+  autoUpdateCheck: true,
   tsSend: true,
 });
 const key = "todo-track-preview-settings-v1";

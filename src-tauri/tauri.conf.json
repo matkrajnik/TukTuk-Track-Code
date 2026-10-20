@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Todo Track",
-  "version": "1.7.3",
+  "version": "1.7.4",
   "identifier": "pl.todotrack.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -68,12 +68,24 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data:; connect-src ipc: http://ipc.localhost https://github.com https://objects.githubusercontent.com https://release-assets.githubusercontent.com"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/matkrajnik/todo-track/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCRTExMjYzNzcxOTVCQTIKUldTaVd4bDNZeExoUzZBSjJ1b1ljMExyZThSRW5CcWJ2eFgvVC96RU1IVkdKTVNJUHhQL0FOTjMK",
+      "windows": {
+        "installMode": "passive"
+      }
     }
   },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "resources": { "../browser-extension/": "browser-extension/" },
     "publisher": "todotrack",

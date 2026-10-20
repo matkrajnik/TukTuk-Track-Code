@@ -8,3 +8,5 @@ playwright-report/
 # Klucz prywatny i paczki rozszerzenia przeglądarki (klucz trzymamy poza repozytorium).
 *.pem
 *.crx
+# Klucz prywatny podpisu aktualizacji (RELEASE.md): trzymany poza repozytorium.
+*.key

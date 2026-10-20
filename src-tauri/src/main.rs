@@ -119,6 +119,21 @@ fn quick_open(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit_to("quick", "quick-open", ());
     Ok(())
 }
+/// Przed instalacją aktualizacji (`src/updater.ts`, między pobraniem a `install()`):
+/// koniec bieżącego pomiaru i zapis stanu okien jak przy `--prepare-update`, bo
+/// w Windows plugin updater po uruchomieniu instalatora kończy proces od razu,
+/// bez zdarzeń zamknięcia okien.
+#[tauri::command]
+fn prepare_update(app: tauri::AppHandle) -> Result<(), String> {
+    {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        db::stop(&db, db::now()).map_err(|e| e.to_string())?;
+    }
+    window_state::save(&app);
+    let _ = app.emit("data-changed", ());
+    Ok(())
+}
 /// Informacje spoza ustawień: wersja i błędy rejestracji skrótów globalnych.
 #[tauri::command]
 fn app_info(app: tauri::AppHandle) -> serde_json::Value {
@@ -283,6 +298,11 @@ fn main() {
         )
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Aktualizacje z publicznego repozytorium wydań (RELEASE.md): sprawdzanie
+        // i pobieranie wywołuje frontend (`src/updater.ts`), instalator NSIS startuje
+        // w trybie pasywnym i uruchamia aplikację ponownie.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(window_state::plugin())
         .plugin(autostart::plugin())
         .plugin(tauri_plugin_single_instance::init(|app, args, _| {
@@ -439,6 +459,7 @@ fn main() {
             quick_open,
             shortcuts::toggle_measurement,
             app_info,
+            prepare_update,
             settings::get_settings,
             settings::set_settings,
             autostart::autostart_get,

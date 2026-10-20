@@ -1,6 +1,6 @@
 [package]
 name = "todo-track"
-version = "1.7.3"
+version = "1.7.4"
 edition = "2021"
 # Główny program aplikacji; `todo-track-bridge` to host native messaging (W4).
 default-run = "todo-track"
@@ -38,6 +38,8 @@ rust_xlsxwriter = "=0.99.1"
 sha2 = "=0.10.9"
 base64 = "=0.22.1"
 getrandom = "=0.3.4"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 # Parser HTML formularza dnia Ideo Timesheet (PLAN_1.8.md, T1).
 scraper = { version = "=0.27.0", default-features = false }
 
