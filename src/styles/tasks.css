@@ -220,12 +220,17 @@
   align-items: center;
   gap: 3px 8px;
 }
-.task-jira-key {
+/*
+ * Klucz i status zgłoszenia (Jira albo Redmine, `issueRef`); obok klasy
+ * ogólnej element ma klasę systemu (`task-jira-*` / `task-redmine-*`) do
+ * wskazywania w testach, bez własnego stylu.
+ */
+.task-issue-key {
   font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--muted);
 }
-.task-jira-status {
+.task-issue-status {
   font-size: var(--fs-xs);
   line-height: 1.5;
   padding: 0 6px;

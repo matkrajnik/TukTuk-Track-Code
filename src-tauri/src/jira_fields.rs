@@ -204,10 +204,13 @@ pub fn priority_band(name: &str) -> Option<i32> {
         "blocker",
         "major",
         "urgent",
+        // Priorytety Redmine (PLAN_1.9.md, R2).
+        "immediate",
         "najwyższy",
         "wysoki",
         "krytyczny",
         "pilny",
+        "natychmiastowy",
     ]
     .contains(&n.as_str())
     {
@@ -628,6 +631,20 @@ mod tests {
         assert_eq!(priority_band("Najniższy"), Some(-1));
         assert_eq!(priority_band(""), None);
         assert_eq!(priority_band("P3"), None);
+    }
+
+    #[test]
+    fn maps_redmine_priority_names_to_bands() {
+        // Priorytety Redmine (PLAN_1.9.md, R2): Immediate i Urgent to pasmo
+        // wysokie, Normal zwykłe, Low niskie; polskie nazwy tak samo.
+        assert_eq!(priority_band("Immediate"), Some(1));
+        assert_eq!(priority_band("Natychmiastowy"), Some(1));
+        assert_eq!(priority_band("Urgent"), Some(1));
+        assert_eq!(priority_band("pilny"), Some(1));
+        assert_eq!(priority_band("Normal"), Some(0));
+        assert_eq!(priority_band("Normalny"), Some(0));
+        assert_eq!(priority_band("Low"), Some(-1));
+        assert_eq!(priority_band("Niski"), Some(-1));
     }
 
     #[test]

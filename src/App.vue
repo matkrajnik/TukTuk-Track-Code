@@ -15,6 +15,7 @@ import { refreshFocus } from "./focus";
 import TasksView from "./views/TasksView.vue";
 import ReportsView from "./views/ReportsView.vue";
 import JiraView from "./JiraView.vue";
+import RedmineView from "./RedmineView.vue";
 import QuickSwitch from "./QuickSwitch.vue";
 import LibraryView from "./LibraryView.vue";
 import DashboardView from "./DashboardView.vue";
@@ -139,6 +140,7 @@ const views: View[] = [
   "tasks",
   "reports",
   "jira",
+  "redmine",
   "dashboard",
   "journal",
   "library",
@@ -396,6 +398,13 @@ onUnmounted(() => {
       <JiraView
         v-else-if="view === 'jira'"
         :active-url="activeTask?.jiraUrl"
+        :data="data"
+        :now="now"
+        @updated="updated"
+        @stop="act('stop')"
+      />
+      <RedmineView
+        v-else-if="view === 'redmine'"
         :data="data"
         :now="now"
         @updated="updated"

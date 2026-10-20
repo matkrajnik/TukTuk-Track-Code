@@ -20,18 +20,24 @@ import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
 import JiraIssueActions from "./JiraIssueActions.vue";
 import JiraFieldChips from "./JiraFieldChips.vue";
+import RedmineIssueActions from "./RedmineIssueActions.vue";
 import {
   desktop,
   duration,
   jiraConnected,
   jiraTransition,
   jiraTransitions,
+  redmineConnected,
+  redmineOpen,
+  redmineTransition,
+  redmineTransitions,
   saveTemplate,
   setJiraNoAsk,
   setPinned,
   setWaiting,
   templateFromTask,
   type JiraTransition,
+  type RedmineStatus,
   type WaitingChange,
   type Session,
   type Snapshot,
@@ -43,6 +49,7 @@ import { openSettings } from "../navigation";
 import { estimateMs, overEstimate, percent, type CorrectionOf } from "../estimates";
 import { useSettings } from "../target";
 import { waitingAge, waitingProposal } from "../recurrence";
+import { dueChip, issueRef, statusTitle, type IssueRef } from "../issue";
 import TsTaskField from "./TsTaskField.vue";
 import { resolveTsTask } from "../timesheet";
 import { useTsProjectMap } from "../composables/useTsProjectMap";
@@ -118,7 +125,16 @@ async function saveAsTemplate() {
     templateBusy.value = false;
   }
 }
-/** „Czekam na”: od kiedy trwa blokada i propozycja ze statusu Jiry. */
+/** Zgłoszenie zadania (Jira albo Redmine): klucz, status, link na kafelku. */
+const issue = computed(() => issueRef(props.task));
+/** Chipy Redmine: tracker i termin „DD.MM” (stały zestaw, odpowiednik `JiraFieldChips`). */
+const redmineDue = computed(() =>
+  issue.value?.system === "redmine" ? dueChip(props.task.redmineDue) : "",
+);
+/**
+ * „Czekam na”: od kiedy trwa blokada i propozycja ze statusu zgłoszenia
+ * (lista statusów czekania zależy od systemu zgłoszenia).
+ */
 const settings = useSettings();
 const waitingSince = computed(() =>
   props.task.details?.waiting && !props.task.done
@@ -126,7 +142,12 @@ const waitingSince = computed(() =>
     : "",
 );
 const proposal = computed(() =>
-  waitingProposal(props.task, settings.value.waitingJiraStatuses ?? []),
+  waitingProposal(
+    props.task,
+    (issue.value?.system === "redmine"
+      ? settings.value.waitingRedmineStatuses
+      : settings.value.waitingJiraStatuses) ?? [],
+  ),
 );
 const waitingBusy = ref(false);
 async function changeWaiting(change: WaitingChange) {
@@ -185,9 +206,39 @@ const moveTo = (t: JiraTransition) =>
   });
 const askAgain = () =>
   jiraRun(async () => emit("updated", await setJiraNoAsk(props.task.id, false)));
+/**
+ * „Przesuń w Redmine…” (PLAN_1.9.md, R4): dozwolone statusy zgłoszenia bez
+ * bieżącego; status zmienia się tylko po kliknięciu.
+ */
+const redmineList = ref<RedmineStatus[] | null>(null);
+const openRedmineList = () =>
+  jiraRun(async () => {
+    redmineList.value =
+      redmineList.value === null ? await redmineTransitions(props.task.id) : null;
+  });
+const redmineMoveTo = (s: RedmineStatus) =>
+  jiraRun(async () => {
+    emit("updated", await redmineTransition(props.task.id, s.id));
+    redmineList.value = null;
+  });
+/** Zapisy do systemu zgłoszenia zadania włączone (`jiraWrite` / `redmineWrite`). */
+const issueWrite = computed(() =>
+  issue.value?.system === "redmine"
+    ? settings.value.redmineWrite
+    : settings.value.jiraWrite,
+);
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
+  } catch (e) {
+    emit("error", String(e));
+  }
+}
+/** „Otwórz w Jirze” / „Otwórz w Redmine”: link tylko pod adresem skonfigurowanego konta. */
+async function openIssue(ref: IssueRef) {
+  if (ref.system === "jira") return openJira(ref.url);
+  try {
+    await redmineOpen(ref.url);
   } catch (e) {
     emit("error", String(e));
   }
@@ -233,7 +284,7 @@ async function openJira(url: string) {
           <span class="task-title">{{ task.title }}</span>
           <span
             v-if="
-              task.jiraKey ||
+              issue ||
               task.details?.project ||
               tsTask ||
               plannedLabel ||
@@ -265,16 +316,32 @@ async function openJira(url: string) {
               :title="'Zaplanowane: ' + task.details?.plannedDay"
               >{{ plannedLabel }}</span
             >
-            <span v-if="task.jiraKey" class="task-jira-key mono">{{
-              task.jiraKey
-            }}</span>
             <span
-              v-if="task.jiraKey && task.jiraStatus"
-              class="task-jira-status"
-              :title="'Status w Jirze: ' + task.jiraStatus"
-              >{{ task.jiraStatus }}</span
+              v-if="issue"
+              class="task-issue-key mono"
+              :class="`task-${issue.system}-key`"
+              >{{ issue.key }}</span
+            >
+            <span
+              v-if="issue?.status"
+              class="task-issue-status"
+              :class="`task-${issue.system}-status`"
+              :title="statusTitle(issue)"
+              >{{ issue.status }}</span
             >
             <JiraFieldChips v-if="task.jiraKey" :fields="task.jiraFields" />
+            <span
+              v-if="issue?.system === 'redmine' && task.redmineTracker"
+              class="task-chip task-redmine-tracker"
+              title="Tracker w Redmine"
+              >{{ task.redmineTracker }}</span
+            >
+            <span
+              v-if="redmineDue"
+              class="task-chip task-redmine-due"
+              :title="'Termin w Redmine: ' + task.redmineDue"
+              >termin {{ redmineDue }}</span
+            >
             <span v-if="task.details?.waiting && !task.done" class="task-status"
               >Czekam na: {{ task.details.waiting
               }}<template v-if="waitingSince"> · {{ waitingSince }}</template></span
@@ -337,13 +404,13 @@ async function openJira(url: string) {
       <span v-else class="done-label">Gotowe</span>
     </div>
     <div
-      v-if="proposal"
+      v-if="proposal && issue"
       class="waiting-proposal"
       role="group"
-      :aria-label="'Propozycja z Jiry: ' + task.title"
+      :aria-label="`Propozycja z ${issue.system === 'jira' ? 'Jiry' : 'Redmine'}: ${task.title}`"
     >
       <span
-        >Jira: {{ proposal.status }} —
+        >{{ issue.label }}: {{ proposal.status }} —
         {{
           proposal.action === "block"
             ? "oznaczyć jako czekam na?"
@@ -356,7 +423,7 @@ async function openJira(url: string) {
         @click="
           changeWaiting(
             proposal.action === 'block'
-              ? { action: 'block', text: 'Jira: ' + proposal.status }
+              ? { action: 'block', text: `${issue.label}: ${proposal.status}` }
               : { action: 'unblock' },
           )
         "
@@ -374,12 +441,12 @@ async function openJira(url: string) {
     <div v-if="expanded" :id="'sessions-' + task.id" class="task-details">
       <div class="details-actions" role="group" aria-label="Akcje zadania">
         <button
-          v-if="task.jiraUrl"
+          v-if="issue?.url"
           class="action-button"
-          :aria-label="'Otwórz w Jirze: ' + task.jiraKey"
-          @click="openJira(task.jiraUrl)"
+          :aria-label="`Otwórz w ${issue.system === 'jira' ? 'Jirze' : 'Redmine'}: ${issue.key}`"
+          @click="openIssue(issue)"
         >
-          <ExternalLink :size="14" />{{ task.jiraKey }}
+          <ExternalLink :size="14" />{{ issue.key }}
         </button>
         <button
           v-if="task.jiraKey && settings.jiraWrite"
@@ -391,6 +458,17 @@ async function openJira(url: string) {
           @click="openMoveList"
         >
           <ArrowRightCircle :size="14" />Przesuń w Jirze…
+        </button>
+        <button
+          v-if="issue?.system === 'redmine' && settings.redmineWrite"
+          class="action-button"
+          :aria-label="'Przesuń w Redmine: ' + issue.key"
+          :aria-expanded="redmineList !== null"
+          :disabled="moveBusy"
+          title="Wybierz nowy status zgłoszenia w Redmine"
+          @click="openRedmineList"
+        >
+          <ArrowRightCircle :size="14" />Przesuń w Redmine…
         </button>
         <span class="details-actions-spacer" />
         <button
@@ -467,6 +545,30 @@ async function openJira(url: string) {
         </button>
         <button class="action-button" @click="moveList = null">Anuluj</button>
       </div>
+      <div
+        v-if="redmineList !== null && issue?.system === 'redmine'"
+        class="jira-move-list redmine-move-list"
+        role="group"
+        :aria-label="'Statusy w Redmine: ' + issue.key"
+      >
+        <span v-if="redmineList.length"
+          >{{ issue.key }}<template v-if="issue.status">
+            ({{ issue.status }})</template
+          >:</span
+        >
+        <span v-else>Redmine nie ma dozwolonych statusów dla {{ issue.key }}.</span>
+        <button
+          v-for="s in redmineList"
+          :key="s.id"
+          class="action-button"
+          :disabled="moveBusy"
+          :aria-label="`Przesuń ${issue.key} do: ${s.name}`"
+          @click="redmineMoveTo(s)"
+        >
+          {{ s.name }}
+        </button>
+        <button class="action-button" @click="redmineList = null">Anuluj</button>
+      </div>
       <p v-if="moveError" class="jira-move-error" role="alert">
         {{ moveError }}
         <button
@@ -477,17 +579,29 @@ async function openJira(url: string) {
         >
           Otwórz {{ task.jiraKey }} w Jirze
         </button>
+        <button
+          v-else-if="issue?.system === 'redmine' && issue.url"
+          type="button"
+          class="text-link"
+          @click="openIssue(issue)"
+        >
+          Otwórz {{ issue.key }} w Redmine
+        </button>
       </p>
       <JiraIssueActions
         v-if="task.jiraKey && jiraConnected"
         :issue-key="task.jiraKey"
         :summary="task.title"
       />
+      <RedmineIssueActions
+        v-if="issue?.system === 'redmine' && task.redmineId && redmineConnected"
+        :issue-id="task.redmineId"
+      />
       <p
-        v-if="task.jiraKey && task.details?.jiraNoAsk && settings.jiraWrite"
+        v-if="issue && task.details?.jiraNoAsk && issueWrite"
         class="hint jira-no-ask"
       >
-        Bez pytania o przesunięcie {{ task.jiraKey }} przy starcie pracy.
+        Bez pytania o przesunięcie {{ issue.key }} przy starcie pracy.
         <button
           type="button"
           class="text-link"

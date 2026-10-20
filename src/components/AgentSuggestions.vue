@@ -43,9 +43,12 @@ const who = (s: Suggestion) =>
 /** Nazwa zadania do etykiet przycisków. */
 const name = (task: AgentTask) =>
   task.title || task.key || "zadanie bez tytułu";
+/** Zgłoszenie Redmine (`#1234`, R3) albo Jira: z którego systemu powstanie zadanie. */
+const origin = (task: AgentTask) =>
+  task.source === "redmine" || task.key?.startsWith("#") ? "Redmine" : "Jiry";
 const label = (task: AgentTask) =>
   task.taskId == null
-    ? `${task.key}${task.title ? `: ${task.title}` : ""} (zadanie powstanie z Jiry)`
+    ? `${task.key}${task.title ? `: ${task.title}` : ""} (zadanie powstanie z ${origin(task)})`
     : `„${task.title}”`;
 const folders = (s: Suggestion) =>
   [...new Set(s.agents.map((a) => a.cwd).filter(Boolean))].join(", ");

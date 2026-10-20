@@ -120,13 +120,15 @@ pub fn menu_label(active: Option<&str>) -> String {
 pub struct Pin {
     pub task_id: i64,
     pub title: String,
+    /// Klucz zgłoszenia do wyświetlenia: z Jiry (`WMS-12`) albo z Redmine
+    /// (`#1234`); zadanie ma najwyżej jedno zgłoszenie.
     pub jira_key: Option<String>,
     /// Zadanie jest teraz mierzone (pozycja nieaktywna).
     pub current: bool,
 }
 
-/// „▶ WMS-12 · Poprawka logowania” dla mierzonego, „WMS-12 · …” dla pozostałych;
-/// `&` podwojone jak w `menu_label`.
+/// „▶ WMS-12 · Poprawka logowania” dla mierzonego, „WMS-12 · …” (albo
+/// „#1234 · …” dla Redmine) dla pozostałych; `&` podwojone jak w `menu_label`.
 pub fn pin_label(pin: &Pin) -> String {
     let title = one_line(&pin.title);
     let text = match &pin.jira_key {
@@ -144,10 +146,11 @@ pub fn pin_label(pin: &Pin) -> String {
 /// Przypięte otwarte zadania w kolejności przypięcia (`pinnedTasks` w widgecie).
 pub fn read_pins(db: &Connection) -> rusqlite::Result<Vec<Pin>> {
     db.prepare(
-        "SELECT t.id, t.title, j.issue_key,
+        "SELECT t.id, t.title, COALESCE(j.issue_key, '#' || r.issue_id),
                 EXISTS(SELECT 1 FROM sessions s WHERE s.task_id=t.id AND s.ended_at IS NULL)
          FROM tasks t JOIN task_details d ON d.task_id=t.id
          LEFT JOIN jira_tasks j ON j.task_id=t.id
+         LEFT JOIN redmine_tasks r ON r.task_id=t.id
          LEFT JOIN task_lifecycle l ON l.task_id=t.id
          WHERE t.done=0 AND COALESCE(l.archived,0)=0 AND l.deleted_at IS NULL
            AND COALESCE(json_extract(d.json,'$.pinnedAt'),0)>0
@@ -575,6 +578,22 @@ mod tests {
         });
         assert_eq!(long.chars().count(), MENU_TITLE_LIMIT);
         assert!(long.ends_with('…'));
+    }
+
+    #[test]
+    fn pins_show_redmine_number_like_jira_key() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("Import CSV".into()), 0).unwrap();
+        db.execute(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl',1234)",
+            [],
+        )
+        .unwrap();
+        crate::planner::set_pinned(&mut db, 1, true, 10).unwrap();
+        let pins = read_pins(&db).unwrap();
+        assert_eq!(pins[0].jira_key.as_deref(), Some("#1234"));
+        assert_eq!(pin_label(&pins[0]), "#1234 · Import CSV");
     }
 
     #[test]

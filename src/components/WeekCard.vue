@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { nextTick, ref } from "vue";
+import { computed, nextTick, ref } from "vue";
 import type { Task } from "../store";
 import { hhmm } from "../target";
 import { dayMonth, dayText } from "../time";
+import { issueRef, statusTitle } from "../issue";
 import ReorderHandle from "./ReorderHandle.vue";
 import JiraFieldChips from "./JiraFieldChips.vue";
 
 /**
  * Karta zadania na tablicy tygodnia: tytuł, projekt, szacunek z procentem
- * wykonania, znacznik Jiry, status oraz menu „Przenieś na…” (alternatywa
- * przeciągania, używana też w testach).
+ * wykonania, klucz i status zgłoszenia (Jira albo Redmine, `issueRef`) oraz
+ * menu „Przenieś na…” (alternatywa przeciągania, używana też w testach).
  */
 const props = defineProps<{
   task: Task;
@@ -32,6 +33,8 @@ const open = ref(false);
 const menu = ref<HTMLElement | null>(null);
 const toggle = ref<HTMLButtonElement | null>(null);
 const current = () => props.task.details?.plannedDay ?? "";
+/** Zgłoszenie zadania (Jira albo Redmine) do klucza i statusu na karcie. */
+const issue = computed(() => issueRef(props.task));
 
 const items = () => [
   ...(menu.value?.querySelectorAll<HTMLElement>(
@@ -89,14 +92,18 @@ function arrows(event: KeyboardEvent) {
         >Plan {{ dayText(task.details!.plannedDay) }}</span
       >
       <span v-if="task.details?.project">{{ task.details.project }}</span>
-      <span v-if="task.jiraKey" class="task-jira-key mono">{{
-        task.jiraKey
-      }}</span>
       <span
-        v-if="task.jiraKey && task.jiraStatus"
-        class="task-jira-status"
-        :title="'Status w Jirze: ' + task.jiraStatus"
-        >{{ task.jiraStatus }}</span
+        v-if="issue"
+        class="task-issue-key mono"
+        :class="`task-${issue.system}-key`"
+        >{{ issue.key }}</span
+      >
+      <span
+        v-if="issue?.status"
+        class="task-issue-status"
+        :class="`task-${issue.system}-status`"
+        :title="statusTitle(issue)"
+        >{{ issue.status }}</span
       >
       <JiraFieldChips v-if="task.jiraKey" :fields="task.jiraFields" />
       <span

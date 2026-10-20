@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { duration, type Snapshot, type Task } from "../store";
+import { issueRef } from "../issue";
 import { dayBounds, dayKey } from "../time";
 import { addToDays, closedDayTotals, decimalHours } from "../report";
 import { holidays } from "../holidays";
@@ -335,7 +336,7 @@ const running = computed(
           <tbody>
             <tr v-for="row in taskTableRows" :key="row.task.id">
               <td>{{ row.task.title }}</td>
-              <td class="mono">{{ row.task.jiraKey ?? "" }}</td>
+              <td class="mono">{{ issueRef(row.task)?.key ?? "" }}</td>
               <td>{{ row.project }}</td>
               <td class="mono">{{ hhmm(row.total) }}</td>
               <td class="mono">{{ decimalHours(row.total) }}</td>

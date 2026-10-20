@@ -5,6 +5,7 @@
  * czasu nie przesuwała dni.
  */
 import { holidayName } from "./holidays";
+import { issueRef, type IssueFields } from "./issue";
 
 /**
  * Reguła cyklu w `task_details` (`repeatRule`):
@@ -187,10 +188,8 @@ export function waitingAge(since: number | undefined, now: number): string {
   return days === 1 ? "od 1 dnia" : `od ${days} dni`;
 }
 
-interface WaitingTask {
+interface WaitingTask extends IssueFields {
   done: boolean;
-  jiraKey?: string | null;
-  jiraStatus?: string | null;
   details?: {
     waiting?: string;
     waitingStatus?: string;
@@ -203,12 +202,13 @@ export interface WaitingProposal {
   status: string;
 }
 const fold = (v: string) => v.trim().toLocaleLowerCase("pl");
-/** Czy status Jiry jest na liście statusów oznaczających czekanie. */
+/** Czy status zgłoszenia jest na liście statusów oznaczających czekanie. */
 export const waitingStatus = (statuses: readonly string[], status: string) =>
   statuses.some((s) => fold(s) === fold(status));
 
 /**
- * Propozycja na kafelku zadania z Jiry. Nic nie zmienia się samo:
+ * Propozycja na kafelku zadania ze zgłoszeniem (Jira albo Redmine; lista
+ * statusów zależy od systemu — `issueRef(task).system`). Nic nie zmienia się samo:
  * - zadanie bez blokady, a zgłoszenie w statusie czekania → „oznaczyć?”,
  * - blokada zapisana przy statusie czekania, a zgłoszenie już w innym → „odblokować?”.
  * Propozycja odrzucona („Nie teraz”, odblokowanie, start) nie wraca dla tego statusu.
@@ -217,8 +217,9 @@ export function waitingProposal(
   task: WaitingTask,
   statuses: readonly string[],
 ): WaitingProposal | null {
-  const status = task.jiraStatus?.trim() ?? "";
-  if (task.done || !task.jiraKey || !status) return null;
+  const issue = issueRef(task);
+  const status = issue?.status ?? "";
+  if (task.done || !issue || !status) return null;
   const d = task.details ?? {};
   if (d.waitingDismissed && fold(d.waitingDismissed) === fold(status)) return null;
   const inWaiting = waitingStatus(statuses, status);

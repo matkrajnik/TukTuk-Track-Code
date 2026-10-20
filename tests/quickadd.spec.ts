@@ -5,6 +5,7 @@ import {
   parse,
   removeToken,
   renderTitle,
+  unknownTitle,
 } from "../src/quickadd";
 
 // Testy jednostkowe parsera składni szybkiego dodawania (bez przeglądarki).
@@ -260,4 +261,87 @@ test("parser helpers: removing a chip token and Tab completion", () => {
   });
   expect(complete("Raport #x", 9, settings)).toBeNull();
   expect(complete("Raport", 6, settings)).toBeNull();
+});
+
+// Zgłoszenie Redmine `#1234` (PLAN_1.9.md, R2).
+
+test("parser: #1234 with connected Redmine is an issue, with a chip and no title", () => {
+  const on = { ...settings, redmineEnabled: true };
+  const r = parse("#1234", TODAY, on);
+  expect(r.errors).toEqual([]);
+  expect(r.title).toBe("");
+  expect(r.fields).toEqual({ redmineId: 1234 });
+  expect(r.tokens).toEqual([
+    expect.objectContaining({ kind: "redmine", text: "#1234", label: "Redmine: #1234" }),
+  ]);
+  // Numer w dowolnym miejscu linii, razem z innymi zapisami.
+  const full = parse("Poprawka importu ~1h #1234 @pt", TODAY, on);
+  expect(full.title).toBe("Poprawka importu");
+  expect(full.fields).toEqual({
+    estimateMinutes: 60,
+    redmineId: 1234,
+    plannedDay: "2026-10-16",
+  });
+  // Dwa numery: błąd „podano dwa razy”.
+  const twice = parse("#1 #2 Raport", TODAY, on);
+  expect(twice.fields.redmineId).toBe(1);
+  expect(twice.errors).toEqual(["Podano dwa razy: zgłoszenie Redmine."]);
+  // `#0` nie jest numerem zgłoszenia: projekt „0” jak dotąd.
+  expect(parse("Raport #0", TODAY, on).fields).toEqual({ project: "0" });
+  // Istniejący projekt o nazwie z cyfr przegrywa z numerem zgłoszenia.
+  expect(parse("Raport #1234", TODAY, { ...on, projects: ["1234"] }).fields).toEqual({
+    redmineId: 1234,
+  });
+});
+
+test("parser: without connected Redmine #1234 is a project, #abc always is", () => {
+  for (const s of [settings, { ...settings, redmineEnabled: false }]) {
+    const r = parse("Raport #1234", TODAY, s);
+    expect(r.fields).toEqual({ project: "1234" });
+    expect(r.tokens.map((t) => t.label)).toEqual(["Projekt: 1234"]);
+  }
+  const on = { ...settings, redmineEnabled: true };
+  expect(parse("Raport #abc", TODAY, on).fields).toEqual({ project: "abc" });
+  expect(parse("Raport #wms", TODAY, on).fields).toEqual({ project: "WMS" });
+  // Litery i cyfry razem to nazwa projektu, nie numer.
+  expect(parse("Raport #12a", TODAY, on).fields).toEqual({ project: "12a" });
+  expect(parse("Raport #a12", TODAY, on).fields).toEqual({ project: "a12" });
+});
+
+test("parser: \\#1234 is literal text in the title", () => {
+  const on = { ...settings, redmineEnabled: true };
+  const r = parse("Numer \\#1234 w tytule", TODAY, on);
+  expect(r.tokens).toEqual([]);
+  expect(r.fields).toEqual({});
+  expect(r.title).toBe("Numer #1234 w tytule");
+});
+
+test("parser: Jira key and #1234 in one line is an error (one issue per task)", () => {
+  const on = { ...settings, redmineEnabled: true };
+  const error = "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
+  const a = parse("WMS-12 Raport #1234", TODAY, on);
+  expect(a.fields).toEqual({ jiraKey: "WMS-12" });
+  expect(a.errors).toEqual([error]);
+  expect(blockingError(a)).toBe(error);
+  const b = parse("#1234 WMS-12 Raport", TODAY, on);
+  expect(b.fields).toEqual({ redmineId: 1234 });
+  expect(b.errors).toEqual([error]);
+  expect(b.title).toBe("Raport");
+  // Bez połączonego Redmine `#1234` to projekt, więc klucz Jiry przechodzi.
+  const off = parse("WMS-12 Raport #1234", TODAY, settings);
+  expect(off.errors).toEqual([]);
+  expect(off.fields).toEqual({ jiraKey: "WMS-12", project: "1234" });
+});
+
+test("template title: #1234 as {klucz} and a Redmine message for an unknown subject", () => {
+  const subject = (key: string) => (key === "#1234" ? "Import CSV" : undefined);
+  expect(renderTitle("Code review {klucz}: {tytuł}", "#1234", "", subject)).toBe(
+    "Code review #1234: Import CSV",
+  );
+  expect(() => renderTitle("{klucz}: {tytuł}", "#9", "", subject)).toThrow(
+    "Nie znam tematu #9. Wpisz tytuł albo odśwież listę w widoku Redmine.",
+  );
+  expect(unknownTitle("WMS-9")).toBe(
+    "Nie znam tytułu WMS-9. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.",
+  );
 });

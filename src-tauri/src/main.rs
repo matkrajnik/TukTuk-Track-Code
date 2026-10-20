@@ -22,6 +22,7 @@ mod notify;
 mod planner;
 mod quickadd;
 mod recurrence;
+mod redmine;
 mod reminder;
 mod settings;
 mod shortcuts;
@@ -258,14 +259,19 @@ fn quick_add(
     task: quickadd::NewTask,
 ) -> Result<db::Snapshot, String> {
     let config = jira::config(&app)?;
-    // Klucz Jiry wiążemy tylko przy połączonym koncie (zapisany e-mail).
+    // Klucz Jiry wiążemy tylko przy połączonym koncie (zapisany e-mail);
+    // numer Redmine tylko przy połączonym Redmine (zapisany login).
     let site = (!config.email.is_empty()).then_some(config.site);
+    let redmine = redmine::config(&app)?;
+    let redmine_site = (!redmine.login.is_empty()).then_some(redmine.site);
     let start = task.start;
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
-    let result = quickadd::create(
+    let result = quickadd::create_linked(
         &mut connection,
         site.as_deref(),
         |key| jira::cached_summary(&app, key),
+        redmine_site.as_deref(),
+        |id| redmine::cached_subject(&app, id),
         task,
         db::now(),
     )?;
@@ -363,6 +369,8 @@ fn main() {
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
+            // Redmine obok Jiry (PLAN_1.9.md): osobny stan, niezależny od Jiry.
+            redmine::setup(app.handle());
             timesheet::setup(app.handle());
             jira_move::setup(app.handle());
             calendar::setup(app.handle());
@@ -396,6 +404,8 @@ fn main() {
             browser::start(app.handle());
             browser::sync(app.handle(), &settings::current(app.handle()));
             jira::start(app.handle());
+            // Obserwacja przypisań w Redmine (R3): osobny wątek, niezależny od Jiry.
+            redmine::start(app.handle());
             // Pytanie o przesunięcie zgłoszenia przy starcie pracy (J1).
             jira_move::start(app.handle());
             calendar::start(app.handle());
@@ -507,6 +517,8 @@ fn main() {
             jira_move::jira_no_ask,
             jira_move::jira_transitions,
             jira_move::jira_transition,
+            jira_move::redmine_transitions,
+            jira_move::redmine_transition,
             jira_board::jira_board,
             jira_board::jira_board_move,
             jira_board::jira_assignable,
@@ -519,6 +531,21 @@ fn main() {
             jira_board::jira_create,
             jira_fields::jira_fields,
             jira_fields::jira_refresh_fields,
+            redmine::redmine_settings,
+            redmine::redmine_connect,
+            redmine::redmine_test,
+            redmine::redmine_disconnect,
+            redmine::redmine_issues,
+            redmine::redmine_projects,
+            redmine::redmine_select_projects,
+            redmine::redmine_statuses,
+            redmine::redmine_start,
+            redmine::redmine_open,
+            redmine::redmine_issue_transitions,
+            redmine::redmine_issue_transition,
+            redmine::redmine_assign_me,
+            redmine::redmine_comment,
+            redmine::redmine_branch_name,
             calendar::calendar_status,
             calendar::calendar_connect,
             calendar::calendar_disconnect,

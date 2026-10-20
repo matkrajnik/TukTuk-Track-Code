@@ -1,10 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
-import { renderTitle, type Parsed } from "./quickadd";
+import { renderTitle, unknownTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
 import { agentTotals, type AgentPeriod, type AgentTime } from "./agenttime";
 import { tsProjectKey } from "./timesheet";
+import { issueRef, redmineKey, validRedmineId } from "./issue";
 import {
   emptyRule,
   isRecurring,
@@ -24,6 +25,16 @@ export interface Task {
   jiraStatus?: string | null;
   /** Wartości pól z Jiry na kafelku (z ustawień `jiraCardFields`, tylko niepuste). */
   jiraFields?: JiraFieldValue[];
+  /**
+   * Zgłoszenie Redmine (`redmine_tasks`, PLAN_1.9.md R2); zadanie ma najwyżej
+   * jedno zgłoszenie: z Jiry albo z Redmine. Opis do kafelków daje `issueRef`.
+   */
+  redmineId?: number | null;
+  redmineUrl?: string | null;
+  /** Ostatni znany status, tracker i termin (`RRRR-MM-DD`) zgłoszenia Redmine. */
+  redmineStatus?: string | null;
+  redmineTracker?: string | null;
+  redmineDue?: string | null;
   details?: TaskDetails;
   archived?: boolean;
 }
@@ -98,9 +109,11 @@ export const detailsOf = (task: Task): TaskDetails => ({
   repeatDays: [...(task.details?.repeatDays ?? [])],
   repeatRule: { ...emptyRule(), ...task.details?.repeatRule },
 });
+/** Status zgłoszenia zadania (Jira albo Redmine) jak `planner::issue_status`. */
+const issueStatus = (task: Task) => issueRef(task)?.status ?? "";
 /**
  * Szczegóły po zdjęciu blokady przy starcie pomiaru (`planner::clear_waiting`):
- * bieżący status Jiry trafia do `waitingDismissed`.
+ * bieżący status zgłoszenia trafia do `waitingDismissed`.
  */
 function unblocked(task: Task): TaskDetails {
   const d = detailsOf(task);
@@ -111,7 +124,7 @@ function unblocked(task: Task): TaskDetails {
     waitingSince: 0,
     waitingStatus: "",
     waitingRemindDay: "",
-    waitingDismissed: task.jiraStatus ?? "",
+    waitingDismissed: issueStatus(task),
   };
 }
 export interface Session {
@@ -144,6 +157,26 @@ export async function refreshJiraConnected(): Promise<void> {
     ).connected;
   } catch {
     jiraConnected.value = false;
+  }
+}
+/**
+ * Czy Redmine jest połączone: tylko wtedy szybkie dodawanie rozpoznaje `#1234`
+ * jako zgłoszenie (bez połączenia to projekt „1234”). W podglądzie symulowane
+ * Redmine jest połączone, chyba że stan w `previewRedmineKey` mówi inaczej.
+ */
+export const redmineConnected = ref(!desktop);
+/** Odświeża `redmineConnected` z `redmine_settings` (w podglądzie ze stanu symulacji). */
+export async function refreshRedmineConnected(): Promise<void> {
+  if (!desktop) {
+    redmineConnected.value = previewRedmineState().connected !== false;
+    return;
+  }
+  try {
+    redmineConnected.value = (
+      await invoke<{ connected: boolean }>("redmine_settings")
+    ).connected;
+  } catch {
+    redmineConnected.value = false;
   }
 }
 const key = "todo-track-preview-v1";
@@ -249,6 +282,8 @@ export async function change(
 export interface NewTask {
   title: string;
   jiraKey?: string | null;
+  /** Numer zgłoszenia Redmine (`#1234`); razem z `jiraKey` to błąd. */
+  redmineId?: number | null;
   details?: TaskDetails | null;
   /** Utwórz i rozpocznij: poprzedni pomiar staje. */
   start?: boolean;
@@ -267,6 +302,7 @@ export function quickTask(parsed: Parsed, start = false): NewTask {
   return {
     title: parsed.title,
     jiraKey: f.jiraKey ?? null,
+    redmineId: f.redmineId ?? null,
     details: planned
       ? {
           ...detailsOf({ id: 0, title: "", done: false, createdAt: 0 }),
@@ -283,33 +319,239 @@ export function quickTask(parsed: Parsed, start = false): NewTask {
 }
 /** Adres Jiry w podglądzie (domyślny z `jira::Config`). */
 const previewJiraSite = "https://asistonwms.atlassian.net";
+/** Adres symulowanego Redmine w podglądzie (przykładowy, PLAN_1.9.md). */
+export const previewRedmineSite = "https://redmine.example.pl";
 /**
- * Szybkie dodawanie ze składnią: zadanie z polami, kluczem Jiry i opcjonalnym
- * startem w jednym kroku. Odpowiednik `quickadd::create`; w podglądzie nie ma listy
- * zgłoszeń, więc pusty tytuł z kluczem bierze tytuł z danych `jira_issues` tylko
- * w aplikacji.
+ * Symulowane Redmine podglądu (PLAN_1.9.md, R6): stan `{ connected, site,
+ * login, displayName, acceptInvalidCert, fail, write, statuses, projects,
+ * selectedProjects, issues }` w `localStorage`; każde brakujące pole ma wartość
+ * z przykładu (`previewRedmine*`). Brak klucza = połączone z przykładowymi
+ * zgłoszeniami. Klucz API „zly” w „Połącz” daje błąd 401. Inne okno albo test
+ * zmieniające ten klucz wywołują `onRedmineChanged` i `onMovePromptsChanged`.
+ */
+export const previewRedmineKey = "todo-track-preview-redmine-v1";
+/**
+ * Zgłoszenie symulowanego Redmine (podzbiór `redmine::Issue`). Pola widoku
+ * Redmine (R3) są opcjonalne: brak projektu = projekt śledzony z przykładu,
+ * brak osoby = przypisane do mnie.
+ */
+export interface PreviewRedmineIssue {
+  id: number;
+  subject: string;
+  status: string;
+  tracker: string;
+  dueDate: string;
+  projectId?: number;
+  priority?: string;
+  /** `null` = nieprzypisane; brak pola = przypisane do mnie. */
+  assignedToId?: number | null;
+  assignedTo?: string;
+  version?: string;
+  category?: string;
+  updatedOn?: string;
+}
+interface PreviewRedmine {
+  connected?: boolean;
+  /** Adres z „Połącz” (R5); brak = `previewRedmineSite`. */
+  site?: string;
+  /** Login i imię i nazwisko z `/users/current.json`; brak = `previewRedmineMe`. */
+  login?: string;
+  displayName?: string;
+  /**
+   * `false` = symulowany backend odrzuca zapisy jak przy wyłączonym
+   * `redmine_write` (`redmine::ensure_write`), niezależnie od przełącznika w
+   * Ustawieniach podglądu; brak = decyduje ustawienie `redmineWrite`.
+   */
+  write?: boolean;
+  /** „Akceptuj niezaufany certyfikat” zapamiętane w konfiguracji (R5). */
+  acceptInvalidCert?: boolean;
+  /** Serwer z certyfikatem spoza magazynu Windows (testy R5). */
+  certError?: boolean;
+  /** Błąd „Testuj połączenie” (testy R5). */
+  failTest?: string;
+  issues?: PreviewRedmineIssue[];
+  /** Wszystkie projekty (`redmine_projects`). */
+  projects?: RedmineProject[];
+  /** Śledzone projekty (`redmine_select_projects`); brak = pierwszy z przykładu. */
+  selectedProjects?: RedmineProject[];
+  statuses?: RedmineStatus[];
+  /** Błąd zapytania o moje zgłoszenia ze wszystkich projektów (testy). */
+  failMine?: string;
+  /** Odrzucenie zapisu przez symulowany Redmine: 403 albo 422 (R4, testy). */
+  fail?: number;
+  /** Redmine przyjmuje zmianę statusu, ale go nie zmienia (R4, testy). */
+  unchanged?: boolean;
+  /** Komentarze wysłane do zgłoszeń (`notes`), po numerze. */
+  comments?: Record<string, string[]>;
+}
+/** Użytkownik symulowanego Redmine (`/users/current.json`). */
+export const previewRedmineMe = Object.freeze({
+  id: 12,
+  login: "jkowalski",
+  name: "Jan Kowalski",
+});
+/** Statusy symulowanego Redmine w kolejności z `/issue_statuses.json`. */
+export const previewRedmineStatuses: readonly RedmineStatus[] = Object.freeze([
+  { id: 1, name: "New", isClosed: false },
+  { id: 2, name: "In Progress", isClosed: false },
+  { id: 3, name: "Feedback", isClosed: false },
+  { id: 4, name: "Resolved", isClosed: true },
+  { id: 5, name: "Closed", isClosed: true },
+]);
+/** Projekty symulowanego Redmine: Magazyn WMS z podprojektem i Portal klienta. */
+export const previewRedmineProjects: readonly RedmineProject[] = Object.freeze([
+  { id: 7, name: "Magazyn WMS", identifier: "wms", parentId: null },
+  { id: 8, name: "WMS – integracje", identifier: "wms-integracje", parentId: 7 },
+  { id: 9, name: "Portal klienta", identifier: "portal", parentId: null },
+]);
+/**
+ * Przykładowe zgłoszenia (tematy do `#1234` w szybkim dodawaniu, lista widoku
+ * Redmine): w śledzonym Magazynie WMS cztery moje w trzech statusach (jedno z
+ * terminem), jedno Anny Nowak i jedno zamknięte; jedno w podprojekcie; jedno
+ * moje w nieśledzonym Portalu klienta.
+ */
+export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freeze([
+  {
+    id: 1234,
+    subject: "Import CSV zamówień",
+    status: "New",
+    tracker: "Funkcja",
+    dueDate: "2026-10-30",
+    projectId: 7,
+    priority: "High",
+    version: "2.4",
+    updatedOn: "2026-10-14T09:00:00Z",
+  },
+  {
+    id: 1240,
+    subject: "Błąd zapisu etykiet",
+    status: "Feedback",
+    tracker: "Błąd",
+    dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    updatedOn: "2026-10-13T09:00:00Z",
+  },
+  {
+    id: 1250,
+    subject: "Aktualizacja dokumentacji API",
+    status: "In Progress",
+    tracker: "Wsparcie",
+    dueDate: "",
+    projectId: 7,
+    priority: "Low",
+    updatedOn: "2026-10-12T09:00:00Z",
+  },
+  {
+    id: 1251,
+    subject: "Raport stanów magazynowych",
+    status: "New",
+    tracker: "Funkcja",
+    dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    assignedToId: 31,
+    assignedTo: "Anna Nowak",
+    updatedOn: "2026-10-11T09:00:00Z",
+  },
+  {
+    id: 1245,
+    subject: "Eksport faktur do ERP",
+    status: "Closed",
+    tracker: "Błąd",
+    dueDate: "",
+    projectId: 7,
+    priority: "Normal",
+    updatedOn: "2026-10-10T09:00:00Z",
+  },
+  {
+    id: 1260,
+    subject: "Mapowanie kodów EDI",
+    status: "In Progress",
+    tracker: "Funkcja",
+    dueDate: "",
+    projectId: 8,
+    priority: "Normal",
+    updatedOn: "2026-10-09T09:00:00Z",
+  },
+  {
+    id: 1270,
+    subject: "Formularz reklamacji",
+    status: "New",
+    tracker: "Błąd",
+    dueDate: "",
+    projectId: 9,
+    priority: "Urgent",
+    updatedOn: "2026-10-08T09:00:00Z",
+  },
+]);
+function previewRedmineState(): PreviewRedmine {
+  return previewJson(previewRedmineKey) as PreviewRedmine;
+}
+function savePreviewRedmine(state: PreviewRedmine) {
+  localStorage.setItem(previewRedmineKey, JSON.stringify(state));
+}
+/** Użytkownik symulowanego Redmine: login i nazwa ze stanu albo z przykładu. */
+function previewRedmineUser(state: PreviewRedmine) {
+  const login =
+    typeof state.login === "string" && state.login.trim()
+      ? state.login.trim()
+      : previewRedmineMe.login;
+  const name =
+    typeof state.displayName === "string" && state.displayName.trim()
+      ? state.displayName.trim()
+      : login === previewRedmineMe.login
+        ? previewRedmineMe.name
+        : login;
+  return { id: previewRedmineMe.id, login, name };
+}
+/** Zgłoszenie symulowanego Redmine po numerze (ze stanu albo z listy przykładowej). */
+function previewRedmineIssue(id: number): PreviewRedmineIssue | undefined {
+  const state = previewRedmineState();
+  const list = Array.isArray(state.issues) ? state.issues : previewRedmineIssues;
+  return list.find((i) => i.id === id);
+}
+/** `Zadanie może mieć jedno zgłoszenie` (`quickadd::ONE_ISSUE`). */
+export const oneIssueError =
+  "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
+/**
+ * Szybkie dodawanie ze składnią: zadanie z polami, kluczem Jiry albo numerem
+ * Redmine i opcjonalnym startem w jednym kroku. Odpowiednik
+ * `quickadd::create_linked`; w podglądzie nie ma listy zgłoszeń Jiry, więc pusty
+ * tytuł z kluczem bierze tytuł z danych `jira_issues` tylko w aplikacji; temat
+ * `#1234` pochodzi z symulowanego Redmine (`previewRedmineIssues`).
  */
 export async function quickAdd(task: NewTask): Promise<Snapshot> {
   if (desktop) return invoke("quick_add", { task });
   const jiraKey = task.jiraKey?.trim() || null;
   if (jiraKey && !/^[A-Z0-9_]+-\d+$/.test(jiraKey))
     throw new Error("Niepoprawny klucz zgłoszenia Jiry.");
+  const redmineId = task.redmineId ?? null;
+  if (redmineId !== null && !validRedmineId(redmineId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  if (jiraKey && redmineId !== null) throw new Error(oneIssueError);
+  if (redmineId !== null && previewRedmineState().connected === false)
+    throw new Error(
+      `Redmine nie jest połączone, więc #${redmineId} nie zostanie powiązane. Połącz konto w Ustawieniach → Redmine albo poprzedź # znakiem \\.`,
+    );
+  const redmineIssue =
+    redmineId !== null ? previewRedmineIssue(redmineId) : undefined;
   const name = task.template?.trim();
   const template = name ? findTemplate(previewTemplates(), name) : undefined;
   if (name && !template)
     throw new Error(
       `Nie ma szablonu „${name}”. Dodaj go w Ustawieniach → Szablony.`,
     );
-  // W podglądzie nie ma listy zgłoszeń, więc {tytuł} z samym kluczem daje błąd.
+  // Etykieta zgłoszenia do szablonu: klucz Jiry albo `#numer`; temat tylko z
+  // symulowanego Redmine (listy Jiry w podglądzie nie ma).
+  const label = jiraKey ?? (redmineId !== null ? redmineKey(redmineId) : null);
+  const subject = () => redmineIssue?.subject ?? null;
   const title = template
-    ? [...renderTitle(template.title, jiraKey, task.title, () => null)]
+    ? [...renderTitle(template.title, label, task.title, subject)]
         .slice(0, 240)
         .join("")
-    : task.title.trim();
-  if (!title && jiraKey)
-    throw new Error(
-      `Nie znam tytułu ${jiraKey}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
-    );
+    : task.title.trim() || [...(subject() ?? "").trim()].slice(0, 240).join("");
+  if (!title && label) throw new Error(unknownTitle(label));
   if (!title || [...title].length > 240)
     throw new Error("Tytuł musi mieć od 1 do 240 znaków.");
   const lineDetails = template
@@ -346,6 +588,15 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
         `${jiraKey} ma już zadanie „${existing.title}”${data.trash?.includes(existing) ? " (w koszu)" : ""}.`,
       );
   }
+  if (redmineId !== null) {
+    const existing = [...data.tasks, ...(data.trash ?? [])].find(
+      (t) => t.redmineId === redmineId,
+    );
+    if (existing)
+      throw new Error(
+        `#${redmineId} ma już zadanie „${existing.title}”${data.trash?.includes(existing) ? " (w koszu)" : ""}.`,
+      );
+  }
   const now = Date.now();
   const id =
     Math.max(
@@ -360,6 +611,15 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
     createdAt: now,
     ...(jiraKey
       ? { jiraKey: jiraKey, jiraUrl: `${previewJiraSite}/browse/${jiraKey}` }
+      : {}),
+    ...(redmineId !== null
+      ? {
+          redmineId,
+          redmineUrl: `${previewRedmineSite}/issues/${redmineId}`,
+          redmineStatus: redmineIssue?.status ?? "",
+          redmineTracker: redmineIssue?.tracker ?? "",
+          redmineDue: redmineIssue?.dueDate ?? "",
+        }
       : {}),
     ...(details ? { details } : {}),
   });
@@ -804,12 +1064,12 @@ export async function saveDetails(
     saved.waitingSince = 0;
     saved.waitingStatus = "";
     saved.waitingRemindDay = "";
-    if (wasWaiting) saved.waitingDismissed = task.jiraStatus ?? "";
+    if (wasWaiting) saved.waitingDismissed = issueStatus(task);
   } else {
     // Nowa blokada zaczyna bez przypomnienia (jak planner::save).
     if (!wasWaiting) saved.waitingRemindDay = "";
     if (!saved.waitingSince) saved.waitingSince = Date.now();
-    if (!saved.waitingStatus) saved.waitingStatus = task.jiraStatus ?? "";
+    if (!saved.waitingStatus) saved.waitingStatus = issueStatus(task);
   }
   if (isRecurring(saved) && !saved.repeatFrom)
     saved.repeatFrom = localDay(Date.now());
@@ -843,7 +1103,7 @@ export async function setWaiting(
   const task = data.tasks.find((t) => t.id === id);
   if (!task) throw new Error("Nie znaleziono zadania.");
   const text = (change.text ?? "").trim();
-  const status = task.jiraStatus ?? "";
+  const status = issueStatus(task);
   const now = Date.now();
   const d = detailsOf(task);
   if (change.action === "block") {
@@ -1340,7 +1600,7 @@ export interface NavigateRequest {
    * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
    * `week-review` (Plan i historia → Tydzień → Przegląd), albo przy
    * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `timesheet`,
-   * `jira`, `notifications`, `focus`, `templates`, `windows`, `shortcuts`,
+   * `jira`, `redmine`, `notifications`, `focus`, `templates`, `windows`, `shortcuts`,
    * `startup`; nieznana sekcja otwiera ostatnią).
    */
   section?: string | null;
@@ -1695,6 +1955,12 @@ export interface JiraTransition {
 }
 /** Pytanie o przesunięcie zgłoszenia przy starcie pracy (`jira_move::Prompt`). */
 export interface JiraMovePrompt {
+  /**
+   * System zgłoszenia (PLAN_1.9.md, R4): Jira albo Redmine. Dla Redmine `key`
+   * to `#1234`, przejścia to statusy docelowe, a `id` przejścia to `status_id`.
+   * Brak pola = Jira (zgodność ze starszym zapisem podglądu).
+   */
+  system?: "jira" | "redmine";
   taskId: number;
   key: string;
   title: string;
@@ -1834,6 +2100,10 @@ async function previewObserveStart(): Promise<PreviewJira> {
   );
   const task = data.tasks.find((t) => t.id === fresh);
   const settings = previewJiraSettings();
+  if (task && !task.jiraKey && validRedmineId(task.redmineId)) {
+    const prompt = previewRedmineStartPrompt(task, data);
+    if (prompt) state.prompts = [prompt];
+  }
   if (
     task?.jiraKey &&
     settings.write &&
@@ -1855,6 +2125,7 @@ async function previewObserveStart(): Promise<PreviewJira> {
         state.prompts = [
           {
             taskId: task.id,
+            system: "jira",
             key: task.jiraKey,
             title: task.title,
             status,
@@ -1964,7 +2235,8 @@ export async function onMovePromptsChanged(
 ): Promise<() => void> {
   if (desktop) return listen(jiraMoveEvent, handler);
   const storage = (e: StorageEvent) => {
-    if (e.key === previewJiraKey || e.key === key) handler();
+    if (e.key === previewJiraKey || e.key === previewRedmineKey || e.key === key)
+      handler();
   };
   window.addEventListener(jiraMoveEvent, handler);
   window.addEventListener("storage", storage);
@@ -2272,7 +2544,8 @@ export function priorityBand(name: string): number | null {
   const n = name.trim().toLowerCase();
   if (!n) return null;
   if (
-    ["highest", "high", "critical", "blocker", "major", "urgent", "najwyższy", "wysoki", "krytyczny", "pilny"].includes(n)
+    // „immediate” i „natychmiastowy” to priorytety Redmine (PLAN_1.9.md, R2).
+    ["highest", "high", "critical", "blocker", "major", "urgent", "immediate", "najwyższy", "wysoki", "krytyczny", "pilny", "natychmiastowy"].includes(n)
   )
     return 1;
   if (["lowest", "low", "minor", "trivial", "najniższy", "niski", "drobny"].includes(n))
@@ -3455,4 +3728,793 @@ export function tsTodayTasks(refresh = false): Promise<TsProject[]> {
 /** Czyści pamięć podręczną listy zadań TS (połączenie, rozłączenie). */
 export function tsForgetTasks() {
   tsTaskCache = null;
+}
+
+// --- Redmine: widok „projekt → zgłoszenia” (PLAN_1.9.md, R3) ---------------
+
+/** Śledzony albo dostępny projekt Redmine (`redmine::Project`). */
+export interface RedmineProject {
+  id: number;
+  name: string;
+  identifier: string;
+  parentId: number | null;
+}
+/** Konfiguracja połączenia bez klucza API (`redmine::Config`). */
+export interface RedmineConfig {
+  site: string;
+  login: string;
+  userId: number;
+  displayName: string;
+  acceptInvalidCert: boolean;
+  projects: RedmineProject[];
+}
+/** `redmine_settings`: konfiguracja i czy klucz API jest w magazynie. */
+export interface RedmineAccount {
+  config: RedmineConfig;
+  connected: boolean;
+}
+/** Status z `/issue_statuses.json` (`redmine::Status`). */
+export interface RedmineStatus {
+  id: number;
+  name: string;
+  isClosed: boolean;
+}
+/** Zgłoszenie z `/issues.json` (`redmine::Issue`). */
+export interface RedmineIssue {
+  id: number;
+  subject: string;
+  projectId: number;
+  project: string;
+  tracker: string;
+  status: string;
+  statusId: number;
+  closed: boolean;
+  priority: string;
+  assignedToId: number | null;
+  assignedTo: string;
+  /** Wersja docelowa (`fixed_version.name`). */
+  version: string;
+  category: string;
+  dueDate: string;
+  updatedOn: string;
+  url: string;
+}
+/** Grupa statusu: numery zgłoszeń w kolejności wyświetlania (`redmine::StatusGroup`). */
+export interface RedmineStatusGroup {
+  status: string;
+  closed: boolean;
+  ids: number[];
+}
+/** `redmine_issues`: lista, ostrzeżenia, grupy statusów i śledzone projekty z podprojektami. */
+export interface RedmineIssues {
+  issues: RedmineIssue[];
+  warnings: string[];
+  groups: RedmineStatusGroup[];
+  tracked: number[];
+}
+// --- Redmine: zapisy (PLAN_1.9.md, R4) -------------------------------------
+
+/** Komunikat przy wyłączonych zapisach (`redmine::WRITE_DISABLED`). */
+export const redmineWriteDisabled =
+  "Zmiany w Redmine są wyłączone. Włączysz je w Ustawienia → Redmine („Pozwól aplikacji zmieniać zgłoszenia w Redmine”).";
+/** Najdłuższy komentarz (`redmine::NOTES_LIMIT`). */
+export const redmineNotesLimit = 4000;
+/** Status Redmine jako przejście pytania (`jira_move::redmine_transitions_of`). */
+export const redmineTransitionOf = (s: RedmineStatus): JiraTransition => ({
+  id: String(s.id),
+  name: s.name,
+  toStatus: s.name,
+  toCategory: s.isClosed ? "done" : "indeterminate",
+});
+/**
+ * Cel pytania przy starcie pracy jak `redmine::choose_status`: dozwolone
+ * statusy niezamknięte bez bieżącego; wybrany status o nazwie z ustawień (bez
+ * względu na wielkość liter), bez dopasowania `null` — lista do wyboru.
+ */
+export function chooseRedmineStatus(
+  allowed: readonly RedmineStatus[],
+  current: number,
+  preferred: string,
+): { statuses: RedmineStatus[]; statusId: number | null } {
+  const statuses = allowed.filter((s) => s.id !== current && !s.isClosed);
+  const wanted = preferred.trim().toLowerCase();
+  const statusId =
+    (wanted &&
+      statuses.find((s) => s.name.trim().toLowerCase() === wanted)?.id) ||
+    null;
+  return { statuses, statusId };
+}
+/** Ustawienia zapisów do Redmine w podglądzie (wartości domyślne jak w Rust). */
+function previewRedmineSettings() {
+  const s = previewJson(previewSettingsKey);
+  return {
+    write: s.redmineWrite !== false && previewRedmineState().write !== false,
+    ask: s.redmineAskMove !== false,
+    status:
+      typeof s.redmineMoveStatus === "string" && s.redmineMoveStatus.trim()
+        ? s.redmineMoveStatus.trim()
+        : "In Progress",
+    newStatuses: Array.isArray(s.redmineNewStatuses)
+      ? s.redmineNewStatuses.filter((n): n is string => typeof n === "string")
+      : ["New", "Nowy"],
+    prefix:
+      typeof s.redmineBranchPrefix === "string"
+        ? s.redmineBranchPrefix
+        : "feature/",
+  };
+}
+/** Status początkowy niezamkniętego zgłoszenia jak `redmine::should_ask`. */
+const previewRedmineInitial = (
+  newStatuses: readonly string[],
+  status: string,
+  closed: boolean,
+) =>
+  !closed &&
+  !!status.trim() &&
+  newStatuses.some(
+    (n) => n.trim().toLowerCase() === status.trim().toLowerCase(),
+  );
+/**
+ * Odpowiednik `jira_move::check_redmine` w podglądzie: status bieżący z
+ * symulowanego Redmine trafia na kafelek, a przy statusie początkowym powstaje
+ * pytanie (w symulacji wszystkie statusy są dozwolone).
+ */
+function previewRedmineStartPrompt(
+  task: Task,
+  data: Snapshot,
+): JiraMovePrompt | null {
+  const settings = previewRedmineSettings();
+  const id = task.redmineId;
+  if (!validRedmineId(id) || !settings.write || !settings.ask) return null;
+  if (task.details?.jiraNoAsk) return null;
+  const state = previewRedmineState();
+  if (state.connected === false) return null;
+  const source = previewRedmineList(state).find((i) => i.id === id);
+  const status = source?.status ?? task.redmineStatus ?? "";
+  if (task.redmineStatus !== status) {
+    task.redmineStatus = status;
+    localStorage.setItem(key, JSON.stringify(data));
+  }
+  const statuses = previewRedmineStatusList(state);
+  const current = statuses.find((s) => s.name === status);
+  if (!previewRedmineInitial(settings.newStatuses, status, !!current?.isClosed))
+    return null;
+  const choice = chooseRedmineStatus(statuses, current?.id ?? 0, settings.status);
+  if (!choice.statuses.length) return null;
+  return {
+    system: "redmine",
+    taskId: task.id,
+    key: redmineKey(id),
+    title: task.title,
+    status,
+    url: task.redmineUrl ?? `${previewRedmineSite}/issues/${id}`,
+    target: settings.status,
+    transitions: choice.statuses.map(redmineTransitionOf),
+    transitionId: choice.statusId === null ? null : String(choice.statusId),
+  };
+}
+/** Zapis do symulowanego Redmine: przełącznik, połączenie i symulowany błąd. */
+function previewRedmineWrite(): PreviewRedmine {
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const state = previewRedmineConnected();
+  if (state.fail === 403)
+    throw new Error("Brak uprawnień w Redmine do tej operacji.");
+  if (state.fail === 422)
+    throw new Error("Redmine odrzucił dane: Status is invalid");
+  return state;
+}
+const redmineMissing =
+  "Nie znaleziono zgłoszenia albo adres Redmine jest błędny (REST API może być wyłączone).";
+/** Zgłoszenie do zmiany (lista przykładowa kopiowana do stanu przy pierwszym zapisie). */
+function previewRedmineEditable(
+  state: PreviewRedmine,
+  id: number,
+): PreviewRedmineIssue {
+  state.issues = previewRedmineList(state).map((i) => ({ ...i }));
+  const issue = state.issues.find((i) => i.id === id);
+  if (!issue) throw new Error(redmineMissing);
+  return issue;
+}
+/** Status zgłoszenia w zadaniach podglądu (`redmine_issues` → kafelek). */
+async function previewRedmineTaskStatus(id: number, status: string) {
+  const data = await read();
+  let changed = false;
+  for (const t of [...data.tasks, ...(data.trash ?? [])])
+    if (t.redmineId === id && t.redmineStatus !== status) {
+      t.redmineStatus = status;
+      changed = true;
+    }
+  if (changed) localStorage.setItem(key, JSON.stringify(data));
+}
+/** `redmine_issue_transitions`: dozwolone statusy zgłoszenia bez bieżącego. */
+export async function redmineIssueTransitions(
+  issueId: number,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_issue_transitions", { issueId });
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineConnected();
+  const source = previewRedmineList(state).find((i) => i.id === issueId);
+  if (!source) throw new Error(redmineMissing);
+  const issue = previewRedmineFull(source, state);
+  await previewRedmineTaskStatus(issueId, issue.status);
+  return previewRedmineStatusList(state)
+    .filter((s) => s.id !== issue.statusId)
+    .map((s) => ({ ...s }));
+}
+/**
+ * `redmine_issue_transition`: zmiana statusu (`PUT` ze `status_id`), odczyt po
+ * zapisie i status na kafelkach powiązanych zadań. Symulowany Redmine może
+ * odrzucić zapis (`fail`) albo przyjąć go bez zmiany (`unchanged`).
+ */
+export async function redmineIssueTransition(
+  issueId: number,
+  statusId: number,
+): Promise<RedmineIssue | null> {
+  if (desktop)
+    return invoke("redmine_issue_transition", { issueId, statusId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineWrite();
+  const status = previewRedmineStatusList(state).find((s) => s.id === statusId);
+  if (!status) throw new Error("Redmine odrzucił dane: Status is invalid");
+  const issue = previewRedmineEditable(state, issueId);
+  if (!state.unchanged) issue.status = status.name;
+  savePreviewRedmine(state);
+  const full = previewRedmineFull(issue, state);
+  await previewRedmineTaskStatus(issueId, full.status);
+  if (full.statusId !== statusId)
+    throw new Error(
+      `Redmine nie zmienił statusu #${issueId} (nadal „${full.status}”). Zmień status w przeglądarce — przejście może wymagać dodatkowych pól.`,
+    );
+  return full;
+}
+/** Zadanie ze zgłoszeniem Redmine dla zapisu (`jira_move::redmine_target`). */
+async function previewRedmineTask(taskId: number): Promise<number> {
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === taskId);
+  const id = task?.redmineId;
+  if (!task || task.jiraKey || !validRedmineId(id))
+    throw new Error("To zadanie nie jest powiązane ze zgłoszeniem Redmine.");
+  return id;
+}
+/** `redmine_transitions`: dozwolone statusy zgłoszenia zadania bez bieżącego. */
+export async function redmineTransitions(
+  taskId: number,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_transitions", { taskId });
+  return redmineIssueTransitions(await previewRedmineTask(taskId));
+}
+/**
+ * `redmine_transition`: zmiana statusu zgłoszenia zadania (baner, widget,
+ * kafelek); pytanie zadania znika, a błąd zostaje przy pytaniu jak dla Jiry.
+ */
+export async function redmineTransition(
+  taskId: number,
+  statusId: number,
+): Promise<Snapshot> {
+  if (desktop) return invoke("redmine_transition", { taskId, statusId });
+  try {
+    await redmineIssueTransition(await previewRedmineTask(taskId), statusId);
+  } catch (e) {
+    const message = String(e instanceof Error ? e.message : e);
+    const prompts = previewJiraState();
+    if ((prompts.prompts ?? []).some((p) => p.taskId === taskId)) {
+      prompts.prompts = (prompts.prompts ?? []).map((p) =>
+        p.taskId === taskId ? { ...p, failure: message } : p,
+      );
+      savePreviewJira(prompts);
+      notifyPreviewJira();
+    }
+    throw new Error(message);
+  }
+  const prompts = previewJiraState();
+  prompts.prompts = (prompts.prompts ?? []).filter((p) => p.taskId !== taskId);
+  savePreviewJira(prompts);
+  notifyPreviewJira();
+  return read();
+}
+/** `redmine_assign_me`: `PUT` z `assigned_to_id` = moje konto. */
+export async function redmineAssignMe(
+  issueId: number,
+): Promise<RedmineIssue | null> {
+  if (desktop) return invoke("redmine_assign_me", { issueId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineWrite();
+  const issue = previewRedmineEditable(state, issueId);
+  delete issue.assignedToId;
+  delete issue.assignedTo;
+  savePreviewRedmine(state);
+  return previewRedmineFull(issue, state);
+}
+/** `redmine_comment`: komentarz zwykłym tekstem w `notes` (1–4000 znaków). */
+export async function redmineComment(
+  issueId: number,
+  text: string,
+): Promise<void> {
+  if (desktop) return invoke("redmine_comment", { issueId, text });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const body = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\P{Cc}\n\t]/gu, "")
+    .trim();
+  if (!body) throw new Error("Wpisz treść komentarza.");
+  if ([...body].length > redmineNotesLimit)
+    throw new Error(`Komentarz może mieć najwyżej ${redmineNotesLimit} znaków.`);
+  const state = previewRedmineWrite();
+  previewRedmineEditable(state, issueId);
+  const comments = (state.comments ??= {});
+  comments[issueId] = [...(comments[issueId] ?? []), body];
+  savePreviewRedmine(state);
+}
+/** `redmine_branch_name`: `feature/1234-krotki-tytul` z prefiksem z ustawień. */
+export async function redmineBranchName(issueId: number): Promise<string> {
+  if (desktop) return invoke("redmine_branch_name", { issueId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const subject = previewRedmineList(previewRedmineState()).find(
+    (i) => i.id === issueId,
+  )?.subject;
+  const task = subject
+    ? undefined
+    : (await read()).tasks.find((t) => t.redmineId === issueId);
+  return branchName(
+    previewRedmineSettings().prefix,
+    String(issueId),
+    subject ?? task?.title ?? "",
+  );
+}
+
+/** Komunikat bez połączenia (`redmine::NOT_CONNECTED`). */
+export const redmineNotConnected =
+  "Połącz konto Redmine: podaj adres i klucz API.";
+/** Najwięcej zgłoszeń na liście (5 stron po 100, `redmine::MAX_ISSUE_PAGES`). */
+export const redmineIssueLimit = 500;
+/** Ślad linków „Otwórz w Redmine” w podglądzie (dla testów). */
+export const previewRedmineOpenedKey = "todo-track-preview-redmine-opened-v1";
+
+const previewRedmineList = (state: PreviewRedmine) =>
+  Array.isArray(state.issues) ? state.issues : previewRedmineIssues;
+const previewRedmineStatusList = (state: PreviewRedmine) =>
+  Array.isArray(state.statuses) ? state.statuses : previewRedmineStatuses;
+const previewRedmineProjectList = (state: PreviewRedmine) =>
+  Array.isArray(state.projects) ? state.projects : previewRedmineProjects;
+const previewRedmineTracked = (state: PreviewRedmine) =>
+  Array.isArray(state.selectedProjects)
+    ? state.selectedProjects
+    : previewRedmineProjectList(state).slice(0, 1);
+function previewRedmineConnected(): PreviewRedmine {
+  const state = previewRedmineState();
+  if (state.connected === false) throw new Error(redmineNotConnected);
+  return state;
+}
+/** Pełne zgłoszenie z przykładu (jak `redmine::parse_issue`). */
+function previewRedmineFull(
+  issue: PreviewRedmineIssue,
+  state: PreviewRedmine,
+): RedmineIssue {
+  const status = previewRedmineStatusList(state).find(
+    (s) => s.name === issue.status,
+  );
+  const projectId = issue.projectId ?? previewRedmineTracked(state)[0]?.id ?? 0;
+  const mine = issue.assignedToId === undefined;
+  return {
+    id: issue.id,
+    subject: issue.subject,
+    projectId,
+    project:
+      previewRedmineProjectList(state).find((p) => p.id === projectId)?.name ??
+      "",
+    tracker: issue.tracker,
+    status: issue.status,
+    statusId: status?.id ?? 0,
+    closed: status?.isClosed ?? false,
+    priority: issue.priority ?? "",
+    assignedToId: mine ? previewRedmineMe.id : (issue.assignedToId ?? null),
+    assignedTo: mine
+      ? previewRedmineUser(state).name
+      : (issue.assignedTo ?? ""),
+    version: issue.version ?? "",
+    category: issue.category ?? "",
+    dueDate: issue.dueDate,
+    updatedOn: issue.updatedOn ?? "",
+    url: `${previewRedmineSite}/issues/${issue.id}`,
+  };
+}
+
+/**
+ * Grupy statusów jak `redmine::group_by_status`: kolejność statusów z listy
+ * (`/issue_statuses.json`), status spoza listy na końcu, puste grupy pominięte;
+ * w grupie pasmo priorytetu malejąco, potem termin (bez terminu na końcu),
+ * potem kolejność z serwera.
+ */
+export function redmineGroups(
+  issues: readonly RedmineIssue[],
+  statuses: readonly RedmineStatus[],
+): RedmineStatusGroup[] {
+  const groups = statuses.map((s) => ({
+    status: s.name,
+    closed: s.isClosed,
+    id: s.id as number | null,
+    members: [] as number[],
+  }));
+  issues.forEach((issue, index) => {
+    let slot = groups.findIndex(
+      (g) => issue.statusId !== 0 && g.id === issue.statusId,
+    );
+    if (slot < 0)
+      slot = groups.findIndex(
+        (g) =>
+          g.status === issue.status && (g.id === null || issue.statusId === 0),
+      );
+    if (slot < 0)
+      groups.push({
+        status: issue.status,
+        closed: issue.closed,
+        id: null,
+        members: [index],
+      });
+    else groups[slot].members.push(index);
+  });
+  return groups
+    .filter((g) => g.members.length)
+    .map((g) => {
+      const sorted = [...g.members].sort((a, b) => {
+        const x = issues[a],
+          y = issues[b];
+        const band =
+          (priorityBand(y.priority) ?? 0) - (priorityBand(x.priority) ?? 0);
+        if (band) return band;
+        if (!x.dueDate !== !y.dueDate) return x.dueDate ? -1 : 1;
+        if (x.dueDate !== y.dueDate) return x.dueDate < y.dueDate ? -1 : 1;
+        return a - b;
+      });
+      return {
+        status: g.status,
+        closed: g.closed,
+        ids: sorted.map((i) => issues[i].id),
+      };
+    });
+}
+/** Śledzone projekty z podprojektami jak `redmine::tracked_project_ids`. */
+export function trackedProjectIds(
+  tracked: readonly RedmineProject[],
+  known: readonly RedmineProject[],
+): number[] {
+  const ids: number[] = [];
+  for (const p of tracked) if (!ids.includes(p.id)) ids.push(p.id);
+  for (let before = -1; before !== ids.length; ) {
+    before = ids.length;
+    for (const p of known)
+      if (
+        !ids.includes(p.id) &&
+        p.parentId !== null &&
+        ids.includes(p.parentId)
+      )
+        ids.push(p.id);
+  }
+  return ids;
+}
+
+/**
+ * Zmiana konta albo śledzonych projektów Redmine: zdarzenie okna po „Połącz”,
+ * „Rozłącz” i wyborze projektów, a w podglądzie także zdarzenie `storage` dla
+ * `previewRedmineKey` (inne okno albo test zmienia symulowany Redmine), jak
+ * przy Jirze i TS.
+ */
+export const redmineChangedEvent = "todo-track-redmine-changed";
+function notifyRedmine() {
+  window.dispatchEvent(new Event(redmineChangedEvent));
+}
+async function notifyRedmineAfter<T>(result: Promise<T>): Promise<T> {
+  const value = await result;
+  notifyRedmine();
+  return value;
+}
+/** Nasłuch zmian Redmine; zwraca funkcję odłączającą. */
+export function onRedmineChanged(handler: () => void): () => void {
+  const storage = (e: StorageEvent) => {
+    if (e.key === previewRedmineKey || e.key === null) handler();
+  };
+  window.addEventListener(redmineChangedEvent, handler);
+  if (!desktop) window.addEventListener("storage", storage);
+  return () => {
+    window.removeEventListener(redmineChangedEvent, handler);
+    window.removeEventListener("storage", storage);
+  };
+}
+
+/** `redmine_settings` (w podglądzie konto przykładowe, chyba że rozłączone). */
+export async function redmineAccount(): Promise<RedmineAccount> {
+  if (desktop) return invoke("redmine_settings");
+  const state = previewRedmineState();
+  const connected = state.connected !== false;
+  const user = previewRedmineUser(state);
+  return {
+    config: {
+      site: typeof state.site === "string" ? state.site : previewRedmineSite,
+      login: connected ? user.login : "",
+      userId: connected ? previewRedmineMe.id : 0,
+      displayName: connected ? user.name : "",
+      acceptInvalidCert: state.acceptInvalidCert === true,
+      projects: previewRedmineTracked(state).map((p) => ({ ...p })),
+    },
+    connected,
+  };
+}
+
+// --- Redmine: połączenie w Ustawieniach (PLAN_1.9.md, R5) ------------------
+
+/** `redmine::SITE_ERROR`. */
+export const redmineSiteError =
+  "Podaj adres Redmine, np. https://redmine.firma.pl albo https://firma.pl/redmine (bez parametrów).";
+/** `redmine::KEY_ERROR`. */
+export const redmineKeyError =
+  "Podaj klucz API Redmine (1–128 znaków, bez spacji).";
+/** `redmine::status_error` dla 401. */
+export const redmineKeyRejected =
+  "Redmine odrzucił klucz API. Sprawdź klucz w „Moje konto” w Redmine.";
+/** `redmine::CERT_ERROR`: certyfikat spoza magazynu Windows. */
+export const redmineCertError =
+  "Certyfikat serwera nie jest zaufany. Zainstaluj certyfikat firmowego urzędu w Windows albo włącz opcję w „Zaawansowane”.";
+/**
+ * Adres Redmine jak `redmine::normalize_site`: `http` albo `https`, host
+ * wymagany, prefiks ścieżki dozwolony (bez końcowego `/`), bez parametrów,
+ * fragmentu i danych logowania.
+ */
+export function redmineNormalizeSite(site: string): string {
+  const raw = site.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(redmineSiteError);
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !url.hostname ||
+    url.search ||
+    url.hash ||
+    raw.includes("?") ||
+    raw.includes("#") ||
+    url.username ||
+    url.password
+  )
+    throw new Error(redmineSiteError);
+  return url.href.replace(/\/+$/, "");
+}
+/** Klucz API jak `redmine::valid_api_key`: 1–128 znaków ASCII bez spacji. */
+export const redmineValidApiKey = (key: string) =>
+  key.length >= 1 && key.length <= 128 && /^[\x21-\x7e]+$/.test(key);
+/** Link „Gdzie znaleźć klucz API”: `<adres>/my/account` albo null. */
+export function redmineAccountUrl(site: string): string | null {
+  try {
+    return `${redmineNormalizeSite(site)}/my/account`;
+  } catch {
+    return null;
+  }
+}
+/**
+ * `redmine_connect`: adres i klucz sprawdzone przez `/users/current.json`,
+ * klucz w magazynie poświadczeń (nigdy nie wraca), reszta w konfiguracji.
+ * W podglądzie klucz „zly” daje 401, a `certError` błąd certyfikatu bez
+ * opcji „Akceptuj niezaufany certyfikat”. Zmiana adresu czyści śledzone
+ * projekty jak w Rust.
+ */
+export async function redmineConnect(
+  site: string,
+  apiKey: string,
+  acceptInvalidCert: boolean,
+): Promise<RedmineAccount> {
+  if (desktop)
+    return notifyRedmineAfter(
+      invoke("redmine_connect", { site, apiKey, acceptInvalidCert }),
+    );
+  const normalized = redmineNormalizeSite(site);
+  const key = apiKey.trim();
+  if (!redmineValidApiKey(key)) throw new Error(redmineKeyError);
+  const state = previewRedmineState();
+  if (state.certError && !acceptInvalidCert) throw new Error(redmineCertError);
+  if (key === "zly") throw new Error(redmineKeyRejected);
+  const oldSite =
+    typeof state.site === "string" ? state.site : previewRedmineSite;
+  if (oldSite !== normalized) state.selectedProjects = [];
+  state.site = normalized;
+  state.acceptInvalidCert = acceptInvalidCert;
+  state.connected = true;
+  savePreviewRedmine(state);
+  redmineConnected.value = true;
+  return notifyRedmineAfter(redmineAccount());
+}
+/** `redmine_test`: „Połączono jako Imię Nazwisko (login), Redmine odpowiada.” */
+export async function redmineTest(): Promise<string> {
+  if (desktop) return invoke("redmine_test");
+  const state = previewRedmineConnected();
+  if (state.certError && !state.acceptInvalidCert)
+    throw new Error(redmineCertError);
+  if (state.failTest) throw new Error(state.failTest);
+  const user = previewRedmineUser(state);
+  return `Połączono jako ${user.name} (${user.login}), Redmine odpowiada.`;
+}
+/** `redmine_disconnect`: usuwa klucz; adres, projekty i powiązania zostają. */
+export async function redmineDisconnect(): Promise<RedmineAccount> {
+  if (desktop) return notifyRedmineAfter(invoke("redmine_disconnect"));
+  const state = previewRedmineState();
+  state.connected = false;
+  savePreviewRedmine(state);
+  redmineConnected.value = false;
+  return notifyRedmineAfter(redmineAccount());
+}
+/**
+ * `redmine_issues`: zgłoszenia projektu (z podprojektami, jak Redmine) albo —
+ * bez `projectId` — moje ze wszystkich projektów; „Moje” = przypisane do mnie,
+ * `openOnly` = bez zamkniętych. Najwyżej 500 z ostrzeżeniem.
+ */
+export async function redmineIssues(
+  projectId: number | null,
+  mine: boolean,
+  openOnly: boolean,
+): Promise<RedmineIssues> {
+  if (desktop) return invoke("redmine_issues", { projectId, mine, openOnly });
+  if (projectId === 0) throw new Error("Niepoprawny projekt Redmine.");
+  const state = previewRedmineConnected();
+  if (projectId === null && state.failMine) throw new Error(state.failMine);
+  const statuses = previewRedmineStatusList(state);
+  const projects = previewRedmineProjectList(state);
+  const scope =
+    projectId === null
+      ? null
+      : trackedProjectIds(
+          [{ id: projectId, name: "", identifier: "", parentId: null }],
+          projects,
+        );
+  const all = previewRedmineList(state)
+    .map((i) => previewRedmineFull(i, state))
+    .filter((i) => scope === null || scope.includes(i.projectId))
+    .filter(
+      (i) =>
+        !(mine || projectId === null) || i.assignedToId === previewRedmineMe.id,
+    )
+    .filter((i) => !openOnly || !i.closed)
+    .sort((a, b) => b.updatedOn.localeCompare(a.updatedOn));
+  const issues = all.slice(0, redmineIssueLimit);
+  return {
+    issues,
+    warnings:
+      all.length > issues.length
+        ? [
+            `Pokazano pierwsze ${issues.length} z ${all.length} zgłoszeń. Zawęź zakres (np. „Moje” albo tylko otwarte).`,
+          ]
+        : [],
+    groups: redmineGroups(issues, statuses),
+    tracked: trackedProjectIds(previewRedmineTracked(state), projects),
+  };
+}
+/** `redmine_projects`: wszystkie projekty (wybór śledzonych w Ustawieniach, R5). */
+export async function redmineProjects(): Promise<RedmineProject[]> {
+  if (desktop) return invoke("redmine_projects");
+  return previewRedmineProjectList(previewRedmineConnected()).map((p) => ({
+    ...p,
+  }));
+}
+/** `redmine_select_projects`: śledzone projekty (najwyżej 50). */
+export async function redmineSelectProjects(
+  projects: RedmineProject[],
+): Promise<void> {
+  if (desktop)
+    return notifyRedmineAfter(invoke("redmine_select_projects", { projects }));
+  if (
+    projects.length > 50 ||
+    projects.some((p) => p.id <= 0 || !p.name.trim())
+  )
+    throw new Error("Wybierz maksymalnie 50 projektów.");
+  const state = previewRedmineState();
+  const seen = new Set<number>();
+  state.selectedProjects = projects
+    .filter((p) => !seen.has(p.id) && Boolean(seen.add(p.id)))
+    .map((p) => ({ ...p, name: p.name.trim() }));
+  savePreviewRedmine(state);
+  notifyRedmine();
+}
+/** `redmine_statuses`: statusy w kolejności z Redmine. */
+export async function redmineStatuses(
+  refresh: boolean,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_statuses", { refresh });
+  return previewRedmineStatusList(previewRedmineConnected()).map((s) => ({
+    ...s,
+  }));
+}
+/**
+ * `redmine_start`: zadanie zgłoszenia (nowe albo z kosza/archiwum, z powrotem
+ * do „do zrobienia”) i jeden pomiar, jak `redmine::start_issue`.
+ */
+export async function redmineStart(id: number): Promise<Snapshot> {
+  if (desktop) return invoke("redmine_start", { id });
+  const state = previewRedmineConnected();
+  const source = previewRedmineList(state).find((i) => i.id === id);
+  if (!source) throw new Error("Odśwież listę zgłoszeń przed rozpoczęciem.");
+  const issue = previewRedmineFull(source, state);
+  const data = await read();
+  const now = Date.now();
+  let task = data.tasks.find((t) => t.redmineId === id);
+  const trashed = data.trash?.find((t) => t.redmineId === id);
+  if (!task && trashed) {
+    data.trash = data.trash?.filter((t) => t !== trashed);
+    data.sessions.push(
+      ...(data.trashSessions ?? []).filter((s) => s.taskId === trashed.id),
+    );
+    data.trashSessions = data.trashSessions?.filter(
+      (s) => s.taskId !== trashed.id,
+    );
+    data.tasks.unshift(trashed);
+    task = trashed;
+  }
+  if (!task) {
+    task = {
+      id:
+        Math.max(
+          0,
+          ...data.tasks.map((t) => t.id),
+          ...(data.trash ?? []).map((t) => t.id),
+        ) + 1,
+      title: [...issue.subject].slice(0, 240).join(""),
+      done: false,
+      createdAt: now,
+      redmineId: id,
+      redmineUrl: issue.url,
+      redmineStatus: issue.status,
+      redmineTracker: issue.tracker,
+      redmineDue: issue.dueDate,
+    };
+    const band = priorityBand(issue.priority);
+    if (band !== null) task.details = { ...detailsOf(task), priority: band };
+    data.tasks.unshift(task);
+  }
+  const started = task;
+  started.done = false;
+  started.archived = false;
+  started.details = unblocked(started);
+  if (
+    !data.sessions.some((s) => s.taskId === started.id && s.endedAt === null)
+  ) {
+    data.sessions.forEach((s) => {
+      if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
+    });
+    data.sessions.unshift({
+      id:
+        Math.max(
+          0,
+          ...data.sessions.map((s) => s.id),
+          ...(data.trashSessions ?? []).map((s) => s.id),
+        ) + 1,
+      taskId: started.id,
+      startedAt: now,
+      endedAt: null,
+    });
+  }
+  localStorage.setItem(key, JSON.stringify(data));
+  return data;
+}
+/** `redmine_open`: zgłoszenie w przeglądarce (w podglądzie tylko zapisany link). */
+export async function redmineOpen(url: string): Promise<void> {
+  if (desktop) return invoke("redmine_open", { url });
+  try {
+    const opened = JSON.parse(
+      localStorage.getItem(previewRedmineOpenedKey) ?? "[]",
+    );
+    localStorage.setItem(
+      previewRedmineOpenedKey,
+      JSON.stringify(
+        [...(Array.isArray(opened) ? opened : []), url].slice(-20),
+      ),
+    );
+  } catch {
+    /* tylko ślad dla testów */
+  }
 }

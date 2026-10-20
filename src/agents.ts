@@ -7,6 +7,7 @@ import {
   type AppSettings,
 } from "./settings";
 import { previewFocusHolds } from "./focus";
+import { issueRef } from "./issue";
 import {
   change,
   desktop,
@@ -23,8 +24,11 @@ export interface AgentTask {
   /** Tytuł zadania albo zgłoszenia (pusty, gdy tytuł zgłoszenia nie jest znany). */
   title: string;
   key: string | null;
-  /** `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`. */
-  source: "folder" | "task" | "jira";
+  /**
+   * `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`,
+   * `redmine` (`#1234` z rozszerzenia przeglądarki, bez zadania; R3).
+   */
+  source: "folder" | "task" | "jira" | "redmine";
   /** Lokalne zadanie jest ukończone: bez propozycji i przypisania przerwy. */
   done?: boolean;
 }
@@ -88,7 +92,8 @@ export function matchAgentTask(
     return {
       taskId: bound.task.id,
       title: bound.task.title,
-      key: bound.task.jiraKey ?? null,
+      // Klucz tylko do wyświetlenia: z Jiry albo `#numer` z Redmine (jak `agents::bound_task`).
+      key: issueRef(bound.task)?.key ?? null,
       source: "folder",
       done: bound.task.done,
     };

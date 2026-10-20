@@ -8,16 +8,21 @@
  * - `@dziś`, `@jutro`, `@pon`…`@nd`, `@20.10` — dzień w planie (najbliższy taki dzień);
  * - `do:pt`, `do:20.10` — termin;
  * - `!` / `!wysoki` i `!niski` — priorytet;
+ * - `#1234` (sam `#` i cyfry) — zgłoszenie Redmine, gdy Redmine jest połączone
+ *   (`redmineEnabled`); bez połączenia to projekt „1234” (PLAN_1.9.md, R2);
  * - `#nazwa` — projekt (także wielowyrazowa nazwa istniejącego projektu);
  * - `/szablon` — szablon z Ustawień → Szablony (nieznana nazwa to błąd);
- * - `\` przed znakiem specjalnym — zapis dosłowny (`C\#` → „C#”, `\#wms` → „#wms”).
+ * - `\` przed znakiem specjalnym — zapis dosłowny (`C\#` → „C#”, `\#wms` → „#wms”,
+ *   `\#1234` → „#1234” w tytule).
  *
+ * Zadanie ma najwyżej jedno zgłoszenie: klucz Jiry i `#1234` w jednej linii to błąd.
  * Tekst bez zapisów i bez `\` daje tytuł identyczny z wpisanym, więc zwykłe
  * dodawanie działa dokładnie jak wcześniej.
  */
 
 export type TokenKind =
   | "jira"
+  | "redmine"
   | "estimate"
   | "planned"
   | "due"
@@ -41,6 +46,8 @@ export interface Token {
 
 export interface QuickFields {
   jiraKey?: string;
+  /** Numer zgłoszenia Redmine z `#1234`. */
+  redmineId?: number;
   estimateMinutes?: number;
   plannedDay?: string;
   dueDay?: string;
@@ -68,10 +75,19 @@ export interface QuickSettings {
    * „COVID-19”) zostaje w tytule. Domyślnie (`undefined`) klucz jest rozpoznawany.
    */
   jiraEnabled?: boolean;
+  /**
+   * Czy Redmine jest połączone. `true`: `#1234` (sam `#` i cyfry) to zgłoszenie
+   * Redmine. Domyślnie (`undefined`) i przy `false` to projekt „1234”.
+   */
+  redmineEnabled?: boolean;
 }
 
 const SPECIAL = "~@#!/\\";
 const JIRA_KEY = /^[A-Z][A-Z0-9_]*-\d+$/;
+/** `#1234`: od 1 do 10 cyfr, jak `redmine::valid_issue_id`. */
+const REDMINE_ID = /^#(\d{1,10})$/;
+/** `Zadanie może mieć jedno zgłoszenie` (`quickadd::ONE_ISSUE`). */
+export const ONE_ISSUE = "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
 const TEMPLATE = /^[\p{L}\p{N}_-]{1,60}$/u;
 const MAX_ESTIMATE = 600_000;
 
@@ -209,6 +225,7 @@ function unescape(word: string) {
 
 const FIELD_LABELS: Record<string, string> = {
   jira: "klucz Jiry",
+  redmine: "zgłoszenie Redmine",
   estimate: "szacunek",
   planned: "dzień w planie",
   due: "termin",
@@ -284,7 +301,9 @@ export function parse(
       JIRA_KEY.test(w) &&
       !fields.jiraKey
     ) {
-      set("jira", word, `Jira: ${w}`, () => (fields.jiraKey = w), false);
+      // Zadanie ma jedno zgłoszenie: klucz Jiry po `#1234` to błąd, nie tytuł.
+      if (fields.redmineId != null) fail(word, ONE_ISSUE);
+      else set("jira", word, `Jira: ${w}`, () => (fields.jiraKey = w), false);
       continue;
     }
     if (w.length > 1 && w[0] === "~") {
@@ -323,6 +342,17 @@ export function parse(
       else
         set("priority", word, `Priorytet: ${priority > 0 ? "wysoki" : "niski"}`, () => (fields.priority = priority), fields.priority != null);
       continue;
+    }
+    if (settings.redmineEnabled === true && REDMINE_ID.test(w)) {
+      // `#1234` to zgłoszenie Redmine tylko przy połączonym Redmine; `#0`
+      // nie jest numerem zgłoszenia i zostaje projektem jak dotąd.
+      const id = Number(REDMINE_ID.exec(w)![1]);
+      if (id > 0) {
+        if (fields.jiraKey) fail(word, ONE_ISSUE);
+        else
+          set("redmine", word, `Redmine: #${id}`, () => (fields.redmineId = id), fields.redmineId != null);
+        continue;
+      }
     }
     if (w.length > 1 && w[0] === "#") {
       // Najdłuższa pasująca nazwa istniejącego projektu (także z odstępami).
@@ -438,8 +468,18 @@ export function blockingError(parsed: Parsed): string | undefined {
 }
 
 /**
+ * Komunikat o nieznanym tytule zgłoszenia (`templates::unknown_title`): klucz
+ * Jiry kieruje do widoku Jira, numer Redmine (`#1234`) do widoku Redmine.
+ */
+export function unknownTitle(key: string): string {
+  return key.startsWith("#")
+    ? `Nie znam tematu ${key}. Wpisz tytuł albo odśwież listę w widoku Redmine.`
+    : `Nie znam tytułu ${key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`;
+}
+
+/**
  * Tytuł zadania z szablonu; ta sama reguła co `templates::render_title` w Rust.
- * - `{klucz}` → klucz Jiry (pusty, gdy go nie podano);
+ * - `{klucz}` → klucz Jiry albo numer Redmine `#1234` (pusty, gdy go nie podano);
  * - `{tytuł}` (także `{tytul}`) → tytuł z linii, a bez niego tytuł zgłoszenia (`summary`);
  * - tytuł z linii bez pola `{tytuł}` jest dopisywany na końcu;
  * - pusty tytuł szablonu zostawia tytuł z linii.
@@ -458,10 +498,7 @@ export function renderTitle(
   let value = line;
   if (!line && wantsTitle && key) {
     value = summary(key)?.trim() ?? "";
-    if (!value)
-      throw new Error(
-        `Nie znam tytułu ${key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
-      );
+    if (!value) throw new Error(unknownTitle(key));
   }
   let title = template
     .replaceAll("{klucz}", key ?? "")

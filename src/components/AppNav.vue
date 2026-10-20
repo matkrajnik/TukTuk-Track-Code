@@ -3,6 +3,7 @@ export type View =
   | "tasks"
   | "reports"
   | "jira"
+  | "redmine"
   | "dashboard"
   | "journal"
   | "library"
@@ -16,6 +17,7 @@ import {
   ArrowLeftRight,
   CalendarDays,
   CalendarRange,
+  ClipboardList,
   History,
   LayoutDashboard,
   ListTodo,
@@ -269,6 +271,15 @@ async function hide() {
         @click="go('jira')"
       >
         <Ticket :size="20" aria-hidden="true" /><span class="nav-label">Jira</span>
+      </button>
+      <button
+        class="nav-item"
+        :class="{ selected: view === 'redmine' }"
+        :aria-current="view === 'redmine' ? 'page' : undefined"
+        :title="paneCompact ? 'Redmine' : undefined"
+        @click="go('redmine')"
+      >
+        <ClipboardList :size="20" aria-hidden="true" /><span class="nav-label">Redmine</span>
       </button>
       <button
         class="nav-item"

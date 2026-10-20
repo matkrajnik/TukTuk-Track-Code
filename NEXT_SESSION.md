@@ -1,4 +1,103 @@
-# Todo Track — stan po 1.8.0
+# Todo Track — stan po 1.9.0
+
+## Stan po 1.9.0 (20 października 2026, przygotowane, niewydane)
+
+Gałąź `release-1-9` (worktree `.claude/worktrees/release-1-9`), lokalnie, bez pusha i bez tagu. Wydanie 1.9.0 obejmuje wszystkie zadania z `PLAN_1.9.md` (Redmine obok Jiry):
+- R1 (backend): `src-tauri/src/redmine.rs` — konfiguracja pod kluczem `redmine`, klucz API w magazynie poświadczeń (`<identifier>.redmine`, użytkownik `<adres>|<login>`), klient per konfiguracja (`danger_accept_invalid_certs` tylko przy opcji), listy zgłoszeń, projektów i statusów ze stronicowaniem (5 stron zgłoszeń, 10 stron projektów), `status_error` po polsku z osobnym `CERT_ERROR`, tabele `redmine_tasks`, `redmine_issues`, `redmine_statuses`, komendy `redmine_*`, `start_by_id`. `reqwest` z `rustls-tls` i `rustls-tls-native-roots`. Przywracanie kopii zachowuje bieżące wiersze `redmine` i `redmine_statuses_at`. Fixture `src-tauri/tests/fixtures/redmine_*.json`.
+- R2 (zgłoszenie na zadaniu): pola `redmineId` / `redmineUrl` / `redmineStatus` / `redmineTracker` / `redmineDue` w snapshot, `src/issue.ts` (`issueRef`, `issueLabel`) w kafelku, karcie tygodnia, szybkim przełączaniu, widgecie, Rano, raporcie miesiąca i tablicy tygodnia; chipy trackera i terminu; szybkie dodawanie `#1234` (`quickadd::create_linked`, jedno zgłoszenie na zadanie); `waiting_redmine_statuses`; status Jiry albo Redmine w `planner`; kolumna „Redmine” na końcu eksportu; `#numer` w trayu i dopasowaniu agentów; `priority_band` z „immediate” / „natychmiastowy”.
+- R3 (widok i obserwacja): `src/RedmineView.vue` z `RedmineIssueCard.vue` (śledzony projekt → grupy statusów, „Moje” / „Wszystkie otwarte”, „Tylko otwarte”, filtr trackera, wyszukiwanie, „Rozpocznij”, sekcja spoza śledzonych projektów, stany bez projektów i bez konta), pozycja „Redmine” w nawigacji po „Jira”; wątek `redmine::start` co 5 minut (`sync_assigned` jak w Jirze, powiadomienie `redmine-start` / „Zaplanuj na dziś”); rozszerzenie przeglądarki rozpoznaje `/issues/1234` (także pod prefiksem) jako `#1234`.
+- R4 (zapisy): `redmine::write` z `ensure_write` (`redmine_write`); przesunięcie przy starcie (`jira_move.rs` z polem `system`, baner, widget, powiadomienie), „Przesuń w Redmine…” i propozycja po ukończeniu (`redmine_transitions` / `redmine_transition` w `jira_move`), „Przesuń do…” na karcie widoku (`redmine_issue_transitions` / `redmine_issue_transition`), „Przypisz do mnie”, komentarz, „Kopiuj nazwę gałęzi” (`RedmineIssueActions.vue`); odczyt statusu po `PUT` i „Redmine nie zmienił statusu”.
+- R5 (Ustawienia → Redmine): `RedmineSettings.vue` — połączenie (adres z prefiksem, ostrzeżenie przy `http`, „Gdzie znaleźć klucz API”, „Zaawansowane” z certyfikatem), „Testuj połączenie”, „Rozłącz” z potwierdzeniem, śledzone projekty, przełączniki, listy statusów z „Wstaw statusy z Redmine”, prefiks gałęzi, „Jak to działa”; ustawienia `redmine_auto_import`, `redmine_write`, `redmine_ask_move`, `redmine_move_status`, `redmine_new_statuses`, `redmine_branch_prefix`.
+- R6 (podgląd i e2e): symulowany Redmine w `store.ts` (`todo-track-preview-redmine-v1`, nasłuch zmian z innego okna, zdarzenie `redmineChangedEvent`), `redmineSeed()` / `redmineFixture()` w `tests/fixtures/seed.ts`, zastępcze IPC w `tests/fixtures/tauri.ts`, `tests/redmine.spec.ts`, `tests/redmine-store.spec.ts`, zrzuty wzorcowe.
+- R19: README („Nowości 1.9”, „Redmine” w opisie ustawień, sekcja „Redmine” po „Jira”, wzmianka w „Rozszerzenie przeglądarki”, wiersz „Wersja w repozytorium”, „Weryfikacja 1.9.0”), `notes.md` z notatkami wydania 1.9.0 i ten wpis.
+
+**Do wydania (użytkownik):** scalić `release-1-9` do `master`, a potem na `master` uruchomić `npm run ship -- 1.9.0` (`RELEASE.md`, `scripts/ship.mjs`). Polecenie podbija wersję w manifestach (obecnie nadal 1.8.0), buduje i podpisuje instalator kluczem z hasłem, publikuje w `matkrajnik/todo-track` z notatkami z `notes.md`, commituje, taguje `v1.9.0` i pushuje. Przygotowanie wydania nie zmieniało wersji, nie budowało instalatora, nie tworzyło tagu i nie ruszało `releases/`.
+
+Weryfikacja (20 października 2026, gałąź `release-1-9`):
+- `npm run build`: przechodzi.
+- Playwright: 366 testów z zrzutami wzorcowymi przechodzi (było 296). W tym 44 w `tests/redmine.spec.ts`, 7 w `tests/redmine-store.spec.ts`, 5 w `tests/issue.spec.ts` i 8 zrzutów `redmine-*` / `ustawienia-redmine-*`.
+- `cargo fmt --check` i 318 testów Rust (`cargo test --locked`): przechodzą (było 268 w 1.8.0).
+- `npm run tauri build` nie był uruchamiany (robi go `npm run ship`).
+- Żadne żądanie nie poszło do żadnego serwera Redmine ani Jiry.
+
+Odstępstwa od planu:
+- R19 tylko przygotowuje wydanie: bez podniesienia wersji, `npm run tauri build`, instalatora w `releases/`, tagu i publikacji (od 1.7.4 robi to `npm run ship` na `master`; klucz podpisu z hasłem jest tylko u użytkownika).
+- TLS: plan zakładał zamianę `rustls-tls` na `rustls-tls-native-roots`. Po przeglądzie R1 `reqwest` ma **obie** cechy: urzędy z magazynu Windows dochodzą do wbudowanej listy `webpki-roots`, która zostaje w `Cargo.lock` (1.0.9). Zestaw zaufanych urzędów tylko rośnie.
+- Komendy zmiany statusu są dwie pary: `redmine_transitions(task_id)` / `redmine_transition` (kafelek zadania, w `jira_move.rs`) oraz `redmine_issue_transitions` / `redmine_issue_transition` (karta w widoku Redmine, po numerze zgłoszenia, także bez zadania).
+- Przywracanie kopii SQLite przenosi z bieżącej instalacji wiersze `redmine` i `redmine_statuses_at` (jak `jira`), bo klucz API w magazynie należy do bieżącej konfiguracji.
+- R6 scalił scenariusze e2e R2–R5 w jednym `tests/redmine.spec.ts`. Świadomie zmienione istniejące testy: `tests/export.spec.ts` (kolumna „Redmine” na końcu, wymagana przez plan) i `tests/settings-tab.spec.ts` (jedna linia dla nowej sekcji). Testy Jiry (`tests/jira*.spec.ts`, testy w `jira*.rs`) bez zmian treści.
+- Zrzuty wzorcowe zregenerowane lokalnie i świadomie: wszystkie widoki z panelem nawigacji (nowa pozycja „Redmine”: `dashboard-*`, `jira-*`, `jira-tablica-*`, `plan-dzien-*`, `plan-tablica-tygodnia-*`, `ustawienia-*`, `ustawienia-timesheet-*`, `zadania-*`, `zamkniecie-dnia-*`), nowe `redmine-*` i `ustawienia-redmine-*` (po 4). Żaden nie potwierdzony na windows-latest.
+- Bez „Zmień osobę…”, „Nowe zgłoszenie”, wpisów czasu, filtra wersji i konfigurowalnych pól na kafelku (odłożone w planie).
+
+Do ręcznego sprawdzenia z prawdziwym Redmine (po instalacji, przez użytkownika; wymaga natywnej aplikacji, adresu firmowego Redmine i klucza API z „Moje konto”):
+
+Połączenie:
+- Czy REST API jest włączone (`GET <site>/users/current.json` z kluczem oddaje JSON, nie stronę logowania) i jaka jest wersja Redmine (Administracja → Informacje) — od 5.0 działa `include=allowed_statuses`, poniżej lista statusów to wszystkie statusy.
+- Czy Redmine jest pod `https`, czy `http`, i czy ma prefiks ścieżki (np. `/redmine`) — sprawdzić, że normalizacja adresu i linki „Otwórz w Redmine” działają z prefiksem.
+- **Certyfikat**: czy „Testuj połączenie” przechodzi z domyślnym ustawieniem (certyfikat firmowego urzędu w magazynie Windows) bez włączania opcji „Akceptuj niezaufany certyfikat”. Jeśli nie, zainstalować certyfikat urzędu w systemie zamiast włączać opcję.
+- Po dodaniu feature TLS `rustls-tls-native-roots`: Jira, kalendarz Microsoft, TS i sprawdzanie aktualizacji nadal łączą się bez błędu (zestaw zaufanych urzędów tylko rośnie, ale sprawdzić raz).
+- Czy `assigned_to_id=me` z kluczem API zwraca moje zgłoszenia (niektóre instalacje wymagają `assigned_to_id=<id>`; wtedy jedna linia w `redmine_issues` z `user_id` z konfiguracji).
+
+Statusy:
+- Rzeczywiste nazwy statusów (polskie czy angielskie) — do wpisania w „Statusy początkowe”, „Docelowy status” i „Czekam na”; czy warto zmienić wartości domyślne na polskie.
+- Czy `PUT /issues/{id}.json` ze `status_id` spoza przepływu zwraca 422 z `errors` (jaka treść), czy 200 bez zmiany — w drugim przypadku `redmine_transition` porównuje status po zapisie i zgłasza „Redmine nie zmienił statusu”.
+- Czy zmiana statusu przez API wymaga pól obowiązkowych (np. „% ukończenia”, pola niestandardowe) — wtedy komunikat 422 ma to pokazać, a docelowo przejście otwiera zgłoszenie w przeglądarce jak w Jirze.
+
+Obserwacja i zapisy:
+- Czy pierwsze sprawdzenie po połączeniu nie importuje istniejącego backlogu, a nowe przypisanie w ciągu 5 minut daje powiadomienie i zadanie w „Do zaplanowania”.
+- Czy komentarz (`notes`) i „Przypisz do mnie” przechodzą z uprawnieniami zwykłego użytkownika, i czy komentarz z polskimi znakami i nowymi liniami wygląda poprawnie.
+- Czy strona zgłoszenia otwarta w Chrome/Edge z rozszerzeniem daje podpowiedź „Przełącz na #1234” (host Redmine musi być w domenach rozszerzenia — opcje rozszerzenia albo automatycznie z konfiguracji).
+- Klucz API po „Rozłącz konto” znika z Menedżera poświadczeń Windows (`pl.todotrack.desktop.redmine`).
+
+Uwagi zgłoszone przez zadania:
+
+R1 (backend):
+- Po dodaniu `rustls-tls-native-roots` cała aplikacja (Jira, Microsoft Graph, TS, updater z GitHub) ufa wbudowanej liście `webpki-roots` i dodatkowo certyfikatom z magazynu Windows. Pierwsza wersja R1 usuwała `webpki-roots`, ale przegląd przywrócił `rustls-tls` obok. Sprawdzić raz na świeżej maszynie, że GitHub, Atlassian i Microsoft działają bez błędu certyfikatu.
+- Czy nagłówek `X-Redmine-API-Key` wysyłany małymi literami (tak koduje hyper) jest akceptowany przez firmowy Redmine za ewentualnym reverse proxy.
+- Czy `/users/current.json` firmowego Redmine zwraca `firstname` / `lastname` (`display_name`) — bez nich nazwa to login.
+- Czy serwer oddaje `status.is_closed` w `/issues.json` (Redmine ≥ 4.1); jeśli nie, zamknięcie bierze się z `/issue_statuses.json`, które muszą się dać pobrać z uprawnieniami zwykłego użytkownika.
+- Czy `/projects.json` w firmowym Redmine zwraca podprojekty z polem `parent.id` i w kolejności hierarchii (`lft`) — od tego zależy wcięcie w Ustawieniach.
+- Rozpoznanie błędu certyfikatu (`CERT_ERROR`) opiera się na tekście błędu rustls w łańcuchu przyczyn („certificate” / „UnknownIssuer”) — potwierdzić z prawdziwym self-signed certyfikatem, że pojawia się komunikat o certyfikacie, a nie ogólny „Nie udało się połączyć”.
+- Czy przy prefiksie ścieżki (np. `https://firma.pl/redmine`) Redmine nie przekierowuje `/issues.json` (klient nie podąża za przekierowaniami → komunikat „Redmine przekierował żądanie”).
+- Wpis w Menedżerze poświadczeń powstaje pod nazwą `pl.todotrack.desktop.redmine` z użytkownikiem `<adres>|<login>` i znika po „Rozłącz”.
+
+R2 (zgłoszenie na zadaniu):
+- W natywnej aplikacji szybkie dodawanie `#1234` bez tytułu bierze temat tylko z `RedmineState` (lista pobrana w widoku Redmine albo `start_by_id`). Przed pierwszym pobraniem listy pojawia się „Nie znam tematu #1234…”. Sprawdzić, że po odświeżeniu listy temat się znajduje, a numer spoza listy z własnym tytułem wiąże się bez statusu i trackera na kafelku do czasu obserwacji.
+- „Otwórz w Redmine” z rozwiniętego kafelka (`redmine_open`) z adresem z prefiksem ścieżki (np. `https://firma.pl/redmine/issues/1234`); w podglądzie przycisk nic nie otwiera.
+- Menu traya dla przypiętego zadania Redmine pokazuje „#1234 · tytuł” (tylko natywnie).
+- Szybkie dodawanie `#1234` nie nadaje pasma priorytetu z `redmine_issues` (robi to tylko `redmine_start` / `start_issue`). Zdecydować, czy przy znanym priorytecie ma je nadawać jak przy „Rozpocznij”.
+- Propozycja „Czekam na” dla zadań Redmine używa `waiting_redmine_statuses` (domyślnie „Feedback”); przy polskich nazwach statusów trzeba je wpisać w Ustawieniach, inaczej propozycja się nie pojawi.
+- Eksport XLSX z kolumną „Redmine” (11. kolumna) i etykietą „Tytuł (#1234)” w arkuszu „Podsumowanie” — sprawdzić w Excelu po eksporcie z natywnej aplikacji (test Rust czyta plik przez `calamine`).
+
+R3 (widok i obserwacja):
+- Czy `redmine_issues` ze `status_id=*` i `updated_on=>=RRRR-MM-DD` (zamknięte niedawno w obserwacji) działa w firmowej wersji Redmine. Czy `issue_id=1,2,3` ze `status_id=*` zwraca też zgłoszenia przypisane komuś innemu i zamknięte (status zadań przekazanych innym).
+- Czy rozpoznanie podprojektów w sekcji „spoza śledzonych projektów” jest poprawne. Liczą się projekty potomne z `/projects.json`; projekty, których użytkownik nie widzi, nie mają tam `parent.id`.
+- Czy pierwsze powiadomienie po realnym przypisaniu ma przyciski „Rozpocznij” i „Zaplanuj na dziś” oraz czy „Rozpocznij” z toastu (`redmine-start`) startuje zadanie, także gdy główne okno jest schowane.
+- Czy po wyłączeniu „Dodawaj nowe zgłoszenia przypisane do mnie” obserwacja Redmine się zatrzymuje, a obserwacja Jiry działa dalej.
+- Czy rozszerzenie przeglądarki na stronie zgłoszenia pod prefiksem ścieżki (np. `https://firma.pl/redmine/issues/1234`) daje podpowiedź z tematem zgłoszenia. Temat jest znany tylko, gdy zgłoszenie było już pobrane do `redmine_issues` (widok albo obserwacja); bez tego zgłoszenie bez zadania nie jest proponowane.
+- Czy przy więcej niż 500 otwartych zgłoszeniach w „Wszystkie otwarte” pojawia się ostrzeżenie i czy czas odpowiedzi jest akceptowalny.
+
+R4 (zapisy):
+- Czy odpowiedź `GET /issues/{id}.json?include=allowed_statuses` w firmowym Redmine zawiera bieżący status. Kod sam usuwa bieżący status z listy, więc to tylko potwierdzenie, że lista wygląda dobrze.
+- Czy pozycje `allowed_statuses` mają `is_closed`. Jeśli nie, flaga pochodzi z `/issue_statuses.json`. Sprawdzić, że „Ukończone. Przesunąć #1234 dalej?” pokazuje statusy zamknięte, a pytanie przy starcie ich nie pokazuje.
+- Czy udany `PUT /issues/{id}.json` zwraca 204 z pustą treścią, czy 200 z JSON (oba przypadki są obsłużone); potwierdzić też, że HTML z kodem 200 (wyłączone API) daje komunikat „…stroną zamiast danymi”.
+- Czy `PUT` z samym `notes` dodaje wpis w historii bez zmiany czegokolwiek innego. Sprawdzić też końce linii i polskie znaki komentarza w Redmine.
+- Czy „Przypisz do mnie” działa z `user_id` zapisanym przy połączeniu. Gdy `user_id` jest 0, użytkownik dostaje komunikat z prośbą o „Testuj połączenie”.
+- Czy przycisk „Przesuń” w powiadomieniu Windows dla pytania o zgłoszenie Redmine (okno schowane albo blok skupienia) zmienia status i czy przy błędzie baner pokazuje komunikat z linkiem „Otwórz #1234 w Redmine”.
+- Czy po zmianie statusu z karty widoku Redmine kafelek powiązanego zadania odświeża się przez `data-changed` bez przeładowania okna.
+- Czy „Kopiuj nazwę gałęzi” kopiuje do schowka w oknie WebView2. Jeśli schowek jest niedostępny, nazwa pokazuje się w komunikacie.
+
+R5 (Ustawienia → Redmine):
+- „Połącz” z adresem z prefiksem ścieżki (np. `https://firma.pl/redmine/`) zapisuje go bez końcowego `/`, a „Gdzie znaleźć klucz API” otwiera `<adres>/my/account` w domyślnej przeglądarce (`redmine_open` z `account_link` przed pierwszym połączeniem).
+- Czy nieudany handshake TLS z firmowym Redmine daje `CERT_ERROR` („Certyfikat serwera nie jest zaufany…”), a nie ogólny błąd sieci. Zależy to od łańcucha błędów reqwest/rustls, który testy tylko symulują.
+- Czy akceptowalne jest, że opcja certyfikatu działa dopiero po „Połącz” z ponownie wpisanym kluczem. Sama zmiana pola wyboru nie zapisuje się bez ponownego połączenia.
+- Czy „Dodaj projekt…” przy dużej instancji (setki projektów, głębokie podprojekty, projekty bez dostępu) ładuje się w 30 s i czy wcięcia odpowiadają prawdziwym `parent.id`.
+- Czy „Wstaw statusy z Redmine” (`redmine_statuses(true)`) zwraca prawdziwe nazwy statusów, być może polskie, dla zwykłego użytkownika bez uprawnień administratora.
+- Czy po „Rozłącz” adres zostaje w polu, „Testuj połączenie” znika, a poświadczenie znika z Menedżera poświadczeń Windows.
+
+R6 (podgląd i e2e; wymaga natywnej aplikacji z prawdziwym Redmine):
+- Przeładowanie widoku Redmine po „Połącz”, „Rozłącz” albo wyborze projektów w Ustawieniach. Na pulpicie działa to na zdarzeniu okna (`redmineChangedEvent`) zaraz po komendzie, bez zdarzenia `storage`, więc sprawdzić w zainstalowanej aplikacji, w szczególności że widok nie ładuje się dwa razy przy przejściu prosto z Ustawień.
+- Szybkie dodawanie w widoku zadań: zaraz po połączeniu albo rozłączeniu Redmine w Ustawieniach `#1234` ma się przełączać między zgłoszeniem a projektem bez restartu aplikacji (`refreshRedmineConnected` działa na zdarzeniu okna).
 
 ## Stan po 1.8.0 (20 października 2026, przygotowane, niewydane)
 

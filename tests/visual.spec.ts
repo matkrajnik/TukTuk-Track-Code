@@ -113,6 +113,42 @@ const views: {
       ).toBeVisible(),
   },
   {
+    // R3: symulowany Redmine podglądu — śledzony projekt, grupy statusów,
+    // karty z trackerem, priorytetem, terminem i podprojektem oraz sekcja
+    // spoza śledzonych projektów.
+    name: "redmine",
+    open: (page) => nav(page, "Redmine"),
+    ready: async (page) => {
+      await expect(page.locator(".redmine-group")).toHaveCount(3);
+      await expect(
+        page.getByRole("region", {
+          name: "Przypisane do mnie spoza śledzonych projektów",
+        }),
+      ).toBeVisible();
+    },
+  },
+  {
+    // R5: Ustawienia → Redmine z połączonym kontem symulowanego Redmine
+    // (adres przykładowy, jeden śledzony projekt, wartości domyślne statusów).
+    name: "ustawienia-redmine",
+    open: async (page) => {
+      await page.evaluate(() =>
+        localStorage.setItem("todo-track-settings-section", "redmine"),
+      );
+      await page.reload();
+      await nav(page, "Ustawienia");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("heading", { name: "Redmine", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Połączono jako Jan Kowalski (jkowalski)"),
+      ).toBeVisible();
+      await expect(page.locator(".redmine-tracked li")).toHaveCount(1);
+    },
+  },
+  {
     name: "ustawienia-timesheet",
     // Połączone konto symulowanego TS z jednym domyślnym zadaniem projektu.
     open: async (page) => {

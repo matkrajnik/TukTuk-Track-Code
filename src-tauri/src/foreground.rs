@@ -477,8 +477,10 @@ pub fn observe(
                 resolve_clue(&db, source, name, &clue, &[], |_| head.clone())?
             };
             if signal.task.title.is_empty() {
+                // `#1234` (Redmine z rozszerzenia, R3): temat z listy Redmine,
+                // pozostałe klucze: podsumowanie z listy Jiry, jak dotąd.
                 if let Some(key) = signal.task.key.clone() {
-                    signal.task.title = crate::jira::cached_summary(app, &key).unwrap_or_default();
+                    signal.task.title = crate::suggest::cached_title(app, &key).unwrap_or_default();
                 }
             }
             Some(signal)

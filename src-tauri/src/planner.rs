@@ -240,7 +240,7 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
         .unwrap_or(false)
     };
     if !details.waiting.is_empty() && details.waiting_status.is_empty() {
-        details.waiting_status = jira_status(&tx, id).map_err(|e| e.to_string())?;
+        details.waiting_status = issue_status(&tx, id).map_err(|e| e.to_string())?;
     }
     // Nowa blokada zaczyna bez przypomnienia: dzień z dawnego toastu
     // („Przypomnij jutro”) nie może ominąć progu `waitingNotifyDays`.
@@ -248,7 +248,7 @@ pub fn save(db: &mut Connection, id: i64, mut details: Details) -> Result<Snapsh
         details.waiting_remind_day.clear();
     }
     if details.waiting.is_empty() && was_waiting {
-        details.waiting_dismissed = jira_status(&tx, id).map_err(|e| e.to_string())?;
+        details.waiting_dismissed = issue_status(&tx, id).map_err(|e| e.to_string())?;
     }
     // Blocking an actively measured task closes its session at the same time.
     if !details.waiting.is_empty() {
@@ -373,22 +373,30 @@ pub fn plan_tasks(db: &mut Connection, entries: &[PlanEntry]) -> Result<Snapshot
 
 /// Ostatni znany status zgłoszenia Jiry powiązanego z zadaniem `?1`.
 const JIRA_STATUS: &str = "SELECT ji.status FROM jira_tasks j JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key WHERE j.task_id=?1";
+/// Ostatni znany status zgłoszenia Redmine powiązanego z zadaniem `?1` (R2).
+const REDMINE_STATUS: &str = "SELECT ri.status FROM redmine_tasks r JOIN redmine_issues ri ON ri.site=r.site AND ri.issue_id=r.issue_id WHERE r.task_id=?1";
 
-/// Status Jiry zadania (pusty bez powiązania albo bez znanego statusu).
-pub fn jira_status(db: &Connection, id: i64) -> rusqlite::Result<String> {
+/// Status zgłoszenia zadania: z Jiry **albo** z Redmine (zadanie ma najwyżej
+/// jedno zgłoszenie); pusty bez powiązania albo bez znanego statusu.
+pub fn issue_status(db: &Connection, id: i64) -> rusqlite::Result<String> {
     use rusqlite::OptionalExtension;
     Ok(db
-        .query_row(JIRA_STATUS, [id], |r| r.get::<_, String>(0))
+        .query_row(
+            &format!("SELECT COALESCE(({JIRA_STATUS}),({REDMINE_STATUS}),'')"),
+            [id],
+            |r| r.get::<_, String>(0),
+        )
         .optional()?
         .unwrap_or_default())
 }
 
-/// Start pomiaru zdejmuje blokadę. Bieżący status Jiry trafia do
-/// `waitingDismissed`, żeby kafelek od razu nie proponował blokady z powrotem.
+/// Start pomiaru zdejmuje blokadę. Bieżący status zgłoszenia (Jira albo
+/// Redmine) trafia do `waitingDismissed`, żeby kafelek od razu nie proponował
+/// blokady z powrotem.
 pub fn clear_waiting(db: &Connection, id: i64) -> rusqlite::Result<()> {
     db.execute(
         &format!(
-            "UPDATE task_details SET json=json_set(json,'$.waiting','','$.waitingSince',0,'$.waitingStatus','','$.waitingRemindDay','','$.waitingDismissed',COALESCE(({JIRA_STATUS}),'')) WHERE task_id=?1 AND COALESCE(json_extract(json,'$.waiting'),'')<>''"
+            "UPDATE task_details SET json=json_set(json,'$.waiting','','$.waitingSince',0,'$.waitingStatus','','$.waitingRemindDay','','$.waitingDismissed',COALESCE(({JIRA_STATUS}),({REDMINE_STATUS}),'')) WHERE task_id=?1 AND COALESCE(json_extract(json,'$.waiting'),'')<>''"
         ),
         [id],
     )?;
@@ -428,7 +436,7 @@ pub fn set_waiting(
     if !exists {
         return Err("Nie znaleziono zadania.".into());
     }
-    let status = jira_status(&tx, id).map_err(|e| e.to_string())?;
+    let status = issue_status(&tx, id).map_err(|e| e.to_string())?;
     tx.execute(
         "INSERT INTO task_details(task_id,json) VALUES(?1,'{}') ON CONFLICT(task_id) DO NOTHING",
         [id],
@@ -1130,5 +1138,39 @@ mod tests {
             params![format!("WMS-{task}"), status],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn waiting_uses_redmine_status_when_task_has_redmine_issue() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("Import CSV".into()), 0).unwrap();
+        db.execute_batch(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl',1234);
+             INSERT INTO redmine_issues(site,issue_id,status) VALUES('https://redmine.example.pl',1234,'Feedback');",
+        )
+        .unwrap();
+        assert_eq!(issue_status(&db, 1).unwrap(), "Feedback");
+        let change = |action: &str, text: &str| WaitingChange {
+            action: action.into(),
+            text: text.into(),
+        };
+        // Propozycja z Redmine: blokada zapamiętuje status Redmine.
+        let snap = set_waiting(&mut db, 1, &change("block", "Redmine: Feedback"), 5_000).unwrap();
+        let one = &snap.tasks.iter().find(|t| t.id == 1).unwrap().details;
+        assert_eq!(one.waiting_status, "Feedback");
+        // Start zdejmuje blokadę; `waitingDismissed` to status z Redmine.
+        db.execute(
+            "UPDATE redmine_issues SET status='In Progress' WHERE issue_id=1234",
+            [],
+        )
+        .unwrap();
+        db::change(&mut db, "start", Some(1), None, 9_000).unwrap();
+        let one = details_of(&db, 1);
+        assert_eq!((one.waiting.as_str(), one.waiting_since), ("", 0));
+        assert_eq!(one.waiting_dismissed, "In Progress");
+        // Bez zgłoszenia status jest pusty.
+        db::change(&mut db, "add", None, Some("Bez zgłoszenia".into()), 0).unwrap();
+        assert_eq!(issue_status(&db, 2).unwrap(), "");
     }
 }

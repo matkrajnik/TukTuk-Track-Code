@@ -2490,3 +2490,156 @@ html.widget-root body {
   width: 1%;
   white-space: nowrap;
 }
+
+/* R3: widok Redmine („projekt → zgłoszenia”, grupy statusów) */
+.redmine-connect {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.redmine-projects,
+.redmine-all-projects {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 18px 0 12px;
+}
+.redmine-all-projects h2 {
+  font-size: var(--fs-md);
+  font-weight: 500;
+  margin: 0;
+}
+.redmine-project-tabs {
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+.redmine-projects select {
+  margin-left: 6px;
+  max-width: 260px;
+}
+.redmine-trackers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.redmine-chip {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  padding: 3px 9px;
+  font-size: var(--fs-xs);
+}
+.redmine-chip[aria-pressed="true"] {
+  background: var(--accent-bg);
+  color: var(--text);
+}
+.redmine-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.redmine-group-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 4px 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  text-align: left;
+  justify-content: flex-start;
+}
+.redmine-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.redmine-card {
+  cursor: default;
+}
+.redmine-number {
+  font-weight: 600;
+}
+.redmine-outside {
+  margin-top: 26px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+.redmine-outside h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-md);
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+/* Ustawienia → Redmine (PLAN_1.9.md, R5): połączenie, śledzone projekty, statusy. */
+.redmine-warning {
+  color: var(--warning);
+}
+.redmine-tracked {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-width: 640px;
+}
+.redmine-tracked li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-size: var(--fs-sm);
+}
+.redmine-tracked small {
+  color: var(--muted);
+}
+.redmine-tracked .text-link {
+  margin-left: auto;
+}
+.redmine-project-picker {
+  margin-top: 12px;
+}
+.redmine-project-picker > input {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.redmine-project-options {
+  grid-template-columns: 1fr;
+}
+.redmine-status-picker {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.redmine-status-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.redmine-status-chips {
+  margin: 0;
+}
+.redmine-status-chips small {
+  color: var(--muted);
+}

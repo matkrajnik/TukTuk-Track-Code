@@ -14,7 +14,10 @@ import {
   onTemplatesChanged,
   quickAdd,
   quickTask,
+  redmineConnected,
   refreshJiraConnected,
+  refreshRedmineConnected,
+  onRedmineChanged,
   templates,
   setPriority,
   type NavigateRequest,
@@ -273,8 +276,12 @@ async function focusRun(action: "start" | "stop") {
 const templateNames = computed(() => templates.value.map((t) => t.name));
 let stopTemplates: (() => void) | undefined;
 let mounted = true;
+// Połączenie albo rozłączenie Redmine (Ustawienia, inne okno): `#1234` w
+// szybkim dodawaniu zmienia znaczenie od razu.
+const stopRedmine = onRedmineChanged(() => void refreshRedmineConnected());
 onMounted(async () => {
   void refreshJiraConnected();
+  void refreshRedmineConnected();
   try {
     const stop = await onTemplatesChanged();
     if (!mounted) return stop();
@@ -288,6 +295,7 @@ onMounted(async () => {
 onUnmounted(() => {
   mounted = false;
   stopTemplates?.();
+  stopRedmine();
 });
 /** Poprawka szacunków (podpowiedzi „zwykle ~…”); przeliczana co minutę. */
 const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
@@ -298,6 +306,7 @@ const parsed = computed(() =>
     projects: projects.value,
     templates: templateNames.value,
     jiraEnabled: jiraConnected.value,
+    redmineEnabled: redmineConnected.value,
   }),
 );
 /** Bez zapisów składni dodanie działa dokładnie jak wcześniej (`mutate add`). */
@@ -306,6 +315,7 @@ const canAdd = computed(
     !blockingError(parsed.value) &&
     (!!parsed.value.title.trim() ||
       !!parsed.value.fields.jiraKey ||
+      parsed.value.fields.redmineId != null ||
       !!parsed.value.fields.template),
 );
 async function add() {

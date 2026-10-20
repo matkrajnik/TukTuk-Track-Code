@@ -1,0 +1,41 @@
+{
+  "projects": [
+    {
+      "id": 7,
+      "name": "Magazyn WMS",
+      "identifier": "wms",
+      "description": "System magazynowy",
+      "status": 1,
+      "is_public": false,
+      "inherit_members": false,
+      "created_on": "2024-01-15T10:00:00Z",
+      "updated_on": "2026-09-01T12:00:00Z"
+    },
+    {
+      "id": 8,
+      "name": "WMS – integracje",
+      "identifier": "wms-integracje",
+      "description": "",
+      "parent": { "id": 7, "name": "Magazyn WMS" },
+      "status": 1,
+      "is_public": false,
+      "inherit_members": true,
+      "created_on": "2025-03-02T10:00:00Z",
+      "updated_on": "2026-09-01T12:00:00Z"
+    },
+    {
+      "id": 9,
+      "name": "Portal klienta",
+      "identifier": "portal",
+      "description": "",
+      "status": 1,
+      "is_public": false,
+      "inherit_members": false,
+      "created_on": "2025-06-10T10:00:00Z",
+      "updated_on": "2026-08-20T12:00:00Z"
+    }
+  ],
+  "total_count": 3,
+  "offset": 0,
+  "limit": 100
+}

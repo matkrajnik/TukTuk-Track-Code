@@ -4,6 +4,7 @@ import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
 import TimesheetSettings from "./TimesheetSettings.vue";
+import RedmineSettings from "./RedmineSettings.vue";
 import BrowserExtensionStatus from "./BrowserExtensionStatus.vue";
 import { openView, type SettingsSection } from "../navigation";
 import { checkForUpdate } from "../updater";
@@ -673,6 +674,10 @@ onUnmounted(() => {
       <button class="action-button" @click="openView({ view: 'jira' })">
         Połączenie z Jirą
       </button>
+    </template>
+    <template v-if="section === 'redmine'">
+      <h2>Redmine</h2>
+      <RedmineSettings :settings="settings" :saving="busy" @save="save" />
     </template>
     <template v-if="section === 'timesheet'">
       <h2>Timesheet (TS)</h2>

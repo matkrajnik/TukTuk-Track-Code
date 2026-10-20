@@ -1,18 +1,21 @@
 //! Szybkie dodawanie ze składnią (`src/quickadd.ts`): zadanie z polami, opcjonalnym
-//! powiązaniem z Jirą i startem pomiaru w jednej transakcji.
+//! powiązaniem z Jirą **albo** z Redmine (PLAN_1.9.md, R2) i startem pomiaru
+//! w jednej transakcji.
 use crate::db::{self, Snapshot};
 use crate::planner::{self, Details};
 use crate::templates;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
 
-/// Wynik parsera z frontendu. Pusty tytuł jest dozwolony tylko z kluczem Jiry,
-/// wtedy tytuł pochodzi ze zgłoszenia.
+/// Wynik parsera z frontendu. Pusty tytuł jest dozwolony tylko z kluczem Jiry
+/// albo numerem Redmine, wtedy tytuł pochodzi ze zgłoszenia.
 #[derive(Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct NewTask {
     pub title: String,
     pub jira_key: Option<String>,
+    /// Numer zgłoszenia Redmine (`#1234`); razem z `jira_key` to błąd.
+    pub redmine_id: Option<u64>,
     pub details: Option<Details>,
     /// „Utwórz i rozpocznij” z szybkiego przełączania: poprzedni pomiar staje.
     pub start: bool,
@@ -20,13 +23,33 @@ pub struct NewTask {
     pub template: Option<String>,
 }
 
-/// Tworzy zadanie. `summary` podaje tytuł zgłoszenia znanego z listy Jiry.
-/// `site` to adres połączonej Jiry; `None`, gdy konto nie jest połączone
-/// (klucz Jiry jest wtedy odrzucany zamiast wiązać zadanie z domyślnym adresem).
+pub const ONE_ISSUE: &str = "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
+
+/// Tworzy zadanie bez źródła Redmine (numer Redmine w `task` jest wtedy
+/// odrzucany jak klucz Jiry bez połączonego konta). `summary` podaje tytuł
+/// zgłoszenia znanego z listy Jiry. `site` to adres połączonej Jiry; `None`,
+/// gdy konto nie jest połączone (klucz Jiry jest wtedy odrzucany zamiast
+/// wiązać zadanie z domyślnym adresem).
 pub fn create(
     db: &mut Connection,
     site: Option<&str>,
     summary: impl FnOnce(&str) -> Option<String>,
+    task: NewTask,
+    now: i64,
+) -> Result<Snapshot, String> {
+    create_linked(db, site, summary, None, |_| None, task, now)
+}
+
+/// Tworzy zadanie z opcjonalnym powiązaniem z Jirą (`jira_site`, `summary`)
+/// albo z Redmine (`redmine_site`, `subject` z `redmine::cached_subject`).
+/// `None` jako adres oznacza niepołączone konto: zapis jest odrzucany zamiast
+/// wiązać zadanie z nieznanym adresem. Zadanie ma najwyżej jedno zgłoszenie.
+pub fn create_linked(
+    db: &mut Connection,
+    jira_site: Option<&str>,
+    summary: impl FnOnce(&str) -> Option<String>,
+    redmine_site: Option<&str>,
+    subject: impl FnOnce(u64) -> Option<String>,
     task: NewTask,
     now: i64,
 ) -> Result<Snapshot, String> {
@@ -39,7 +62,16 @@ pub fn create(
             return Err("Niepoprawny klucz zgłoszenia Jiry.".into());
         }
     }
-    let site = match (&key, site) {
+    let redmine_id = task.redmine_id;
+    if let Some(id) = redmine_id {
+        if !crate::redmine::valid_issue_id(id) {
+            return Err("Niepoprawny numer zgłoszenia Redmine.".into());
+        }
+    }
+    if key.is_some() && redmine_id.is_some() {
+        return Err(ONE_ISSUE.into());
+    }
+    let site = match (&key, jira_site) {
         (Some(key), None) => {
             return Err(format!(
                 "Jira nie jest połączona, więc {key} nie zostanie powiązane. Połącz konto w widoku Jira albo poprzedź klucz znakiem \\."
@@ -47,16 +79,34 @@ pub fn create(
         }
         (_, site) => site.unwrap_or_default(),
     };
+    let redmine_site = match (redmine_id, redmine_site) {
+        (Some(id), None) => {
+            return Err(format!(
+                "Redmine nie jest połączone, więc #{id} nie zostanie powiązane. Połącz konto w Ustawieniach → Redmine albo poprzedź # znakiem \\."
+            ))
+        }
+        (_, site) => site.unwrap_or_default(),
+    };
+    // Etykieta zgłoszenia do szablonu (`{klucz}`) i komunikatów: klucz Jiry
+    // albo `#numer`; tytuł zgłoszenia z właściwego źródła.
+    let label = key
+        .clone()
+        .or_else(|| redmine_id.map(|id| format!("#{id}")));
+    let mut lookup = Some(move |label: &str| -> Option<String> {
+        match label.strip_prefix('#').and_then(|n| n.parse::<u64>().ok()) {
+            Some(id) => subject(id),
+            None => summary(label),
+        }
+    });
     let template = match task.template.as_deref().map(str::trim) {
         Some(name) if !name.is_empty() => Some(templates::find(db, name)?.ok_or(format!(
             "Nie ma szablonu „{name}”. Dodaj go w Ustawieniach → Szablony."
         ))?),
         _ => None,
     };
-    let mut summary = Some(summary);
     let mut title = match &template {
-        Some(t) => templates::render_title(&t.body.title, key.as_deref(), &task.title, |k| {
-            summary.take().and_then(|f| f(k))
+        Some(t) => templates::render_title(&t.body.title, label.as_deref(), &task.title, |k| {
+            lookup.take().and_then(|f| f(k))
         })?
         // Długi tytuł zgłoszenia nie blokuje szablonu, jak przy samym kluczu.
         .chars()
@@ -64,16 +114,14 @@ pub fn create(
         .collect(),
         None => task.title.trim().to_owned(),
     };
-    let summary = summary.take();
+    let lookup = lookup.take();
     if title.is_empty() {
-        if let Some(key) = &key {
-            title = summary
-                .and_then(|f| f(key))
+        if let Some(label) = &label {
+            title = lookup
+                .and_then(|f| f(label))
                 .map(|s| s.trim().chars().take(240).collect())
                 .filter(|s: &String| !s.is_empty())
-                .ok_or(format!(
-                    "Nie znam tytułu {key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira."
-                ))?;
+                .ok_or_else(|| templates::unknown_title(label))?;
         }
     }
     if title.is_empty() || title.chars().count() > 240 {
@@ -108,6 +156,23 @@ pub fn create(
             ));
         }
     }
+    if let Some(id) = redmine_id {
+        let existing: Option<(String, bool)> = tx
+            .query_row(
+                "SELECT t.title, EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=t.id AND l.deleted_at IS NOT NULL)
+                 FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.site=?1 AND r.issue_id=?2",
+                params![redmine_site, id as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((existing, deleted)) = existing {
+            return Err(format!(
+                "#{id} ma już zadanie „{existing}”{}.",
+                if deleted { " (w koszu)" } else { "" }
+            ));
+        }
+    }
     tx.execute(
         "INSERT INTO tasks(title,created_at) VALUES(?1,?2)",
         params![title, now],
@@ -128,6 +193,13 @@ pub fn create(
         tx.execute(
             "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(?1,?2,?3)",
             params![id, site, key],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    if let Some(issue) = redmine_id {
+        tx.execute(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(?1,?2,?3)",
+            params![id, redmine_site, issue as i64],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -430,5 +502,202 @@ mod tests {
             assert!(create(&mut db, Some(SITE), |_| None, task, 1).is_err());
         }
         assert!(db::snapshot(&db).unwrap().tasks.is_empty());
+    }
+
+    const REDMINE: &str = "https://redmine.example.pl";
+
+    /// `create_linked` z połączoną Jirą i Redmine; temat #1234 znany z listy.
+    fn linked(db: &mut Connection, task: NewTask, now: i64) -> Result<Snapshot, String> {
+        create_linked(
+            db,
+            Some(SITE),
+            |key| (key == "WMS-123").then(|| "Eksport etykiet".to_owned()),
+            Some(REDMINE),
+            |id| (id == 1234).then(|| "  Import CSV  ".to_owned()),
+            task,
+            now,
+        )
+    }
+
+    #[test]
+    fn redmine_number_links_task_and_takes_subject_from_cache() {
+        let mut db = open();
+        let snap = linked(
+            &mut db,
+            NewTask {
+                redmine_id: Some(1234),
+                ..NewTask::default()
+            },
+            100,
+        )
+        .unwrap();
+        let task = &snap.tasks[0];
+        assert_eq!(task.title, "Import CSV");
+        assert_eq!(task.redmine_id, Some(1234));
+        assert_eq!(
+            task.redmine_url.as_deref(),
+            Some("https://redmine.example.pl/issues/1234")
+        );
+        assert!(task.jira_key.is_none());
+        // Ten sam numer drugi raz nie tworzy duplikatu (także z kosza).
+        let err = linked(
+            &mut db,
+            NewTask {
+                title: "Inny".into(),
+                redmine_id: Some(1234),
+                ..NewTask::default()
+            },
+            200,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err, "#1234 ma już zadanie „Import CSV”.");
+        db::change(&mut db, "delete", Some(task.id), None, 250).unwrap();
+        let err = linked(
+            &mut db,
+            NewTask {
+                title: "Inny".into(),
+                redmine_id: Some(1234),
+                ..NewTask::default()
+            },
+            260,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err, "#1234 ma już zadanie „Import CSV” (w koszu).");
+        // Nieznany temat bez tytułu: czytelny błąd, nic nie powstaje.
+        let err = linked(
+            &mut db,
+            NewTask {
+                redmine_id: Some(77),
+                ..NewTask::default()
+            },
+            300,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            err,
+            "Nie znam tematu #77. Wpisz tytuł albo odśwież listę w widoku Redmine."
+        );
+        // Z tytułem powstaje bez tematu z listy; start zatrzymuje poprzedni pomiar.
+        let snap = linked(
+            &mut db,
+            NewTask {
+                title: "Nowe zgłoszenie".into(),
+                redmine_id: Some(77),
+                start: true,
+                ..NewTask::default()
+            },
+            400,
+        )
+        .unwrap();
+        let task = snap
+            .tasks
+            .iter()
+            .find(|t| t.title == "Nowe zgłoszenie")
+            .unwrap();
+        assert_eq!(task.redmine_id, Some(77));
+        assert_eq!(snap.sessions[0].task_id, task.id);
+        assert_eq!(db::snapshot(&db).unwrap().tasks.len(), 1);
+    }
+
+    #[test]
+    fn task_has_one_issue_jira_or_redmine() {
+        let mut db = open();
+        let err = linked(
+            &mut db,
+            NewTask {
+                title: "Oba".into(),
+                jira_key: Some("WMS-123".into()),
+                redmine_id: Some(1234),
+                ..NewTask::default()
+            },
+            1,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err, ONE_ISSUE);
+        // Niepoprawny numer (0) też nic nie tworzy.
+        assert!(linked(
+            &mut db,
+            NewTask {
+                title: "Zero".into(),
+                redmine_id: Some(0),
+                ..NewTask::default()
+            },
+            1,
+        )
+        .is_err());
+        assert!(db::snapshot(&db).unwrap().tasks.is_empty());
+        // Klucz Jiry działa jak dotąd obok źródła Redmine.
+        let snap = linked(
+            &mut db,
+            NewTask {
+                jira_key: Some("WMS-123".into()),
+                ..NewTask::default()
+            },
+            2,
+        )
+        .unwrap();
+        assert_eq!(snap.tasks[0].title, "Eksport etykiet");
+        assert!(snap.tasks[0].redmine_id.is_none());
+    }
+
+    #[test]
+    fn redmine_number_without_connected_account_is_rejected() {
+        let mut db = open();
+        // `create` (bez źródła Redmine) i jawne `None` odrzucają numer.
+        let err = create(
+            &mut db,
+            Some(SITE),
+            |_| None,
+            NewTask {
+                title: "Import".into(),
+                redmine_id: Some(1234),
+                ..NewTask::default()
+            },
+            1,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            err.contains("#1234") && err.contains("Redmine nie jest połączone"),
+            "{err}"
+        );
+        assert!(db::snapshot(&db).unwrap().tasks.is_empty());
+    }
+
+    #[test]
+    fn template_with_redmine_number_fills_key_and_subject() {
+        let mut db = open();
+        review(&mut db);
+        let snap = linked(
+            &mut db,
+            NewTask {
+                redmine_id: Some(1234),
+                template: Some("review".into()),
+                ..NewTask::default()
+            },
+            100,
+        )
+        .unwrap();
+        let task = &snap.tasks[0];
+        assert_eq!(task.title, "Code review #1234: Import CSV");
+        assert_eq!(task.redmine_id, Some(1234));
+        assert_eq!(task.details.estimate_minutes, 45);
+        // Nieznany temat w szablonie: komunikat o Redmine.
+        let err = linked(
+            &mut db,
+            NewTask {
+                redmine_id: Some(5),
+                template: Some("review".into()),
+                ..NewTask::default()
+            },
+            200,
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("#5") && err.contains("Redmine"), "{err}");
     }
 }

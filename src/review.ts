@@ -1,4 +1,5 @@
 import type { PlanEntry, Task } from "./store";
+import { issueRef } from "./issue";
 import { compareTasks } from "./order";
 import { isRecurring } from "./recurrence";
 import { dayBounds, dayKey } from "./time";
@@ -100,8 +101,9 @@ export function reviewSince(
 }
 
 /**
- * Krok 3: zadania z Jiry (import przypisanych z 1.1) utworzone od `since`,
- * jeszcze niezaplanowane na dziś (bez zadań z kroków 1 i 2), najnowsze pierwsze.
+ * Krok 3: zadania ze zgłoszeniem (import przypisanych z Jiry od 1.1, z Redmine
+ * od 1.9) utworzone od `since`, jeszcze niezaplanowane na dziś (bez zadań
+ * z kroków 1 i 2), najnowsze pierwsze.
  */
 export function newJiraTasks(
   tasks: readonly Task[],
@@ -114,7 +116,7 @@ export function newJiraTasks(
       (t) =>
         open(t) &&
         !skip.has(t.id) &&
-        !!t.jiraKey &&
+        issueRef(t) !== null &&
         t.createdAt > since &&
         t.details?.plannedDay !== today,
     )

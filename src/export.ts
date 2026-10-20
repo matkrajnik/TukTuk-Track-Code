@@ -1,5 +1,6 @@
 import type { Snapshot } from "./store";
 import { dayBounds } from "./time";
+import { redmineKey, validRedmineId } from "./issue";
 
 /**
  * Eksport CSV w trybie podglądu: ten sam układ co `src-tauri/src/export.rs`
@@ -18,6 +19,8 @@ export interface ExportRow {
   jiraKey: string;
   project: string;
   note: string;
+  /** Zgłoszenie Redmine jako `#1234` (ostatnia kolumna; „Klucz Jiry” bez zmian). */
+  redmine: string;
 }
 
 /** Znacznik kolejności bajtów: polski Excel czyta wtedy plik jako UTF-8. */
@@ -34,6 +37,7 @@ export const exportHeaders = [
   "Projekt",
   "Notatka dnia",
   "Uwagi",
+  "Redmine",
 ];
 
 export function exportRows(
@@ -64,6 +68,7 @@ export function exportRows(
         jiraKey: task.jiraKey ?? "",
         project: task.details?.project?.trim() ?? "",
         note: task.details?.notes?.[day]?.trim() ?? "",
+        redmine: validRedmineId(task.redmineId) ? redmineKey(task.redmineId) : "",
       });
     }
   }
@@ -105,6 +110,7 @@ export function exportCsv(rows: ExportRow[]): string {
         field(row.project),
         field(row.note),
         row.running ? "trwa" : "",
+        field(row.redmine),
       ].join(";"),
     );
   return BOM + lines.map((line) => line + "\r\n").join("");
