@@ -1687,7 +1687,11 @@ pub(crate) async fn transitions(app: &tauri::AppHandle, id: u64) -> Result<Vec<S
     Ok(transitions_for(&allowed, issue.status_id))
 }
 /// Odczyt zgłoszenia po zapisie (status, osoba) i zapis do `redmine_issues`;
-/// bez odczytu — zgłoszenie z pamięci z naniesioną zmianą (`patch`) albo `None`.
+/// bez odczytu — zgłoszenie z pamięci widoku z naniesioną zmianą (`patch`)
+/// albo `None`. Kopia z pamięci trafia tylko do widoku (i pamięci widoku), nie
+/// do `redmine_issues`: mogłaby nadpisać nowsze dane z obserwacji (temat,
+/// priorytet, termin) i ponownie nanieść pasmo priorytetu na zadanie. Pola
+/// zmienione zapisem w tabeli uzupełnia wywołujący (status — `set_status`).
 async fn refresh_after_write(
     app: &tauri::AppHandle,
     id: u64,
@@ -1704,16 +1708,11 @@ async fn refresh_after_write(
             Some(issue)
         }
         Err(_) => {
-            let mut issue = app
-                .state::<RedmineState>()
-                .issues
-                .lock()
-                .ok()?
-                .get(&id)
-                .cloned()?;
-            patch(&mut issue);
-            remember(app, &c.site, &issue).ok()?;
-            Some(issue)
+            let state = app.state::<RedmineState>();
+            let mut cache = state.issues.lock().ok()?;
+            let issue = cache.get_mut(&id)?;
+            patch(issue);
+            Some(issue.clone())
         }
     }
 }
@@ -1725,6 +1724,20 @@ pub(crate) fn status_unchanged(issue: &Issue, status_id: u64) -> Option<String> 
             issue.id, issue.status
         )
     })
+}
+/// Status po zapisie w `redmine_issues` — tylko pola statusu; temat, priorytet,
+/// termin i pasmo zadania bez zmian.
+pub(crate) fn save_status(
+    db: &Connection,
+    site: &str,
+    id: u64,
+    status: &Status,
+) -> rusqlite::Result<()> {
+    db.execute(
+        "UPDATE redmine_issues SET status=?3, status_id=?4, closed=?5 WHERE site=?1 AND issue_id=?2",
+        params![site, id as i64, status.name, status.id as i64, status.is_closed],
+    )?;
+    Ok(())
 }
 /// Zmiana statusu (`PUT` z `status_id`), potem odczyt statusu i zapis do
 /// `redmine_issues` i kafelka. Bez odczytu po zapisie status docelowy z listy
@@ -1746,11 +1759,7 @@ pub(crate) async fn set_status(
             .into_iter()
             .find(|s| s.id == status_id);
         if let Some(s) = &target {
-            db.execute(
-                "UPDATE redmine_issues SET status=?3, status_id=?4, closed=?5 WHERE site=?1 AND issue_id=?2",
-                params![site, id as i64, s.name, s.id as i64, s.is_closed],
-            )
-            .map_err(|e| e.to_string())?;
+            save_status(&db, &site, id, s).map_err(|e| e.to_string())?;
         }
         target
     };
@@ -2823,6 +2832,54 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM jira_issues", [], |r| r.get(0))
             .unwrap();
         assert_eq!(jira, 0);
+    }
+    #[test]
+    fn status_after_write_keeps_newer_fields_and_manual_band() {
+        let mut db = memory();
+        let issues = fixture_issues();
+        let tx = db.transaction().unwrap();
+        save_issues(&tx, SITE, &issues[..1]).unwrap();
+        tx.commit().unwrap();
+        let s = start_issue(&mut db, SITE, 1234, "Eksport faktur", 100).unwrap();
+        assert_eq!(s.tasks[0].details.priority, 1);
+        // Ręczna zmiana pasma po obserwacji (High w redmine_issues).
+        db.execute(
+            "UPDATE task_details SET json=json_set(json,'$.priority',0) WHERE task_id=?1",
+            [s.tasks[0].id],
+        )
+        .unwrap();
+        // Zapis statusu bez odczytu po zapisie zmienia tylko pola statusu.
+        let done = Status {
+            id: 5,
+            name: "Closed".into(),
+            is_closed: true,
+        };
+        save_status(&db, SITE, 1234, &done).unwrap();
+        let row: (String, i64, bool, String, String, String) = db
+            .query_row(
+                "SELECT status,status_id,closed,subject,priority,due_date FROM redmine_issues WHERE site=?1 AND issue_id=1234",
+                [SITE],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            (
+                "Closed".into(),
+                5,
+                true,
+                "Eksport faktur – błąd przy polskich znakach (ąęśćżźńół)".into(),
+                "High".into(),
+                "2026-10-30".into()
+            )
+        );
+        assert_eq!(db::snapshot(&db).unwrap().tasks[0].details.priority, 0);
+        // Inny adres — bez zmian.
+        save_status(&db, "https://inny.example.pl", 1234, &done).unwrap();
+        let count: i64 = db
+            .query_row("SELECT COUNT(*) FROM redmine_issues", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
     }
     #[test]
     fn status_errors_are_polish_without_secrets() {
