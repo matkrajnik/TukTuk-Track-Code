@@ -18,7 +18,7 @@ Stan wyjściowy: 1.8.0 (wydane 20 października 2026, tag `v1.8.0`, `master` na 
 | B8 | Wykrywanie agentów przez hooki Claude Code i Codexa (zamiast plików sesji) | L | — |
 | B9 | Worktree Orki z kafelka zadania | M | B8 (wspólna sekcja Ustawień „Agenci”) |
 | B10 | Jakość kodu: wspólne formatowanie, podział `store.ts` i dużych komponentów | L | najlepiej przed B1/B5 albo po nich, nie równolegle |
-| B11 | Drobne funkcje: skróty, godziny w „Dodaj czas ręcznie”, suma dnia w widgecie | S | — |
+| B11 | Drobne funkcje: skróty, godziny w „Dodaj czas ręcznie”, suma dnia w widgecie, plan dnia przy pierwszym uruchomieniu | S | — |
 
 Rozmiary jak w poprzednich planach: S do pół dnia, M jeden do dwóch dni, L dwa do trzech dni z testami.
 
@@ -158,6 +158,7 @@ Bez zmian zachowania; wszystkie istniejące testy przechodzą bez modyfikacji po
 1. **Skróty dla najczęstszych akcji**: dziś tylko Ctrl+K i Ctrl+przecinek (`App.vue:221-229`); Ctrl+Shift+S = Start/Stop (logika `toggle_measurement`), `N` = fokus w „Nowe zadanie”, lista w Ustawienia → Skróty.
 2. **„Dodaj czas ręcznie” z sensownymi godzinami**: `ManualTime.vue:25-26` zawsze proponuje 09:00–10:00; początek z `dayStart` albo koniec ostatniego przedziału dnia, koniec = teraz dla dzisiaj.
 3. **Suma dnia w widgecie**: tray pokazuje „dziś 5:10 / 8:00”, widget w podlinii tylko projekt albo „Pomiar trwa” (`WidgetWindow.vue:203-215`); dane są już w oknie.
+4. **Plan dnia przy pierwszym uruchomieniu w danym dniu** (zgłoszenie użytkownika): dziś Poranny przegląd (Plan i historia → Rano) otwiera się tylko ręcznie albo z powiadomienia „Przegląd dnia”. Przy pierwszym starcie aplikacji w dniu roboczym, gdy przegląd dnia nie został jeszcze zapisany („Zaczynam dzień”), główne okno otwiera się od razu na zakładce Rano zamiast na liście zadań; to samo, gdy aplikacja działała przez noc i po północy okno jest pokazywane pierwszy raz tego dnia. Nie w święto ani w całodniowy urlop z kalendarza (te same reguły co powiadomienie), nie przy starcie zminimalizowanym do traya (wtedy przy pierwszym pokazaniu okna). Po „Zaczynam dzień” albo ręcznym przejściu gdzie indziej aplikacja nie wraca do Rano tego dnia. Przełącznik „Otwieraj plan dnia przy pierwszym uruchomieniu” w Ustawieniach → Uruchamianie (domyślnie włączony), stan „pokazano dziś” w pamięci okna, nie w bazie. W podglądzie przeglądarkowym działa tak samo (`localStorage`). Test Playwright: start z zapisanym przeglądem i bez, zmiana dnia zegarem.
 
 ## Po każdym zadaniu
 
