@@ -1339,9 +1339,9 @@ export interface NavigateRequest {
    * Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”), przy
    * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
    * `week-review` (Plan i historia → Tydzień → Przegląd), albo przy
-   * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `jira`,
-   * `notifications`, `focus`, `templates`, `windows`, `shortcuts`, `startup`;
-   * `timesheet` od T4 — do tego czasu nieznana sekcja otwiera ostatnią).
+   * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `timesheet`,
+   * `jira`, `notifications`, `focus`, `templates`, `windows`, `shortcuts`,
+   * `startup`; nieznana sekcja otwiera ostatnią).
    */
   section?: string | null;
   /** Plan i historia → Zamknięcie dnia. */

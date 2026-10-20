@@ -2450,3 +2450,43 @@ html.widget-root body {
 .ts-send-warning {
   color: var(--warning);
 }
+/* Ustawienia → Timesheet (TS): konto, zaawansowane i domyślne zadania projektów. */
+.ts-account {
+  margin: 0;
+  font-weight: 600;
+}
+.ts-advanced {
+  margin-top: 10px;
+}
+.ts-advanced summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.ts-advanced input[readonly] {
+  color: var(--muted);
+}
+.ts-notice {
+  color: var(--text);
+}
+.ts-project-map {
+  width: 100%;
+  max-width: 640px;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+.ts-project-map th,
+.ts-project-map td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.ts-project-map thead th {
+  color: var(--muted);
+  font-weight: 600;
+}
+.ts-project-map td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}

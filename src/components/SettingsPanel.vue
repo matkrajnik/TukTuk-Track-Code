@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import ShortcutInput from "./ShortcutInput.vue";
 import TemplateEditor from "./TemplateEditor.vue";
 import CalendarSettings from "./CalendarSettings.vue";
+import TimesheetSettings from "./TimesheetSettings.vue";
 import BrowserExtensionStatus from "./BrowserExtensionStatus.vue";
 import { openView, type SettingsSection } from "../navigation";
 import { checkForUpdate } from "../updater";
@@ -672,6 +673,27 @@ onUnmounted(() => {
       <button class="action-button" @click="openView({ view: 'jira' })">
         Połączenie z Jirą
       </button>
+    </template>
+    <template v-if="section === 'timesheet'">
+      <h2>Timesheet (TS)</h2>
+      <TimesheetSettings>
+        <template #send>
+          <h3>Wysyłka</h3>
+          <label class="inline-check"
+            ><input
+              :checked="settings.tsSend"
+              type="checkbox"
+              :disabled="busy"
+              @change="save({ tsSend: checked($event) })"
+            />Wysyłaj raport TS</label
+          >
+          <p class="hint">
+            Wysyłka zawsze wymaga potwierdzenia w podglądzie („Zapisz w TS”).
+            Wyłączone chowa przyciski „Wyślij do TS” i blokuje zapis w TS także
+            w aplikacji, nie tylko w interfejsie.
+          </p>
+        </template>
+      </TimesheetSettings>
     </template>
     <template v-if="section === 'calendar'">
       <h2>Kalendarz</h2>

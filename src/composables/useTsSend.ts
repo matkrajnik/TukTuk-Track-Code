@@ -1,4 +1,11 @@
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  onActivated,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { tsSent, tsSettings, type TsSent, type TsSettings } from "../store";
 import { useSettings } from "../target";
 
@@ -68,6 +75,8 @@ export function useTsSend(day: () => string, reportHours: () => string) {
   // Zmiana konta lub przełącznika w innym widoku (Ustawienia, inne okno).
   const onFocus = () => void reload();
   onMounted(() => window.addEventListener("focus", onFocus));
+  // Widok w KeepAlive (Raporty dzienne) po powrocie z Ustawień → Timesheet.
+  onActivated(onFocus);
   onBeforeUnmount(() => window.removeEventListener("focus", onFocus));
 
   /** Przycisk widoczny: włączony przełącznik i połączone konto. */

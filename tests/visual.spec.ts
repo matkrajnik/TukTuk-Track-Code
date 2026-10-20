@@ -112,6 +112,35 @@ const views: {
         page.getByRole("heading", { name: "Czas pracy", exact: true }),
       ).toBeVisible(),
   },
+  {
+    name: "ustawienia-timesheet",
+    // Połączone konto symulowanego TS z jednym domyślnym zadaniem projektu.
+    open: async (page) => {
+      await page.evaluate(() => {
+        localStorage.setItem(
+          "todo-track-preview-ts-v1",
+          JSON.stringify({
+            connected: true,
+            login: "jan.kowalski",
+            deviceId: "0123456789abcdef0123456789abcdef",
+            projectMap: [
+              { project: "Zespół", tsTaskId: "2201", tsTaskName: "Spotkania" },
+            ],
+          }),
+        );
+        // Zapamiętana sekcja: przy 760 px lista sekcji jest polem wyboru.
+        localStorage.setItem("todo-track-settings-section", "timesheet");
+      });
+      await page.reload();
+      await nav(page, "Ustawienia");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("heading", { name: "Timesheet (TS)", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Wewnętrzne → Spotkania")).toBeVisible();
+    },
+  },
 ];
 
 for (const theme of themes)

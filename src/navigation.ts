@@ -75,6 +75,32 @@ export const settingsSections = [
     ],
   },
   {
+    id: "timesheet",
+    name: "Timesheet (TS)",
+    labels: [
+      "Timesheet",
+      "TS",
+      "Ideo",
+      "Ideo TS",
+      "Raport TS",
+      "Wyślij do TS",
+      "konto TS",
+      "login",
+      "hasło",
+      "Połącz",
+      "Testuj połączenie",
+      "Rozłącz",
+      "Zaawansowane",
+      "Adres API",
+      "Identyfikator urządzenia",
+      "Wysyłaj raport TS",
+      "Domyślne zadania TS dla projektów",
+      "Domyślne zadanie TS",
+      "mapowanie",
+      "Dodaj mapowanie",
+    ],
+  },
+  {
     id: "jira",
     name: "Jira",
     labels: [
@@ -276,7 +302,10 @@ export function sectionInMessage(message: string): SettingsSection | null {
   const match = /Ustawienia(?:ch)?\s*→\s*([\p{L} ]+)/u.exec(message);
   if (!match) return null;
   const name = fold(match[1]);
+  // Nawias w nazwie sekcji („Timesheet (TS)”) jest w komunikacie pomijany.
   return (
-    settingsSections.find((s) => name.startsWith(fold(s.name)))?.id ?? null
+    settingsSections.find((s) =>
+      name.startsWith(fold(s.name.replace(/\s*\(.*\)$/, ""))),
+    )?.id ?? null
   );
 }

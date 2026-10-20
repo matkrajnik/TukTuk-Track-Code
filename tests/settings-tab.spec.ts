@@ -10,6 +10,7 @@ test.use({ timezoneId: "Europe/Warsaw" });
 const sections = [
   "Czas pracy",
   "Kalendarz",
+  "Timesheet (TS)",
   "Jira",
   "Powiadomienia",
   "Skupienie",
