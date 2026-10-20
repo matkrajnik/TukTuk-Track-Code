@@ -1,19 +1,32 @@
 <script setup lang="ts">
-import { ExternalLink, Play, Square } from "lucide-vue-next";
+import { ref } from "vue";
+import {
+  ArrowRightCircle,
+  Ellipsis,
+  ExternalLink,
+  Play,
+  Square,
+} from "lucide-vue-next";
 import {
   duration,
   initials,
   priorityBand,
+  redmineIssueTransitions,
   type RedmineIssue,
+  type RedmineStatus,
 } from "../store";
 import { dueChip } from "../issue";
+import { useSettings } from "../target";
+import RedmineIssueActions from "./RedmineIssueActions.vue";
 
 /**
  * Karta zgłoszenia w widoku Redmine (PLAN_1.9.md, R3): numer, temat, tracker,
  * projekt (podprojekt albo projekt spoza śledzonych), status, priorytet
  * kolorem pasma jak w Jirze, osoba przypisana (inicjały, gdy nie ja), wersja
  * docelowa, termin, czas zmierzony lokalnie i plan, „Otwórz w Redmine” oraz
- * „Rozpocznij” / „Stop”. Menu akcji dochodzi w R4.
+ * „Rozpocznij” / „Stop”. Menu akcji (R4): „Przesuń do…” (dozwolone statusy;
+ * zmianę wykonuje widok, który przenosi kartę do grupy nowego statusu),
+ * „Przypisz do mnie”, „Dodaj komentarz” i „Kopiuj nazwę gałęzi”.
  */
 const props = defineProps<{
   issue: RedmineIssue;
@@ -26,7 +39,41 @@ const props = defineProps<{
   /** Czas zmierzony w Todo Track i dzień planu lokalnego zadania. */
   local?: { ms: number; planned: string };
 }>();
-const emit = defineEmits<{ start: [id: number]; stop: []; open: [url: string] }>();
+const emit = defineEmits<{
+  start: [id: number];
+  stop: [];
+  open: [url: string];
+  move: [issue: RedmineIssue, status: RedmineStatus];
+  assigned: [issue: RedmineIssue | null];
+}>();
+const settings = useSettings();
+
+const menu = ref(false);
+/** Dozwolone statusy („Przesuń do…”); `null` = lista zamknięta. */
+const statuses = ref<RedmineStatus[] | null>(null);
+const loading = ref(false);
+const menuError = ref("");
+async function toggleStatuses() {
+  if (statuses.value !== null) {
+    statuses.value = null;
+    return;
+  }
+  if (loading.value) return;
+  loading.value = true;
+  menuError.value = "";
+  try {
+    statuses.value = await redmineIssueTransitions(props.issue.id);
+  } catch (e) {
+    menuError.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    loading.value = false;
+  }
+}
+function moveTo(status: RedmineStatus) {
+  statuses.value = null;
+  menu.value = false;
+  emit("move", props.issue, status);
+}
 
 const band = () => {
   const value = priorityBand(props.issue.priority);
@@ -104,9 +151,59 @@ const band = () => {
         :aria-label="'Rozpocznij: #' + issue.id"
         @click="emit('start', issue.id)"
       >
-        <Play :size="12" />Rozpocznij
+        <Play :size="12" />Rozpocznij</button
+      ><button
+        class="icon-button redmine-menu-button"
+        :aria-label="'Akcje: #' + issue.id"
+        :aria-expanded="menu"
+        title="Akcje zgłoszenia"
+        @click="menu = !menu"
+      >
+        <Ellipsis :size="15" />
       </button>
-      <!-- R4: menu akcji karty („Przesuń do…”, „Przypisz do mnie”, komentarz, gałąź). -->
+    </div>
+    <div v-if="menu" class="jira-card-menu redmine-card-menu">
+      <div
+        v-if="settings.redmineWrite"
+        class="jira-issue-actions-row"
+        role="group"
+        :aria-label="'Status w Redmine: #' + issue.id"
+      >
+        <button
+          type="button"
+          class="action-button"
+          :disabled="busy || loading"
+          :aria-expanded="statuses !== null"
+          :aria-label="'Przesuń do: #' + issue.id"
+          @click="toggleStatuses"
+        >
+          <ArrowRightCircle :size="14" />Przesuń do…
+        </button>
+        <template v-if="statuses !== null">
+          <button
+            v-for="s in statuses"
+            :key="s.id"
+            type="button"
+            class="action-button"
+            :disabled="busy"
+            :aria-label="`Przesuń #${issue.id} do: ${s.name}`"
+            @click="moveTo(s)"
+          >
+            {{ s.name }}
+          </button>
+          <span v-if="!statuses.length" class="hint"
+            >Redmine nie ma dozwolonych statusów dla #{{ issue.id }}.</span
+          >
+        </template>
+      </div>
+      <p v-if="menuError" class="jira-move-error" role="alert">
+        {{ menuError }}
+      </p>
+      <RedmineIssueActions
+        :issue-id="issue.id"
+        :me="issue.assignedToId === me"
+        @assigned="emit('assigned', $event)"
+      />
     </div>
   </article>
 </template>

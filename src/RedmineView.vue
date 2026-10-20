@@ -3,14 +3,18 @@ import { computed, onMounted, ref, watch } from "vue";
 import { ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-vue-next";
 import {
   desktop,
+  read,
   redmineAccount,
   redmineConnected,
+  redmineGroups,
   redmineIssues,
+  redmineIssueTransition,
   redmineOpen,
   redmineStart,
   redmineStatuses,
   type RedmineAccount,
   type RedmineIssue,
+  type RedmineStatus,
   type RedmineStatusGroup,
   type Snapshot,
 } from "./store";
@@ -23,8 +27,10 @@ import RedmineIssueCard from "./components/RedmineIssueCard.vue";
  * śledzone projekty (wybierane w Ustawieniach → Redmine), zakres „Moje” /
  * „Wszystkie otwarte”, zgłoszenia pogrupowane według statusu, a na dole moje
  * zgłoszenia spoza śledzonych projektów. Połączenie konta jest w Ustawieniach,
- * nie w widoku. Nic nie zmienia się w Redmine: „Rozpocznij” tworzy albo
- * wznawia lokalne zadanie i startuje pomiar.
+ * nie w widoku. „Rozpocznij” tworzy albo wznawia lokalne zadanie i startuje
+ * pomiar. Zmiany w Redmine (R4) tylko po kliknięciu w menu karty: „Przesuń
+ * do…” (karta od razu przechodzi do grupy nowego statusu, przy błędzie wraca
+ * z komunikatem), „Przypisz do mnie”, komentarz.
  */
 const props = defineProps<{
   /** Dane zadań: czas zmierzony lokalnie, plan i trwający pomiar na kartach. */
@@ -251,7 +257,7 @@ const refreshAll = () =>
     let statusWarning = "";
     if (account.value?.connected) {
       try {
-        await redmineStatuses(true);
+        statusOrder = await redmineStatuses(true);
       } catch (e) {
         statusWarning = `Statusy: ${errorText(e)}`;
       }
@@ -276,6 +282,63 @@ async function start(id: number) {
 }
 async function open(url: string) {
   await run(() => redmineOpen(url));
+}
+/** Statusy w kolejności z Redmine do przegrupowania po zmianie statusu. */
+let statusOrder: RedmineStatus[] = [];
+/** Podmienia zgłoszenie na liście projektu i w sekcji spoza śledzonych. */
+function replaceIssue(next: RedmineIssue) {
+  const swap = (list: RedmineIssue[]) =>
+    list.map((i) => (i.id === next.id ? next : i));
+  issues.value = swap(issues.value);
+  outside.value = swap(outside.value);
+}
+function regroup() {
+  if (statusOrder.length)
+    groups.value = redmineGroups(issues.value, statusOrder);
+}
+/**
+ * „Przesuń do…”: karta od razu przechodzi do grupy wybranego statusu; po
+ * odczycie z Redmine dostaje faktyczny status, a przy błędzie wraca na swoje
+ * miejsce z komunikatem.
+ */
+async function move(issue: RedmineIssue, status: RedmineStatus) {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  const before = { ...issue };
+  try {
+    if (!statusOrder.length) statusOrder = await redmineStatuses(false);
+  } catch {
+    /* bez kolejności statusów grupa zmieni się po odświeżeniu */
+  }
+  replaceIssue({
+    ...issue,
+    status: status.name,
+    statusId: status.id,
+    closed: status.isClosed,
+  });
+  regroup();
+  try {
+    const after = await redmineIssueTransition(issue.id, status.id);
+    if (after) replaceIssue(after);
+    regroup();
+  } catch (e) {
+    replaceIssue(before);
+    regroup();
+    error.value = `Nie udało się przesunąć #${issue.id}: ${errorText(e)}`;
+  } finally {
+    busy.value = false;
+  }
+  // Status na kafelkach powiązanych zadań (w aplikacji także „data-changed”).
+  try {
+    emit("updated", await read());
+  } catch {
+    /* kafelki odświeżą się przy następnym odczycie */
+  }
+}
+/** „Przypisz do mnie” z menu karty: karta pokazuje nową osobę. */
+function assigned(issue: RedmineIssue | null) {
+  if (issue) replaceIssue(issue);
 }
 function openSettings() {
   // Sekcja „Redmine” w Ustawieniach (R5); bez niej otwiera się ostatnia.
@@ -462,6 +525,8 @@ onMounted(() =>
               @start="start"
               @stop="emit('stop')"
               @open="open"
+              @move="move"
+              @assigned="assigned"
             />
           </div>
         </section>
@@ -509,6 +574,8 @@ onMounted(() =>
             @start="start"
             @stop="emit('stop')"
             @open="open"
+            @move="move"
+            @assigned="assigned"
           />
         </div>
         <p v-else-if="!outsideError" class="hint">

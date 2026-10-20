@@ -3,12 +3,20 @@ import { previewFocusHolds } from "./focus";
 import { readSettings } from "./settings";
 import {
   desktop,
+  jiraTransition,
   jiraTransitions,
   readMovePrompts,
+  redmineOpen,
+  redmineTransition,
+  redmineTransitionOf,
+  redmineTransitions,
   type JiraMovePrompt,
   type JiraTransition,
+  type Snapshot,
   type Task,
 } from "./store";
+import { issueRef, type IssueSystem } from "./issue";
+import { invoke } from "@tauri-apps/api/core";
 
 /**
  * Pytania o przesunięcie zgłoszenia przy starcie pracy (J1) widoczne w banerze
@@ -22,6 +30,8 @@ export async function readVisibleMovePrompts(): Promise<JiraMovePrompt[]> {
 
 /** Propozycja po ukończeniu zadania: „Ukończone. Przesunąć KEY dalej?”. */
 export interface DonePrompt {
+  /** Jira albo Redmine (`issueRef(task).system`). */
+  system: IssueSystem;
   taskId: number;
   key: string;
   title: string;
@@ -33,27 +43,65 @@ export interface DonePrompt {
 export const donePrompts = ref<DonePrompt[]>([]);
 
 /**
- * Po ukończeniu zadania z kluczem Jiry pobiera przejścia i pokazuje propozycję
- * w banerze. Wyłączone zapisy, brak połączenia albo błąd Jiry: bez propozycji.
+ * Po ukończeniu zadania ze zgłoszeniem pobiera przejścia (Jira) albo dozwolone
+ * statusy (Redmine, PLAN_1.9.md R4) i pokazuje propozycję w banerze. System
+ * rozpoznaje `issueRef`. Wyłączone zapisy danego systemu, brak połączenia albo
+ * błąd serwera: bez propozycji.
  */
 export async function offerAfterDone(task: Task): Promise<void> {
-  if (!task.jiraKey) return;
+  const issue = issueRef(task);
+  if (!issue) return;
   try {
-    if (!(await readSettings()).jiraWrite) return;
-    const transitions = await jiraTransitions(task.id);
+    const settings = await readSettings();
+    let transitions: JiraTransition[];
+    if (issue.system === "redmine") {
+      if (!settings.redmineWrite) return;
+      transitions = (await redmineTransitions(task.id)).map(redmineTransitionOf);
+    } else {
+      if (!settings.jiraWrite) return;
+      transitions = await jiraTransitions(task.id);
+    }
     if (!transitions.length) return;
     donePrompts.value = [
       {
+        system: issue.system,
         taskId: task.id,
-        key: task.jiraKey,
+        key: issue.key,
         title: task.title,
-        url: task.jiraUrl ?? "",
+        url: issue.url,
         transitions,
       },
     ];
   } catch {
-    // Jira niedostępna albo konto niepołączone: ukończenie bez propozycji.
+    // Serwer niedostępny albo konto niepołączone: ukończenie bez propozycji.
   }
+}
+
+/** System pytania (starszy zapis podglądu bez pola to Jira). */
+export const promptSystem = (p: { system?: IssueSystem }): IssueSystem =>
+  p.system === "redmine" ? "redmine" : "jira";
+/** „w Jirze” / „w Redmine” do tekstów banera i widgetu. */
+export const inSystem = (system: IssueSystem) =>
+  system === "redmine" ? "w Redmine" : "w Jirze";
+
+/**
+ * Wykonuje wybrane przejście pytania: Jira — `jira_transition`, Redmine —
+ * `redmine_transition` (`id` przejścia to `status_id`). Zawsze po kliknięciu.
+ */
+export function performMove(
+  system: IssueSystem,
+  taskId: number,
+  transitionId: string,
+): Promise<Snapshot> {
+  return system === "redmine"
+    ? redmineTransition(taskId, Number(transitionId))
+    : jiraTransition(taskId, transitionId);
+}
+
+/** „Otwórz … w Jirze / w Redmine” z banera (link tylko pod adresem konta). */
+export async function openIssueUrl(system: IssueSystem, url: string) {
+  if (system === "redmine") return redmineOpen(url);
+  if (desktop) await invoke("jira_open", { url });
 }
 
 export function dropDonePrompt(taskId: number) {

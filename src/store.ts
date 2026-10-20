@@ -357,6 +357,12 @@ interface PreviewRedmine {
   statuses?: RedmineStatus[];
   /** Błąd zapytania o moje zgłoszenia ze wszystkich projektów (testy). */
   failMine?: string;
+  /** Odrzucenie zapisu przez symulowany Redmine: 403 albo 422 (R4, testy). */
+  fail?: number;
+  /** Redmine przyjmuje zmianę statusu, ale go nie zmienia (R4, testy). */
+  unchanged?: boolean;
+  /** Komentarze wysłane do zgłoszeń (`notes`), po numerze. */
+  comments?: Record<string, string[]>;
 }
 /** Użytkownik symulowanego Redmine (`/users/current.json`). */
 export const previewRedmineMe = Object.freeze({
@@ -1915,6 +1921,12 @@ export interface JiraTransition {
 }
 /** Pytanie o przesunięcie zgłoszenia przy starcie pracy (`jira_move::Prompt`). */
 export interface JiraMovePrompt {
+  /**
+   * System zgłoszenia (PLAN_1.9.md, R4): Jira albo Redmine. Dla Redmine `key`
+   * to `#1234`, przejścia to statusy docelowe, a `id` przejścia to `status_id`.
+   * Brak pola = Jira (zgodność ze starszym zapisem podglądu).
+   */
+  system?: "jira" | "redmine";
   taskId: number;
   key: string;
   title: string;
@@ -2054,6 +2066,10 @@ async function previewObserveStart(): Promise<PreviewJira> {
   );
   const task = data.tasks.find((t) => t.id === fresh);
   const settings = previewJiraSettings();
+  if (task && !task.jiraKey && validRedmineId(task.redmineId)) {
+    const prompt = previewRedmineStartPrompt(task, data);
+    if (prompt) state.prompts = [prompt];
+  }
   if (
     task?.jiraKey &&
     settings.write &&
@@ -2075,6 +2091,7 @@ async function previewObserveStart(): Promise<PreviewJira> {
         state.prompts = [
           {
             taskId: task.id,
+            system: "jira",
             key: task.jiraKey,
             title: task.title,
             status,
@@ -3740,6 +3757,284 @@ export interface RedmineIssues {
   groups: RedmineStatusGroup[];
   tracked: number[];
 }
+// --- Redmine: zapisy (PLAN_1.9.md, R4) -------------------------------------
+
+/** Komunikat przy wyłączonych zapisach (`redmine::WRITE_DISABLED`). */
+export const redmineWriteDisabled =
+  "Zmiany w Redmine są wyłączone. Włączysz je w Ustawienia → Redmine („Pozwól aplikacji zmieniać zgłoszenia w Redmine”).";
+/** Najdłuższy komentarz (`redmine::NOTES_LIMIT`). */
+export const redmineNotesLimit = 4000;
+/** Status Redmine jako przejście pytania (`jira_move::redmine_transitions_of`). */
+export const redmineTransitionOf = (s: RedmineStatus): JiraTransition => ({
+  id: String(s.id),
+  name: s.name,
+  toStatus: s.name,
+  toCategory: s.isClosed ? "done" : "indeterminate",
+});
+/**
+ * Cel pytania przy starcie pracy jak `redmine::choose_status`: dozwolone
+ * statusy niezamknięte bez bieżącego; wybrany status o nazwie z ustawień (bez
+ * względu na wielkość liter), bez dopasowania `null` — lista do wyboru.
+ */
+export function chooseRedmineStatus(
+  allowed: readonly RedmineStatus[],
+  current: number,
+  preferred: string,
+): { statuses: RedmineStatus[]; statusId: number | null } {
+  const statuses = allowed.filter((s) => s.id !== current && !s.isClosed);
+  const wanted = preferred.trim().toLowerCase();
+  const statusId =
+    (wanted &&
+      statuses.find((s) => s.name.trim().toLowerCase() === wanted)?.id) ||
+    null;
+  return { statuses, statusId };
+}
+/** Ustawienia zapisów do Redmine w podglądzie (wartości domyślne jak w Rust). */
+function previewRedmineSettings() {
+  const s = previewJson(previewSettingsKey);
+  return {
+    write: s.redmineWrite !== false,
+    ask: s.redmineAskMove !== false,
+    status:
+      typeof s.redmineMoveStatus === "string" && s.redmineMoveStatus.trim()
+        ? s.redmineMoveStatus.trim()
+        : "In Progress",
+    newStatuses: Array.isArray(s.redmineNewStatuses)
+      ? s.redmineNewStatuses.filter((n): n is string => typeof n === "string")
+      : ["New", "Nowy"],
+    prefix:
+      typeof s.redmineBranchPrefix === "string"
+        ? s.redmineBranchPrefix
+        : "feature/",
+  };
+}
+/** Status początkowy niezamkniętego zgłoszenia jak `redmine::should_ask`. */
+const previewRedmineInitial = (
+  newStatuses: readonly string[],
+  status: string,
+  closed: boolean,
+) =>
+  !closed &&
+  !!status.trim() &&
+  newStatuses.some(
+    (n) => n.trim().toLowerCase() === status.trim().toLowerCase(),
+  );
+/**
+ * Odpowiednik `jira_move::check_redmine` w podglądzie: status bieżący z
+ * symulowanego Redmine trafia na kafelek, a przy statusie początkowym powstaje
+ * pytanie (w symulacji wszystkie statusy są dozwolone).
+ */
+function previewRedmineStartPrompt(
+  task: Task,
+  data: Snapshot,
+): JiraMovePrompt | null {
+  const settings = previewRedmineSettings();
+  const id = task.redmineId;
+  if (!validRedmineId(id) || !settings.write || !settings.ask) return null;
+  if (task.details?.jiraNoAsk) return null;
+  const state = previewRedmineState();
+  if (state.connected === false) return null;
+  const source = previewRedmineList(state).find((i) => i.id === id);
+  const status = source?.status ?? task.redmineStatus ?? "";
+  if (task.redmineStatus !== status) {
+    task.redmineStatus = status;
+    localStorage.setItem(key, JSON.stringify(data));
+  }
+  const statuses = previewRedmineStatusList(state);
+  const current = statuses.find((s) => s.name === status);
+  if (!previewRedmineInitial(settings.newStatuses, status, !!current?.isClosed))
+    return null;
+  const choice = chooseRedmineStatus(statuses, current?.id ?? 0, settings.status);
+  if (!choice.statuses.length) return null;
+  return {
+    system: "redmine",
+    taskId: task.id,
+    key: redmineKey(id),
+    title: task.title,
+    status,
+    url: task.redmineUrl ?? `${previewRedmineSite}/issues/${id}`,
+    target: settings.status,
+    transitions: choice.statuses.map(redmineTransitionOf),
+    transitionId: choice.statusId === null ? null : String(choice.statusId),
+  };
+}
+/** Zapis do symulowanego Redmine: przełącznik, połączenie i symulowany błąd. */
+function previewRedmineWrite(): PreviewRedmine {
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const state = previewRedmineConnected();
+  if (state.fail === 403)
+    throw new Error("Brak uprawnień w Redmine do tej operacji.");
+  if (state.fail === 422)
+    throw new Error("Redmine odrzucił dane: Status is invalid");
+  return state;
+}
+const redmineMissing =
+  "Nie znaleziono zgłoszenia albo adres Redmine jest błędny (REST API może być wyłączone).";
+/** Zgłoszenie do zmiany (lista przykładowa kopiowana do stanu przy pierwszym zapisie). */
+function previewRedmineEditable(
+  state: PreviewRedmine,
+  id: number,
+): PreviewRedmineIssue {
+  state.issues = previewRedmineList(state).map((i) => ({ ...i }));
+  const issue = state.issues.find((i) => i.id === id);
+  if (!issue) throw new Error(redmineMissing);
+  return issue;
+}
+/** Status zgłoszenia w zadaniach podglądu (`redmine_issues` → kafelek). */
+async function previewRedmineTaskStatus(id: number, status: string) {
+  const data = await read();
+  let changed = false;
+  for (const t of [...data.tasks, ...(data.trash ?? [])])
+    if (t.redmineId === id && t.redmineStatus !== status) {
+      t.redmineStatus = status;
+      changed = true;
+    }
+  if (changed) localStorage.setItem(key, JSON.stringify(data));
+}
+/** `redmine_issue_transitions`: dozwolone statusy zgłoszenia bez bieżącego. */
+export async function redmineIssueTransitions(
+  issueId: number,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_issue_transitions", { issueId });
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineConnected();
+  const source = previewRedmineList(state).find((i) => i.id === issueId);
+  if (!source) throw new Error(redmineMissing);
+  const issue = previewRedmineFull(source, state);
+  await previewRedmineTaskStatus(issueId, issue.status);
+  return previewRedmineStatusList(state)
+    .filter((s) => s.id !== issue.statusId)
+    .map((s) => ({ ...s }));
+}
+/**
+ * `redmine_issue_transition`: zmiana statusu (`PUT` ze `status_id`), odczyt po
+ * zapisie i status na kafelkach powiązanych zadań. Symulowany Redmine może
+ * odrzucić zapis (`fail`) albo przyjąć go bez zmiany (`unchanged`).
+ */
+export async function redmineIssueTransition(
+  issueId: number,
+  statusId: number,
+): Promise<RedmineIssue | null> {
+  if (desktop)
+    return invoke("redmine_issue_transition", { issueId, statusId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineWrite();
+  const status = previewRedmineStatusList(state).find((s) => s.id === statusId);
+  if (!status) throw new Error("Redmine odrzucił dane: Status is invalid");
+  const issue = previewRedmineEditable(state, issueId);
+  if (!state.unchanged) issue.status = status.name;
+  savePreviewRedmine(state);
+  const full = previewRedmineFull(issue, state);
+  await previewRedmineTaskStatus(issueId, full.status);
+  if (full.statusId !== statusId)
+    throw new Error(
+      `Redmine nie zmienił statusu #${issueId} (nadal „${full.status}”). Zmień status w przeglądarce — przejście może wymagać dodatkowych pól.`,
+    );
+  return full;
+}
+/** Zadanie ze zgłoszeniem Redmine dla zapisu (`jira_move::redmine_target`). */
+async function previewRedmineTask(taskId: number): Promise<number> {
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const data = await read();
+  const task = data.tasks.find((t) => t.id === taskId);
+  const id = task?.redmineId;
+  if (!task || task.jiraKey || !validRedmineId(id))
+    throw new Error("To zadanie nie jest powiązane ze zgłoszeniem Redmine.");
+  return id;
+}
+/** `redmine_transitions`: dozwolone statusy zgłoszenia zadania bez bieżącego. */
+export async function redmineTransitions(
+  taskId: number,
+): Promise<RedmineStatus[]> {
+  if (desktop) return invoke("redmine_transitions", { taskId });
+  return redmineIssueTransitions(await previewRedmineTask(taskId));
+}
+/**
+ * `redmine_transition`: zmiana statusu zgłoszenia zadania (baner, widget,
+ * kafelek); pytanie zadania znika, a błąd zostaje przy pytaniu jak dla Jiry.
+ */
+export async function redmineTransition(
+  taskId: number,
+  statusId: number,
+): Promise<Snapshot> {
+  if (desktop) return invoke("redmine_transition", { taskId, statusId });
+  try {
+    await redmineIssueTransition(await previewRedmineTask(taskId), statusId);
+  } catch (e) {
+    const message = String(e instanceof Error ? e.message : e);
+    const prompts = previewJiraState();
+    if ((prompts.prompts ?? []).some((p) => p.taskId === taskId)) {
+      prompts.prompts = (prompts.prompts ?? []).map((p) =>
+        p.taskId === taskId ? { ...p, failure: message } : p,
+      );
+      savePreviewJira(prompts);
+      notifyPreviewJira();
+    }
+    throw new Error(message);
+  }
+  const prompts = previewJiraState();
+  prompts.prompts = (prompts.prompts ?? []).filter((p) => p.taskId !== taskId);
+  savePreviewJira(prompts);
+  notifyPreviewJira();
+  return read();
+}
+/** `redmine_assign_me`: `PUT` z `assigned_to_id` = moje konto. */
+export async function redmineAssignMe(
+  issueId: number,
+): Promise<RedmineIssue | null> {
+  if (desktop) return invoke("redmine_assign_me", { issueId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const state = previewRedmineWrite();
+  const issue = previewRedmineEditable(state, issueId);
+  delete issue.assignedToId;
+  delete issue.assignedTo;
+  savePreviewRedmine(state);
+  return previewRedmineFull(issue, state);
+}
+/** `redmine_comment`: komentarz zwykłym tekstem w `notes` (1–4000 znaków). */
+export async function redmineComment(
+  issueId: number,
+  text: string,
+): Promise<void> {
+  if (desktop) return invoke("redmine_comment", { issueId, text });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  if (!previewRedmineSettings().write) throw new Error(redmineWriteDisabled);
+  const body = text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[^\P{Cc}\n\t]/gu, "")
+    .trim();
+  if (!body) throw new Error("Wpisz treść komentarza.");
+  if ([...body].length > redmineNotesLimit)
+    throw new Error(`Komentarz może mieć najwyżej ${redmineNotesLimit} znaków.`);
+  const state = previewRedmineWrite();
+  previewRedmineEditable(state, issueId);
+  const comments = (state.comments ??= {});
+  comments[issueId] = [...(comments[issueId] ?? []), body];
+  savePreviewRedmine(state);
+}
+/** `redmine_branch_name`: `feature/1234-krotki-tytul` z prefiksem z ustawień. */
+export async function redmineBranchName(issueId: number): Promise<string> {
+  if (desktop) return invoke("redmine_branch_name", { issueId });
+  if (!validRedmineId(issueId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  const subject = previewRedmineList(previewRedmineState()).find(
+    (i) => i.id === issueId,
+  )?.subject;
+  const task = subject
+    ? undefined
+    : (await read()).tasks.find((t) => t.redmineId === issueId);
+  return branchName(
+    previewRedmineSettings().prefix,
+    String(issueId),
+    subject ?? task?.title ?? "",
+  );
+}
+
 /** Komunikat bez połączenia (`redmine::NOT_CONNECTED`). */
 export const redmineNotConnected =
   "Połącz konto Redmine: podaj adres i klucz API.";

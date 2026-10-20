@@ -20,18 +20,24 @@ import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
 import JiraIssueActions from "./JiraIssueActions.vue";
 import JiraFieldChips from "./JiraFieldChips.vue";
+import RedmineIssueActions from "./RedmineIssueActions.vue";
 import {
   desktop,
   duration,
   jiraConnected,
   jiraTransition,
   jiraTransitions,
+  redmineConnected,
+  redmineOpen,
+  redmineTransition,
+  redmineTransitions,
   saveTemplate,
   setJiraNoAsk,
   setPinned,
   setWaiting,
   templateFromTask,
   type JiraTransition,
+  type RedmineStatus,
   type WaitingChange,
   type Session,
   type Snapshot,
@@ -200,6 +206,27 @@ const moveTo = (t: JiraTransition) =>
   });
 const askAgain = () =>
   jiraRun(async () => emit("updated", await setJiraNoAsk(props.task.id, false)));
+/**
+ * „Przesuń w Redmine…” (PLAN_1.9.md, R4): dozwolone statusy zgłoszenia bez
+ * bieżącego; status zmienia się tylko po kliknięciu.
+ */
+const redmineList = ref<RedmineStatus[] | null>(null);
+const openRedmineList = () =>
+  jiraRun(async () => {
+    redmineList.value =
+      redmineList.value === null ? await redmineTransitions(props.task.id) : null;
+  });
+const redmineMoveTo = (s: RedmineStatus) =>
+  jiraRun(async () => {
+    emit("updated", await redmineTransition(props.task.id, s.id));
+    redmineList.value = null;
+  });
+/** Zapisy do systemu zgłoszenia zadania włączone (`jiraWrite` / `redmineWrite`). */
+const issueWrite = computed(() =>
+  issue.value?.system === "redmine"
+    ? settings.value.redmineWrite
+    : settings.value.jiraWrite,
+);
 async function openJira(url: string) {
   try {
     if (desktop) await invoke("jira_open", { url });
@@ -211,7 +238,7 @@ async function openJira(url: string) {
 async function openIssue(ref: IssueRef) {
   if (ref.system === "jira") return openJira(ref.url);
   try {
-    if (desktop) await invoke("redmine_open", { url: ref.url });
+    await redmineOpen(ref.url);
   } catch (e) {
     emit("error", String(e));
   }
@@ -432,6 +459,17 @@ async function openIssue(ref: IssueRef) {
         >
           <ArrowRightCircle :size="14" />Przesuń w Jirze…
         </button>
+        <button
+          v-if="issue?.system === 'redmine' && settings.redmineWrite"
+          class="action-button"
+          :aria-label="'Przesuń w Redmine: ' + issue.key"
+          :aria-expanded="redmineList !== null"
+          :disabled="moveBusy"
+          title="Wybierz nowy status zgłoszenia w Redmine"
+          @click="openRedmineList"
+        >
+          <ArrowRightCircle :size="14" />Przesuń w Redmine…
+        </button>
         <span class="details-actions-spacer" />
         <button
           v-if="!task.done"
@@ -507,6 +545,30 @@ async function openIssue(ref: IssueRef) {
         </button>
         <button class="action-button" @click="moveList = null">Anuluj</button>
       </div>
+      <div
+        v-if="redmineList !== null && issue?.system === 'redmine'"
+        class="jira-move-list redmine-move-list"
+        role="group"
+        :aria-label="'Statusy w Redmine: ' + issue.key"
+      >
+        <span v-if="redmineList.length"
+          >{{ issue.key }}<template v-if="issue.status">
+            ({{ issue.status }})</template
+          >:</span
+        >
+        <span v-else>Redmine nie ma dozwolonych statusów dla {{ issue.key }}.</span>
+        <button
+          v-for="s in redmineList"
+          :key="s.id"
+          class="action-button"
+          :disabled="moveBusy"
+          :aria-label="`Przesuń ${issue.key} do: ${s.name}`"
+          @click="redmineMoveTo(s)"
+        >
+          {{ s.name }}
+        </button>
+        <button class="action-button" @click="redmineList = null">Anuluj</button>
+      </div>
       <p v-if="moveError" class="jira-move-error" role="alert">
         {{ moveError }}
         <button
@@ -517,17 +579,29 @@ async function openIssue(ref: IssueRef) {
         >
           Otwórz {{ task.jiraKey }} w Jirze
         </button>
+        <button
+          v-else-if="issue?.system === 'redmine' && issue.url"
+          type="button"
+          class="text-link"
+          @click="openIssue(issue)"
+        >
+          Otwórz {{ issue.key }} w Redmine
+        </button>
       </p>
       <JiraIssueActions
         v-if="task.jiraKey && jiraConnected"
         :issue-key="task.jiraKey"
         :summary="task.title"
       />
+      <RedmineIssueActions
+        v-if="issue?.system === 'redmine' && task.redmineId && redmineConnected"
+        :issue-id="task.redmineId"
+      />
       <p
-        v-if="task.jiraKey && task.details?.jiraNoAsk && settings.jiraWrite"
+        v-if="issue && task.details?.jiraNoAsk && issueWrite"
         class="hint jira-no-ask"
       >
-        Bez pytania o przesunięcie {{ task.jiraKey }} przy starcie pracy.
+        Bez pytania o przesunięcie {{ issue.key }} przy starcie pracy.
         <button
           type="button"
           class="text-link"

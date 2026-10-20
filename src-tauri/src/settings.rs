@@ -88,6 +88,20 @@ pub struct AppSettings {
     /// (PLAN_1.9.md, R3; przełącznik w Ustawieniach → Redmine od R5). Niezależny
     /// od `jira_auto_import`.
     pub redmine_auto_import: bool,
+    /// Główny wyłącznik zapisów do Redmine (PLAN_1.9.md, R4; przełącznik w
+    /// Ustawieniach → Redmine od R5): wyłączony blokuje każdą zmianę zgłoszenia,
+    /// także w backendzie (`redmine::ensure_write`). Niezależny od `jira_write`.
+    pub redmine_write: bool,
+    /// Pytaj o przesunięcie zgłoszenia Redmine w statusie początkowym przy
+    /// starcie pomiaru (R4).
+    pub redmine_ask_move: bool,
+    /// Nazwa statusu Redmine „w toku” — cel pytania przy starcie pracy.
+    pub redmine_move_status: String,
+    /// Statusy Redmine oznaczające „Do zrobienia” (Redmine nie ma kategorii
+    /// statusów): tylko z nich aplikacja pyta o przesunięcie.
+    pub redmine_new_statuses: Vec<String>,
+    /// Prefiks nazwy gałęzi z „Kopiuj nazwę gałęzi” dla zgłoszeń Redmine.
+    pub redmine_branch_prefix: String,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -105,6 +119,10 @@ pub fn default_waiting_statuses() -> Vec<String> {
 /// Domyślne statusy Redmine oznaczające czekanie.
 pub fn default_waiting_redmine_statuses() -> Vec<String> {
     vec!["Feedback".into()]
+}
+/// Domyślne statusy początkowe Redmine (pytanie o przesunięcie przy starcie pracy).
+pub fn default_redmine_new_statuses() -> Vec<String> {
+    vec!["New".into(), "Nowy".into()]
 }
 
 /// Domyślne pola Jiry na kafelku: etykiety i przypisany.
@@ -162,6 +180,11 @@ impl Default for AppSettings {
             ts_send: true,
             waiting_redmine_statuses: default_waiting_redmine_statuses(),
             redmine_auto_import: true,
+            redmine_write: true,
+            redmine_ask_move: true,
+            redmine_move_status: "In Progress".into(),
+            redmine_new_statuses: default_redmine_new_statuses(),
+            redmine_branch_prefix: "feature/".into(),
         }
     }
 }
@@ -260,6 +283,11 @@ pub fn valid_branch_prefix(value: &str) -> bool {
 /// i bez powtórek (wielkość liter bez znaczenia), najwyżej 50 nazw po 80 znaków.
 /// `system` to dopełniacz w komunikacie („Jiry”, „Redmine”).
 fn clean_statuses(list: &[String], system: &str) -> Result<Vec<String>, String> {
+    clean_list(list, system, "oznaczających czekanie")
+}
+/// Lista nazw statusów jak [`clean_statuses`]; `purpose` kończy komunikat o
+/// zbyt długiej liście.
+fn clean_list(list: &[String], system: &str, purpose: &str) -> Result<Vec<String>, String> {
     let mut statuses: Vec<String> = Vec::new();
     for status in list.iter().map(|v| v.trim()) {
         if status.chars().count() > 80 {
@@ -274,7 +302,7 @@ fn clean_statuses(list: &[String], system: &str) -> Result<Vec<String>, String> 
         }
     }
     if statuses.len() > 50 {
-        return Err(format!("Za dużo statusów {system} oznaczających czekanie."));
+        return Err(format!("Za dużo statusów {system} {purpose}."));
     }
     Ok(statuses)
 }
@@ -338,6 +366,15 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     s.jira_branch_prefix = s.jira_branch_prefix.trim().to_string();
     if !valid_branch_prefix(&s.jira_branch_prefix) {
+        return Err(BRANCH_PREFIX_ERROR.into());
+    }
+    s.redmine_new_statuses = clean_list(&s.redmine_new_statuses, "Redmine", "początkowych")?;
+    s.redmine_move_status = s.redmine_move_status.trim().to_string();
+    if s.redmine_move_status.is_empty() || s.redmine_move_status.chars().count() > 80 {
+        return Err("Nazwa statusu w Redmine musi mieć od 1 do 80 znaków.".into());
+    }
+    s.redmine_branch_prefix = s.redmine_branch_prefix.trim().to_string();
+    if !valid_branch_prefix(&s.redmine_branch_prefix) {
         return Err(BRANCH_PREFIX_ERROR.into());
     }
     // Pola Jiry na kafelku: poprawne identyfikatory, bez powtórek, bez pól
@@ -578,6 +615,63 @@ mod tests {
         assert!(saved.jira_auto_import, "Jira bez zmian");
         assert!(!load(&db).redmine_auto_import);
         assert!(save(&mut db, &json!({"redmineAutoImport": "nie"})).is_err());
+    }
+
+    #[test]
+    fn redmine_write_settings_default_validate_and_save_separately_from_jira() {
+        let mut db = db();
+        let s = load(&db);
+        assert!(s.redmine_write && s.redmine_ask_move);
+        assert_eq!(s.redmine_move_status, "In Progress");
+        assert_eq!(s.redmine_new_statuses, vec!["New", "Nowy"]);
+        assert_eq!(s.redmine_branch_prefix, "feature/");
+        let saved = save(
+            &mut db,
+            &json!({
+                "redmineWrite": false,
+                "redmineAskMove": false,
+                "redmineMoveStatus": "  W toku ",
+                "redmineNewStatuses": [" Nowy ", "", "nowy", "Otwarte"],
+                "redmineBranchPrefix": " bugfix/ "
+            }),
+        )
+        .unwrap();
+        assert!(!saved.redmine_write && !saved.redmine_ask_move);
+        assert_eq!(saved.redmine_move_status, "W toku");
+        assert_eq!(saved.redmine_new_statuses, vec!["Nowy", "Otwarte"]);
+        assert_eq!(saved.redmine_branch_prefix, "bugfix/");
+        let loaded = load(&db);
+        assert_eq!(loaded, saved);
+        // Jira bez zmian.
+        assert!(loaded.jira_write && loaded.jira_ask_move);
+        assert_eq!(loaded.jira_move_status, "In Progress");
+        assert_eq!(loaded.jira_branch_prefix, "feature/");
+        for bad in [
+            json!({"redmineMoveStatus": " "}),
+            json!({"redmineMoveStatus": "x".repeat(81)}),
+            json!({"redmineBranchPrefix": "../x"}),
+            json!({"redmineBranchPrefix": "feature /"}),
+            json!({"redmineNewStatuses": ["x".repeat(81)]}),
+            json!({"redmineNewStatuses": "New"}),
+            json!({"redmineWrite": "tak"}),
+        ] {
+            assert!(save(&mut db, &bad).is_err(), "{bad}");
+        }
+        let many: Vec<String> = (0..51).map(|i| format!("S{i}")).collect();
+        assert_eq!(
+            save(&mut db, &json!({"redmineNewStatuses": many}))
+                .err()
+                .unwrap(),
+            "Za dużo statusów Redmine początkowych."
+        );
+        // Pusty prefiks i pusta lista są dozwolone.
+        let saved = save(
+            &mut db,
+            &json!({"redmineBranchPrefix": "", "redmineNewStatuses": []}),
+        )
+        .unwrap();
+        assert_eq!(saved.redmine_branch_prefix, "");
+        assert!(saved.redmine_new_statuses.is_empty());
     }
 
     #[test]

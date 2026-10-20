@@ -30,13 +30,18 @@ import {
   type Suggestion,
 } from "./agents";
 import QuickSwitch from "./QuickSwitch.vue";
-import { readVisibleMovePrompts } from "./jiramove";
+import {
+  inSystem,
+  performMove,
+  promptSystem,
+  readVisibleMovePrompts,
+} from "./jiramove";
+import { issueLabel } from "./issue";
 import {
   desktop,
   dismissWidget,
   change,
   duration,
-  jiraTransition,
   moveTargetName,
   onMovePromptsChanged,
   type JiraMovePrompt,
@@ -139,11 +144,11 @@ async function useProposal() {
     busy.value = false;
   }
 }
-/** Pytanie o przesunięcie zgłoszenia w Jirze przy starcie pracy (J1). */
+/** Pytanie o przesunięcie zgłoszenia w Jirze albo Redmine przy starcie pracy (J1, R4). */
 const movePrompts = ref<JiraMovePrompt[]>([]);
 const moveLine = computed(() =>
   movePrompts.value.length
-    ? `Jira: przesunąć ${movePrompts.value[0].key} do „${moveTargetName(movePrompts.value[0])}”?`
+    ? `${issueLabel(promptSystem(movePrompts.value[0]))}: przesunąć ${movePrompts.value[0].key} do „${moveTargetName(movePrompts.value[0])}”?`
     : "",
 );
 async function loadMovePrompts() {
@@ -161,8 +166,10 @@ async function useMovePrompt() {
   busy.value = true;
   error.value = "";
   try {
-    data.value = await jiraTransition(p.taskId, p.transitionId);
-    showFeedback(`Jira: ${p.key} → ${moveTargetName(p)}`);
+    data.value = await performMove(promptSystem(p), p.taskId, p.transitionId);
+    showFeedback(
+      `${issueLabel(promptSystem(p))}: ${p.key} → ${moveTargetName(p)}`,
+    );
     await loadMovePrompts();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
@@ -388,7 +395,7 @@ onUnmounted(() => {
       :aria-label="
         movePrompts[0].transitionId
           ? `Przesuń ${movePrompts[0].key} do ${moveTargetName(movePrompts[0])}`
-          : 'Pokaż pytanie o przesunięcie w Jirze'
+          : `Pokaż pytanie o przesunięcie ${inSystem(promptSystem(movePrompts[0]))}`
       "
       :title="moveLine"
       :disabled="busy"

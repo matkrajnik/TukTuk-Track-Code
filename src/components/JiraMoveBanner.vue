@@ -1,11 +1,8 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import { Ticket } from "lucide-vue-next";
-import { invoke } from "@tauri-apps/api/core";
 import {
-  desktop,
   dismissMovePrompt,
-  jiraTransition,
   moveTargetName,
   onMovePromptsChanged,
   setJiraNoAsk,
@@ -16,14 +13,20 @@ import {
 import {
   donePrompts,
   dropDonePrompt,
+  inSystem,
+  openIssueUrl,
+  performMove,
+  promptSystem,
   readVisibleMovePrompts,
 } from "../jiramove";
+import type { IssueSystem } from "../issue";
 import { onFocusChanged } from "../focus";
 
 /**
- * Pytanie o przesunięcie zgłoszenia w Jirze (J1): przy starcie pracy nad
- * zgłoszeniem „Do zrobienia” i po ukończeniu zadania. Pomiar trwa niezależnie
- * od odpowiedzi; zgłoszenie zmienia się tylko po kliknięciu.
+ * Pytanie o przesunięcie zgłoszenia w Jirze (J1) albo w Redmine (PLAN_1.9.md,
+ * R4): przy starcie pracy nad zgłoszeniem „Do zrobienia” (w Redmine: w statusie
+ * początkowym) i po ukończeniu zadania. Pomiar trwa niezależnie od odpowiedzi;
+ * zgłoszenie zmienia się tylko po kliknięciu.
  */
 const props = defineProps<{
   /** Aktywny pomiar (przedział): zmiana sprawdza pytanie od razu. */
@@ -64,9 +67,14 @@ async function run(taskId: number, url: string, action: () => Promise<void>) {
     busy.value = false;
   }
 }
-const move = (taskId: number, url: string, transitionId: string) =>
+const move = (
+  system: IssueSystem,
+  taskId: number,
+  url: string,
+  transitionId: string,
+) =>
   run(taskId, url, async () => {
-    emit("updated", await jiraTransition(taskId, transitionId));
+    emit("updated", await performMove(system, taskId, transitionId));
     dropDonePrompt(taskId);
   });
 const notNow = (p: JiraMovePrompt) =>
@@ -81,13 +89,18 @@ function closeDone(taskId: number) {
   dropDonePrompt(taskId);
   if (failure.value?.taskId === taskId) failure.value = null;
 }
-async function openIssue(url: string) {
+async function openIssue(system: IssueSystem, url: string) {
   try {
-    if (desktop) await invoke("jira_open", { url });
+    await openIssueUrl(system, url);
   } catch (e) {
     emit("error", String(e));
   }
 }
+/** Etykieta banera: osobna dla Jiry (bez zmian) i Redmine. */
+const regionLabel = (system: IssueSystem) =>
+  system === "redmine"
+    ? "Przesunięcie zgłoszenia w Redmine"
+    : "Przesunięcie zgłoszenia w Jirze";
 const arrow = (t: JiraTransition) =>
   t.name && t.name !== t.toStatus ? `${t.name} → ${t.toStatus}` : t.toStatus;
 
@@ -117,14 +130,18 @@ onUnmounted(() => {
     v-for="p in prompts"
     :key="'start-' + p.taskId"
     class="idle-banner jira-move-banner"
-    aria-label="Przesunięcie zgłoszenia w Jirze"
+    :class="{ 'redmine-move-banner': promptSystem(p) === 'redmine' }"
+    :aria-label="regionLabel(promptSystem(p))"
   >
     <Ticket class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Przesunąć {{ p.key }} do „{{ moveTargetName(p) }}”?</h2>
     <p>
-      „{{ p.title }}” ma w Jirze status {{ p.status }}. Pomiar już trwa;
-      zgłoszenie zmieni się tylko po kliknięciu.
-      <template v-if="!p.transitionId">Wybierz przejście:</template>
+      „{{ p.title }}” ma {{ inSystem(promptSystem(p)) }} status
+      {{ p.status }}. Pomiar już trwa; zgłoszenie zmieni się tylko po
+      kliknięciu.
+      <template v-if="!p.transitionId">{{
+        promptSystem(p) === "redmine" ? "Wybierz status:" : "Wybierz przejście:"
+      }}</template>
     </p>
     <div class="planning-actions">
       <button
@@ -132,7 +149,7 @@ onUnmounted(() => {
         class="primary-button"
         :disabled="busy"
         :aria-label="`Przesuń ${p.key} do ${moveTargetName(p)}`"
-        @click="move(p.taskId, p.url, p.transitionId)"
+        @click="move(promptSystem(p), p.taskId, p.url, p.transitionId)"
       >
         Przesuń</button
       ><button
@@ -141,7 +158,7 @@ onUnmounted(() => {
         class="secondary-button"
         :disabled="busy"
         :aria-label="`Przesuń do: ${t.toStatus}`"
-        @click="move(p.taskId, p.url, t.id)"
+        @click="move(promptSystem(p), p.taskId, p.url, t.id)"
       >
         {{ arrow(t) }}</button
       ><button class="today-button" :disabled="busy" @click="notNow(p)">
@@ -156,8 +173,12 @@ onUnmounted(() => {
       role="alert"
     >
       {{ failure?.taskId === p.taskId ? failure.text : p.failure }}
-      <button v-if="p.url" class="text-link" @click="openIssue(p.url)">
-        Otwórz {{ p.key }} w Jirze
+      <button
+        v-if="p.url"
+        class="text-link"
+        @click="openIssue(promptSystem(p), p.url)"
+      >
+        Otwórz {{ p.key }} {{ inSystem(promptSystem(p)) }}
       </button>
     </p>
   </section>
@@ -169,7 +190,11 @@ onUnmounted(() => {
   >
     <Ticket class="infobar-icon" :size="20" aria-hidden="true" />
     <h2>Ukończone. Przesunąć {{ p.key }} dalej?</h2>
-    <p>Wybierz przejście dla „{{ p.title }}” albo zostaw zgłoszenie bez zmian.</p>
+    <p>
+      Wybierz {{ p.system === "redmine" ? "status" : "przejście" }} dla „{{
+        p.title
+      }}” albo zostaw zgłoszenie bez zmian.
+    </p>
     <div class="planning-actions">
       <button
         v-for="t in p.transitions"
@@ -177,7 +202,7 @@ onUnmounted(() => {
         class="secondary-button"
         :disabled="busy"
         :aria-label="`Przesuń do: ${t.toStatus}`"
-        @click="move(p.taskId, p.url, t.id)"
+        @click="move(p.system, p.taskId, p.url, t.id)"
       >
         {{ arrow(t) }}</button
       ><button class="today-button" :disabled="busy" @click="closeDone(p.taskId)">
@@ -189,9 +214,9 @@ onUnmounted(() => {
       <button
         v-if="failure.url"
         class="text-link"
-        @click="openIssue(failure.url)"
+        @click="openIssue(p.system, failure.url)"
       >
-        Otwórz {{ p.key }} w Jirze
+        Otwórz {{ p.key }} {{ inSystem(p.system) }}
       </button>
     </p>
   </section>

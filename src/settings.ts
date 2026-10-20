@@ -72,6 +72,16 @@ export interface AppSettings {
   waitingRedmineStatuses: string[];
   /** Co 5 min dodawaj nowe zgłoszenia przypisane w Redmine (PLAN_1.9.md, R3; przełącznik w Ustawieniach od R5). */
   redmineAutoImport: boolean;
+  /** Główny przełącznik zapisów do Redmine (PLAN_1.9.md, R4); wyłączony blokuje też backend. */
+  redmineWrite: boolean;
+  /** Pytaj o przesunięcie zgłoszenia Redmine w statusie początkowym przy starcie pracy. */
+  redmineAskMove: boolean;
+  /** Status Redmine „w toku” — cel pytania przy starcie pracy. */
+  redmineMoveStatus: string;
+  /** Statusy początkowe Redmine („Do zrobienia”; Redmine nie ma kategorii statusów). */
+  redmineNewStatuses: string[];
+  /** Prefiks nazwy gałęzi w „Kopiuj nazwę gałęzi” dla zgłoszeń Redmine. */
+  redmineBranchPrefix: string;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -131,6 +141,11 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   tsSend: true,
   waitingRedmineStatuses: ["Feedback"],
   redmineAutoImport: true,
+  redmineWrite: true,
+  redmineAskMove: true,
+  redmineMoveStatus: "In Progress",
+  redmineNewStatuses: ["New", "Nowy"],
+  redmineBranchPrefix: "feature/",
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -241,7 +256,11 @@ export const validBranchPrefix = (value: string) =>
  * `settings::clean_statuses`: przycięte, bez pustych i bez powtórek, najwyżej
  * 50 nazw po 80 znaków. `system` to dopełniacz w komunikacie („Jiry”, „Redmine”).
  */
-function cleanStatuses(list: readonly unknown[], system: string): string[] {
+function cleanStatuses(
+  list: readonly unknown[],
+  system: string,
+  purpose = "oznaczających czekanie",
+): string[] {
   const statuses: string[] = [];
   for (const raw of list) {
     const status = typeof raw === "string" ? raw.trim() : "";
@@ -254,7 +273,7 @@ function cleanStatuses(list: readonly unknown[], system: string): string[] {
       statuses.push(status);
   }
   if (statuses.length > 50)
-    throw new Error(`Za dużo statusów ${system} oznaczających czekanie.`);
+    throw new Error(`Za dużo statusów ${system} ${purpose}.`);
   return statuses;
 }
 const fresh = (): AppSettings => ({
@@ -263,6 +282,7 @@ const fresh = (): AppSettings => ({
   agentMutedFolders: [],
   waitingJiraStatuses: [...defaultSettings.waitingJiraStatuses],
   waitingRedmineStatuses: [...defaultSettings.waitingRedmineStatuses],
+  redmineNewStatuses: [...defaultSettings.redmineNewStatuses],
   jiraCardFields: [...defaultSettings.jiraCardFields],
 });
 /** Najwięcej pól Jiry na kafelku (`settings::MAX_CARD_FIELDS`). */
@@ -350,6 +370,18 @@ function applyFields(
     throw new Error("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.");
   s.jiraBranchPrefix = s.jiraBranchPrefix.trim();
   if (!validBranchPrefix(s.jiraBranchPrefix)) throw new Error(branchPrefixError);
+  // Redmine (R4): osobne pola, te same reguły co w Rust.
+  s.redmineNewStatuses = cleanStatuses(
+    Array.isArray(s.redmineNewStatuses) ? s.redmineNewStatuses : [],
+    "Redmine",
+    "początkowych",
+  );
+  s.redmineMoveStatus = s.redmineMoveStatus.trim();
+  if (!s.redmineMoveStatus || [...s.redmineMoveStatus].length > 80)
+    throw new Error("Nazwa statusu w Redmine musi mieć od 1 do 80 znaków.");
+  s.redmineBranchPrefix = s.redmineBranchPrefix.trim();
+  if (!validBranchPrefix(s.redmineBranchPrefix))
+    throw new Error(branchPrefixError);
   // Jak w Rust: poprawne identyfikatory, bez powtórek, bez summary i status.
   const fields: string[] = [];
   for (const raw of s.jiraCardFields) {

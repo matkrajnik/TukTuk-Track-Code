@@ -12,8 +12,18 @@
 //! Pomiar startuje od razu, a zgłoszenie nie przesuwa się samo: tylko
 //! `jira_transition` (kliknięcie) wykonuje `POST …/transitions` przez wspólną
 //! ścieżkę zapisu `jira::write` z głównym przełącznikiem `jira_write`.
+//!
+//! Od 1.9 (PLAN_1.9.md, R4) ta sama mechanika obsługuje zgłoszenia Redmine
+//! (`redmine_tasks`): pytanie, gdy status zgłoszenia jest w
+//! `redmine_new_statuses` i zgłoszenie nie jest zamknięte, cel to status
+//! `redmine_move_status` wśród dozwolonych (`include=allowed_statuses`), a
+//! wykonanie to `redmine_transition` (`PUT /issues/{id}.json` przez
+//! `redmine::write` z przełącznikiem `redmine_write`). Jira i Redmine mają
+//! osobne połączenia, ustawienia i tabele; wspólne są tylko pytanie, baner,
+//! widget i powiadomienie.
 use crate::jira::{self, Transition};
 use crate::notify::{self, Action, Message, View};
+use crate::redmine;
 use crate::settings::AppSettings;
 use crate::{db, Database};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -27,10 +37,19 @@ const TICK: Duration = Duration::from_secs(2);
 /// Zdarzenie z listą pytań dla banera i widgetu.
 pub const EVENT: &str = "jira-move-prompts";
 
+/// System zgłoszenia w pytaniu: Jira.
+pub const JIRA: &str = "jira";
+/// System zgłoszenia w pytaniu: Redmine (`key` = `#1234`, przejścia to statusy
+/// docelowe, `id` przejścia = `status_id`).
+pub const REDMINE: &str = "redmine";
+
 /// Pytanie o przesunięcie zgłoszenia zadania.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Prompt {
+    /// `jira` albo `redmine`: baner, widget i powiadomienie wybierają po nim
+    /// etykietę i komendę zapisu.
+    pub system: &'static str,
     pub task_id: i64,
     pub key: String,
     pub title: String,
@@ -120,16 +139,55 @@ pub fn mark_failure(prompts: &mut [Prompt], task_id: i64, error: &str) -> bool {
     found
 }
 
-/// Zadanie powiązane ze zgłoszeniem: adres Jiry, klucz, tytuł i „Nie pytaj”.
+/// Zadanie powiązane ze zgłoszeniem: adres Jiry albo Redmine, klucz (`WMS-12`
+/// albo `#1234`), tytuł i „Nie pytaj”; `redmine_id` tylko dla Redmine.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Linked {
     pub site: String,
     pub key: String,
     pub title: String,
     pub no_ask: bool,
+    pub redmine_id: Option<u64>,
 }
 
+impl Linked {
+    pub fn system(&self) -> &'static str {
+        if self.redmine_id.is_some() {
+            REDMINE
+        } else {
+            JIRA
+        }
+    }
+}
+
+/// Powiązanie zadania: `jira_tasks`, a gdy brak — `redmine_tasks` (zadanie ma
+/// najwyżej jedno zgłoszenie). „Nie pytaj” to dla obu to samo pole `jiraNoAsk`.
 pub fn linked(db: &Connection, task_id: i64) -> rusqlite::Result<Option<Linked>> {
+    if let Some(jira) = linked_jira(db, task_id)? {
+        return Ok(Some(jira));
+    }
+    db.query_row(
+        "SELECT r.site, r.issue_id, t.title,
+                COALESCE(json_extract(d.json,'$.jiraNoAsk'),0)
+         FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id
+         LEFT JOIN task_details d ON d.task_id=r.task_id
+         WHERE r.task_id=?1",
+        [task_id],
+        |r| {
+            let id = r.get::<_, i64>(1)? as u64;
+            Ok(Linked {
+                site: r.get(0)?,
+                key: format!("#{id}"),
+                title: r.get(2)?,
+                no_ask: r.get::<_, i64>(3)? != 0,
+                redmine_id: Some(id),
+            })
+        },
+    )
+    .optional()
+}
+
+fn linked_jira(db: &Connection, task_id: i64) -> rusqlite::Result<Option<Linked>> {
     db.query_row(
         "SELECT j.site, j.issue_key, t.title,
                 COALESCE(json_extract(d.json,'$.jiraNoAsk'),0)
@@ -143,6 +201,7 @@ pub fn linked(db: &Connection, task_id: i64) -> rusqlite::Result<Option<Linked>>
                 key: r.get(1)?,
                 title: r.get(2)?,
                 no_ask: r.get::<_, i64>(3)? != 0,
+                redmine_id: None,
             })
         },
     )
@@ -268,8 +327,13 @@ fn tick(app: &tauri::AppHandle) {
         fresh
     };
     if let (Some(task), Some(info)) = (fresh, info) {
-        // Szybkie odrzucenie bez sieci; kategorię sprawdza `check`.
-        if settings.jira_write && settings.jira_ask_move && !info.no_ask {
+        // Szybkie odrzucenie bez sieci; kategorię (Jira) albo status (Redmine)
+        // sprawdza `check`. Każdy system ma własne przełączniki.
+        let enabled = match info.redmine_id {
+            Some(_) => settings.redmine_write && settings.redmine_ask_move,
+            None => settings.jira_write && settings.jira_ask_move,
+        };
+        if enabled && !info.no_ask {
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = check(&app, task, info).await;
@@ -279,8 +343,16 @@ fn tick(app: &tauri::AppHandle) {
     publish(app);
 }
 
-/// Status i przejścia z Jiry; przy kategorii „Do zrobienia” zapisuje pytanie.
+/// Status i przejścia z Jiry albo Redmine; przy zgłoszeniu „Do zrobienia”
+/// zapisuje pytanie.
 async fn check(app: &tauri::AppHandle, task_id: i64, info: Linked) -> Result<(), String> {
+    match info.redmine_id {
+        Some(id) => check_redmine(app, task_id, id, info).await,
+        None => check_jira(app, task_id, info).await,
+    }
+}
+
+async fn check_jira(app: &tauri::AppHandle, task_id: i64, info: Linked) -> Result<(), String> {
     let c = jira::config(app)?;
     if c.email.is_empty() || c.site != info.site {
         return Ok(());
@@ -300,6 +372,7 @@ async fn check(app: &tauri::AppHandle, task_id: i64, info: Linked) -> Result<(),
         return Ok(());
     }
     let prompt = Prompt {
+        system: info.system(),
         task_id,
         key: info.key.clone(),
         title: info.title.clone(),
@@ -310,6 +383,76 @@ async fn check(app: &tauri::AppHandle, task_id: i64, info: Linked) -> Result<(),
         transition_id,
         failure: None,
     };
+    offer(app, prompt)
+}
+
+/// Statusy Redmine jako przejścia pytania: `id` = `status_id`, nazwa i status
+/// docelowy to nazwa statusu (Redmine nie ma nazw przejść ani kategorii).
+pub fn redmine_transitions_of(statuses: &[redmine::Status]) -> Vec<Transition> {
+    statuses
+        .iter()
+        .map(|s| Transition {
+            id: s.id.to_string(),
+            name: s.name.clone(),
+            to_status: s.name.clone(),
+            to_category: if s.is_closed { "done" } else { "indeterminate" }.into(),
+        })
+        .collect()
+}
+
+/// Pytanie dla zgłoszenia Redmine ze statusem bieżącym i dozwolonymi statusami
+/// (`/issues/{id}.json?include=allowed_statuses`); cel z `redmine_move_status`.
+pub fn redmine_prompt(
+    task_id: i64,
+    info: &Linked,
+    issue: &redmine::Issue,
+    allowed: &[redmine::Status],
+    settings: &AppSettings,
+) -> Option<Prompt> {
+    if !redmine::should_ask(settings, info.no_ask, &issue.status, issue.closed) {
+        return None;
+    }
+    let (candidates, chosen) =
+        redmine::choose_status(allowed, issue.status_id, &settings.redmine_move_status);
+    if candidates.is_empty() {
+        return None;
+    }
+    Some(Prompt {
+        system: REDMINE,
+        task_id,
+        key: info.key.clone(),
+        title: info.title.clone(),
+        status: issue.status.clone(),
+        url: format!("{}/issues/{}", info.site, issue.id),
+        target: settings.redmine_move_status.clone(),
+        transitions: redmine_transitions_of(&candidates),
+        transition_id: chosen.map(|id| id.to_string()),
+        failure: None,
+    })
+}
+
+async fn check_redmine(
+    app: &tauri::AppHandle,
+    task_id: i64,
+    id: u64,
+    info: Linked,
+) -> Result<(), String> {
+    let c = redmine::config(app)?;
+    if c.login.is_empty() || c.site != info.site {
+        return Ok(());
+    }
+    let (issue, allowed) = redmine::issue_statuses(app, id).await?;
+    let settings = crate::settings::current(app);
+    match redmine_prompt(task_id, &info, &issue, &allowed, &settings) {
+        Some(prompt) => offer(app, prompt),
+        None => Ok(()),
+    }
+}
+
+/// Zapisuje pytanie aktywnego zadania, publikuje je, a przy schowanym oknie
+/// albo w bloku skupienia pokazuje powiadomienie.
+fn offer(app: &tauri::AppHandle, prompt: Prompt) -> Result<(), String> {
+    let task_id = prompt.task_id;
     {
         let state = app.state::<State>();
         let mut g = state.0.lock().map_err(|e| e.to_string())?;
@@ -388,6 +531,7 @@ fn target(app: &tauri::AppHandle, task_id: i64) -> Result<Linked, String> {
         let db = state.0.lock().map_err(|e| e.to_string())?;
         linked(&db, task_id).map_err(|e| e.to_string())?
     }
+    .filter(|info| info.redmine_id.is_none())
     .ok_or("To zadanie nie jest powiązane ze zgłoszeniem Jiry.")?;
     let c = jira::config(app)?;
     if c.email.is_empty() {
@@ -486,6 +630,88 @@ pub async fn jira_transition(
     perform(&app, task_id, &transition_id).await
 }
 
+/// Zadanie ze zgłoszeniem Redmine dla zapisu: zgłoszenie z połączonego Redmine.
+fn redmine_target(app: &tauri::AppHandle, task_id: i64) -> Result<(Linked, u64), String> {
+    let info = {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        linked(&db, task_id).map_err(|e| e.to_string())?
+    };
+    let Some((info, id)) = info.and_then(|i| i.redmine_id.map(|id| (i, id))) else {
+        return Err("To zadanie nie jest powiązane ze zgłoszeniem Redmine.".into());
+    };
+    let c = redmine::config(app)?;
+    if c.login.is_empty() {
+        return Err(redmine::NOT_CONNECTED.into());
+    }
+    if c.site != info.site {
+        return Err(format!(
+            "Zgłoszenie {} pochodzi z innego Redmine ({}).",
+            info.key, info.site
+        ));
+    }
+    Ok((info, id))
+}
+
+/// „Przesuń w Redmine…” i propozycja po ukończeniu: dozwolone statusy
+/// zgłoszenia zadania bez bieżącego.
+#[tauri::command]
+pub async fn redmine_transitions(
+    app: tauri::AppHandle,
+    task_id: i64,
+) -> Result<Vec<redmine::Status>, String> {
+    redmine::ensure_write(&crate::settings::current(&app))?;
+    let (_, id) = redmine_target(&app, task_id)?;
+    redmine::transitions(&app, id).await
+}
+
+/// Zmiana statusu zgłoszenia Redmine zadania (baner, widget, kafelek,
+/// powiadomienie); błąd zostaje przy pytaniu zadania jak dla Jiry.
+pub async fn perform_redmine(
+    app: &tauri::AppHandle,
+    task_id: i64,
+    status_id: u64,
+) -> Result<db::Snapshot, String> {
+    let result = attempt_redmine(app, task_id, status_id).await;
+    if let Err(e) = &result {
+        let marked = app
+            .state::<State>()
+            .0
+            .lock()
+            .map(|mut g| mark_failure(&mut g.prompts, task_id, e))
+            .unwrap_or(false);
+        if marked {
+            publish(app);
+        }
+    }
+    result
+}
+
+async fn attempt_redmine(
+    app: &tauri::AppHandle,
+    task_id: i64,
+    status_id: u64,
+) -> Result<db::Snapshot, String> {
+    redmine::ensure_write(&crate::settings::current(app))?;
+    let (_, id) = redmine_target(app, task_id)?;
+    redmine::set_status(app, id, status_id).await?;
+    remove(app, task_id);
+    publish(app);
+    let _ = app.emit("data-changed", ());
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    db::snapshot(&db).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn redmine_transition(
+    app: tauri::AppHandle,
+    task_id: i64,
+    status_id: u64,
+) -> Result<db::Snapshot, String> {
+    perform_redmine(&app, task_id, status_id).await
+}
+
 /// „Przesuń” z powiadomienia: przejście wybrane w pytaniu. Bez pytania (np. stary
 /// toast) albo przy błędzie pokazuje główne okno; błąd zostaje w banerze pytania
 /// z linkiem do zgłoszenia.
@@ -494,15 +720,23 @@ pub fn activate(app: &tauri::AppHandle, task_id: i64) {
         g.prompts
             .iter()
             .find(|p| p.task_id == task_id)
-            .map(|p| (p.transition_id.clone(), p.url.clone()))
+            .map(|p| (p.system, p.transition_id.clone(), p.url.clone()))
     });
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        let Some((Some(id), url)) = chosen else {
+        let Some((system, Some(id), url)) = chosen else {
             crate::show(&app);
             return;
         };
-        if let Err(e) = perform(&app, task_id, &id).await {
+        let result = if system == REDMINE {
+            match id.parse::<u64>() {
+                Ok(status_id) => perform_redmine(&app, task_id, status_id).await,
+                Err(_) => Err("Niepoprawny status Redmine.".into()),
+            }
+        } else {
+            perform(&app, task_id, &id).await
+        };
+        if let Err(e) = result {
             crate::show(&app);
             // Pytanie zniknęło w międzyczasie: komunikat z adresem zgłoszenia.
             let kept = app
@@ -652,6 +886,7 @@ mod tests {
     #[test]
     fn notification_offers_move_only_with_chosen_transition() {
         let mut p = Prompt {
+            system: JIRA,
             task_id: 4,
             key: "WMS-1".into(),
             title: "Import".into(),
@@ -681,6 +916,7 @@ mod tests {
 
     fn prompt(task_id: i64) -> Prompt {
         Prompt {
+            system: JIRA,
             task_id,
             key: format!("WMS-{task_id}"),
             title: "Zadanie".into(),
@@ -708,6 +944,144 @@ mod tests {
         let mut list = vec![prompt(1)];
         keep_current(&mut list, None);
         assert!(list.is_empty());
+    }
+
+    // --- R4: Redmine w tym samym pytaniu --------------------------------------
+
+    fn status(id: u64, name: &str, closed: bool) -> redmine::Status {
+        redmine::Status {
+            id,
+            name: name.into(),
+            is_closed: closed,
+        }
+    }
+    fn redmine_issue(status_id: u64, name: &str, closed: bool) -> redmine::Issue {
+        redmine::Issue {
+            id: 1234,
+            subject: "Import CSV".into(),
+            project_id: 7,
+            project: "Magazyn WMS".into(),
+            tracker: "Funkcja".into(),
+            status: name.into(),
+            status_id,
+            closed,
+            priority: "Normal".into(),
+            assigned_to_id: Some(12),
+            assigned_to: "Jan Kowalski".into(),
+            version: String::new(),
+            category: String::new(),
+            due_date: String::new(),
+            updated_on: String::new(),
+            url: "https://redmine.example.pl/issues/1234".into(),
+        }
+    }
+
+    #[test]
+    fn linked_reads_redmine_tasks_when_task_has_no_jira_issue() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        db::change(&mut conn, "add", None, Some("Import CSV".into()), 0).unwrap();
+        db::change(&mut conn, "add", None, Some("Analiza".into()), 0).unwrap();
+        conn.execute(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl',1234)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO jira_tasks(task_id,site,issue_key) VALUES(2,'https://a.atlassian.net','WMS-2')",
+            [],
+        )
+        .unwrap();
+        let info = linked(&conn, 1).unwrap().unwrap();
+        assert_eq!(info.key, "#1234");
+        assert_eq!(info.redmine_id, Some(1234));
+        assert_eq!(info.system(), REDMINE);
+        assert_eq!(info.site, "https://redmine.example.pl");
+        assert!(!info.no_ask);
+        // „Nie pytaj” to to samo pole co dla Jiry.
+        set_no_ask(&conn, 1, true).unwrap();
+        assert!(linked(&conn, 1).unwrap().unwrap().no_ask);
+        let jira = linked(&conn, 2).unwrap().unwrap();
+        assert_eq!((jira.key.as_str(), jira.system()), ("WMS-2", JIRA));
+        assert_eq!(jira.redmine_id, None);
+    }
+
+    #[test]
+    fn redmine_prompt_targets_move_status_or_lists_open_statuses() {
+        let info = Linked {
+            site: "https://redmine.example.pl".into(),
+            key: "#1234".into(),
+            title: "Import CSV".into(),
+            no_ask: false,
+            redmine_id: Some(1234),
+        };
+        let allowed = [
+            status(1, "New", false),
+            status(2, "In Progress", false),
+            status(3, "Feedback", false),
+            status(5, "Closed", true),
+        ];
+        let s = AppSettings::default();
+        let issue = redmine_issue(1, "New", false);
+        let p = redmine_prompt(4, &info, &issue, &allowed, &s).unwrap();
+        assert_eq!(p.system, REDMINE);
+        assert_eq!(p.key, "#1234");
+        assert_eq!(p.url, "https://redmine.example.pl/issues/1234");
+        assert_eq!(p.transition_id.as_deref(), Some("2"));
+        assert_eq!(
+            p.transitions
+                .iter()
+                .map(|t| t.id.as_str())
+                .collect::<Vec<_>>(),
+            ["2", "3"],
+            "bez bieżącego i bez zamkniętych"
+        );
+        assert_eq!(p.target_name(), "In Progress");
+        let m = message(&p);
+        assert_eq!(m.title, "Przesunąć #1234 do „In Progress”?");
+        assert_eq!(m.actions, [Action::new(notify::JIRA_MOVE, "Przesuń", 4)]);
+        let json = serde_json::to_value(&p).unwrap();
+        assert_eq!(json["system"], "redmine");
+        assert_eq!(json["transitionId"], "2");
+        // Bez dopasowania nazwy: lista do wyboru i powiadomienie bez „Przesuń”.
+        let other = AppSettings {
+            redmine_move_status: "W toku".into(),
+            ..AppSettings::default()
+        };
+        let p = redmine_prompt(4, &info, &issue, &allowed, &other).unwrap();
+        assert_eq!(p.transition_id, None);
+        assert_eq!(p.transitions.len(), 2);
+        assert_eq!(message(&p).title, "Przesunąć #1234 do „W toku”?");
+        assert!(message(&p).actions.is_empty());
+        // Status spoza statusów początkowych, zamknięte, „Nie pytaj”, wyłączniki.
+        assert!(
+            redmine_prompt(4, &info, &redmine_issue(3, "Feedback", false), &allowed, &s).is_none()
+        );
+        assert!(redmine_prompt(4, &info, &redmine_issue(1, "New", true), &allowed, &s).is_none());
+        let never = Linked {
+            no_ask: true,
+            ..info.clone()
+        };
+        assert!(redmine_prompt(4, &never, &issue, &allowed, &s).is_none());
+        let off = AppSettings {
+            redmine_ask_move: false,
+            ..AppSettings::default()
+        };
+        assert!(redmine_prompt(4, &info, &issue, &allowed, &off).is_none());
+        let read_only = AppSettings {
+            redmine_write: false,
+            ..AppSettings::default()
+        };
+        assert!(redmine_prompt(4, &info, &issue, &allowed, &read_only).is_none());
+        // Wyłączniki Jiry nie dotyczą Redmine.
+        let jira_off = AppSettings {
+            jira_write: false,
+            jira_ask_move: false,
+            ..AppSettings::default()
+        };
+        assert!(redmine_prompt(4, &info, &issue, &allowed, &jira_off).is_some());
+        // Same zamknięte dozwolone: nie ma o co pytać.
+        assert!(redmine_prompt(4, &info, &issue, &[status(5, "Closed", true)], &s).is_none());
     }
 
     #[test]

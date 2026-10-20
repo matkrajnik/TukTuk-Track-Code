@@ -837,14 +837,14 @@ fn statuses_fresh(db: &Connection, site: &str, now: i64) -> rusqlite::Result<boo
         })
         .unwrap_or(false))
 }
-fn closed_map(statuses: &[Status]) -> HashMap<u64, bool> {
+pub(crate) fn closed_map(statuses: &[Status]) -> HashMap<u64, bool> {
     statuses.iter().map(|s| (s.id, s.is_closed)).collect()
 }
 /// Statusy w kolejności z serwera (grupy widoku) i przez `closed_map` mapa
 /// `status_id → is_closed` do parsowania zgłoszeń (Redmine przed 5.x nie
 /// oddaje `status.is_closed` w zgłoszeniu): z `ensure_statuses`, a gdy serwer
 /// nie odda statusów — z pamięci podręcznej, z ostrzeżeniem.
-async fn known_statuses(
+pub(crate) async fn known_statuses(
     app: &tauri::AppHandle,
     client: &Client,
     c: &Config,
@@ -1396,6 +1396,472 @@ pub fn redmine_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
     app.opener()
         .open_url(url, None::<String>)
         .map_err(|_| "Nie można otworzyć przeglądarki.".into())
+}
+
+// ---------------------------------------------------------------------------
+// Zapisy (R4): status, przypisanie, komentarz — wyłącznie po kliknięciu
+
+/// Komunikat, gdy główny przełącznik zapisów do Redmine jest wyłączony.
+pub const WRITE_DISABLED: &str =
+    "Zmiany w Redmine są wyłączone. Włączysz je w Ustawienia → Redmine („Pozwól aplikacji zmieniać zgłoszenia w Redmine”).";
+/// Początek komunikatu, gdy Redmine przyjął `PUT`, ale status się nie zmienił
+/// (status spoza przepływu bywa ignorowany bez błędu 422).
+pub const STATUS_UNCHANGED: &str = "Redmine nie zmienił statusu";
+/// Najdłuższy komentarz (`notes`) wysyłany z aplikacji.
+pub const NOTES_LIMIT: usize = 4000;
+/// Limit treści jednego zapisu do Redmine.
+const WRITE_LIMIT: usize = 32 * 1024;
+const BAD_STATUS: &str = "Niepoprawny status Redmine.";
+const BAD_ISSUE: &str = "Niepoprawny numer zgłoszenia Redmine.";
+const NO_USER: &str =
+    "Nie znam Twojego konta w Redmine. Kliknij „Testuj połączenie” albo połącz konto ponownie w Ustawieniach → Redmine.";
+
+/// Główny przełącznik zapisów (`redmine_write`): backend odrzuca zapis
+/// niezależnie od interfejsu. Niezależny od `jira_write`.
+pub fn ensure_write(s: &crate::settings::AppSettings) -> Result<(), String> {
+    if s.redmine_write {
+        Ok(())
+    } else {
+        Err(WRITE_DISABLED.into())
+    }
+}
+/// Ścieżka zapisu: tylko `/issues/<numer>.json`.
+fn valid_write_path(path: &str) -> bool {
+    path.strip_prefix("/issues/")
+        .and_then(|rest| rest.strip_suffix(".json"))
+        .is_some_and(|n| {
+            !n.is_empty()
+                && n.len() <= 10
+                && n.bytes().all(|b| b.is_ascii_digit())
+                && n.parse::<u64>().is_ok_and(valid_issue_id)
+        })
+}
+fn issue_path(id: u64) -> Result<String, String> {
+    if valid_issue_id(id) {
+        Ok(format!("/issues/{id}.json"))
+    } else {
+        Err(BAD_ISSUE.into())
+    }
+}
+/// Ciało `PUT /issues/{id}.json` zmieniające status.
+pub(crate) fn status_body(status_id: u64) -> Result<Value, String> {
+    if status_id == 0 || status_id > 9_999_999_999 {
+        return Err(BAD_STATUS.into());
+    }
+    Ok(serde_json::json!({"issue": {"status_id": status_id}}))
+}
+/// Ciało „Przypisz do mnie”: `assigned_to_id` = identyfikator mojego konta.
+pub(crate) fn assign_body(user_id: u64) -> Result<Value, String> {
+    if user_id == 0 {
+        return Err(NO_USER.into());
+    }
+    Ok(serde_json::json!({"issue": {"assigned_to_id": user_id}}))
+}
+/// Ciało komentarza: zwykły tekst w `notes` (końce linii ujednolicone, bez
+/// znaków sterujących poza tabulatorem i końcem linii), 1–4000 znaków.
+pub(crate) fn notes_body(text: &str) -> Result<Value, String> {
+    let text: String = text
+        .replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .chars()
+        .filter(|c| *c == '\n' || *c == '\t' || !c.is_control())
+        .collect();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err("Wpisz treść komentarza.".into());
+    }
+    if trimmed.chars().count() > NOTES_LIMIT {
+        return Err(format!(
+            "Komentarz może mieć najwyżej {NOTES_LIMIT} znaków."
+        ));
+    }
+    Ok(serde_json::json!({"issue": {"notes": trimmed}}))
+}
+/// Odpowiedź na zapis: błąd HTTP po polsku (422 z `errors`), pusta odpowiedź
+/// (204 albo 200 bez treści) to `Value::Null`, strona HTML to osobny komunikat.
+pub(crate) fn write_response(status: StatusCode, html: bool, text: &str) -> Result<Value, String> {
+    if !status.is_success() {
+        return Err(status_error(status, text));
+    }
+    if text.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+    parse_response(status, html, text)
+}
+/// Wysyła zapis (`PUT /issues/{id}.json`) z kluczem API w nagłówku; ścieżka
+/// tylko do zgłoszenia, treść z limitem długości.
+pub(crate) async fn send_write(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    method: reqwest::Method,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    if !valid_write_path(path) {
+        return Err("Niepoprawny adres zapisu do Redmine.".into());
+    }
+    let raw = serde_json::to_vec(body).map_err(|e| e.to_string())?;
+    if raw.len() > WRITE_LIMIT {
+        return Err("Zmiana jest zbyt duża dla Redmine.".into());
+    }
+    // W testach dozwolony jest tylko lokalny serwer, nigdy prawdziwy Redmine.
+    #[cfg(test)]
+    assert!(
+        c.site.starts_with("http://127.0.0.1:"),
+        "testy nie mogą łączyć się z serwerem Redmine"
+    );
+    let response = client
+        .request(method, format!("{}{}", c.site, path))
+        .header("X-Redmine-API-Key", key)
+        .header("Accept", "application/json")
+        .header("Content-Type", "application/json")
+        .body(raw)
+        .send()
+        .await
+        .map_err(|e| network_error(&e))?;
+    let status = response.status();
+    let html = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().contains("text/html"));
+    let text = response.text().await.unwrap_or_default();
+    write_response(status, html, &text)
+}
+/// Połączone konto: konfiguracja, klucz API i klient.
+fn session(app: &tauri::AppHandle) -> Result<(Config, String, Client), String> {
+    let c = config(app)?;
+    if c.login.is_empty() || c.site.is_empty() {
+        return Err(NOT_CONNECTED.into());
+    }
+    let key = api_key(app, &c)?;
+    let client = client(&c)?;
+    Ok((c, key, client))
+}
+/// Jedyna ścieżka zapisu do Redmine (status, przypisanie, komentarz): główny
+/// przełącznik, połączone konto, walidacja i polskie komunikaty błędów.
+pub async fn write(
+    app: &tauri::AppHandle,
+    method: reqwest::Method,
+    path: &str,
+    body: &Value,
+) -> Result<Value, String> {
+    ensure_write(&crate::settings::current(app))?;
+    let (c, key, client) = session(app)?;
+    send_write(&client, &c, &key, method, path, body).await
+}
+
+/// `allowed_statuses` z `/issues/{id}.json?include=allowed_statuses` (Redmine
+/// od 5.0); `None`, gdy odpowiedź nie ma tego pola. `is_closed` z mapy
+/// statusów, gdy serwer go nie podaje.
+pub(crate) fn parse_allowed(value: &Value, closed: &HashMap<u64, bool>) -> Option<Vec<Status>> {
+    let list = value["issue"]["allowed_statuses"].as_array()?;
+    let mut seen = HashSet::new();
+    Some(
+        list.iter()
+            .filter_map(|s| {
+                let id = s["id"].as_u64().filter(|id| *id > 0)?;
+                let name = name(s);
+                if name.is_empty() || !seen.insert(id) {
+                    return None;
+                }
+                Some(Status {
+                    id,
+                    name,
+                    is_closed: s["is_closed"]
+                        .as_bool()
+                        .or_else(|| closed.get(&id).copied())
+                        .unwrap_or(false),
+                })
+            })
+            .collect(),
+    )
+}
+/// Dozwolone statusy, a bez pola `allowed_statuses` (Redmine przed 5.0)
+/// wszystkie statusy z `redmine_statuses` (serwer odrzuci niedozwolony 422).
+pub(crate) fn allowed_or_all(allowed: Option<Vec<Status>>, all: &[Status]) -> Vec<Status> {
+    allowed.unwrap_or_else(|| all.to_vec())
+}
+/// „Przesuń w Redmine…” / „Przesuń do…”: dozwolone statusy bez bieżącego.
+pub fn transitions_for(allowed: &[Status], current: u64) -> Vec<Status> {
+    allowed
+        .iter()
+        .filter(|s| s.id != current)
+        .cloned()
+        .collect()
+}
+/// Cel pytania przy starcie pracy: dozwolone statusy niezamknięte (bez
+/// bieżącego) i wybrany status o nazwie z ustawień (wielkość liter bez
+/// znaczenia); bez dopasowania `None` — baner pokazuje listę do wyboru.
+pub fn choose_status(
+    allowed: &[Status],
+    current: u64,
+    preferred: &str,
+) -> (Vec<Status>, Option<u64>) {
+    let candidates: Vec<Status> = transitions_for(allowed, current)
+        .into_iter()
+        .filter(|s| !s.is_closed)
+        .collect();
+    let wanted = preferred.trim().to_lowercase();
+    let chosen = candidates
+        .iter()
+        .find(|s| !wanted.is_empty() && s.name.trim().to_lowercase() == wanted)
+        .map(|s| s.id);
+    (candidates, chosen)
+}
+/// Czy pytać o przesunięcie: zapisy i pytanie włączone, zadanie bez „Nie
+/// pytaj”, zgłoszenie niezamknięte w statusie z `redmine_new_statuses`.
+pub fn should_ask(
+    s: &crate::settings::AppSettings,
+    no_ask: bool,
+    status: &str,
+    closed: bool,
+) -> bool {
+    let status = status.trim().to_lowercase();
+    s.redmine_write
+        && s.redmine_ask_move
+        && !no_ask
+        && !closed
+        && !status.is_empty()
+        && s.redmine_new_statuses
+            .iter()
+            .any(|n| n.trim().to_lowercase() == status)
+}
+/// Zgłoszenie z dozwolonymi statusami z jednego zapytania.
+pub(crate) async fn fetch_issue_allowed(
+    client: &Client,
+    c: &Config,
+    key: &str,
+    id: u64,
+    closed: &HashMap<u64, bool>,
+) -> Result<(Issue, Option<Vec<Status>>), String> {
+    let path = issue_path(id)?;
+    let value = get(
+        client,
+        c,
+        key,
+        &path,
+        &[("include", "allowed_statuses".to_owned())],
+    )
+    .await?;
+    let issue = parse_issue(&value["issue"], &c.site, closed).ok_or(BAD_RESPONSE)?;
+    Ok((issue, parse_allowed(&value, closed)))
+}
+/// Zapisuje zgłoszenie w `redmine_issues` (kafelek) i w pamięci tematów.
+fn remember(app: &tauri::AppHandle, site: &str, issue: &Issue) -> Result<(), String> {
+    {
+        let state = app.state::<Database>();
+        let mut db = state.0.lock().map_err(|e| e.to_string())?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        save_issues(&tx, site, std::slice::from_ref(issue))
+            .and_then(|_| tx.commit())
+            .map_err(|e| e.to_string())?;
+    }
+    app.state::<RedmineState>()
+        .issues
+        .lock()
+        .map_err(|e| e.to_string())?
+        .insert(issue.id, issue.clone());
+    let _ = app.emit("data-changed", ());
+    Ok(())
+}
+/// Bieżące zgłoszenie (odświeżone w `redmine_issues`) i jego dozwolone statusy
+/// (bez pola `allowed_statuses` — wszystkie znane statusy).
+pub(crate) async fn issue_statuses(
+    app: &tauri::AppHandle,
+    id: u64,
+) -> Result<(Issue, Vec<Status>), String> {
+    issue_path(id)?;
+    let (c, key, client) = session(app)?;
+    let (statuses, _) = known_statuses(app, &client, &c, &key).await?;
+    let (issue, allowed) =
+        fetch_issue_allowed(&client, &c, &key, id, &closed_map(&statuses)).await?;
+    remember(app, &c.site, &issue)?;
+    Ok((issue, allowed_or_all(allowed, &statuses)))
+}
+/// Dozwolone statusy zgłoszenia bez bieżącego (lista „Przesuń…”).
+pub(crate) async fn transitions(app: &tauri::AppHandle, id: u64) -> Result<Vec<Status>, String> {
+    ensure_write(&crate::settings::current(app))?;
+    let (issue, allowed) = issue_statuses(app, id).await?;
+    Ok(transitions_for(&allowed, issue.status_id))
+}
+/// Odczyt zgłoszenia po zapisie (status, osoba) i zapis do `redmine_issues`;
+/// bez odczytu — zgłoszenie z pamięci z naniesioną zmianą (`patch`) albo `None`.
+async fn refresh_after_write(
+    app: &tauri::AppHandle,
+    id: u64,
+    patch: impl FnOnce(&mut Issue),
+) -> Option<Issue> {
+    let (c, key, client) = session(app).ok()?;
+    let statuses = known_statuses(app, &client, &c, &key)
+        .await
+        .map(|(list, _)| list)
+        .unwrap_or_default();
+    match fetch_issue(&client, &c, &key, id, &closed_map(&statuses)).await {
+        Ok(issue) => {
+            remember(app, &c.site, &issue).ok()?;
+            Some(issue)
+        }
+        Err(_) => {
+            let mut issue = app
+                .state::<RedmineState>()
+                .issues
+                .lock()
+                .ok()?
+                .get(&id)
+                .cloned()?;
+            patch(&mut issue);
+            remember(app, &c.site, &issue).ok()?;
+            Some(issue)
+        }
+    }
+}
+/// Status po zapisie różny od docelowego: Redmine przyjął zapis bez zmiany.
+pub(crate) fn status_unchanged(issue: &Issue, status_id: u64) -> Option<String> {
+    (issue.status_id != 0 && issue.status_id != status_id).then(|| {
+        format!(
+            "{STATUS_UNCHANGED} #{} (nadal „{}”). Zmień status w przeglądarce — przejście może wymagać dodatkowych pól.",
+            issue.id, issue.status
+        )
+    })
+}
+/// Zmiana statusu (`PUT` z `status_id`), potem odczyt statusu i zapis do
+/// `redmine_issues` i kafelka. Bez odczytu po zapisie status docelowy z listy
+/// statusów trafia do `redmine_issues` (`None` — brak zgłoszenia w pamięci).
+pub(crate) async fn set_status(
+    app: &tauri::AppHandle,
+    id: u64,
+    status_id: u64,
+) -> Result<Option<Issue>, String> {
+    let path = issue_path(id)?;
+    let body = status_body(status_id)?;
+    write(app, reqwest::Method::PUT, &path, &body).await?;
+    let target = {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        let site = read_config(&db)?.site;
+        let target = read_statuses(&db, &site)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|s| s.id == status_id);
+        if let Some(s) = &target {
+            db.execute(
+                "UPDATE redmine_issues SET status=?3, status_id=?4, closed=?5 WHERE site=?1 AND issue_id=?2",
+                params![site, id as i64, s.name, s.id as i64, s.is_closed],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        target
+    };
+    let issue = refresh_after_write(app, id, |issue| {
+        if let Some(s) = &target {
+            issue.status = s.name.clone();
+            issue.status_id = s.id;
+            issue.closed = s.is_closed;
+        }
+    })
+    .await;
+    let _ = app.emit("data-changed", ());
+    match issue.as_ref().and_then(|i| status_unchanged(i, status_id)) {
+        Some(message) => Err(message),
+        None => Ok(issue),
+    }
+}
+/// Tytuł do nazwy gałęzi: temat z `redmine_issues`, a bez niego tytuł zadania
+/// powiązanego ze zgłoszeniem.
+pub(crate) fn branch_title(db: &Connection, site: &str, id: u64) -> rusqlite::Result<String> {
+    let subject: Option<String> = db
+        .query_row(
+            "SELECT subject FROM redmine_issues WHERE site=?1 AND issue_id=?2 AND subject<>''",
+            params![site, id as i64],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if let Some(subject) = subject {
+        return Ok(subject);
+    }
+    Ok(db
+        .query_row(
+            "SELECT t.title FROM redmine_tasks r JOIN tasks t ON t.id=r.task_id WHERE r.site=?1 AND r.issue_id=?2",
+            params![site, id as i64],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or_default())
+}
+
+/// „Przesuń do…” w widoku Redmine: dozwolone statusy zgłoszenia bez bieżącego.
+#[tauri::command]
+pub async fn redmine_issue_transitions(
+    app: tauri::AppHandle,
+    issue_id: u64,
+) -> Result<Vec<Status>, String> {
+    transitions(&app, issue_id).await
+}
+/// Zmiana statusu z widoku Redmine; wynik to zgłoszenie po odczycie (karta
+/// przechodzi do grupy nowego statusu) albo `None` bez odczytu.
+#[tauri::command]
+pub async fn redmine_issue_transition(
+    app: tauri::AppHandle,
+    issue_id: u64,
+    status_id: u64,
+) -> Result<Option<Issue>, String> {
+    set_status(&app, issue_id, status_id).await
+}
+/// „Przypisz do mnie”: `PUT` z `assigned_to_id` = identyfikator mojego konta.
+#[tauri::command]
+pub async fn redmine_assign_me(
+    app: tauri::AppHandle,
+    issue_id: u64,
+) -> Result<Option<Issue>, String> {
+    let path = issue_path(issue_id)?;
+    ensure_write(&crate::settings::current(&app))?;
+    let c = config(&app)?;
+    let body = assign_body(c.user_id)?;
+    write(&app, reqwest::Method::PUT, &path, &body).await?;
+    let (user_id, display_name) = (c.user_id, c.display_name.clone());
+    Ok(refresh_after_write(&app, issue_id, move |issue| {
+        issue.assigned_to_id = Some(user_id);
+        issue.assigned_to = display_name;
+    })
+    .await)
+}
+/// „Dodaj komentarz”: `PUT` z `notes` (zwykły tekst, 1–4000 znaków).
+#[tauri::command]
+pub async fn redmine_comment(
+    app: tauri::AppHandle,
+    issue_id: u64,
+    text: String,
+) -> Result<(), String> {
+    let path = issue_path(issue_id)?;
+    ensure_write(&crate::settings::current(&app))?;
+    let body = notes_body(&text)?;
+    write(&app, reqwest::Method::PUT, &path, &body)
+        .await
+        .map(|_| ())
+}
+/// „Kopiuj nazwę gałęzi”: `feature/1234-krotki-tytul` (ta sama funkcja co dla
+/// Jiry, numer zamiast klucza, prefiks z `redmine_branch_prefix`).
+#[tauri::command]
+pub fn redmine_branch_name(app: tauri::AppHandle, issue_id: u64) -> Result<String, String> {
+    issue_path(issue_id)?;
+    let title = {
+        let state = app.state::<Database>();
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        let site = read_config(&db)?.site;
+        branch_title(&db, &site, issue_id).map_err(|e| e.to_string())?
+    };
+    let title = if title.is_empty() {
+        cached_subject(&app, issue_id).unwrap_or_default()
+    } else {
+        title
+    };
+    Ok(crate::jira_board::branch_name(
+        &crate::settings::current(&app).redmine_branch_prefix,
+        &issue_id.to_string(),
+        &title,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -3116,5 +3582,402 @@ mod tests {
             600,
         )
         .is_err());
+    }
+
+    // --- R4: zapisy ----------------------------------------------------------
+
+    const ALLOWED: &str = include_str!("../tests/fixtures/redmine_issue_allowed.json");
+
+    fn st(id: u64, name: &str, closed: bool) -> Status {
+        Status {
+            id,
+            name: name.into(),
+            is_closed: closed,
+        }
+    }
+
+    #[test]
+    fn chooses_target_status_by_name_or_lists_open_ones() {
+        let allowed = [
+            st(1, "New", false),
+            st(2, "In Progress", false),
+            st(3, "Feedback", false),
+            st(4, "Resolved", true),
+            st(5, "Closed", true),
+        ];
+        // Jedno dopasowanie po nazwie (bez względu na wielkość liter i spacje).
+        let (list, chosen) = choose_status(&allowed, 1, " in progress ");
+        assert_eq!(chosen, Some(2));
+        // Bieżący i zamknięte odfiltrowane.
+        assert_eq!(list.iter().map(|s| s.id).collect::<Vec<_>>(), [2, 3]);
+        // Brak dopasowania: lista do wyboru bez wybranego statusu.
+        let (list, chosen) = choose_status(&allowed, 1, "W toku");
+        assert_eq!(chosen, None);
+        assert_eq!(list.len(), 2);
+        // Nazwa zamkniętego statusu nie jest celem pytania.
+        assert_eq!(choose_status(&allowed, 1, "Closed").1, None);
+        // Pusty status w ustawieniach niczego nie wybiera.
+        assert_eq!(choose_status(&allowed, 1, " ").1, None);
+        // Same zamknięte: nie ma o co pytać.
+        assert!(choose_status(&allowed[3..], 1, "Closed").0.is_empty());
+        // „Przesuń do…”: wszystkie dozwolone poza bieżącym, także zamknięte.
+        assert_eq!(
+            transitions_for(&allowed, 3)
+                .iter()
+                .map(|s| s.id)
+                .collect::<Vec<_>>(),
+            [1, 2, 4, 5]
+        );
+    }
+
+    #[test]
+    fn asks_only_for_initial_open_statuses_with_switches_on() {
+        let s = crate::settings::AppSettings::default();
+        assert!(should_ask(&s, false, "New", false));
+        assert!(should_ask(&s, false, " nowy ", false));
+        // Status spoza `redmine_new_statuses`.
+        assert!(!should_ask(&s, false, "In Progress", false));
+        assert!(!should_ask(&s, false, "", false));
+        // Zamknięte zgłoszenie (np. status „New” oznaczony jako zamknięty).
+        assert!(!should_ask(&s, false, "New", true));
+        // „Nie pytaj dla tego zadania”.
+        assert!(!should_ask(&s, true, "New", false));
+        // Własna lista statusów początkowych.
+        let custom = crate::settings::AppSettings {
+            redmine_new_statuses: vec!["Otwarte".into()],
+            ..Default::default()
+        };
+        assert!(should_ask(&custom, false, "otwarte", false));
+        assert!(!should_ask(&custom, false, "New", false));
+        // Wyłącznik pytania i główny przełącznik zapisów Redmine.
+        let off = crate::settings::AppSettings {
+            redmine_ask_move: false,
+            ..Default::default()
+        };
+        assert!(!should_ask(&off, false, "New", false));
+        let read_only = crate::settings::AppSettings {
+            redmine_write: false,
+            ..Default::default()
+        };
+        assert!(!should_ask(&read_only, false, "New", false));
+        // Wyłączniki Jiry nie dotyczą Redmine.
+        let jira_off = crate::settings::AppSettings {
+            jira_write: false,
+            jira_ask_move: false,
+            ..Default::default()
+        };
+        assert!(should_ask(&jira_off, false, "New", false));
+    }
+
+    #[test]
+    fn parses_allowed_statuses_and_falls_back_to_all_statuses() {
+        let statuses = parse_statuses(&serde_json::from_str(STATUSES).unwrap()).unwrap();
+        let closed = closed_map(&statuses);
+        let value: Value = serde_json::from_str(ALLOWED).unwrap();
+        let issue = parse_issue(&value["issue"], SITE, &closed).unwrap();
+        assert_eq!((issue.id, issue.status_id), (1234, 1));
+        let allowed = parse_allowed(&value, &closed).unwrap();
+        assert_eq!(
+            allowed,
+            [
+                st(1, "New", false),
+                st(2, "In Progress", false),
+                st(3, "Feedback", false),
+                st(5, "Closed", true),
+            ]
+        );
+        assert_eq!(allowed_or_all(Some(allowed.clone()), &statuses), allowed);
+        // Redmine przed 5.0: brak pola → wszystkie statusy z `redmine_statuses`.
+        let mut old = value.clone();
+        old["issue"]
+            .as_object_mut()
+            .unwrap()
+            .remove("allowed_statuses");
+        assert_eq!(parse_allowed(&old, &closed), None);
+        assert_eq!(
+            allowed_or_all(parse_allowed(&old, &closed), &statuses),
+            statuses
+        );
+        // Pusta lista to brak dozwolonych zmian (np. brak uprawnień), nie fallback.
+        let mut none = value.clone();
+        none["issue"]["allowed_statuses"] = serde_json::json!([]);
+        assert!(allowed_or_all(parse_allowed(&none, &closed), &statuses).is_empty());
+        // `is_closed` z mapy statusów, gdy serwer go nie podaje.
+        let mut bare = value;
+        bare["issue"]["allowed_statuses"] =
+            serde_json::json!([{"id": 4, "name": "Resolved"}, {"id": 0, "name": "x"}, {"id": 6}]);
+        assert_eq!(
+            parse_allowed(&bare, &closed).unwrap(),
+            [st(4, "Resolved", true)]
+        );
+    }
+
+    #[test]
+    fn builds_put_bodies_for_status_assignment_and_notes() {
+        assert_eq!(
+            status_body(2).unwrap(),
+            serde_json::json!({"issue": {"status_id": 2}})
+        );
+        assert_eq!(status_body(0).unwrap_err(), BAD_STATUS);
+        assert_eq!(
+            assign_body(12).unwrap(),
+            serde_json::json!({"issue": {"assigned_to_id": 12}})
+        );
+        assert_eq!(assign_body(0).unwrap_err(), NO_USER);
+        assert_eq!(
+            notes_body("  Zażółć\r\ngęślą jaźń\u{7}\n\n").unwrap(),
+            serde_json::json!({"issue": {"notes": "Zażółć\ngęślą jaźń"}})
+        );
+        assert_eq!(notes_body(" \n ").unwrap_err(), "Wpisz treść komentarza.");
+        assert!(notes_body(&"ą".repeat(NOTES_LIMIT)).is_ok());
+        assert_eq!(
+            notes_body(&"ą".repeat(NOTES_LIMIT + 1)).unwrap_err(),
+            "Komentarz może mieć najwyżej 4000 znaków."
+        );
+        // Ścieżka zapisu tylko do zgłoszenia.
+        assert_eq!(issue_path(1234).unwrap(), "/issues/1234.json");
+        assert_eq!(issue_path(0).unwrap_err(), BAD_ISSUE);
+        assert!(valid_write_path("/issues/1234.json"));
+        for bad in [
+            "/issues/0.json",
+            "/issues/abc.json",
+            "/issues/1234",
+            "/issues/1234.json?x=1",
+            "/users/1.json",
+            "/issues/../users/1.json",
+            "/issues/12345678901.json",
+        ] {
+            assert!(!valid_write_path(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn write_responses_map_success_422_and_html() {
+        assert_eq!(
+            write_response(StatusCode::NO_CONTENT, false, ""),
+            Ok(Value::Null)
+        );
+        assert_eq!(write_response(StatusCode::OK, false, "  "), Ok(Value::Null));
+        assert_eq!(
+            write_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                false,
+                r#"{"errors":["Status is invalid"]}"#
+            )
+            .unwrap_err(),
+            "Redmine odrzucił dane: Status is invalid"
+        );
+        assert_eq!(
+            write_response(StatusCode::OK, true, "<html>Logowanie</html>").unwrap_err(),
+            HTML_ERROR
+        );
+        assert_eq!(
+            write_response(StatusCode::FORBIDDEN, false, "").unwrap_err(),
+            "Brak uprawnień w Redmine do tej operacji."
+        );
+    }
+
+    /// Serwer HTTP na jedno połączenie z treścią żądania (`Content-Length`).
+    fn serve_write(
+        status: &'static str,
+        body: &'static str,
+    ) -> (String, std::thread::JoinHandle<String>) {
+        use std::{
+            io::{Read, Write},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            let head_end = loop {
+                if let Some(i) = request.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break i + 4;
+                }
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+            };
+            let head = String::from_utf8_lossy(&request[..head_end]).to_ascii_lowercase();
+            let length: usize = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .map(|v| v.trim().parse().unwrap())
+                .unwrap_or(0);
+            while request.len() < head_end + length {
+                let n = socket.read(&mut buffer).unwrap();
+                assert!(n > 0);
+                request.extend_from_slice(&buffer[..n]);
+            }
+            write!(socket,"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body).unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        (format!("http://{address}"), server)
+    }
+
+    #[test]
+    fn send_write_puts_json_with_api_key_and_maps_422() {
+        let (site, server) = serve_write("204 No Content", "");
+        let c = Config {
+            site,
+            ..Config::default()
+        };
+        let body = notes_body("Komentarz z „cudzysłowem”\ni nową linią").unwrap();
+        let out = tauri::async_runtime::block_on(send_write(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            reqwest::Method::PUT,
+            "/issues/1234.json",
+            &body,
+        ))
+        .unwrap();
+        assert_eq!(out, Value::Null);
+        let request = server.join().unwrap();
+        assert!(
+            request.starts_with("PUT /issues/1234.json HTTP/1.1\r\n"),
+            "{request}"
+        );
+        let lower = request.to_ascii_lowercase();
+        assert!(lower.contains("x-redmine-api-key: test-only-key\r\n"));
+        assert!(lower.contains("content-type: application/json\r\n"));
+        assert!(!lower.contains("authorization:"));
+        let sent: Value = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert_eq!(sent, body);
+        // 422 z `errors`: komunikat po polsku z treścią Redmine, bez klucza.
+        let (site, server) = serve_write(
+            "422 Unprocessable Entity",
+            r#"{"errors":["Status is invalid","Done ratio cannot be blank"]}"#,
+        );
+        let c = Config {
+            site,
+            ..Config::default()
+        };
+        let err = tauri::async_runtime::block_on(send_write(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            reqwest::Method::PUT,
+            "/issues/1234.json",
+            &status_body(2).unwrap(),
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "Redmine odrzucił dane: Status is invalid; Done ratio cannot be blank"
+        );
+        assert!(!err.contains("test-only-key"));
+        let request = server.join().unwrap();
+        assert!(
+            request.ends_with(r#"{"issue":{"status_id":2}}"#),
+            "{request}"
+        );
+        // Niepoprawna ścieżka nie trafia do serwera.
+        let c = Config {
+            site: "http://127.0.0.1:9".into(),
+            ..Config::default()
+        };
+        let err = tauri::async_runtime::block_on(send_write(
+            &client(&c).unwrap(),
+            &c,
+            "test-only-key",
+            reqwest::Method::PUT,
+            "/users/1.json",
+            &status_body(2).unwrap(),
+        ))
+        .unwrap_err();
+        assert_eq!(err, "Niepoprawny adres zapisu do Redmine.");
+    }
+
+    #[test]
+    fn writes_are_blocked_when_redmine_write_is_off() {
+        let off = crate::settings::AppSettings {
+            redmine_write: false,
+            ..Default::default()
+        };
+        assert_eq!(ensure_write(&off).unwrap_err(), WRITE_DISABLED);
+        // Przełącznik Jiry jest osobny w obie strony.
+        assert!(crate::jira::ensure_write(&off).is_ok());
+        let jira_off = crate::settings::AppSettings {
+            jira_write: false,
+            ..Default::default()
+        };
+        assert!(ensure_write(&jira_off).is_ok());
+        assert!(ensure_write(&crate::settings::AppSettings::default()).is_ok());
+    }
+
+    #[test]
+    fn status_unchanged_after_put_is_reported() {
+        let mut issue = fixture_issues()
+            .into_iter()
+            .find(|i| i.id == 1234)
+            .unwrap_or_else(|| fixture_issues().remove(0));
+        issue.status_id = 1;
+        issue.status = "New".into();
+        let message = status_unchanged(&issue, 2).unwrap();
+        assert!(message.starts_with(STATUS_UNCHANGED), "{message}");
+        assert!(message.contains("„New”"));
+        assert_eq!(status_unchanged(&issue, 1), None);
+        issue.status_id = 0;
+        assert_eq!(status_unchanged(&issue, 2), None);
+    }
+
+    #[test]
+    fn branch_name_uses_issue_number_and_subject() {
+        assert_eq!(
+            crate::jira_board::branch_name("feature/", "1234", "Krótki tytuł"),
+            "feature/1234-krotki-tytul"
+        );
+        assert_eq!(crate::jira_board::branch_name("", "1234", "!!!"), "1234");
+        let mut connection = memory();
+        // Temat z `redmine_issues`.
+        let tx = connection.transaction().unwrap();
+        let mut issue = fixture_issues().remove(0);
+        issue.id = 1234;
+        issue.subject = "Import CSV zamówień".into();
+        save_issues(&tx, SITE, &[issue]).unwrap();
+        tx.commit().unwrap();
+        assert_eq!(
+            branch_title(&connection, SITE, 1234).unwrap(),
+            "Import CSV zamówień"
+        );
+        assert_eq!(
+            crate::jira_board::branch_name(
+                "bugfix/",
+                "1234",
+                &branch_title(&connection, SITE, 1234).unwrap()
+            ),
+            "bugfix/1234-import-csv-zamowien"
+        );
+        // Bez zgłoszenia w `redmine_issues`: tytuł powiązanego zadania.
+        db::change(
+            &mut connection,
+            "add",
+            None,
+            Some("Lokalny tytuł".into()),
+            0,
+        )
+        .unwrap();
+        connection
+            .execute(
+                "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,?1,77)",
+                [SITE],
+            )
+            .unwrap();
+        assert_eq!(
+            branch_title(&connection, SITE, 77).unwrap(),
+            "Lokalny tytuł"
+        );
+        assert_eq!(branch_title(&connection, SITE, 78).unwrap(), "");
+        // Inny Redmine nie podaje tytułu.
+        assert_eq!(
+            branch_title(&connection, "https://inny.example.pl", 1234).unwrap(),
+            ""
+        );
     }
 }
