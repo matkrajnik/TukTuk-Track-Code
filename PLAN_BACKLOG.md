@@ -27,6 +27,7 @@ Realizacja: workflow `.claude/workflows/backlog.js` (zadanie po zadaniu: impleme
 | B10 | Jakość kodu: wspólne formatowanie, podział `store.ts` i dużych komponentów | L | nie równolegle z innymi zadaniami |
 | B11 | Drobne funkcje: skróty, godziny w „Dodaj czas ręcznie”, suma dnia w widgecie, plan dnia przy pierwszym uruchomieniu | S | — |
 | B12 | Ręczne spotkania: dodawanie, edycja i usuwanie spotkań spoza Outlooka, także bez połączonego kalendarza | M | B1 (`SearchSelect`) |
+| B13 | Rozpocznij, zakończ i wznów dzień: stan dnia, historia godzin dnia, wyciszenie po zakończeniu | M | B11 (plan dnia rano), B5 (Raport dnia) |
 | A0 | Filtr danych osobowych (pseudonimizacja wszystkiego, co wychodzi do modelu) | M | — |
 | A1 | Silnik AI: wykrycie CLI, wybór agenta przy pierwszym uruchomieniu, izolowane wywołania, Ustawienia → Asystent AI | M | A0, B8 (filtr `TODO_TRACK_AI` w `todo-track-hook.exe`) |
 | A2 | Serwer MCP `todo-track-mcp.exe` i rejestracja w Claude Code i Codexie | L | A0 |
@@ -46,7 +47,7 @@ Jeden implementator naraz w jednym drzewie roboczym (zadania dotykają `store.ts
 2. **B10** — refaktor przed resztą: wspólne `clock()` / `plural()`, symulatory podglądu w `src/preview/*.ts`, podział `JiraView` / `SettingsPanel` / `TaskCard`. Kolejne zadania zmieniają wtedy mniejsze pliki, a A3 od razu kładzie symulator w `src/preview/ai.ts`.
 3. **B1** — `SearchSelect` i czytelne przyciski (potrzebne w B4).
 4. **B3**, **B4**, **B5** — pomiary, wysyłka do TS z nadgodzinami, raporty z tą samą funkcją `overtime`; potem **B12** — ręczne spotkania (oś dnia, pojemność i Zamknięcie dnia są już po zmianach B3–B5).
-5. **B2**, **B6**, **B11** — układ, wydajność, drobne.
+5. **B2**, **B6**, **B11** — układ, wydajność, drobne; potem **B13** — rozpocznij, zakończ i wznów dzień (po planie dnia rano z B11).
 6. **B8**, **B9** — hooki agentów i Orka.
 7. **A0**, **A1**, **A2** — filtr osobowy, silnik, serwer MCP.
 8. **A3**, **A4**, **A5**, **A6** — czat i funkcje asystenta.
@@ -62,7 +63,7 @@ Workflow zatrzymuje się na pierwszej blokadzie i podaje, jak wznowić.
 - Nic nie trafia do TS, Jiry, Redmine ani Orki bez kliknięcia; model AI tylko proponuje (część A).
 - Testy nie łączą się z żadnym serwerem (TS, Jira, Redmine) i nie uruchamiają prawdziwego `claude`, `codex` ani `orca`; nie zmieniają plików użytkownika `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.codex/config.toml` ani rejestracji MCP (testy pracują na kopiach w katalogu tymczasowym).
 - Każde zadanie kończy się: `npm run build`, `npm test`, `cargo test --locked`, `cargo fmt --check`, commit `B<n>: <tytuł>`, `A<n>: <tytuł>` albo `N1: <tytuł>`. README i `NEXT_SESSION.md` aktualizuje zadanie przygotowania wydania (R20) na podstawie opisów z zadań.
-- Zrzuty wzorcowe Playwright (`tests/visual.spec.ts`) odświeżane tylko w zadaniach zmieniających wygląd (B1, B2, B5, B12, A1, A3), świadomie i z opisem.
+- Zrzuty wzorcowe Playwright (`tests/visual.spec.ts`) odświeżane tylko w zadaniach zmieniających wygląd (B1, B2, B5, B12, B13, A1, A3), świadomie i z opisem.
 
 # Część B — poprawki i ulepszenia
 
@@ -206,6 +207,19 @@ Zgłoszenie użytkownika (20 października 2026): spotkania można dziś tylko p
 6. **Bez cykli** w tym zadaniu: spotkanie powtarzalne (np. codzienny stand-up spoza Outlooka) jako możliwe rozszerzenie później, wzorem `recurrence.rs`.
 
 Testy: Rust dla walidacji komend, `meetings_between` (oba źródła, brak konta, kolejność), odporności ręcznych na `replace_range` i `calendar_disconnect`, pojemności z ręcznym spotkaniem bez połączonego kalendarza, `ON DELETE SET NULL` przy usunięciu zadania. Playwright: dodanie z osi dnia, edycja i usunięcie, pojemność i plan omijający spotkanie, widoczność w Rano i Zamknięciu dnia z „Dodaj jako czas” z zadaniem, tor „Spotkania” bez połączonego kalendarza; zrzut osi dnia z ręcznym spotkaniem.
+
+## B13 — Rozpocznij, zakończ i wznów dzień
+
+Zgłoszenie użytkownika (20 października 2026): skoro jest „rozpocznij dzień”, potrzebne jest też „Zakończ dzień”, a po zakończeniu, gdy to wciąż ten sam dzień, „Wznów dzień”. Stan kodu: „Zaczynam dzień” w Rano (`MorningReview.vue`) zapisuje tylko `morning_review_day` i `morning_review_at` w ustawieniach (ostatni dzień, bez historii); Zamknięcie dnia ma osobny przycisk „Oznacz dzień jako sprawdzony” / „Otwórz dzień ponownie” (`closed_days`), który oznacza zgodność historii, a nie koniec pracy.
+
+1. **Stan dnia** z trzema przyciskami w jednym miejscu: nie rozpoczęty → „Rozpocznij dzień”; rozpoczęty → „Zakończ dzień”; zakończony dziś → „Wznów dzień”. Przycisk w Rano zmienia nazwę z „Zaczynam dzień” na **„Rozpocznij dzień”** (podpowiedzi, Ustawienia → Powiadomienia i powiadomienie „Przegląd dnia” też); po rozpoczęciu Rano pokazuje „Dzień rozpoczęty o 8:05” i „Zakończ dzień”.
+2. **Historia dni**: tabela `day_marks(day TEXT PRIMARY KEY, started_at, ended_at NULL, resumed INTEGER DEFAULT 0)` przez `CREATE TABLE IF NOT EXISTS`; „Rozpocznij dzień” ustawia `started_at` (i dalej `morning_review_day` / `morning_review_at`, bo od nich zależą powiadomienie i „nowe” zgłoszenia Jiry), „Zakończ dzień” ustawia `ended_at`, „Wznów dzień” czyści `ended_at` i zwiększa `resumed`. Kopia SQLite obejmuje tabelę. Komendy `day_start`, `day_end`, `day_resume` z odpowiednikami w podglądzie; dzień w przyszłości i dzień inny niż dziś odrzucane („Wznów dzień” tylko dla dzisiaj, po północy znika).
+3. **„Zakończ dzień”**: dostępne w Rano, w Zamknięciu dnia (obok „Oznacz dzień jako sprawdzony”, który zostaje bez zmian), w pasku z mierzonym zadaniem, w menu traya i w widgecie. Gdy trwa pomiar, dialog „Zakończyć dzień i zatrzymać pomiar »X«?” (zatrzymanie to kliknięcie użytkownika, nie automat); po zakończeniu przejście do Zamknięcia dnia z podsumowaniem. Gdy dzień nie był rozpoczęty, „Zakończ dzień” też działa (`started_at` = początek pierwszego pomiaru dnia albo puste).
+4. **Po zakończeniu dnia**: przypomnienia o braku pomiaru (`reminder.rs`), powiadomienie o celu i propozycje startu (okna, przeglądarka, agenci, kalendarz, `suggest.rs`) są wyciszone do północy; tray i widget pokazują „Dzień zakończony 16:40 · 7:55”. Timer nadal działa tylko po kliknięciu: Start na zadaniu po zakończeniu dnia pyta „Wznowić dzień?” (Wznów i start / Anuluj).
+5. **„Wznów dzień”**: przywraca stan „rozpoczęty” (przypomnienia i propozycje wracają), opcjonalny przycisk „Wznów pomiar »X«” dla ostatnio mierzonego zadania. Dostępne w tych samych miejscach co „Zakończ dzień”.
+6. **Raporty**: Raport dnia i Zamknięcie dnia pokazują „Dzień: 8:05–16:40” (z adnotacją „wznawiany”, gdy `resumed` > 0), Miesiąc kolumnę początku i końca dnia. Nadgodziny (B4, B5) liczą się z pomiarów, nie z tych godzin.
+
+Testy: Rust dla komend (kolejność stanów, wznowienie tylko dziś, dzień w przyszłości), wyciszenia przypomnień i propozycji po zakończeniu, zatrzymania pomiaru tylko z jawnym parametrem z dialogu. Playwright: Rozpocznij → Zakończ (z trwającym pomiarem i bez) → Wznów w Rano, w pasku i w Zamknięciu dnia; Start po zakończeniu dnia z pytaniem; brak „Wznów dzień” po północy (zegar); godziny dnia w Raporcie dnia i Miesiącu; zrzut Rano i paska.
 
 # Część A — integracja z agentami AI (Claude Code, Codex)
 
@@ -377,7 +391,7 @@ Zielone `npm run build`, `npm test` (Playwright), `cargo test --locked`, `cargo 
 
 ## Wydanie 2.0.0 (R20)
 
-Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przechodzą same, potem najważniejsze nowości), README: tytuł i opis TukTuk Track, sekcja „Nowości 2.0” (zmiana nazwy i migracja z Todo Track; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania; SearchSelect i czytelne przyciski; plan dnia rano; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez `/hooks`; worktree Orki; Asystent AI: subskrypcja zamiast klucza API, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z przykładem wpisu do CLAUDE.md, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, „Wersja w repozytorium”; `NEXT_SESSION.md` z pełną listą ręcznych sprawdzeń. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 2.0.0`.
+Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przechodzą same, potem najważniejsze nowości), README: tytuł i opis TukTuk Track, sekcja „Nowości 2.0” (zmiana nazwy i migracja z Todo Track; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania; SearchSelect i czytelne przyciski; plan dnia rano; Rozpocznij / Zakończ / Wznów dzień; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez `/hooks`; worktree Orki; Asystent AI: subskrypcja zamiast klucza API, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z przykładem wpisu do CLAUDE.md, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, „Wersja w repozytorium”; `NEXT_SESSION.md` z pełną listą ręcznych sprawdzeń. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 2.0.0`.
 
 ## Do ręcznego sprawdzenia (po instalacji, przez użytkownika)
 
@@ -385,6 +399,7 @@ Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przech
 - B8: sesja Claude z workflow ponad 15 minut widoczna w kafelku; sesja czekająca na zgodę nie liczy się jako praca; Codex przed i po zatwierdzeniu hooka przez `/hooks`; sesja uruchomiona z Orki; restart aplikacji w trakcie pracy agenta.
 - B9: tworzenie worktree przy działającej i niedziałającej Orce.
 - B12: ręczne spotkanie przetrwa odświeżenie i rozłączenie kalendarza Microsoft w natywnej aplikacji; tray i powiadomienie o celu liczą je w pojemności.
+- B13: „Zakończ dzień” i „Wznów dzień” z menu traya i widgetu w natywnej aplikacji; przypomnienia o braku pomiaru milkną po zakończeniu i wracają po wznowieniu.
 - A1: `claude -p` uruchomione z aplikacji korzysta z subskrypcji (bez klucza API) i działa w schowanym oknie; `--setting-sources ""` naprawdę pomija hooki z `~/.claude/settings.json` (w tym wpisy Orki) — jeśli nie, potwierdzić, że filtr `TODO_TRACK_AI` w `todo-track-hook.exe` wystarcza; komunikat przy wylogowanym CLI i przy wyczerpanym limicie; `codex exec --output-schema` zwraca poprawny JSON.
 - A1: dialog pierwszego uruchomienia z jednym, dwoma i zerem wykrytych CLI; wybór przetrwał restart.
 - A0: przejrzeć „Pokaż, co zostanie wysłane” na prawdziwym dniu z Jirą: czy żadne nazwisko nie przeszło; uzupełnić „Ukrywaj te nazwy”.
