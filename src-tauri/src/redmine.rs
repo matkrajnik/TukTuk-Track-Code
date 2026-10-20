@@ -116,8 +116,8 @@ pub fn setup(app: &tauri::AppHandle) {
         projects: Mutex::new(Vec::new()),
     });
 }
-/// Temat zgłoszenia z ostatnio pobranej listy, jak `jira::cached_summary`.
-#[allow(dead_code)] // szybkie dodawanie `#1234` (R2)
+/// Temat zgłoszenia z ostatnio pobranej listy, jak `jira::cached_summary`
+/// (szybkie dodawanie `#1234`, R2).
 pub fn cached_subject(app: &tauri::AppHandle, id: u64) -> Option<String> {
     app.state::<RedmineState>()
         .issues

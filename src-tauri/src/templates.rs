@@ -152,9 +152,19 @@ pub fn delete(db: &Connection, id: i64) -> Result<Vec<Template>, String> {
     list(db)
 }
 
+/// Komunikat o nieznanym tytule zgłoszenia: klucz Jiry (`WMS-12`) kieruje do
+/// widoku Jira, numer Redmine (`#1234`, PLAN_1.9.md R2) do widoku Redmine.
+pub fn unknown_title(key: &str) -> String {
+    if key.starts_with('#') {
+        format!("Nie znam tematu {key}. Wpisz tytuł albo odśwież listę w widoku Redmine.")
+    } else {
+        format!("Nie znam tytułu {key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.")
+    }
+}
+
 /// Tytuł zadania z szablonu.
-/// - `{klucz}` → klucz Jiry (pusty, gdy go nie podano);
-/// - `{tytuł}` (także `{tytul}`) → tytuł z linii, a bez niego tytuł zgłoszenia z Jiry;
+/// - `{klucz}` → klucz Jiry albo numer Redmine `#1234` (pusty, gdy go nie podano);
+/// - `{tytuł}` (także `{tytul}`) → tytuł z linii, a bez niego tytuł zgłoszenia;
 /// - tytuł z linii bez pola `{tytuł}` w szablonie jest dopisywany na końcu;
 /// - pusty tytuł szablonu zostawia tytuł z linii (dalej jak bez szablonu).
 ///
@@ -177,9 +187,7 @@ pub fn render_title(
         summary(key)
             .map(|s| s.trim().to_owned())
             .filter(|s| !s.is_empty())
-            .ok_or(format!(
-                "Nie znam tytułu {key}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira."
-            ))?
+            .ok_or_else(|| unknown_title(key))?
     } else {
         String::new()
     };

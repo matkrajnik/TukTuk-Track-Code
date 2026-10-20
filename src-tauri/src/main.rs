@@ -259,14 +259,19 @@ fn quick_add(
     task: quickadd::NewTask,
 ) -> Result<db::Snapshot, String> {
     let config = jira::config(&app)?;
-    // Klucz Jiry wiążemy tylko przy połączonym koncie (zapisany e-mail).
+    // Klucz Jiry wiążemy tylko przy połączonym koncie (zapisany e-mail);
+    // numer Redmine tylko przy połączonym Redmine (zapisany login).
     let site = (!config.email.is_empty()).then_some(config.site);
+    let redmine = redmine::config(&app)?;
+    let redmine_site = (!redmine.login.is_empty()).then_some(redmine.site);
     let start = task.start;
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
-    let result = quickadd::create(
+    let result = quickadd::create_linked(
         &mut connection,
         site.as_deref(),
         |key| jira::cached_summary(&app, key),
+        redmine_site.as_deref(),
+        |id| redmine::cached_subject(&app, id),
         task,
         db::now(),
     )?;

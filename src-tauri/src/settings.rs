@@ -81,6 +81,9 @@ pub struct AppSettings {
     /// Główny przełącznik wysyłki Raportu TS do Ideo Timesheet (PLAN_1.8.md):
     /// wyłączony chowa przyciski i blokuje `timesheet::ts_send` w backendzie.
     pub ts_send: bool,
+    /// Statusy Redmine oznaczające czekanie (PLAN_1.9.md, R2; pole w
+    /// Ustawieniach → Redmine od R5). Osobna lista od `waiting_jira_statuses`.
+    pub waiting_redmine_statuses: Vec<String>,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -94,6 +97,10 @@ pub fn default_waiting_statuses() -> Vec<String> {
     ]
     .map(String::from)
     .to_vec()
+}
+/// Domyślne statusy Redmine oznaczające czekanie.
+pub fn default_waiting_redmine_statuses() -> Vec<String> {
+    vec!["Feedback".into()]
 }
 
 /// Domyślne pola Jiry na kafelku: etykiety i przypisany.
@@ -149,6 +156,7 @@ impl Default for AppSettings {
             week_review_time: "15:00".into(),
             auto_update_check: true,
             ts_send: true,
+            waiting_redmine_statuses: default_waiting_redmine_statuses(),
         }
     }
 }
@@ -243,6 +251,29 @@ pub fn valid_branch_prefix(value: &str) -> bool {
         && !value.starts_with(['/', '.', '-'])
 }
 
+/// Lista statusów oznaczających czekanie (Jira albo Redmine): bez pustych
+/// i bez powtórek (wielkość liter bez znaczenia), najwyżej 50 nazw po 80 znaków.
+/// `system` to dopełniacz w komunikacie („Jiry”, „Redmine”).
+fn clean_statuses(list: &[String], system: &str) -> Result<Vec<String>, String> {
+    let mut statuses: Vec<String> = Vec::new();
+    for status in list.iter().map(|v| v.trim()) {
+        if status.chars().count() > 80 {
+            return Err(format!("Status {system} może mieć najwyżej 80 znaków."));
+        }
+        if !status.is_empty()
+            && !statuses
+                .iter()
+                .any(|v| v.to_lowercase() == status.to_lowercase())
+        {
+            statuses.push(status.to_string());
+        }
+    }
+    if statuses.len() > 50 {
+        return Err(format!("Za dużo statusów {system} oznaczających czekanie."));
+    }
+    Ok(statuses)
+}
+
 /// Pełna walidacja: pola osobno i reguły łączące pola.
 pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
     let s = validate_fields(s)?;
@@ -294,23 +325,8 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
         return Err("Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.".into());
     }
     // Statusy czekania: bez pustych i bez powtórek (wielkość liter bez znaczenia).
-    let mut statuses: Vec<String> = Vec::new();
-    for status in s.waiting_jira_statuses.iter().map(|v| v.trim()) {
-        if status.chars().count() > 80 {
-            return Err("Status Jiry może mieć najwyżej 80 znaków.".into());
-        }
-        if !status.is_empty()
-            && !statuses
-                .iter()
-                .any(|v| v.to_lowercase() == status.to_lowercase())
-        {
-            statuses.push(status.to_string());
-        }
-    }
-    if statuses.len() > 50 {
-        return Err("Za dużo statusów Jiry oznaczających czekanie.".into());
-    }
-    s.waiting_jira_statuses = statuses;
+    s.waiting_jira_statuses = clean_statuses(&s.waiting_jira_statuses, "Jiry")?;
+    s.waiting_redmine_statuses = clean_statuses(&s.waiting_redmine_statuses, "Redmine")?;
     s.jira_move_status = s.jira_move_status.trim().to_string();
     if s.jira_move_status.is_empty() || s.jira_move_status.chars().count() > 80 {
         return Err("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.".into());
@@ -503,6 +519,49 @@ mod tests {
         assert!(!load(&db).ts_send);
         assert!(save(&mut db, &json!({"tsSend": "tak"})).is_err());
         assert!(save(&mut db, &json!({"tsSend": true})).unwrap().ts_send);
+    }
+
+    #[test]
+    fn waiting_redmine_statuses_default_validate_and_save_separately_from_jira() {
+        let mut db = db();
+        assert_eq!(load(&db).waiting_redmine_statuses, vec!["Feedback"]);
+        // Czyszczenie jak dla Jiry: przycięcie, bez pustych i bez powtórek.
+        let saved = save(
+            &mut db,
+            &json!({"waitingRedmineStatuses": [" Feedback ", "", "feedback", "Oczekuje"]}),
+        )
+        .unwrap();
+        assert_eq!(saved.waiting_redmine_statuses, vec!["Feedback", "Oczekuje"]);
+        assert_eq!(
+            load(&db).waiting_redmine_statuses,
+            vec!["Feedback", "Oczekuje"]
+        );
+        // Lista Jiry zostaje nietknięta.
+        assert_eq!(saved.waiting_jira_statuses, default_waiting_statuses());
+        let err = save(
+            &mut db,
+            &json!({"waitingRedmineStatuses": ["x".repeat(81)]}),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err, "Status Redmine może mieć najwyżej 80 znaków.");
+        let many: Vec<String> = (0..51).map(|i| format!("S{i}")).collect();
+        let err = save(&mut db, &json!({"waitingRedmineStatuses": many}))
+            .err()
+            .unwrap();
+        assert_eq!(err, "Za dużo statusów Redmine oznaczających czekanie.");
+        // Komunikaty Jiry bez zmian.
+        let err = save(&mut db, &json!({"waitingJiraStatuses": ["x".repeat(81)]}))
+            .err()
+            .unwrap();
+        assert_eq!(err, "Status Jiry może mieć najwyżej 80 znaków.");
+        assert!(save(&mut db, &json!({"waitingRedmineStatuses": "Feedback"})).is_err());
+        assert_eq!(
+            save(&mut db, &json!({"waitingRedmineStatuses": []}))
+                .unwrap()
+                .waiting_redmine_statuses,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

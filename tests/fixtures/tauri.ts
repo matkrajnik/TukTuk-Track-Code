@@ -412,6 +412,20 @@ function install(init: {
             },
             connected: !!init.jira,
           };
+        // Redmine (PLAN_1.9.md): w zastępczym backendzie niepołączone, więc
+        // `#1234` w szybkim dodawaniu jest projektem; R6 dodaje fixture Redmine.
+        case "redmine_settings":
+          return {
+            config: {
+              site: "",
+              login: "",
+              userId: 0,
+              displayName: "",
+              acceptInvalidCert: false,
+              projects: [],
+            },
+            connected: false,
+          };
         case "jira_boards":
           return { values: clone(init.jira?.boards ?? []), nextStart: null };
         case "jira_issues":

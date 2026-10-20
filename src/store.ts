@@ -1,10 +1,11 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { ref } from "vue";
-import { renderTitle, type Parsed } from "./quickadd";
+import { renderTitle, unknownTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
 import { agentTotals, type AgentPeriod, type AgentTime } from "./agenttime";
 import { tsProjectKey } from "./timesheet";
+import { issueRef, redmineKey, validRedmineId } from "./issue";
 import {
   emptyRule,
   isRecurring,
@@ -24,6 +25,16 @@ export interface Task {
   jiraStatus?: string | null;
   /** Wartości pól z Jiry na kafelku (z ustawień `jiraCardFields`, tylko niepuste). */
   jiraFields?: JiraFieldValue[];
+  /**
+   * Zgłoszenie Redmine (`redmine_tasks`, PLAN_1.9.md R2); zadanie ma najwyżej
+   * jedno zgłoszenie: z Jiry albo z Redmine. Opis do kafelków daje `issueRef`.
+   */
+  redmineId?: number | null;
+  redmineUrl?: string | null;
+  /** Ostatni znany status, tracker i termin (`RRRR-MM-DD`) zgłoszenia Redmine. */
+  redmineStatus?: string | null;
+  redmineTracker?: string | null;
+  redmineDue?: string | null;
   details?: TaskDetails;
   archived?: boolean;
 }
@@ -98,9 +109,11 @@ export const detailsOf = (task: Task): TaskDetails => ({
   repeatDays: [...(task.details?.repeatDays ?? [])],
   repeatRule: { ...emptyRule(), ...task.details?.repeatRule },
 });
+/** Status zgłoszenia zadania (Jira albo Redmine) jak `planner::issue_status`. */
+const issueStatus = (task: Task) => issueRef(task)?.status ?? "";
 /**
  * Szczegóły po zdjęciu blokady przy starcie pomiaru (`planner::clear_waiting`):
- * bieżący status Jiry trafia do `waitingDismissed`.
+ * bieżący status zgłoszenia trafia do `waitingDismissed`.
  */
 function unblocked(task: Task): TaskDetails {
   const d = detailsOf(task);
@@ -111,7 +124,7 @@ function unblocked(task: Task): TaskDetails {
     waitingSince: 0,
     waitingStatus: "",
     waitingRemindDay: "",
-    waitingDismissed: task.jiraStatus ?? "",
+    waitingDismissed: issueStatus(task),
   };
 }
 export interface Session {
@@ -144,6 +157,26 @@ export async function refreshJiraConnected(): Promise<void> {
     ).connected;
   } catch {
     jiraConnected.value = false;
+  }
+}
+/**
+ * Czy Redmine jest połączone: tylko wtedy szybkie dodawanie rozpoznaje `#1234`
+ * jako zgłoszenie (bez połączenia to projekt „1234”). W podglądzie symulowane
+ * Redmine jest połączone, chyba że stan w `previewRedmineKey` mówi inaczej.
+ */
+export const redmineConnected = ref(!desktop);
+/** Odświeża `redmineConnected` z `redmine_settings` (w podglądzie ze stanu symulacji). */
+export async function refreshRedmineConnected(): Promise<void> {
+  if (!desktop) {
+    redmineConnected.value = previewRedmineState().connected !== false;
+    return;
+  }
+  try {
+    redmineConnected.value = (
+      await invoke<{ connected: boolean }>("redmine_settings")
+    ).connected;
+  } catch {
+    redmineConnected.value = false;
   }
 }
 const key = "todo-track-preview-v1";
@@ -249,6 +282,8 @@ export async function change(
 export interface NewTask {
   title: string;
   jiraKey?: string | null;
+  /** Numer zgłoszenia Redmine (`#1234`); razem z `jiraKey` to błąd. */
+  redmineId?: number | null;
   details?: TaskDetails | null;
   /** Utwórz i rozpocznij: poprzedni pomiar staje. */
   start?: boolean;
@@ -267,6 +302,7 @@ export function quickTask(parsed: Parsed, start = false): NewTask {
   return {
     title: parsed.title,
     jiraKey: f.jiraKey ?? null,
+    redmineId: f.redmineId ?? null,
     details: planned
       ? {
           ...detailsOf({ id: 0, title: "", done: false, createdAt: 0 }),
@@ -283,33 +319,100 @@ export function quickTask(parsed: Parsed, start = false): NewTask {
 }
 /** Adres Jiry w podglądzie (domyślny z `jira::Config`). */
 const previewJiraSite = "https://asistonwms.atlassian.net";
+/** Adres symulowanego Redmine w podglądzie (przykładowy, PLAN_1.9.md). */
+export const previewRedmineSite = "https://redmine.example.pl";
 /**
- * Szybkie dodawanie ze składnią: zadanie z polami, kluczem Jiry i opcjonalnym
- * startem w jednym kroku. Odpowiednik `quickadd::create`; w podglądzie nie ma listy
- * zgłoszeń, więc pusty tytuł z kluczem bierze tytuł z danych `jira_issues` tylko
- * w aplikacji.
+ * Symulowane Redmine podglądu (PLAN_1.9.md, R2 — minimum do szybkiego dodawania
+ * `#1234` i chipów; R6 rozbudowuje stan o projekty, statusy i zapisy).
+ * Brak klucza w `localStorage` = połączone z przykładowymi zgłoszeniami.
+ */
+export const previewRedmineKey = "todo-track-preview-redmine-v1";
+/** Zgłoszenie symulowanego Redmine (podzbiór `redmine::Issue`). */
+export interface PreviewRedmineIssue {
+  id: number;
+  subject: string;
+  status: string;
+  tracker: string;
+  dueDate: string;
+}
+interface PreviewRedmine {
+  connected?: boolean;
+  issues?: PreviewRedmineIssue[];
+}
+/** Przykładowe zgłoszenia (tematy do `#1234` w szybkim dodawaniu). */
+export const previewRedmineIssues: readonly PreviewRedmineIssue[] = Object.freeze([
+  {
+    id: 1234,
+    subject: "Import CSV zamówień",
+    status: "New",
+    tracker: "Funkcja",
+    dueDate: "2026-10-30",
+  },
+  {
+    id: 1240,
+    subject: "Błąd zapisu etykiet",
+    status: "Feedback",
+    tracker: "Błąd",
+    dueDate: "",
+  },
+  {
+    id: 1250,
+    subject: "Aktualizacja dokumentacji API",
+    status: "In Progress",
+    tracker: "Wsparcie",
+    dueDate: "",
+  },
+]);
+function previewRedmineState(): PreviewRedmine {
+  return previewJson(previewRedmineKey) as PreviewRedmine;
+}
+/** Zgłoszenie symulowanego Redmine po numerze (ze stanu albo z listy przykładowej). */
+function previewRedmineIssue(id: number): PreviewRedmineIssue | undefined {
+  const state = previewRedmineState();
+  const list = Array.isArray(state.issues) ? state.issues : previewRedmineIssues;
+  return list.find((i) => i.id === id);
+}
+/** `Zadanie może mieć jedno zgłoszenie` (`quickadd::ONE_ISSUE`). */
+export const oneIssueError =
+  "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
+/**
+ * Szybkie dodawanie ze składnią: zadanie z polami, kluczem Jiry albo numerem
+ * Redmine i opcjonalnym startem w jednym kroku. Odpowiednik
+ * `quickadd::create_linked`; w podglądzie nie ma listy zgłoszeń Jiry, więc pusty
+ * tytuł z kluczem bierze tytuł z danych `jira_issues` tylko w aplikacji; temat
+ * `#1234` pochodzi z symulowanego Redmine (`previewRedmineIssues`).
  */
 export async function quickAdd(task: NewTask): Promise<Snapshot> {
   if (desktop) return invoke("quick_add", { task });
   const jiraKey = task.jiraKey?.trim() || null;
   if (jiraKey && !/^[A-Z0-9_]+-\d+$/.test(jiraKey))
     throw new Error("Niepoprawny klucz zgłoszenia Jiry.");
+  const redmineId = task.redmineId ?? null;
+  if (redmineId !== null && !validRedmineId(redmineId))
+    throw new Error("Niepoprawny numer zgłoszenia Redmine.");
+  if (jiraKey && redmineId !== null) throw new Error(oneIssueError);
+  if (redmineId !== null && previewRedmineState().connected === false)
+    throw new Error(
+      `Redmine nie jest połączone, więc #${redmineId} nie zostanie powiązane. Połącz konto w Ustawieniach → Redmine albo poprzedź # znakiem \\.`,
+    );
+  const redmineIssue =
+    redmineId !== null ? previewRedmineIssue(redmineId) : undefined;
   const name = task.template?.trim();
   const template = name ? findTemplate(previewTemplates(), name) : undefined;
   if (name && !template)
     throw new Error(
       `Nie ma szablonu „${name}”. Dodaj go w Ustawieniach → Szablony.`,
     );
-  // W podglądzie nie ma listy zgłoszeń, więc {tytuł} z samym kluczem daje błąd.
+  // Etykieta zgłoszenia do szablonu: klucz Jiry albo `#numer`; temat tylko z
+  // symulowanego Redmine (listy Jiry w podglądzie nie ma).
+  const label = jiraKey ?? (redmineId !== null ? redmineKey(redmineId) : null);
+  const subject = () => redmineIssue?.subject ?? null;
   const title = template
-    ? [...renderTitle(template.title, jiraKey, task.title, () => null)]
+    ? [...renderTitle(template.title, label, task.title, subject)]
         .slice(0, 240)
         .join("")
-    : task.title.trim();
-  if (!title && jiraKey)
-    throw new Error(
-      `Nie znam tytułu ${jiraKey}. Wpisz tytuł albo odśwież listę zgłoszeń w widoku Jira.`,
-    );
+    : task.title.trim() || [...(subject() ?? "").trim()].slice(0, 240).join("");
+  if (!title && label) throw new Error(unknownTitle(label));
   if (!title || [...title].length > 240)
     throw new Error("Tytuł musi mieć od 1 do 240 znaków.");
   const lineDetails = template
@@ -346,6 +449,15 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
         `${jiraKey} ma już zadanie „${existing.title}”${data.trash?.includes(existing) ? " (w koszu)" : ""}.`,
       );
   }
+  if (redmineId !== null) {
+    const existing = [...data.tasks, ...(data.trash ?? [])].find(
+      (t) => t.redmineId === redmineId,
+    );
+    if (existing)
+      throw new Error(
+        `#${redmineId} ma już zadanie „${existing.title}”${data.trash?.includes(existing) ? " (w koszu)" : ""}.`,
+      );
+  }
   const now = Date.now();
   const id =
     Math.max(
@@ -360,6 +472,15 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
     createdAt: now,
     ...(jiraKey
       ? { jiraKey: jiraKey, jiraUrl: `${previewJiraSite}/browse/${jiraKey}` }
+      : {}),
+    ...(redmineId !== null
+      ? {
+          redmineId,
+          redmineUrl: `${previewRedmineSite}/issues/${redmineId}`,
+          redmineStatus: redmineIssue?.status ?? "",
+          redmineTracker: redmineIssue?.tracker ?? "",
+          redmineDue: redmineIssue?.dueDate ?? "",
+        }
       : {}),
     ...(details ? { details } : {}),
   });
@@ -804,12 +925,12 @@ export async function saveDetails(
     saved.waitingSince = 0;
     saved.waitingStatus = "";
     saved.waitingRemindDay = "";
-    if (wasWaiting) saved.waitingDismissed = task.jiraStatus ?? "";
+    if (wasWaiting) saved.waitingDismissed = issueStatus(task);
   } else {
     // Nowa blokada zaczyna bez przypomnienia (jak planner::save).
     if (!wasWaiting) saved.waitingRemindDay = "";
     if (!saved.waitingSince) saved.waitingSince = Date.now();
-    if (!saved.waitingStatus) saved.waitingStatus = task.jiraStatus ?? "";
+    if (!saved.waitingStatus) saved.waitingStatus = issueStatus(task);
   }
   if (isRecurring(saved) && !saved.repeatFrom)
     saved.repeatFrom = localDay(Date.now());
@@ -843,7 +964,7 @@ export async function setWaiting(
   const task = data.tasks.find((t) => t.id === id);
   if (!task) throw new Error("Nie znaleziono zadania.");
   const text = (change.text ?? "").trim();
-  const status = task.jiraStatus ?? "";
+  const status = issueStatus(task);
   const now = Date.now();
   const d = detailsOf(task);
   if (change.action === "block") {

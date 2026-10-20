@@ -68,6 +68,8 @@ export interface AppSettings {
   autoUpdateCheck: boolean;
   /** Główny przełącznik wysyłki Raportu TS (Ideo Timesheet); wyłączony blokuje też backend. */
   tsSend: boolean;
+  /** Statusy Redmine oznaczające czekanie (PLAN_1.9.md, R2; pole w Ustawieniach od R5). */
+  waitingRedmineStatuses: string[];
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -125,6 +127,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   weekReviewTime: "15:00",
   autoUpdateCheck: true,
   tsSend: true,
+  waitingRedmineStatuses: ["Feedback"],
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -230,11 +233,33 @@ export const validBranchPrefix = (value: string) =>
   !value.includes("..") &&
   !/^[/.-]/.test(value);
 
+/**
+ * Lista statusów oznaczających czekanie (Jira albo Redmine) jak
+ * `settings::clean_statuses`: przycięte, bez pustych i bez powtórek, najwyżej
+ * 50 nazw po 80 znaków. `system` to dopełniacz w komunikacie („Jiry”, „Redmine”).
+ */
+function cleanStatuses(list: readonly unknown[], system: string): string[] {
+  const statuses: string[] = [];
+  for (const raw of list) {
+    const status = typeof raw === "string" ? raw.trim() : "";
+    if ([...status].length > 80)
+      throw new Error(`Status ${system} może mieć najwyżej 80 znaków.`);
+    if (
+      status &&
+      !statuses.some((v) => v.toLowerCase() === status.toLowerCase())
+    )
+      statuses.push(status);
+  }
+  if (statuses.length > 50)
+    throw new Error(`Za dużo statusów ${system} oznaczających czekanie.`);
+  return statuses;
+}
 const fresh = (): AppSettings => ({
   ...defaultSettings,
   workDays: [...defaultSettings.workDays],
   agentMutedFolders: [],
   waitingJiraStatuses: [...defaultSettings.waitingJiraStatuses],
+  waitingRedmineStatuses: [...defaultSettings.waitingRedmineStatuses],
   jiraCardFields: [...defaultSettings.jiraCardFields],
 });
 /** Najwięcej pól Jiry na kafelku (`settings::MAX_CARD_FIELDS`). */
@@ -312,20 +337,11 @@ function applyFields(
       "Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.",
     );
   // Jak w Rust: bez pustych i bez powtórek (wielkość liter bez znaczenia).
-  const statuses: string[] = [];
-  for (const raw of s.waitingJiraStatuses) {
-    const status = typeof raw === "string" ? raw.trim() : "";
-    if ([...status].length > 80)
-      throw new Error("Status Jiry może mieć najwyżej 80 znaków.");
-    if (
-      status &&
-      !statuses.some((v) => v.toLowerCase() === status.toLowerCase())
-    )
-      statuses.push(status);
-  }
-  if (statuses.length > 50)
-    throw new Error("Za dużo statusów Jiry oznaczających czekanie.");
-  s.waitingJiraStatuses = statuses;
+  s.waitingJiraStatuses = cleanStatuses(s.waitingJiraStatuses, "Jiry");
+  s.waitingRedmineStatuses = cleanStatuses(
+    Array.isArray(s.waitingRedmineStatuses) ? s.waitingRedmineStatuses : [],
+    "Redmine",
+  );
   s.jiraMoveStatus = s.jiraMoveStatus.trim();
   if (!s.jiraMoveStatus || [...s.jiraMoveStatus].length > 80)
     throw new Error("Nazwa statusu w Jirze musi mieć od 1 do 80 znaków.");

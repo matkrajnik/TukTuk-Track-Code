@@ -10,6 +10,7 @@ import {
   type Task,
 } from "../store";
 import { dayBounds, dayKey, dayText, inDay } from "../time";
+import { issueRef } from "../issue";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
 import { dayTarget, hhmm, hm, targetHoliday, useSettings } from "../target";
@@ -149,8 +150,8 @@ function matches(task: Task) {
   const query = search.value.trim().toLocaleLowerCase("pl");
   return (
     !query ||
-    [task.title, task.details?.project ?? "", task.jiraKey ?? ""].some((text) =>
-      text.toLocaleLowerCase("pl").includes(query),
+    [task.title, task.details?.project ?? "", issueRef(task)?.key ?? ""].some(
+      (text) => text.toLocaleLowerCase("pl").includes(query),
     )
   );
 }

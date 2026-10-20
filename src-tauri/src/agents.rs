@@ -175,6 +175,8 @@ pub fn norm_folder(folder: &str) -> String {
 }
 
 /// Przypisanie folderu obejmuje też jego podfoldery; wygrywa najdłuższe.
+/// Klucz w dopasowaniu służy tylko do wyświetlenia: z Jiry albo `#numer`
+/// z Redmine (dopasowanie po kluczu w `resolve` zostaje dla Jiry).
 pub(crate) fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<Match>> {
     let cwd = norm_folder(cwd);
     if cwd.is_empty() {
@@ -182,8 +184,9 @@ pub(crate) fn bound_task(db: &Connection, cwd: &str) -> rusqlite::Result<Option<
     }
     let rows = db
         .prepare(
-            "SELECT b.folder,t.id,t.title,j.issue_key,t.done FROM agent_bindings b JOIN tasks t ON t.id=b.task_id
+            "SELECT b.folder,t.id,t.title,COALESCE(j.issue_key,'#' || r.issue_id),t.done FROM agent_bindings b JOIN tasks t ON t.id=b.task_id
              LEFT JOIN task_lifecycle l ON l.task_id=t.id LEFT JOIN jira_tasks j ON j.task_id=t.id
+             LEFT JOIN redmine_tasks r ON r.task_id=t.id
              WHERE l.deleted_at IS NULL",
         )?
         .query_map([], |r| {
@@ -1108,5 +1111,24 @@ mod tests {
         .unwrap();
         assert_eq!(bindings(&db).unwrap().len(), 2);
         assert!(unbind(&db, "c:/X/").unwrap().is_empty());
+    }
+
+    #[test]
+    fn folder_binding_shows_redmine_number_and_keeps_key_matching_for_jira() {
+        let db = open();
+        db.execute_batch(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(2,'https://redmine.example.pl',1234);",
+        )
+        .unwrap();
+        bind(&db, "C:\\Projekty\\redmine", 2).unwrap();
+        let m = resolve(&db, "C:\\Projekty\\redmine\\src", None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (m.task_id, m.key.as_deref(), m.source.as_str()),
+            (Some(2), Some("#1234"), "folder")
+        );
+        // Numer Redmine nie jest kluczem do dopasowania po gałęzi.
+        assert_eq!(resolve(&db, "C:\\inne", Some("#1234")).unwrap(), None);
     }
 }

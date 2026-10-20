@@ -25,9 +25,12 @@ pub struct Row {
     pub jira_key: String,
     pub project: String,
     pub note: String,
+    /// Zgłoszenie Redmine jako `#1234` (kolumna na końcu, PLAN_1.9.md R2);
+    /// kolumna „Klucz Jiry” zostaje bez zmian dla zgodności arkuszy.
+    pub redmine: String,
 }
 
-pub const HEADERS: [&str; 10] = [
+pub const HEADERS: [&str; 11] = [
     "Data",
     "Start",
     "Koniec",
@@ -38,6 +41,7 @@ pub const HEADERS: [&str; 10] = [
     "Projekt",
     "Notatka dnia",
     "Uwagi",
+    "Redmine",
 ];
 const RUNNING: &str = "trwa";
 /// Najwięcej dni w jednym eksporcie (z zapasem ponad rok).
@@ -87,6 +91,10 @@ pub fn rows<Tz: TimeZone>(snap: &db::Snapshot, tz: &Tz, days: &[NaiveDate], now:
                     .notes
                     .get(&key)
                     .map(|n| n.trim().to_string())
+                    .unwrap_or_default(),
+                redmine: task
+                    .redmine_id
+                    .map(|id| format!("#{id}"))
                     .unwrap_or_default(),
             });
         }
@@ -148,6 +156,7 @@ pub fn csv(rows: &[Row]) -> String {
             } else {
                 String::new()
             },
+            text(&row.redmine),
         ];
         out.push_str(&fields.join(";"));
         out.push_str("\r\n");
@@ -210,8 +219,9 @@ pub fn xlsx(rows: &[Row], days: &[NaiveDate]) -> Result<Vec<u8>, XlsxError> {
         if row.running {
             sheet.write_string(r, 9, RUNNING)?;
         }
+        sheet.write_string(r, 10, &row.redmine)?;
     }
-    for (col, width) in [11.0, 7.0, 7.0, 8.0, 8.0, 40.0, 12.0, 16.0, 40.0, 8.0]
+    for (col, width) in [11.0, 7.0, 7.0, 8.0, 8.0, 40.0, 12.0, 16.0, 40.0, 8.0, 10.0]
         .into_iter()
         .enumerate()
     {
@@ -219,16 +229,22 @@ pub fn xlsx(rows: &[Row], days: &[NaiveDate]) -> Result<Vec<u8>, XlsxError> {
     }
     sheet.set_freeze_panes(1, 0)?;
 
-    // Zadania według łącznego czasu malejąco, potem id.
+    // Zadania według łącznego czasu malejąco, potem id; w nagłówku klucz
+    // zgłoszenia (Jira albo `#numer` Redmine) w nawiasie.
     let mut totals: Vec<(i64, String, i64)> = Vec::new();
     for row in rows {
         match totals.iter_mut().find(|t| t.0 == row.task_id) {
             Some(t) => t.2 += row.ms,
             None => {
-                let label = if row.jira_key.is_empty() {
+                let issue = if row.jira_key.is_empty() {
+                    &row.redmine
+                } else {
+                    &row.jira_key
+                };
+                let label = if issue.is_empty() {
                     row.task.clone()
                 } else {
-                    format!("{} ({})", row.task, row.jira_key)
+                    format!("{} ({})", row.task, issue)
                 };
                 totals.push((row.task_id, label, row.ms));
             }
@@ -450,11 +466,11 @@ mod tests {
         assert_eq!(
             lines,
             vec![
-                "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi",
-                "2026-11-01;23:00;24:00;60;1,00;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;",
-                "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;",
-                "2026-11-02;09:00;10:15;75;1,25;\"Spotkanie; \"\"pilne\"\"\";;;;",
-                "2026-11-03;14:00;15:20;80;1,33;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;trwa",
+                "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi;Redmine",
+                "2026-11-01;23:00;24:00;60;1,00;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;;",
+                "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;;",
+                "2026-11-02;09:00;10:15;75;1,25;\"Spotkanie; \"\"pilne\"\"\";;;;;",
+                "2026-11-03;14:00;15:20;80;1,33;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;trwa;",
                 "",
             ]
         );
@@ -522,5 +538,52 @@ mod tests {
             parse_days(&["2026-11-02".into()]).unwrap(),
             vec![date("2026-11-02")]
         );
+    }
+
+    #[test]
+    fn redmine_issue_fills_last_column_and_summary_label() {
+        let db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db.execute_batch(
+            "INSERT INTO tasks(id,title,done,created_at) VALUES (1,'Import CSV',0,0),(2,'Bez zgłoszenia',0,0);
+             INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES (1,'https://redmine.example.pl',1234);",
+        )
+        .unwrap();
+        for (task, a, b) in [
+            (1, "2026-11-02 09:00", "2026-11-02 10:00"),
+            (2, "2026-11-02 10:00", "2026-11-02 10:30"),
+        ] {
+            db.execute(
+                "INSERT INTO sessions(task_id,started_at,ended_at) VALUES (?1,?2,?3)",
+                params![task, at(a), at(b)],
+            )
+            .unwrap();
+        }
+        let snap = db::snapshot(&db).unwrap();
+        let day = [date("2026-11-02")];
+        let list = rows(&snap, &Warsaw, &day, at("2026-11-02 12:00"));
+        assert_eq!(list[0].redmine, "#1234");
+        assert_eq!(list[0].jira_key, "");
+        assert_eq!(list[1].redmine, "");
+        let out = csv(&list);
+        let lines: Vec<_> = out.trim_start_matches('\u{feff}').split("\r\n").collect();
+        assert_eq!(
+            lines[1],
+            "2026-11-02;09:00;10:00;60;1,00;Import CSV;;;;;#1234"
+        );
+        assert_eq!(
+            lines[2],
+            "2026-11-02;10:00;10:30;30;0,50;Bez zgłoszenia;;;;;"
+        );
+        let bytes = xlsx(&list, &day).unwrap();
+        let mut book: Xlsx<_> = open_workbook_from_rs(std::io::Cursor::new(bytes)).unwrap();
+        let ranges = book.worksheet_range("Przedziały").unwrap();
+        let rows: Vec<_> = ranges.rows().collect();
+        assert_eq!(rows[0][10], Data::String("Redmine".into()));
+        assert_eq!(rows[1][10], Data::String("#1234".into()));
+        let summary = book.worksheet_range("Podsumowanie").unwrap();
+        let s: Vec<_> = summary.rows().collect();
+        assert_eq!(s[0][1], Data::String("Import CSV (#1234)".into()));
+        assert_eq!(s[0][2], Data::String("Bez zgłoszenia".into()));
     }
 }

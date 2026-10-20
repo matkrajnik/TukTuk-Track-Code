@@ -16,6 +16,15 @@ pub struct Task {
     /// Wartości pól z Jiry na kafelku (`jira_card_fields`, `jira_issue_fields`),
     /// w kolejności z ustawień, tylko niepuste.
     pub jira_fields: Vec<crate::jira_fields::FieldValue>,
+    /// Zgłoszenie Redmine powiązane z zadaniem (`redmine_tasks`); zadanie ma
+    /// najwyżej jedno zgłoszenie: z Jiry albo z Redmine (PLAN_1.9.md, R2).
+    pub redmine_id: Option<u64>,
+    /// `<site>/issues/<id>`.
+    pub redmine_url: Option<String>,
+    /// Ostatni znany status, tracker i termin zgłoszenia (`redmine_issues`).
+    pub redmine_status: Option<String>,
+    pub redmine_tracker: Option<String>,
+    pub redmine_due: Option<String>,
     pub details: crate::planner::Details,
     pub archived: bool,
 }
@@ -83,7 +92,7 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
     let tasks = db
-        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,'') FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
+        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,''),r.issue_id,r.site || '/issues/' || r.issue_id,NULLIF(ri.status,''),NULLIF(ri.tracker,''),NULLIF(ri.due_date,'') FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN redmine_tasks r ON r.task_id=t.id LEFT JOIN redmine_issues ri ON ri.site=r.site AND ri.issue_id=r.issue_id LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
         .query_map([], |r| {
             Ok((Task {
                 id: r.get(0)?,
@@ -94,6 +103,11 @@ pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
                 jira_url: r.get(5)?,
                 jira_status: r.get(9)?,
                 jira_fields: card_fields.remove(&r.get::<_, i64>(0)?).unwrap_or_default(),
+                redmine_id: r.get::<_, Option<i64>>(10)?.map(|id| id as u64),
+                redmine_url: r.get(11)?,
+                redmine_status: r.get(12)?,
+                redmine_tracker: r.get(13)?,
+                redmine_due: r.get(14)?,
                 details: serde_json::from_str(&r.get::<_, String>(6)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?,
                 archived: r.get(7)?,
             },r.get::<_,bool>(8)?))
@@ -579,5 +593,37 @@ mod tests {
         assert_eq!(s.sessions[0].ended_at, Some(5000));
         let s = change(&mut db, "unarchive", Some(1), None, 6000).unwrap();
         assert!(!s.tasks[0].archived);
+    }
+    #[test]
+    fn snapshot_joins_redmine_issue_fields() {
+        let mut db = Connection::open_in_memory().unwrap();
+        init(&db).unwrap();
+        change(&mut db, "add", None, Some("Import CSV".into()), 0).unwrap();
+        change(&mut db, "add", None, Some("Bez zgłoszenia".into()), 0).unwrap();
+        change(&mut db, "add", None, Some("Nieznany status".into()), 0).unwrap();
+        db.execute_batch(
+            "INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(1,'https://redmine.example.pl/redmine',1234);
+             INSERT INTO redmine_tasks(task_id,site,issue_id) VALUES(3,'https://redmine.example.pl/redmine',9);
+             INSERT INTO redmine_issues(site,issue_id,subject,status,tracker,due_date) VALUES('https://redmine.example.pl/redmine',1234,'Import CSV','In Progress','Błąd','2026-10-30');",
+        )
+        .unwrap();
+        let snap = snapshot(&db).unwrap();
+        let task = snap.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(task.redmine_id, Some(1234));
+        assert_eq!(
+            task.redmine_url.as_deref(),
+            Some("https://redmine.example.pl/redmine/issues/1234")
+        );
+        assert_eq!(task.redmine_status.as_deref(), Some("In Progress"));
+        assert_eq!(task.redmine_tracker.as_deref(), Some("Błąd"));
+        assert_eq!(task.redmine_due.as_deref(), Some("2026-10-30"));
+        assert!(task.jira_key.is_none() && task.jira_url.is_none());
+        let plain = snap.tasks.iter().find(|t| t.id == 2).unwrap();
+        assert!(plain.redmine_id.is_none() && plain.redmine_url.is_none());
+        assert!(plain.redmine_status.is_none() && plain.redmine_tracker.is_none());
+        // Powiązanie bez wiersza w `redmine_issues`: numer i adres, bez statusu.
+        let unknown = snap.tasks.iter().find(|t| t.id == 3).unwrap();
+        assert_eq!(unknown.redmine_id, Some(9));
+        assert!(unknown.redmine_status.is_none() && unknown.redmine_due.is_none());
     }
 }

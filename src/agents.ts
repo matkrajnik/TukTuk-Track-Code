@@ -7,6 +7,7 @@ import {
   type AppSettings,
 } from "./settings";
 import { previewFocusHolds } from "./focus";
+import { issueRef } from "./issue";
 import {
   change,
   desktop,
@@ -88,7 +89,8 @@ export function matchAgentTask(
     return {
       taskId: bound.task.id,
       title: bound.task.title,
-      key: bound.task.jiraKey ?? null,
+      // Klucz tylko do wyświetlenia: z Jiry albo `#numer` z Redmine (jak `agents::bound_task`).
+      key: issueRef(bound.task)?.key ?? null,
       source: "folder",
       done: bound.task.done,
     };

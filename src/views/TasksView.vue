@@ -14,7 +14,9 @@ import {
   onTemplatesChanged,
   quickAdd,
   quickTask,
+  redmineConnected,
   refreshJiraConnected,
+  refreshRedmineConnected,
   templates,
   setPriority,
   type NavigateRequest,
@@ -275,6 +277,7 @@ let stopTemplates: (() => void) | undefined;
 let mounted = true;
 onMounted(async () => {
   void refreshJiraConnected();
+  void refreshRedmineConnected();
   try {
     const stop = await onTemplatesChanged();
     if (!mounted) return stop();
@@ -298,6 +301,7 @@ const parsed = computed(() =>
     projects: projects.value,
     templates: templateNames.value,
     jiraEnabled: jiraConnected.value,
+    redmineEnabled: redmineConnected.value,
   }),
 );
 /** Bez zapisów składni dodanie działa dokładnie jak wcześniej (`mutate add`). */
@@ -306,6 +310,7 @@ const canAdd = computed(
     !blockingError(parsed.value) &&
     (!!parsed.value.title.trim() ||
       !!parsed.value.fields.jiraKey ||
+      parsed.value.fields.redmineId != null ||
       !!parsed.value.fields.template),
 );
 async function add() {

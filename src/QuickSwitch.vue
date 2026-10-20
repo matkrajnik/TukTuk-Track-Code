@@ -11,11 +11,14 @@ import {
   quickTask,
   loadTemplates,
   navigateMain,
+  redmineConnected,
   refreshJiraConnected,
+  refreshRedmineConnected,
   templates,
   type Snapshot,
 } from "./store";
 import { compareTasks } from "./order";
+import { redmineKey } from "./issue";
 import { dayKey } from "./time";
 import {
   blockingError,
@@ -64,8 +67,18 @@ const parsed = computed(() =>
     projects: projects.value,
     templates: templates.value.map((t) => t.name),
     jiraEnabled: jiraConnected.value,
+    redmineEnabled: redmineConnected.value,
   }),
 );
+/** Nazwa tworzonego zadania: tytuł albo klucz zgłoszenia (Jira lub `#1234`). */
+const createLabel = computed(() => {
+  const f = parsed.value.fields;
+  return (
+    parsed.value.title ||
+    f.jiraKey ||
+    (f.redmineId != null ? redmineKey(f.redmineId) : "")
+  );
+});
 /** Brak wyników i jest co utworzyć: Enter tworzy i uruchamia, Shift+Enter tylko tworzy. */
 const creatable = computed(
   () =>
@@ -73,6 +86,7 @@ const creatable = computed(
     !!query.value.trim() &&
     (!!parsed.value.title.trim() ||
       !!parsed.value.fields.jiraKey ||
+      parsed.value.fields.redmineId != null ||
       !!parsed.value.fields.template),
 );
 async function create(start: boolean) {
@@ -101,6 +115,7 @@ async function refresh() {
   try {
     data.value = await read();
     await refreshJiraConnected();
+    await refreshRedmineConnected();
     // Bez listy szablonów przełączanie nadal działa (szablon byłby nieznany).
     await loadTemplates().catch(() => []);
     query.value = "";
@@ -213,11 +228,11 @@ onUnmounted(() => off?.());
           :disabled="busy"
           @click="create(true)"
         >
-          <span>Utwórz i rozpocznij: {{ parsed.title || parsed.fields.jiraKey }}</span
+          <span>Utwórz i rozpocznij: {{ createLabel }}</span
           ><small>Enter</small>
         </button>
         <button class="quick-result" :disabled="busy" @click="create(false)">
-          <span>Utwórz: {{ parsed.title || parsed.fields.jiraKey }}</span
+          <span>Utwórz: {{ createLabel }}</span
           ><small>Shift+Enter</small>
         </button>
       </div>

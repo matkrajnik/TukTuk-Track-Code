@@ -12,6 +12,7 @@ import {
 } from "./store";
 import { writeSettings } from "./settings";
 import { offerAfterDone } from "./jiramove";
+import { issueRef } from "./issue";
 import { dayBounds, dayKey, dayText } from "./time";
 import { plannedTasks } from "./dayplan";
 import { dayCapacity } from "./capacity";
@@ -291,9 +292,9 @@ const reviewedAt = computed(() =>
         class="journal-task-row morning-row"
       >
         <span
-          ><span class="mono">{{ task.jiraKey }}</span> {{ task.title
+          ><span class="mono">{{ issueRef(task)?.key }}</span> {{ task.title
           }}<small class="hint">{{
-            [task.jiraStatus, planText(task)].filter(Boolean).join(" · ")
+            [issueRef(task)?.status, planText(task)].filter(Boolean).join(" · ")
           }}</small></span
         ><button
           class="today-button"

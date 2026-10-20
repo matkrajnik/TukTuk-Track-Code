@@ -46,7 +46,9 @@ import {
   resumeCandidate,
   toggleMeasurement,
   type Snapshot,
+  type Task,
 } from "./store";
+import { issueRef } from "./issue";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -68,8 +70,8 @@ const resume = computed(() =>
 );
 /** Przypięte zadania („w toku”): przełączanie jednym kliknięciem. */
 const pins = computed(() => pinnedTasks(data.value));
-const pinLabel = (t: { title: string; jiraKey?: string | null }) =>
-  t.jiraKey || t.title;
+/** Klucz zgłoszenia (Jira albo `#1234` z Redmine) zamiast tytułu, jak w trayu. */
+const pinLabel = (t: Task) => issueRef(t)?.key || t.title;
 async function switchToPin(id: number, title: string) {
   if (busy.value || id === active.value?.taskId) return;
   busy.value = true;

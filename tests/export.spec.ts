@@ -48,8 +48,9 @@ async function seed(page: Page) {
     .click();
 }
 
+// Od 1.9 na końcu kolumna „Redmine” (`#1234`); „Klucz Jiry” bez zmian.
 const header =
-  "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi";
+  "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi;Redmine";
 
 test("month export in preview returns CSV text; XLSX is unavailable", async ({
   page,
@@ -66,10 +67,10 @@ test("month export in preview returns CSV text; XLSX is unavailable", async ({
   // Pole tekstowe normalizuje CRLF do LF; CRLF sprawdza test exportCsv niżej.
   expect(text.slice(1).split("\n")).toEqual([
     header,
-    "2026-11-01;23:00;24:00;60;1,00;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;",
-    "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;",
-    '2026-11-02;09:00;10:15;75;1,25;"Spotkanie; ""pilne""";;;;',
-    "2026-11-20;10:30;12:00;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;trwa",
+    "2026-11-01;23:00;24:00;60;1,00;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;;",
+    "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;;",
+    '2026-11-02;09:00;10:15;75;1,25;"Spotkanie; ""pilne""";;;;;',
+    "2026-11-20;10:30;12:00;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;;trwa;",
     "",
   ]);
 
@@ -104,8 +105,8 @@ test("selected days export covers only the chosen days", async ({ page }) => {
   ).toHaveValue(
     [
       BOM + header,
-      "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;",
-      '2026-11-02;09:00;10:15;75;1,25;"Spotkanie; ""pilne""";;;;',
+      "2026-11-02;00:00;01:30;90;1,50;Zażółć gęślą jaźń;WMS-7;Magazyn Łódź;Poprawki źródeł;;",
+      '2026-11-02;09:00;10:15;75;1,25;"Spotkanie; ""pilne""";;;;;',
       "",
     ].join("\n"),
   );
@@ -124,12 +125,17 @@ test("exportCsv: BOM, CRLF, rounding and formula guard match the Rust export", (
     new Date(2026, 10, 2, h, m, s).getTime();
   const rows = exportRows(
     {
-      tasks: [{ id: 1, title: "=SUMA(A1)", done: false, createdAt: 0 }],
+      tasks: [
+        { id: 1, title: "=SUMA(A1)", done: false, createdAt: 0 },
+        // Zgłoszenie Redmine: `#1234` w ostatniej kolumnie, „Klucz Jiry” pusty.
+        { id: 3, title: "Import CSV", done: false, createdAt: 0, redmineId: 1234 },
+      ],
       sessions: [
         // 7,5 minuty = 0,125 h: połówka w górę, jak w Rust.
         { id: 1, taskId: 1, startedAt: at(8, 0), endedAt: at(8, 7, 30) },
         // Zadanie spoza listy (np. w koszu) nie trafia do eksportu.
         { id: 2, taskId: 2, startedAt: at(9, 0), endedAt: at(10, 0) },
+        { id: 3, taskId: 3, startedAt: at(10, 0), endedAt: at(11, 0) },
       ],
     },
     ["2026-11-02"],
@@ -137,7 +143,8 @@ test("exportCsv: BOM, CRLF, rounding and formula guard match the Rust export", (
   );
   expect(exportCsv(rows)).toBe(
     BOM +
-      "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi\r\n" +
-      "2026-11-02;08:00;08:07;8;0,13;'=SUMA(A1);;;;\r\n",
+      "Data;Start;Koniec;Minuty;Godziny;Zadanie;Klucz Jiry;Projekt;Notatka dnia;Uwagi;Redmine\r\n" +
+      "2026-11-02;08:00;08:07;8;0,13;'=SUMA(A1);;;;;\r\n" +
+      "2026-11-02;10:00;11:00;60;1,00;Import CSV;;;;;#1234\r\n",
   );
 });
