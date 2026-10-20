@@ -1,4 +1,5 @@
-import type { Task, TsProject, TsProjectMapping } from "./store";
+import type { Snapshot, Task, TsProject, TsProjectMapping } from "./store";
+import { byTotal, dayRows, decimalHours } from "./report";
 
 /**
  * Wysyłka Raportu TS do Ideo Timesheet (PLAN_1.8.md): czyste funkcje bez
@@ -51,4 +52,158 @@ export function findTsTask(
     for (const t of p.tasks)
       if (t.id === id) return { project: p.name, id: t.id, name: t.name };
   return null;
+}
+
+/** Wiersz Raportu TS do wysłania: jedno zadanie TS, scalone zadania Todo Track. */
+export interface TsSendRow {
+  tsTaskId: string;
+  tsTaskName: string;
+  /** Zadania Todo Track scalone w ten wpis, w kolejności raportu. */
+  tasks: Task[];
+  /** Pełny czas (ms) przed zaokrągleniem. */
+  ms: number;
+  /** Godziny jak w raporcie (`decimalHours` po scaleniu, np. „1,50”). */
+  hours: string;
+  overtime: "0";
+  /** Notatki dnia (albo tytuły) połączone „; ” bez powtórzeń. */
+  description: string;
+}
+
+/** Zadanie z czasem w dniu, którego nie da się wysłać (brak zadania TS). */
+export interface TsUnmapped {
+  task: Task;
+  ms: number;
+}
+
+export interface TsEntriesOptions {
+  /** Opis z notatki dnia (domyślnie); `false` — zawsze tytuł zadania. */
+  includeNotes?: boolean;
+}
+
+export interface TsEntriesResult {
+  entries: TsSendRow[];
+  unmapped: TsUnmapped[];
+  /** Czas wierszy do wysłania (bez zadań bez zadania TS). */
+  totalMs: number;
+  /** Czas zadań bez zadania TS. */
+  unmappedMs: number;
+  /** Trwający pomiar wliczony do `now`. */
+  running: boolean;
+}
+
+/** Białe znaki zbite do jednej spacji, bez spacji na końcach. */
+export const tsCleanText = (text: string) => text.replace(/\s+/g, " ").trim();
+
+/**
+ * Wpisy TS dnia z Raportu TS (`dayRows`): wiersze z zerowym czasem pominięte,
+ * zadanie TS z `resolveTsTask`, wiersze o tym samym zadaniu TS scalone (suma
+ * czasu → `decimalHours` po scaleniu, opisy „; ” bez powtórzeń). Opis to
+ * notatka dnia zadania, a bez niej tytuł. Nadgodziny zawsze „0”. Kolejność:
+ * najwięcej czasu, potem kolejność pierwszego zadania w raporcie.
+ */
+export function tsEntries(
+  day: string,
+  data: Snapshot,
+  now: number,
+  map: readonly TsProjectMapping[],
+  options: TsEntriesOptions = {},
+): TsEntriesResult {
+  const { includeNotes = true } = options;
+  const rows = dayRows(data, day, now)
+    .filter((row) => row.total > 0)
+    .sort(byTotal);
+  const merged = new Map<
+    string,
+    { name: string; tasks: Task[]; ms: number; notes: string[]; order: number }
+  >();
+  const unmapped: TsUnmapped[] = [];
+  let running = false;
+  for (const row of rows) {
+    if (row.sessions.some((s) => s.endedAt === null)) running = true;
+    const resolved = resolveTsTask(row.task, map);
+    if (!resolved) {
+      unmapped.push({ task: row.task, ms: row.total });
+      continue;
+    }
+    const entry = merged.get(resolved.id) ?? {
+      name: resolved.name,
+      tasks: [],
+      ms: 0,
+      notes: [],
+      order: merged.size,
+    };
+    entry.tasks.push(row.task);
+    entry.ms += row.total;
+    const note = includeNotes
+      ? tsCleanText(row.task.details?.notes?.[day] ?? "")
+      : "";
+    const text = note || tsCleanText(row.task.title);
+    if (text && !entry.notes.includes(text)) entry.notes.push(text);
+    merged.set(resolved.id, entry);
+  }
+  const entries = [...merged.entries()]
+    .sort(([, a], [, b]) => b.ms - a.ms || a.order - b.order)
+    .map(([id, e]) => ({
+      tsTaskId: id,
+      tsTaskName: e.name,
+      tasks: e.tasks,
+      ms: e.ms,
+      hours: decimalHours(e.ms),
+      overtime: "0" as const,
+      description: e.notes.join("; "),
+    }));
+  return {
+    entries,
+    unmapped,
+    totalMs: entries.reduce((sum, e) => sum + e.ms, 0),
+    unmappedMs: unmapped.reduce((sum, u) => sum + u.ms, 0),
+    running,
+  };
+}
+
+/** Godziny z TS w setnych („1,5”, „1.25”); nieczytelne liczą się jako 0. */
+export function tsHundredths(hours: string): number {
+  const raw = hours.trim();
+  const value = Number(raw.replace(",", "."));
+  return raw && Number.isFinite(value) ? Math.round(value * 100) : 0;
+}
+
+/** Setne części godziny jako „7,50”. */
+export const tsHoursText = (hundredths: number) =>
+  `${Math.trunc(hundredths / 100)},${String(Math.abs(hundredths % 100)).padStart(2, "0")}`;
+
+export interface TsSaveCheck {
+  /** Liczba wpisów i suma godzin odczytane z TS po zapisie. */
+  count: number;
+  hours: string;
+  /** Liczba wpisów albo suma (różnica > 0,01 h) inne niż wysłane. */
+  differs: boolean;
+}
+
+/**
+ * Porównanie odczytu z TS po zapisie z tym, co poszło w POST (`sent` — przy
+ * „Zachowaj” razem z doklejonymi wpisami TS): inna liczba wpisów albo suma
+ * godzin różna o więcej niż 0,01 h oznacza, że TS zapisał inne wartości.
+ */
+export function tsCheckSaved(
+  sent: readonly { hours: string }[],
+  read: readonly { hours: string }[],
+): TsSaveCheck {
+  const sum = (list: readonly { hours: string }[]) =>
+    list.reduce((total, e) => total + tsHundredths(e.hours), 0);
+  const readSum = sum(read);
+  return {
+    count: read.length,
+    hours: tsHoursText(readSum),
+    differs: sent.length !== read.length || Math.abs(sum(sent) - readSum) > 1,
+  };
+}
+
+/** Polska liczba mnoga: `plural(5, "wpis", "wpisy", "wpisów")` → „5 wpisów”. */
+export function tsPlural(n: number, one: string, few: string, many: string) {
+  const d = n % 10,
+    t = n % 100;
+  const word =
+    n === 1 ? one : d >= 2 && d <= 4 && (t < 12 || t > 14) ? few : many;
+  return `${n} ${word}`;
 }

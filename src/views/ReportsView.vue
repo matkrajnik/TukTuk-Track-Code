@@ -9,10 +9,21 @@ import {
 import ManualTime from "../ManualTime.vue";
 import { duration, type Session, type Snapshot } from "../store";
 import { dayBounds, dayKey, inDay, stamp } from "../time";
-import { byTotal, dayRows, rowsTotal, tsText } from "../report";
+import {
+  byTotal,
+  dayRows,
+  decimalHours,
+  rowsTotal,
+  tsText,
+} from "../report";
 import { copyReport } from "../clipboard";
 import MultiDayReport from "../components/MultiDayReport.vue";
 import MonthReport from "../components/MonthReport.vue";
+import TsSendDialog from "../components/TsSendDialog.vue";
+import { useTsSend } from "../composables/useTsSend";
+import { useTsProjectMap } from "../composables/useTsProjectMap";
+import { tsEntries } from "../timesheet";
+import { openView } from "../navigation";
 
 const props = defineProps<{
   data: Snapshot;
@@ -53,6 +64,26 @@ const reportLabel = computed(() =>
     year: "numeric",
   }).format(dayBounds(day.value)[0]),
 );
+/** Wysyłka do TS (1.8): przycisk, znacznik wysyłki i podgląd. */
+const tsMap = useTsProjectMap();
+const tsReportHours = computed(() =>
+  decimalHours(
+    tsEntries(day.value, props.data, props.now, tsMap.value).totalMs,
+  ),
+);
+const {
+  account: tsAccount,
+  enabled: tsEnabled,
+  connected: tsConnected,
+  marker: tsMarker,
+  changed: tsChanged,
+  markSent: tsMarkSent,
+} = useTsSend(
+  () => day.value,
+  () => tsReportHours.value,
+);
+const tsOpen = ref(false);
+watch(day, () => (tsOpen.value = false));
 watch([day, tsVisible], () => {
   tsCopyStatus.value = "";
 });
@@ -181,10 +212,39 @@ function toggle(id: number) {
     >
       <div class="ts-heading">
         <h2>Raport TS</h2>
-        <button class="today-button" @click="copyTsReport">
-          Kopiuj raport
-        </button>
+        <div class="ts-heading-actions">
+          <button class="today-button" @click="copyTsReport">
+            Kopiuj raport</button
+          ><button
+            v-if="tsEnabled && tsConnected"
+            class="today-button"
+            :disabled="busy || day > todayKey"
+            :title="
+              day > todayKey
+                ? 'Dnia z przyszłości nie można wysłać do TS'
+                : undefined
+            "
+            @click="tsOpen = true"
+          >
+            Wyślij do TS
+          </button>
+        </div>
       </div>
+      <p v-if="tsEnabled && tsAccount && !tsConnected" class="report-note">
+        <button
+          type="button"
+          class="text-link"
+          @click="openView({ view: 'settings', section: 'timesheet' })"
+        >
+          Połącz konto TS w Ustawieniach</button
+        >, żeby wysłać raport do TS.
+      </p>
+      <p v-if="tsMarker" class="report-note ts-sent-marker">
+        {{ tsMarker
+        }}<span v-if="tsChanged" class="ts-sent-changed">
+          · raport zmienił się od wysyłki</span
+        >
+      </p>
       <label class="inline-check"
         ><input v-model="tsIncludeNotes" type="checkbox" />Dołącz notatki z tego
         dnia</label
@@ -212,6 +272,14 @@ function toggle(id: number) {
         @focus="($event.target as HTMLTextAreaElement).select()"
       />
       <p class="ts-copy-status" role="status">{{ tsCopyStatus }}</p>
+      <TsSendDialog
+        v-if="tsOpen"
+        :data="data"
+        :day="day"
+        :now="now"
+        @close="tsOpen = false"
+        @sent="tsMarkSent"
+      />
     </section>
     <div class="report-list">
       <article v-for="row in report" :key="row.task.id" class="report-card">

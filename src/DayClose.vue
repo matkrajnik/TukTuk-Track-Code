@@ -16,6 +16,11 @@ import { copyReport } from "./clipboard";
 import { dayGoal } from "./capacity";
 import { useMeetings } from "./composables/useMeetings";
 import ManualTime from "./ManualTime.vue";
+import TsSendDialog from "./components/TsSendDialog.vue";
+import { useTsSend } from "./composables/useTsSend";
+import { useTsProjectMap } from "./composables/useTsProjectMap";
+import { tsEntries } from "./timesheet";
+import { openView } from "./navigation";
 import {
   dayTarget,
   targetDiffMinutes,
@@ -138,6 +143,23 @@ const report = computed(() =>
     order: "snapshot",
   }),
 );
+/** Wysyłka do TS (1.8): przycisk, znacznik wysyłki i podgląd. */
+const tsMap = useTsProjectMap();
+const tsReportHours = computed(() =>
+  decimal(tsEntries(props.day, props.data, props.now, tsMap.value).totalMs),
+);
+const {
+  account: tsAccount,
+  enabled: tsEnabled,
+  connected: tsConnected,
+  marker: tsMarker,
+  changed: tsChanged,
+  markSent: tsMarkSent,
+} = useTsSend(
+  () => props.day,
+  () => tsReportHours.value,
+);
+const tsOpen = ref(false);
 async function run(fn: () => Promise<void>) {
   busy.value = true;
   error.value = "";
@@ -306,6 +328,18 @@ async function move() {
       >
         Kopiuj raport TS</button
       ><button
+        v-if="tsEnabled && tsConnected"
+        class="secondary-button"
+        :disabled="busy || day > dayKey(now)"
+        :title="
+          day > dayKey(now)
+            ? 'Dnia z przyszłości nie można wysłać do TS'
+            : undefined
+        "
+        @click="tsOpen = true"
+      >
+        Wyślij do TS</button
+      ><button
         class="primary-button"
         :disabled="busy || active || day > dayKey(now)"
         @click="
@@ -324,5 +358,28 @@ async function move() {
         }}
       </button>
     </div>
+    <p v-if="tsEnabled && tsAccount && !tsConnected" class="hint">
+      <button
+        type="button"
+        class="text-link"
+        @click="openView({ view: 'settings', section: 'timesheet' })"
+      >
+        Połącz konto TS w Ustawieniach</button
+      >, żeby wysłać raport do TS.
+    </p>
+    <p v-if="tsMarker" class="hint ts-sent-marker">
+      {{ tsMarker
+      }}<span v-if="tsChanged" class="ts-sent-changed">
+        · raport zmienił się od wysyłki</span
+      >
+    </p>
+    <TsSendDialog
+      v-if="tsOpen"
+      :data="data"
+      :day="day"
+      :now="now"
+      @close="tsOpen = false"
+      @sent="tsMarkSent"
+    />
   </section>
 </template>
