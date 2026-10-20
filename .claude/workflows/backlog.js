@@ -1,10 +1,10 @@
 export const meta = {
   name: 'backlog',
   description: 'Realizuje PLAN_BACKLOG.md zadanie po zadaniu (część B: poprawki i ulepszenia, część A: agenci AI): implementacja, weryfikacja testami, przegląd, poprawki, commit; przygotowanie wydań 1.10.0 i 1.11.0',
-  whenToUse: 'Pełna delegacja prac nad Todo Track według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B2, B6, B11, B8, B9, R110, A0–A6, R111). args: { from?: "B7", only?: ["B3"], until?: "R110", maxFixRounds?: 3, model?: "opus" }',
+  whenToUse: 'Pełna delegacja prac nad Todo Track według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B12, B2, B6, B11, B8, B9, R110, A0–A6, R111). args: { from?: "B7", only?: ["B3"], until?: "R110", maxFixRounds?: 3, model?: "opus" }',
   phases: [
     { title: 'Porządek', detail: 'B7 poprawność backendu, B10 podział store.ts i dużych komponentów' },
-    { title: 'Codzienna praca', detail: 'B1 przyciski i SearchSelect, B3 pomiary, B4 wysyłka do TS z nadgodzinami, B5 raporty' },
+    { title: 'Codzienna praca', detail: 'B1 przyciski i SearchSelect, B3 pomiary, B4 wysyłka do TS z nadgodzinami, B5 raporty, B12 ręczne spotkania' },
     { title: 'Układ i wydajność', detail: 'B2 układ i nawigacja, B6 wydajność, B11 drobne funkcje' },
     { title: 'Agenci', detail: 'B8 hooki Claude Code i Codexa, B9 worktree Orki' },
     { title: 'Wydanie 1.10', detail: 'README, notes.md, NEXT_SESSION dla części B' },
@@ -81,6 +81,13 @@ const TASKS = [
     testChanges: 'zrzuty wzorcowe Raportu dnia, Dashboardu i Miesiąca; asercje treści Raportu dnia, jeśli lista zmieniła strukturę (opisz)',
   },
   {
+    id: 'B12', phase: 'Codzienna praca', title: 'Ręczne spotkania',
+    section: 'B12 — Ręczne spotkania',
+    scope: 'Wszystkie 6 punktów sekcji: tabela manual_meetings (CREATE TABLE IF NOT EXISTS, id z prefiksem manual:, task_id ON DELETE SET NULL, w kopii SQLite) osobno od calendar_events, żeby replace_range i calendar_disconnect jej nie kasowały; calendar::meetings_between łącząca Outlook (tylko przy połączonym koncie) i ręczne (zawsze), CalendarEvent z polami source ("outlook" domyślnie / "manual") i taskId; przepięcie calendar_events, capacity.rs, notify.rs, przeglądu tygodnia i frontendu (DayTimeline, capacity.ts, Rano, Zadania → Dzisiaj, Zamknięcie dnia, tablica i przegląd tygodnia) na wspólne źródło, tak żeby ręczne spotkania działały bez połączonego kalendarza; komendy meeting_add / meeting_update / meeting_delete z walidacją z sekcji i odpowiednikami w podglądzie; MeetingEditor.vue (temat, dzień, od–do albo Cały dzień, typ, opcjonalne zadanie przez SearchSelect) z wejściami z toru Spotkania osi dnia, Plan i historia → Dzień, Zadania → Dzisiaj i tablicy tygodnia; edycja i Usuń tylko dla ręcznych (Outlook tylko do odczytu), znacznik „ręczne”; „Dodaj jako czas” w Zamknięciu dnia wypełnia zadanie ręcznego spotkania; „Pokazuj tytuły spotkań” tylko dla Outlooka. Bez cykli.',
+    done: 'Rust: walidacja komend, meetings_between (oba źródła, brak konta, kolejność), ręczne spotkania nietknięte po replace_range i calendar_disconnect, pojemność z ręcznym spotkaniem bez połączonego kalendarza, ON DELETE SET NULL. Playwright: dodanie z osi dnia, edycja i usunięcie, pojemność i plan omijający spotkanie, Rano i Zamknięcie dnia z „Dodaj jako czas” z zadaniem, tor Spotkania bez połączonego kalendarza; nowy zrzut osi dnia z ręcznym spotkaniem.',
+    testChanges: 'mechaniczne dopisanie pól source/taskId w literałach CalendarEvent w testach Rust (notify.rs, capacity.rs, calendar.rs) i zrzuty osi dnia z przyciskiem „Dodaj spotkanie”; oczekiwane wartości pojemności i spotkań z Outlooka bez zmian',
+  },
+  {
     id: 'B2', phase: 'Układ i wydajność', title: 'Układ i nawigacja',
     section: 'B2 — Układ i nawigacja',
     scope: 'Wszystkie 7 punktów sekcji: przewinięcie do góry przy zmianie widoku (z zachowaniem pozycji przy powrocie z KeepAlive); main.wide dla widoków tablicowych (Jira → Tablica, Plan → Tydzień → Tablica, widok Redmine, jeśli ma szeroki układ); karta „Zagrożone teraz” bez łamania po literze przy 900–1150 px; watch(todayKey) w JournalView i MonthReport; „jutro” = nextWorkDay z datą w etykiecie w Zamknięciu dnia, Dniu i Rano; jedna funkcja dopasowania wyszukiwania (tytuł, projekt, klucz Jiry, #numer Redmine) w Zadaniach, Ctrl+K i tablicy tygodnia; „Ukończone”/„Wszystkie” domyślnie 30 dni z „Pokaż starsze” i grupowaniem po dniu ukończenia.',
@@ -118,7 +125,7 @@ const TASKS = [
   {
     id: 'R110', phase: 'Wydanie 1.10', title: 'Przygotowanie wydania 1.10.0', release: '1.10.0', part: 'B',
     section: 'Wydania (R110)',
-    scope: 'Wydanie obejmuje zadania części B, które weszły na gałąź (git log). README: „Nowości 1.10” (pomiary i luki, wysyłka TS z nadgodzinami i wieloma dniami, raporty z nadgodzinami, SearchSelect i czytelne przyciski, plan dnia rano, hooki agentów zamiast plików sesji z instrukcją zatwierdzenia w Codexie przez /hooks, worktree Orki), opis sekcji ustawień „Agenci” i „Skróty”, „Wersja w repozytorium”.',
+    scope: 'Wydanie obejmuje zadania części B, które weszły na gałąź (git log). README: „Nowości 1.10” (pomiary i luki, wysyłka TS z nadgodzinami i wieloma dniami, raporty z nadgodzinami, ręczne spotkania (także bez kalendarza Microsoft), SearchSelect i czytelne przyciski, plan dnia rano, hooki agentów zamiast plików sesji z instrukcją zatwierdzenia w Codexie przez /hooks, worktree Orki), opis sekcji ustawień „Agenci” i „Skróty”, „Wersja w repozytorium”.',
     done: '',
   },
   {

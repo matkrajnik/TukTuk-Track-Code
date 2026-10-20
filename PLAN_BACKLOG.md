@@ -23,6 +23,7 @@ Realizacja: workflow `.claude/workflows/backlog.js` (zadanie po zadaniu: impleme
 | B9 | Worktree Orki z kafelka zadania | M | B8 (wspólna sekcja Ustawień „Agenci”) |
 | B10 | Jakość kodu: wspólne formatowanie, podział `store.ts` i dużych komponentów | L | nie równolegle z innymi zadaniami |
 | B11 | Drobne funkcje: skróty, godziny w „Dodaj czas ręcznie”, suma dnia w widgecie, plan dnia przy pierwszym uruchomieniu | S | — |
+| B12 | Ręczne spotkania: dodawanie, edycja i usuwanie spotkań spoza Outlooka, także bez połączonego kalendarza | M | B1 (`SearchSelect`) |
 | A0 | Filtr danych osobowych (pseudonimizacja wszystkiego, co wychodzi do modelu) | M | — |
 | A1 | Silnik AI: wykrycie CLI, wybór agenta przy pierwszym uruchomieniu, izolowane wywołania, Ustawienia → Asystent AI | M | A0, B8 (filtr `TODO_TRACK_AI` w `todo-track-hook.exe`) |
 | A2 | Serwer MCP `todo-track-mcp.exe` i rejestracja w Claude Code i Codexie | L | A0 |
@@ -40,7 +41,7 @@ Jeden implementator naraz w jednym drzewie roboczym (zadania dotykają `store.ts
 1. **B7** — małe błędy backendu, bez zmian w interfejsie.
 2. **B10** — refaktor przed resztą: wspólne `clock()` / `plural()`, symulatory podglądu w `src/preview/*.ts`, podział `JiraView` / `SettingsPanel` / `TaskCard`. Kolejne zadania zmieniają wtedy mniejsze pliki, a A3 od razu kładzie symulator w `src/preview/ai.ts`.
 3. **B1** — `SearchSelect` i czytelne przyciski (potrzebne w B4).
-4. **B3**, **B4**, **B5** — pomiary, wysyłka do TS z nadgodzinami, raporty z tą samą funkcją `overtime`.
+4. **B3**, **B4**, **B5** — pomiary, wysyłka do TS z nadgodzinami, raporty z tą samą funkcją `overtime`; potem **B12** — ręczne spotkania (oś dnia, pojemność i Zamknięcie dnia są już po zmianach B3–B5).
 5. **B2**, **B6**, **B11** — układ, wydajność, drobne.
 6. **B8**, **B9** — hooki agentów i Orka.
 7. **R110** — przygotowanie wydania 1.10.0 (część B).
@@ -57,7 +58,7 @@ Podział na wydania jest propozycją: część B nie wymaga AI i może wyjść w
 - Nic nie trafia do TS, Jiry, Redmine ani Orki bez kliknięcia; model AI tylko proponuje (część A).
 - Testy nie łączą się z żadnym serwerem (TS, Jira, Redmine) i nie uruchamiają prawdziwego `claude`, `codex` ani `orca`; nie zmieniają plików użytkownika `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.codex/config.toml` ani rejestracji MCP (testy pracują na kopiach w katalogu tymczasowym).
 - Każde zadanie kończy się: `npm run build`, `npm test`, `cargo test --locked`, `cargo fmt --check`, commit `B<n>: <tytuł>` albo `A<n>: <tytuł>`. README i `NEXT_SESSION.md` aktualizuje zadanie przygotowania wydania (R110, R111) na podstawie opisów z zadań.
-- Zrzuty wzorcowe Playwright (`tests/visual.spec.ts`) odświeżane tylko w zadaniach zmieniających wygląd (B1, B2, B5, A1, A3), świadomie i z opisem.
+- Zrzuty wzorcowe Playwright (`tests/visual.spec.ts`) odświeżane tylko w zadaniach zmieniających wygląd (B1, B2, B5, B12, A1, A3), świadomie i z opisem.
 
 # Część B — poprawki i ulepszenia
 
@@ -188,6 +189,19 @@ Bez zmian zachowania; wszystkie istniejące testy przechodzą bez modyfikacji po
 2. **„Dodaj czas ręcznie” z sensownymi godzinami**: `ManualTime.vue:25-26` zawsze proponuje 09:00–10:00; początek z `dayStart` albo koniec ostatniego przedziału dnia, koniec = teraz dla dzisiaj.
 3. **Suma dnia w widgecie**: tray pokazuje „dziś 5:10 / 8:00”, widget w podlinii tylko projekt albo „Pomiar trwa” (`WidgetWindow.vue:203-215`); dane są już w oknie.
 4. **Plan dnia przy pierwszym uruchomieniu w danym dniu** (zgłoszenie użytkownika): dziś Poranny przegląd (Plan i historia → Rano) otwiera się tylko ręcznie albo z powiadomienia „Przegląd dnia”. Przy pierwszym starcie aplikacji w dniu roboczym, gdy przegląd dnia nie został jeszcze zapisany („Zaczynam dzień”), główne okno otwiera się od razu na zakładce Rano zamiast na liście zadań; to samo, gdy aplikacja działała przez noc i po północy okno jest pokazywane pierwszy raz tego dnia. Nie w święto ani w całodniowy urlop z kalendarza (te same reguły co powiadomienie), nie przy starcie zminimalizowanym do traya (wtedy przy pierwszym pokazaniu okna). Po „Zaczynam dzień” albo ręcznym przejściu gdzie indziej aplikacja nie wraca do Rano tego dnia. Przełącznik „Otwieraj plan dnia przy pierwszym uruchomieniu” w Ustawieniach → Uruchamianie (domyślnie włączony), stan „pokazano dziś” w pamięci okna, nie w bazie. W podglądzie przeglądarkowym działa tak samo (`localStorage`). Test Playwright: start z zapisanym przeglądem i bez, zmiana dnia zegarem.
+
+## B12 — Ręczne spotkania
+
+Zgłoszenie użytkownika (20 października 2026): spotkania można dziś tylko pobrać z Microsoft 365 (K1). Nie da się dopisać spotkania spoza Outlooka (telefon, spotkanie u klienta, kalendarz innej firmy, praca bez połączonego konta), więc pojemność dnia, plan i Zamknięcie dnia go nie widzą. Stan kodu: spotkania są w `calendar_events`; `calendar::replace_range` przy każdym pobraniu kasuje zakres, a `calendar_disconnect` kasuje całą tabelę; `calendar_events`, `capacity.rs` (`connected`) i tor „Spotkania” w `DayTimeline.vue` zwracają pustą listę bez połączonego konta.
+
+1. **Osobna tabela** `manual_meetings(id TEXT PRIMARY KEY, start, "end", subject, show_as DEFAULT 'busy', all_day, task_id NULL → tasks ON DELETE SET NULL, created_at, updated_at)` przez `CREATE TABLE IF NOT EXISTS` — nie w `calendar_events`, żeby pobieranie i rozłączenie Outlooka ich nie kasowały. Id z prefiksem `manual:`. Kopia SQLite obejmuje tabelę.
+2. **Jedno źródło spotkań**: `calendar::meetings_between(db, from, to)` łączy spotkania z Outlooka (tylko przy połączonym koncie, jak dziś) i ręczne (zawsze), według początku; `CalendarEvent` dostaje pola `source` (`"outlook"` / `"manual"`, domyślnie `"outlook"`) i `taskId`. Używają jej komenda `calendar_events`, `capacity.rs`, `notify.rs` i przegląd tygodnia, więc ręczne spotkanie zmniejsza pojemność, plan dnia je omija, a Rano, Zadania → „Dzisiaj”, Zamknięcie dnia, tablica tygodnia i przegląd tygodnia je pokazują — także bez połączonego kalendarza (tor „Spotkania” widoczny, gdy jest choć jedno spotkanie). Nakładanie z Outlookiem liczone jak dziś (nienakładające się minuty), bez wykrywania duplikatów.
+3. **Komendy** `meeting_add`, `meeting_update`, `meeting_delete` z walidacją: koniec po początku, oba w tym samym dniu albo „Cały dzień”, temat 1–200 znaków, `show_as` z listy `busy` / `tentative` / `oof` / `workingElsewhere`, zadanie istniejące; odpowiedniki w podglądzie przeglądarkowym. Spotkania z Outlooka zostają tylko do odczytu.
+4. **Formularz** `MeetingEditor.vue`: temat, dzień, od–do (domyślnie najbliższa pełna godzina, 30 min) albo „Cały dzień”, typ (Zajęte / Wstępnie / Poza biurem / Praca gdzie indziej), opcjonalne zadanie (`SearchSelect` z B1). Wejścia: „Dodaj spotkanie” w torze „Spotkania” osi dnia (kliknięcie w pusty fragment toru podstawia godzinę), w Plan i historia → Dzień, w Zadania → „Dzisiaj” obok nadchodzących spotkań i w menu dnia tablicy tygodnia. Kliknięcie ręcznego spotkania otwiera edycję z „Usuń” (`ConfirmDialog`); ręczne mają w osi i na listach znacznik „ręczne”.
+5. **Zamknięcie dnia**: „Dodaj jako czas” dla ręcznego spotkania z zadaniem wypełnia też zadanie w `ManualTime`. „Pokazuj tytuły spotkań” dotyczy tylko Outlooka (temat ręcznego wpisał użytkownik); w części A przełącznik `ai_send_meeting_titles` obejmuje oba źródła.
+6. **Bez cykli** w tym zadaniu: spotkanie powtarzalne (np. codzienny stand-up spoza Outlooka) jako możliwe rozszerzenie później, wzorem `recurrence.rs`.
+
+Testy: Rust dla walidacji komend, `meetings_between` (oba źródła, brak konta, kolejność), odporności ręcznych na `replace_range` i `calendar_disconnect`, pojemności z ręcznym spotkaniem bez połączonego kalendarza, `ON DELETE SET NULL` przy usunięciu zadania. Playwright: dodanie z osi dnia, edycja i usunięcie, pojemność i plan omijający spotkanie, widoczność w Rano i Zamknięciu dnia z „Dodaj jako czas” z zadaniem, tor „Spotkania” bez połączonego kalendarza; zrzut osi dnia z ręcznym spotkaniem.
 
 # Część A — integracja z agentami AI (Claude Code, Codex)
 
@@ -336,7 +350,7 @@ Zielone `npm run build`, `npm test` (Playwright), `cargo test --locked`, `cargo 
 
 ## Wydania
 
-- **R110 — przygotowanie 1.10.0**: zadania części B. `notes.md`, README („Nowości 1.10”, opis ustawień „Agenci”, hooki zamiast plików sesji, Orka, „Wersja w repozytorium”), `NEXT_SESSION.md` z listą ręcznych sprawdzeń B. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 1.10.0`.
+- **R110 — przygotowanie 1.10.0**: zadania części B. `notes.md`, README („Nowości 1.10”, ręczne spotkania w opisie kalendarza, opis ustawień „Agenci”, hooki zamiast plików sesji, Orka, „Wersja w repozytorium”), `NEXT_SESSION.md` z listą ręcznych sprawdzeń B. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 1.10.0`.
 - **R111 — przygotowanie 1.11.0**: zadania części A. README („Nowości 1.11”, sekcja „Asystent AI”: subskrypcja zamiast klucza API, co wychodzi do modelu i jak działa filtr nazwisk z ograniczeniem słownika, serwer MCP z przykładem wpisu do CLAUDE.md, karty akcji), `notes.md`, `NEXT_SESSION.md` z listą ręcznych sprawdzeń A. Wydanie: `npm run ship -- 1.11.0` przez użytkownika.
 
 ## Do ręcznego sprawdzenia (po instalacji, przez użytkownika)
@@ -344,6 +358,7 @@ Zielone `npm run build`, `npm test` (Playwright), `cargo test --locked`, `cargo 
 - B4: nazwa pola nadgodzin w prawdziwym TS, czy norma dnia jest tam stała (8 h) czy per użytkownik, i czy porównanie po zapisie uwzględnia nadgodziny.
 - B8: sesja Claude z workflow ponad 15 minut widoczna w kafelku; sesja czekająca na zgodę nie liczy się jako praca; Codex przed i po zatwierdzeniu hooka przez `/hooks`; sesja uruchomiona z Orki; restart aplikacji w trakcie pracy agenta.
 - B9: tworzenie worktree przy działającej i niedziałającej Orce.
+- B12: ręczne spotkanie przetrwa odświeżenie i rozłączenie kalendarza Microsoft w natywnej aplikacji; tray i powiadomienie o celu liczą je w pojemności.
 - A1: `claude -p` uruchomione z aplikacji korzysta z subskrypcji (bez klucza API) i działa w schowanym oknie; `--setting-sources ""` naprawdę pomija hooki z `~/.claude/settings.json` (w tym wpisy Orki) — jeśli nie, potwierdzić, że filtr `TODO_TRACK_AI` w `todo-track-hook.exe` wystarcza; komunikat przy wylogowanym CLI i przy wyczerpanym limicie; `codex exec --output-schema` zwraca poprawny JSON.
 - A1: dialog pierwszego uruchomienia z jednym, dwoma i zerem wykrytych CLI; wybór przetrwał restart.
 - A0: przejrzeć „Pokaż, co zostanie wysłane” na prawdziwym dniu z Jirą: czy żadne nazwisko nie przeszło; uzupełnić „Ukrywaj te nazwy”.
