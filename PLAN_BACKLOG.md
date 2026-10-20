@@ -11,8 +11,8 @@ Stan wyjściowy: 1.8.0 (wydane 20 października 2026, tag `v1.8.0`, `master` na 
 | B1 | Czytelność przycisków, selecty z wyszukiwaniem, drobne w formularzach | M | — |
 | B2 | Układ i nawigacja: przewijanie, szerokość tablic, karta „Zagrożone”, zmiana dnia po północy, „jutro”, wyszukiwanie po kluczu | M | — |
 | B3 | Pomiary: akcje dla luki w zapisie, przycięcie i wznowienie z banera bezczynności, edycja startu trwającego pomiaru | M | — |
-| B4 | Wysyłka do TS: nadgodziny, edycja godzin, przypisanie zadania TS z podglądu, poprawne porównanie po zapisie, wysyłka wielu dni | L | — |
-| B5 | Raport dnia jak kafelki, oznaczenie zgłoszeń Jiry z zadaniem, stan obserwacji Jiry | M | — |
+| B4 | Wysyłka do TS: nadgodziny z automatycznym podziałem powyżej normy dnia, edycja godzin, przypisanie zadania TS z podglądu, poprawne porównanie po zapisie, wysyłka wielu dni | L | — |
+| B5 | Raport dnia jak kafelki, nadgodziny dnia w raportach i na Dashboardzie, oznaczenie zgłoszeń Jiry z zadaniem, stan obserwacji Jiry | M | B4 (wspólna funkcja `overtime`) albo odwrotnie |
 | B6 | Wydajność: migawka, cykle, ustawienia, przeliczenia co sekundę | L | — |
 | B7 | Poprawność backendu: kopie, uszkodzony cykl, `set_priority`, brakujące testy | S | — |
 | B8 | Wykrywanie agentów przez hooki Claude Code i Codexa (zamiast plików sesji) | L | — |
@@ -73,7 +73,8 @@ Testy: Rust dla `fill_gap` (trzy tryby, nakładanie, luka zerowa), dla przycięc
 
 Zgłoszenia użytkownika z pierwszych wysyłek 1.8.0 i przegląd kodu.
 
-1. **Pole „nadgodziny”**: w TS obok godzin jest osobne pole nadgodzin. Dodać je do każdego wpisu w podglądzie „Wyślij do TS” (domyślnie 0, format jak godziny), przekazywać w `ts_send` i uwzględniać w porównaniu po zapisie. Wymaga sprawdzenia nazwy pola w API TS (`ideo-ts-api`, symulowany TS w `store.ts`).
+1. **Pole „nadgodziny”**: w TS obok godzin jest osobne pole nadgodzin. Dodać je do każdego wpisu w podglądzie „Wyślij do TS” (format jak godziny), przekazywać w `ts_send` i uwzględniać w porównaniu po zapisie. Wymaga sprawdzenia nazwy pola w API TS (`ideo-ts-api`, symulowany TS w `store.ts`).
+   - **Automatyczny podział na godziny i nadgodziny** (zgłoszenie użytkownika): czas dnia powyżej normy (8 h, czyli cel dzienny z Ustawień → Czas pracy; w dzień wolny lub święto cała praca to nadgodziny) trafia do kolumny nadgodzin. Podgląd liczy sumę dnia z pomiarów i proponuje podział: wpisy do normy w kolumnie godzin, nadwyżka w nadgodzinach, przy czym nadwyżka jest odejmowana od ostatnich chronologicznie wpisów dnia (zadanie kończące dzień ma nadgodziny). Podział jest widoczny i edytowalny przed zapisem (pkt 2 obejmuje oba pola), sumy godzin i nadgodzin osobno na dole, ostrzeżenie, gdy suma godzin przekracza normę. Wymaga sprawdzenia w prawdziwym TS, czy norma dnia jest tam stała, czy per użytkownik.
 2. **Edycja godzin we wpisie**: liczba godzin w każdym wpisie edytowalna przed zapisem (pole liczbowe z dwoma miejscami, przecinek), suma na dole przeliczana; wartość z pomiarów jako domyślna z przyciskiem „Przywróć z pomiarów”.
 3. **Przypisanie zadania TS z podglądu**: zadania bez zadania TS dziś blokują wpis; w podglądzie przy takim wierszu `SearchSelect` (B1) z listą zadań TS, wybór zapisuje `tsTaskId` / `tsTaskName` na zadaniu (i opcjonalnie jako domyślne dla projektu), bez wychodzenia do kafelka.
 4. **Fałszywy rozjazd po zapisie** (`TsSendDialog.vue:138-142`, `timesheet.rs:994-1002`): przy „Zachowaj pozostałe wpisy TS” frontend buduje `expected` z `filled` pobranego przy otwarciu, a backend dokleja wpisy z aktualnej strony; zmiana w TS między otwarciem a zapisem daje „TS zapisał inne wartości niż wysłane”. `ts_send` zwraca listę faktycznie wysłaną i z nią porównuje.
@@ -85,7 +86,8 @@ Testy: Rust dla nadgodzin i porównania; Playwright na symulowanym TS dla edycji
 
 1. **Raport dnia: lista zadań jak kafelki** (zgłoszenie użytkownika): lista w Raporcie dnia pokazuje tylko tytuł i czas; ma pokazywać to, co kafelek na liście zadań (projekt, klucz i status zgłoszenia, plan i procent, termin, notatka dnia), bez akcji Start/Ukończ. Wydzielić z `TaskCard` prezentacyjny `TaskSummary.vue` używany w obu miejscach.
 2. **Lista Jiry nie odróżnia zgłoszeń z lokalnym zadaniem** (`JiraView.vue:890-925`, lista nie sprawdza `props.data.tasks` po `jiraKey`): WMS-12 z zadaniem i WMS-31 bez wyglądają tak samo, „Rozpocznij” nie mówi, czy uruchomi istniejące zadanie, czy utworzy nowe. Znacznik „W zadaniach · dziś HH:MM” i ostrzeżenie przed utworzeniem duplikatu, gdy zadanie jest w koszu albo zarchiwizowane.
-3. **Obserwacja Jiry milczy o błędach** (zweryfikowane; `jira.rs:995-1006`): `Err` z `watch_once` (wygasły token, 401, brak sieci) jest ignorowany, statusy przestają się odświeżać bez sygnału, choć kalendarz ma `last_error`. Zapamiętać ostatni błąd i czas ostatniego udanego sprawdzenia w `JiraState`, pokazać linię „Ostatnio sprawdzono 14:05 · błąd: …” w widoku Jira i Ustawienia → Jira.
+3. **Nadgodziny dnia jako osobna informacja** (zgłoszenie użytkownika): gdy przepracowany czas dnia przekracza normę (cel dzienny, domyślnie 8 h; dzień wolny lub święto: cała praca), pokazać to wprost, nie tylko jako „110%”: w Raporcie dnia linia „Nadgodziny: 1:20” pod przepracowanym czasem, na Dashboardzie w karcie „Dzisiaj” i w wykresie „Czas pracy · ostatnie 7 dni” fragment słupka powyżej normy innym kolorem z sumą nadgodzin tygodnia, w Miesiącu kolumna „Nadgodziny” i suma. Jedna funkcja `overtime(day, sessions, settings)` w `report.ts`, używana też przez podział w B4.
+4. **Obserwacja Jiry milczy o błędach** (zweryfikowane; `jira.rs:995-1006`): `Err` z `watch_once` (wygasły token, 401, brak sieci) jest ignorowany, statusy przestają się odświeżać bez sygnału, choć kalendarz ma `last_error`. Zapamiętać ostatni błąd i czas ostatniego udanego sprawdzenia w `JiraState`, pokazać linię „Ostatnio sprawdzono 14:05 · błąd: …” w widoku Jira i Ustawienia → Jira.
 
 Testy: Playwright dla Raportu dnia (zrzut), dla znacznika w liście Jiry, dla linii stanu po błędzie z symulowanej Jiry.
 
@@ -163,6 +165,6 @@ Bez zmian zachowania; wszystkie istniejące testy przechodzą bez modyfikacji po
 
 ## Do ręcznego sprawdzenia (po instalacji, przez użytkownika)
 
-- B4: nazwa pola nadgodzin w prawdziwym TS i czy porównanie po zapisie je uwzględnia.
+- B4: nazwa pola nadgodzin w prawdziwym TS, czy norma dnia jest tam stała (8 h) czy per użytkownik, i czy porównanie po zapisie uwzględnia nadgodziny.
 - B8: sesja Claude z workflow ponad 15 minut widoczna w kafelku; sesja czekająca na zgodę nie liczy się jako praca; Codex przed i po zatwierdzeniu hooka przez `/hooks`; sesja uruchomiona z Orki; restart aplikacji w trakcie pracy agenta.
 - B9: tworzenie worktree przy działającej i niedziałającej Orce.
