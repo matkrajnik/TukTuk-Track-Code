@@ -83,8 +83,15 @@ export interface TsEntriesOptions {
 export interface TsEntriesResult {
   entries: TsSendRow[];
   unmapped: TsUnmapped[];
-  /** Czas wierszy do wysłania (bez zadań bez zadania TS). */
+  /**
+   * Wpisy z czasem poniżej 0,01 h (po scaleniu „0,00”): nie idą do TS, bo przy
+   * „Zachowaj pozostałe wpisy TS” zastąpiłyby wpis TS o tym zadaniu zerem.
+   */
+  tooShort: TsSendRow[];
+  /** Czas wpisów do wysłania (bez zadań bez zadania TS i wpisów „0,00”). */
   totalMs: number;
+  /** Suma godzin wpisów do wysłania (per wpis po zaokrągleniu, „7,50”). */
+  totalHours: string;
   /** Czas zadań bez zadania TS. */
   unmappedMs: number;
   /** Trwający pomiar wliczony do `now`. */
@@ -99,7 +106,8 @@ export const tsCleanText = (text: string) => text.replace(/\s+/g, " ").trim();
  * zadanie TS z `resolveTsTask`, wiersze o tym samym zadaniu TS scalone (suma
  * czasu → `decimalHours` po scaleniu, opisy „; ” bez powtórzeń). Opis to
  * notatka dnia zadania, a bez niej tytuł. Nadgodziny zawsze „0”. Kolejność:
- * najwięcej czasu, potem kolejność pierwszego zadania w raporcie.
+ * najwięcej czasu, potem kolejność pierwszego zadania w raporcie. Wpisy, które
+ * po scaleniu dają „0,00” h, trafiają do `tooShort` zamiast do wysyłki.
  */
 export function tsEntries(
   day: string,
@@ -141,7 +149,7 @@ export function tsEntries(
     if (text && !entry.notes.includes(text)) entry.notes.push(text);
     merged.set(resolved.id, entry);
   }
-  const entries = [...merged.entries()]
+  const all: TsSendRow[] = [...merged.entries()]
     .sort(([, a], [, b]) => b.ms - a.ms || a.order - b.order)
     .map(([id, e]) => ({
       tsTaskId: id,
@@ -152,10 +160,16 @@ export function tsEntries(
       overtime: "0" as const,
       description: e.notes.join("; "),
     }));
+  const entries = all.filter((e) => tsHundredths(e.hours) > 0);
+  const tooShort = all.filter((e) => tsHundredths(e.hours) <= 0);
   return {
     entries,
     unmapped,
+    tooShort,
     totalMs: entries.reduce((sum, e) => sum + e.ms, 0),
+    totalHours: tsHoursText(
+      entries.reduce((sum, e) => sum + tsHundredths(e.hours), 0),
+    ),
     unmappedMs: unmapped.reduce((sum, u) => sum + u.ms, 0),
     running,
   };

@@ -154,6 +154,54 @@ test("tsEntries: zaokrąglenie po scaleniu zgodne z sumą raportu", () => {
   expect(result.entries[0].tsTaskName).toBe("1101");
 });
 
+test("tsEntries: wpis poniżej 0,01 h po scaleniu nie idzie do wysyłki", () => {
+  // 10 s + 5 s na zadanie TS 1102: po scaleniu 15 s → „0,00”. Taki wpis przy
+  // „Zachowaj” zastąpiłby wpis TS o tym zadaniu zerem, więc trafia do tooShort.
+  const sec = (h: string, sx: number) => at(DAY, h) + sx * 1000;
+  const data = {
+    tasks: [
+      t(1, "Analiza", { tsTaskId: "1101", tsTaskName: "Rozwój" }),
+      t(2, "Krótkie A", { tsTaskId: "1102", tsTaskName: "Błędy" }),
+      t(3, "Krótkie B", { tsTaskId: "1102", tsTaskName: "Błędy" }),
+    ],
+    sessions: [
+      { id: 1, taskId: 1, startedAt: at(DAY, "08:00"), endedAt: at(DAY, "09:00") },
+      { id: 2, taskId: 2, startedAt: at(DAY, "09:00"), endedAt: sec("09:00", 10) },
+      { id: 3, taskId: 3, startedAt: at(DAY, "09:01"), endedAt: sec("09:01", 5) },
+    ],
+  } as unknown as Snapshot;
+  const result = tsEntries(DAY, data, at(DAY, "12:00"), []);
+  expect(result.entries.map((e) => [e.tsTaskId, e.hours])).toEqual([
+    ["1101", "1,00"],
+  ]);
+  expect(result.tooShort.map((e) => [e.tsTaskId, e.hours, e.ms])).toEqual([
+    ["1102", "0,00", 15_000],
+  ]);
+  expect(result.tooShort[0].tasks.map((x) => x.title)).toEqual([
+    "Krótkie A",
+    "Krótkie B",
+  ]);
+  expect(result.totalMs).toBe(3_600_000);
+  expect(result.totalHours).toBe("1,00");
+});
+
+test("tsEntries: totalHours to suma godzin wpisów po zaokrągleniu", () => {
+  // Trzy zadania TS po 20 min: per wpis 0,33 → razem 0,99 (a nie 1,00 z sumy ms),
+  // tak jak suma wpisów wysłanych do TS.
+  const data = snapshot(
+    [
+      t(1, "A", { tsTaskId: "1101" }),
+      t(2, "B", { tsTaskId: "1102" }),
+      t(3, "C", { tsTaskId: "1103" }),
+    ],
+    [s(1, 1, "08:00", "08:20"), s(2, 2, "08:20", "08:40"), s(3, 3, "09:00", "09:20")],
+  );
+  const result = tsEntries(DAY, data, at(DAY, "12:00"), []);
+  expect(result.entries.map((e) => e.hours)).toEqual(["0,33", "0,33", "0,33"]);
+  expect(result.totalHours).toBe("0,99");
+  expect(decimalHours(result.totalMs)).toBe("1,00");
+});
+
 test("tsCheckSaved: liczba wpisów i suma po zapisie", () => {
   const e = (hours: string) => ({ hours });
   expect(tsCheckSaved([e("1,50"), e("0,25")], [e("1.5"), e("0,25")])).toEqual({
@@ -488,4 +536,69 @@ test("przycisk „Wyślij do TS”: bez konta link do Ustawień, wyłączony prz
   await expect(send).toBeEnabled();
   await page.getByRole("button", { name: "Następny dzień" }).click();
   await expect(send).toBeDisabled();
+});
+
+test("wpis poniżej 0,01 h nie zastępuje wpisu TS, a znacznik bez lokalnej sumy nie zgłasza zmiany", async ({
+  page,
+}) => {
+  const data = tsSeed();
+  const template = data.tasks.find((x) => x.id === ids.analysis)!;
+  data.tasks.push({
+    ...structuredClone(template),
+    id: 900,
+    title: "Krótka poprawka",
+    details: {
+      ...structuredClone(template.details),
+      notes: {},
+      tsTaskId: "2202",
+      tsTaskName: "Administracja",
+    },
+  });
+  // 10 s pracy: po zaokrągleniu „0,00” h.
+  data.sessions.push({
+    id: 901,
+    taskId: 900,
+    startedAt: at(TODAY, "06:00"),
+    endedAt: at(TODAY, "06:00") + 10_000,
+  });
+  await openPreview(page, { data });
+  await setTs(page, connected());
+  await openReport(page);
+  const region = page.getByRole("region", { name: "Raport TS" });
+  await region.getByRole("button", { name: "Wyślij do TS" }).click();
+  const d = dialog(page);
+  await expect(rows(page)).toHaveCount(2);
+  await expect(d.getByRole("note", { name: "Ostrzeżenia wysyłki" })).toContainText(
+    "Zadanie TS „Administracja” ma mniej niż 0,01 h — ten wpis nie zostanie wysłany, a wpis w TS o tym zadaniu zostanie bez zmian.",
+  );
+  // Wpis TS „Administracja” nie jest oznaczony do zastąpienia.
+  await expect(
+    d.getByRole("region", { name: "Wpisy w TS" }).locator("li").nth(1),
+  ).not.toContainText("zastąpiony");
+  await d.getByRole("button", { name: "Zapisz w TS" }).click();
+  await expect(d.getByRole("status")).toHaveText(
+    "W TS zapisano 3 wpisy, razem 4,50 h.",
+  );
+  await expect(d.getByRole("alert")).toHaveCount(0);
+  expect((await tsState(page)).filled[TODAY]).toContainEqual({
+    id: "2202",
+    hours: "1.5",
+    overtime: "0",
+    description: "Administracja zespołu",
+  });
+  await d.getByRole("button", { name: "Zamknij" }).click();
+  await expect(region.locator(".ts-sent-marker")).toHaveText(
+    "Wysłano do TS 15.10 12:00 (4,50 h)",
+  );
+  // Inne urządzenie albo wyczyszczona pamięć: brak lokalnej sumy wysłanych
+  // wpisów raportu. Suma z TS (4,50 h, z wpisem spoza raportu) różni się od
+  // raportu (3,00 h), ale znacznik nie zgłasza zmiany raportu.
+  await page.evaluate(() =>
+    localStorage.removeItem("todo-track-ts-sent-report-v1"),
+  );
+  await page.reload();
+  await openReport(page);
+  await expect(region.locator(".ts-sent-marker")).toHaveText(
+    "Wysłano do TS 15.10 12:00 (4,50 h)",
+  );
 });

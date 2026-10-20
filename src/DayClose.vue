@@ -145,8 +145,8 @@ const report = computed(() =>
 );
 /** Wysyłka do TS (1.8): przycisk, znacznik wysyłki i podgląd. */
 const tsMap = useTsProjectMap();
-const tsReportHours = computed(() =>
-  decimal(tsEntries(props.day, props.data, props.now, tsMap.value).totalMs),
+const tsReportHours = computed(
+  () => tsEntries(props.day, props.data, props.now, tsMap.value).totalHours,
 );
 const {
   account: tsAccount,

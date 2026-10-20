@@ -7,10 +7,12 @@ import { useSettings } from "../target";
  * przełącznik „Wysyłaj raport TS”, połączone konto (`ts_settings`) i ostatnia
  * wysyłka dnia (`ts_sent`). Niczego nie wysyła.
  *
- * Znacznik porównuje bieżącą sumę wpisów raportu z sumą wysłaną. `ts_sent`
- * zapisuje sumę odczytaną z TS (przy „Zachowaj pozostałe wpisy TS” z wpisami
- * spoza raportu), więc suma samych wysłanych wpisów raportu jest dodatkowo
- * zapamiętana lokalnie (`sentReportKey`); bez niej porównanie idzie z `ts_sent`.
+ * Znacznik porównuje bieżącą sumę wpisów raportu (`tsEntries().totalHours`,
+ * suma godzin per wpis) z sumą wysłanych wpisów raportu zapamiętaną lokalnie
+ * (`sentReportKey`), liczoną tak samo. `ts_sent` zapisuje sumę odczytaną z TS
+ * (przy „Zachowaj pozostałe wpisy TS” z wpisami spoza raportu), więc nie
+ * nadaje się do porównania: bez lokalnego wpisu (inne urządzenie, wyczyszczona
+ * pamięć) znacznik pokazuje samą wysyłkę, bez uwagi o zmianie raportu.
  */
 export const sentReportKey = "todo-track-ts-sent-report-v1";
 
@@ -33,7 +35,7 @@ export function rememberSentReport(day: string, hours: string) {
       JSON.stringify(Object.fromEntries(days.map((d) => [d, all[d]]))),
     );
   } catch {
-    // Brak pamięci lokalnej: porównanie użyje sumy z `ts_sent`.
+    // Brak pamięci lokalnej: znacznik bez uwagi o zmianie raportu.
   }
 }
 
@@ -79,12 +81,11 @@ export function useTsSend(day: () => string, reportHours: () => string) {
       ? `Wysłano do TS ${clock(sent.value.sentAt)} (${sent.value.hours} h)`
       : "",
   );
-  /** Suma wpisów raportu różni się od wysłanej. */
-  const changed = computed(() => {
-    if (!sent.value) return false;
-    const base = sentReport.value || sent.value.hours;
-    return base !== reportHours();
-  });
+  /** Suma wpisów raportu różni się od wysłanej (znanej tylko lokalnie). */
+  const changed = computed(
+    () =>
+      !!sent.value && !!sentReport.value && sentReport.value !== reportHours(),
+  );
   /** Po zapisie w TS: znacznik i zapamiętana suma wysłanych wpisów. */
   async function markSent(sentDay: string, hours: string) {
     rememberSentReport(sentDay, hours);

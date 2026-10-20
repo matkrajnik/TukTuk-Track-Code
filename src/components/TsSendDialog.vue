@@ -106,7 +106,8 @@ const missing = computed(() =>
     ? []
     : plan.value.entries.filter((e) => !findTsTask(projects.value, e.tsTaskId)),
 );
-const totalHours = computed(() => decimalHours(plan.value.totalMs));
+/** Suma wysyłanych wpisów (per wpis) — ta sama podstawa co znacznik wysyłki. */
+const totalHours = computed(() => plan.value.totalHours);
 const filledCount = computed(() => {
   const text = tsPlural(filled.value.length, "wpis", "wpisy", "wpisów");
   // „jest już 1 wpis”, „są już 2 wpisy”, „jest już 5 wpisów”.
@@ -229,7 +230,12 @@ function showTask(id: number) {
         Brak czasu z przypisanym zadaniem TS — nie ma czego wysłać.
       </p>
       <div
-        v-if="plan.unmapped.length || plan.running || missing.length"
+        v-if="
+          plan.unmapped.length ||
+          plan.tooShort.length ||
+          plan.running ||
+          missing.length
+        "
         class="ts-send-warnings"
         role="note"
         aria-label="Ostrzeżenia wysyłki"
@@ -254,6 +260,10 @@ function showTask(id: number) {
             </li>
           </ul>
         </div>
+        <p v-for="e in plan.tooShort" :key="'short-' + e.tsTaskId">
+          Zadanie TS „{{ e.tsTaskName }}” ma mniej niż 0,01 h — ten wpis nie
+          zostanie wysłany, a wpis w TS o tym zadaniu zostanie bez zmian.
+        </p>
         <p v-if="plan.running">
           Trwający pomiar liczony do teraz (do chwili otwarcia podglądu).
         </p>

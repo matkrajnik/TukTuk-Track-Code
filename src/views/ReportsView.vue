@@ -12,7 +12,6 @@ import { dayBounds, dayKey, inDay, stamp } from "../time";
 import {
   byTotal,
   dayRows,
-  decimalHours,
   rowsTotal,
   tsText,
 } from "../report";
@@ -66,10 +65,8 @@ const reportLabel = computed(() =>
 );
 /** Wysyłka do TS (1.8): przycisk, znacznik wysyłki i podgląd. */
 const tsMap = useTsProjectMap();
-const tsReportHours = computed(() =>
-  decimalHours(
-    tsEntries(day.value, props.data, props.now, tsMap.value).totalMs,
-  ),
+const tsReportHours = computed(
+  () => tsEntries(day.value, props.data, props.now, tsMap.value).totalHours,
 );
 const {
   account: tsAccount,
