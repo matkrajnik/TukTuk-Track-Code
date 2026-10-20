@@ -674,6 +674,97 @@ mod tests {
         assert!(saved.redmine_new_statuses.is_empty());
     }
 
+    /// Ustawienia → Redmine (PLAN_1.9.md, R5): każde pole sekcji zapisuje się
+    /// osobno (pozostałe pola Redmine i Jiry bez zmian) i wraca po odczycie.
+    #[test]
+    fn redmine_section_fields_save_one_by_one_and_reload() {
+        let mut db = db();
+        let defaults = load(&db);
+        assert!(
+            defaults.redmine_write && defaults.redmine_ask_move && defaults.redmine_auto_import
+        );
+        assert_eq!(defaults.redmine_move_status, "In Progress");
+        assert_eq!(defaults.redmine_new_statuses, vec!["New", "Nowy"]);
+        assert_eq!(defaults.waiting_redmine_statuses, vec!["Feedback"]);
+        assert_eq!(defaults.redmine_branch_prefix, "feature/");
+        let cases: Vec<(Value, Box<dyn Fn(&AppSettings) -> bool>)> = vec![
+            (
+                json!({"redmineWrite": false}),
+                Box::new(|s| !s.redmine_write),
+            ),
+            (
+                json!({"redmineAskMove": false}),
+                Box::new(|s| !s.redmine_ask_move),
+            ),
+            (
+                json!({"redmineAutoImport": false}),
+                Box::new(|s| !s.redmine_auto_import),
+            ),
+            (
+                json!({"redmineMoveStatus": "W toku"}),
+                Box::new(|s| s.redmine_move_status == "W toku"),
+            ),
+            (
+                json!({"redmineNewStatuses": ["Nowy", "Otwarte"]}),
+                Box::new(|s| s.redmine_new_statuses == ["Nowy", "Otwarte"]),
+            ),
+            (
+                json!({"waitingRedmineStatuses": ["Feedback", "Oczekuje"]}),
+                Box::new(|s| s.waiting_redmine_statuses == ["Feedback", "Oczekuje"]),
+            ),
+            (
+                json!({"redmineBranchPrefix": "bugfix/"}),
+                Box::new(|s| s.redmine_branch_prefix == "bugfix/"),
+            ),
+        ];
+        let mut expected = defaults.clone();
+        for (patch, check) in &cases {
+            let saved = save(&mut db, patch).unwrap();
+            assert!(check(&saved), "{patch}");
+            let loaded = load(&db);
+            assert!(check(&loaded), "{patch}");
+            // Jedno pole naraz: reszta jak po poprzednich zapisach.
+            let key = patch.as_object().unwrap().keys().next().unwrap().clone();
+            expected = merged(&expected, &key, &loaded);
+            assert_eq!(loaded, expected, "{patch}");
+        }
+        // Granica 80 znaków statusu docelowego.
+        let status80 = "s".repeat(80);
+        assert_eq!(
+            save(&mut db, &json!({"redmineMoveStatus": status80}))
+                .unwrap()
+                .redmine_move_status,
+            status80
+        );
+        // Jira bez zmian po wszystkich zapisach.
+        let loaded = load(&db);
+        assert_eq!(loaded.jira_write, defaults.jira_write);
+        assert_eq!(loaded.jira_ask_move, defaults.jira_ask_move);
+        assert_eq!(loaded.jira_auto_import, defaults.jira_auto_import);
+        assert_eq!(loaded.jira_move_status, defaults.jira_move_status);
+        assert_eq!(loaded.waiting_jira_statuses, defaults.waiting_jira_statuses);
+        assert_eq!(loaded.jira_branch_prefix, defaults.jira_branch_prefix);
+    }
+    /// `expected` z jednym polem Redmine przepisanym z `loaded`.
+    fn merged(expected: &AppSettings, key: &str, loaded: &AppSettings) -> AppSettings {
+        let mut next = expected.clone();
+        match key {
+            "redmineWrite" => next.redmine_write = loaded.redmine_write,
+            "redmineAskMove" => next.redmine_ask_move = loaded.redmine_ask_move,
+            "redmineAutoImport" => next.redmine_auto_import = loaded.redmine_auto_import,
+            "redmineMoveStatus" => next.redmine_move_status = loaded.redmine_move_status.clone(),
+            "redmineNewStatuses" => next.redmine_new_statuses = loaded.redmine_new_statuses.clone(),
+            "waitingRedmineStatuses" => {
+                next.waiting_redmine_statuses = loaded.waiting_redmine_statuses.clone()
+            }
+            "redmineBranchPrefix" => {
+                next.redmine_branch_prefix = loaded.redmine_branch_prefix.clone()
+            }
+            other => panic!("nieznane pole {other}"),
+        }
+        next
+    }
+
     #[test]
     fn defaults_and_legacy_idle_value_are_read() {
         let db = db();

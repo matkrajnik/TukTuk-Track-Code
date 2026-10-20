@@ -349,6 +349,14 @@ export interface PreviewRedmineIssue {
 }
 interface PreviewRedmine {
   connected?: boolean;
+  /** Adres z „Połącz” (R5); brak = `previewRedmineSite`. */
+  site?: string;
+  /** „Akceptuj niezaufany certyfikat” zapamiętane w konfiguracji (R5). */
+  acceptInvalidCert?: boolean;
+  /** Serwer z certyfikatem spoza magazynu Windows (testy R5). */
+  certError?: boolean;
+  /** Błąd „Testuj połączenie” (testy R5). */
+  failTest?: string;
   issues?: PreviewRedmineIssue[];
   /** Wszystkie projekty (`redmine_projects`). */
   projects?: RedmineProject[];
@@ -1566,7 +1574,7 @@ export interface NavigateRequest {
    * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
    * `week-review` (Plan i historia → Tydzień → Przegląd), albo przy
    * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `timesheet`,
-   * `jira`, `notifications`, `focus`, `templates`, `windows`, `shortcuts`,
+   * `jira`, `redmine`, `notifications`, `focus`, `templates`, `windows`, `shortcuts`,
    * `startup`; nieznana sekcja otwiera ostatnią).
    */
   section?: string | null;
@@ -4171,15 +4179,115 @@ export async function redmineAccount(): Promise<RedmineAccount> {
   const connected = state.connected !== false;
   return {
     config: {
-      site: previewRedmineSite,
+      site: typeof state.site === "string" ? state.site : previewRedmineSite,
       login: connected ? previewRedmineMe.login : "",
       userId: connected ? previewRedmineMe.id : 0,
       displayName: connected ? previewRedmineMe.name : "",
-      acceptInvalidCert: false,
+      acceptInvalidCert: state.acceptInvalidCert === true,
       projects: previewRedmineTracked(state).map((p) => ({ ...p })),
     },
     connected,
   };
+}
+
+// --- Redmine: połączenie w Ustawieniach (PLAN_1.9.md, R5) ------------------
+
+/** `redmine::SITE_ERROR`. */
+export const redmineSiteError =
+  "Podaj adres Redmine, np. https://redmine.firma.pl albo https://firma.pl/redmine (bez parametrów).";
+/** `redmine::KEY_ERROR`. */
+export const redmineKeyError =
+  "Podaj klucz API Redmine (1–128 znaków, bez spacji).";
+/** `redmine::status_error` dla 401. */
+export const redmineKeyRejected =
+  "Redmine odrzucił klucz API. Sprawdź klucz w „Moje konto” w Redmine.";
+/** `redmine::CERT_ERROR`: certyfikat spoza magazynu Windows. */
+export const redmineCertError =
+  "Certyfikat serwera nie jest zaufany. Zainstaluj certyfikat firmowego urzędu w Windows albo włącz opcję w „Zaawansowane”.";
+/**
+ * Adres Redmine jak `redmine::normalize_site`: `http` albo `https`, host
+ * wymagany, prefiks ścieżki dozwolony (bez końcowego `/`), bez parametrów,
+ * fragmentu i danych logowania.
+ */
+export function redmineNormalizeSite(site: string): string {
+  const raw = site.trim();
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(redmineSiteError);
+  }
+  if (
+    !["http:", "https:"].includes(url.protocol) ||
+    !url.hostname ||
+    url.search ||
+    url.hash ||
+    raw.includes("?") ||
+    raw.includes("#") ||
+    url.username ||
+    url.password
+  )
+    throw new Error(redmineSiteError);
+  return url.href.replace(/\/+$/, "");
+}
+/** Klucz API jak `redmine::valid_api_key`: 1–128 znaków ASCII bez spacji. */
+export const redmineValidApiKey = (key: string) =>
+  key.length >= 1 && key.length <= 128 && /^[\x21-\x7e]+$/.test(key);
+/** Link „Gdzie znaleźć klucz API”: `<adres>/my/account` albo null. */
+export function redmineAccountUrl(site: string): string | null {
+  try {
+    return `${redmineNormalizeSite(site)}/my/account`;
+  } catch {
+    return null;
+  }
+}
+/**
+ * `redmine_connect`: adres i klucz sprawdzone przez `/users/current.json`,
+ * klucz w magazynie poświadczeń (nigdy nie wraca), reszta w konfiguracji.
+ * W podglądzie klucz „zly” daje 401, a `certError` błąd certyfikatu bez
+ * opcji „Akceptuj niezaufany certyfikat”. Zmiana adresu czyści śledzone
+ * projekty jak w Rust.
+ */
+export async function redmineConnect(
+  site: string,
+  apiKey: string,
+  acceptInvalidCert: boolean,
+): Promise<RedmineAccount> {
+  if (desktop)
+    return invoke("redmine_connect", { site, apiKey, acceptInvalidCert });
+  const normalized = redmineNormalizeSite(site);
+  const key = apiKey.trim();
+  if (!redmineValidApiKey(key)) throw new Error(redmineKeyError);
+  const state = previewRedmineState();
+  if (state.certError && !acceptInvalidCert) throw new Error(redmineCertError);
+  if (key === "zly") throw new Error(redmineKeyRejected);
+  const oldSite =
+    typeof state.site === "string" ? state.site : previewRedmineSite;
+  if (oldSite !== normalized) state.selectedProjects = [];
+  state.site = normalized;
+  state.acceptInvalidCert = acceptInvalidCert;
+  state.connected = true;
+  savePreviewRedmine(state);
+  redmineConnected.value = true;
+  return redmineAccount();
+}
+/** `redmine_test`: „Połączono jako Imię Nazwisko (login), Redmine odpowiada.” */
+export async function redmineTest(): Promise<string> {
+  if (desktop) return invoke("redmine_test");
+  const state = previewRedmineConnected();
+  if (state.certError && !state.acceptInvalidCert)
+    throw new Error(redmineCertError);
+  if (state.failTest) throw new Error(state.failTest);
+  return `Połączono jako ${previewRedmineMe.name} (${previewRedmineMe.login}), Redmine odpowiada.`;
+}
+/** `redmine_disconnect`: usuwa klucz; adres, projekty i powiązania zostają. */
+export async function redmineDisconnect(): Promise<RedmineAccount> {
+  if (desktop) return invoke("redmine_disconnect");
+  const state = previewRedmineState();
+  state.connected = false;
+  savePreviewRedmine(state);
+  redmineConnected.value = false;
+  return redmineAccount();
 }
 /**
  * `redmine_issues`: zgłoszenia projektu (z podprojektami, jak Redmine) albo —

@@ -12,6 +12,7 @@ const sections = [
   "Kalendarz",
   "Timesheet (TS)",
   "Jira",
+  "Redmine",
   "Powiadomienia",
   "Skupienie",
   "Szablony",

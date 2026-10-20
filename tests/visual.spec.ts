@@ -128,6 +128,27 @@ const views: {
     },
   },
   {
+    // R5: Ustawienia → Redmine z połączonym kontem symulowanego Redmine
+    // (adres przykładowy, jeden śledzony projekt, wartości domyślne statusów).
+    name: "ustawienia-redmine",
+    open: async (page) => {
+      await page.evaluate(() =>
+        localStorage.setItem("todo-track-settings-section", "redmine"),
+      );
+      await page.reload();
+      await nav(page, "Ustawienia");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("heading", { name: "Redmine", exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByText("Połączono jako Jan Kowalski (jkowalski)"),
+      ).toBeVisible();
+      await expect(page.locator(".redmine-tracked li")).toHaveCount(1);
+    },
+  },
+  {
     name: "ustawienia-timesheet",
     // Połączone konto symulowanego TS z jednym domyślnym zadaniem projektu.
     open: async (page) => {

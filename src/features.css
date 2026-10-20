@@ -2588,3 +2588,58 @@ html.widget-root body {
   font-weight: 500;
   margin: 0 0 6px;
 }
+/* Ustawienia → Redmine (PLAN_1.9.md, R5): połączenie, śledzone projekty, statusy. */
+.redmine-warning {
+  color: var(--warning);
+}
+.redmine-tracked {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-width: 640px;
+}
+.redmine-tracked li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-size: var(--fs-sm);
+}
+.redmine-tracked small {
+  color: var(--muted);
+}
+.redmine-tracked .text-link {
+  margin-left: auto;
+}
+.redmine-project-picker {
+  margin-top: 12px;
+}
+.redmine-project-picker > input {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.redmine-project-options {
+  grid-template-columns: 1fr;
+}
+.redmine-status-picker {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.redmine-status-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.redmine-status-chips {
+  margin: 0;
+}
+.redmine-status-chips small {
+  color: var(--muted);
+}

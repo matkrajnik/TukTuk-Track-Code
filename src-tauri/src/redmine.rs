@@ -2514,6 +2514,22 @@ mod tests {
             normalize_site("http://10.0.0.5:3000").unwrap(),
             "http://10.0.0.5:3000"
         );
+        // Ustawienia → Redmine (R5): adres z wielopoziomowym prefiksem ścieżki
+        // i portem, z końcowymi ukośnikami; link „Gdzie znaleźć klucz API”
+        // i zgłoszenia pod tym prefiksem.
+        let prefixed = normalize_site(" https://intranet.example.pl:8443/apps/redmine// ").unwrap();
+        assert_eq!(prefixed, "https://intranet.example.pl:8443/apps/redmine");
+        for link in ["/my/account", "/issues/1234"] {
+            let url = Url::parse(&format!("{prefixed}{link}")).unwrap();
+            assert!(allowed_link(&url, &prefixed), "{link}");
+            assert!(!allowed_link(
+                &Url::parse(&format!("https://intranet.example.pl:8443{link}")).unwrap(),
+                &prefixed
+            ));
+        }
+        assert!(account_link(
+            &Url::parse("https://intranet.example.pl:8443/apps/redmine/my/account").unwrap()
+        ));
         assert_eq!(
             normalize_site("HTTPS://Redmine.Example.PL/Redmine").unwrap(),
             "https://redmine.example.pl/Redmine"
