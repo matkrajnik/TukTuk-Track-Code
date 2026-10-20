@@ -4,7 +4,7 @@ Lokalna aplikacja desktopowa: lista zadań i prosty tracker czasu. Tauri 2 + Rus
 
 ## Funkcje
 
-### Nowości 1.8
+### Nowości 1.8.0
 
 - **Wysyłka Raportu TS do Ideo Timesheet**: przycisk „Wyślij do TS” w sekcji „Raport TS” Zamknięcia dnia (obok „Kopiuj raport TS”) i Raportu dnia (obok „Kopiuj raport”) otwiera podgląd dnia. Przycisk widać tylko przy połączonym koncie i włączonym „Wysyłaj raport TS”; bez konta jest link „Połącz konto TS w Ustawieniach”, a dzień z przyszłości blokuje wysyłkę.
 - **Skąd godziny i opisy**: wiersze powstają z pomiarów dnia jak w Raporcie TS (`dayRows` i `decimalHours` z `src/report.ts`, funkcja `tsEntries` w `src/timesheet.ts`): godziny dziesiętne z dwoma miejscami i przecinkiem, zaokrąglone per wiersz po scaleniu, bez zaokrąglania do 0,25 h; nadgodziny zawsze „0”, pole `status` zawsze „0”. Opis to notatka dnia zadania, a bez niej tytuł zadania; w podglądzie opis można poprawić przed wysyłką (notatka w Todo Track się nie zmienia). Wiersze z zerowym czasem są pomijane, a trwający pomiar liczy się do teraz (z ostrzeżeniem).
