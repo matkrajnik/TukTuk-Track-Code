@@ -1,9 +1,9 @@
-# TukTukTrack 2.0 (dawniej Todo Track) — poprawki, agenci AI i nowa nazwa
+# TukTuk Track 2.0 (dawniej Todo Track) — poprawki, agenci AI i nowa nazwa
 
-Stan wyjściowy: 1.9.0 (Redmine, `PLAN_1.9.md`), wydane 20 października 2026 (`a22ce02` na `master`). **Cały plan to jedno wydanie 2.0.0**, w którym aplikacja zmienia nazwę z Todo Track na **TukTukTrack** (decyzja użytkownika z 20 października 2026). Części:
+Stan wyjściowy: 1.9.0 (Redmine, `PLAN_1.9.md`), wydane 20 października 2026 (`a22ce02` na `master`). **Cały plan to jedno wydanie 2.0.0**, w którym aplikacja zmienia nazwę z Todo Track na **TukTuk Track** (decyzja użytkownika z 20 października 2026). Części:
 - **część B** (B1–B12): błędy, uwagi z użytkowania, wynik przeglądu kodu i ręczne spotkania;
 - **część A** (A0–A6): integracja z agentami AI — serwer MCP, czat, asystent przypisań (dawny `PLAN_AI.md`, commit `e778ff6`);
-- **część N** (N1): nowa nazwa TukTukTrack z pełną zmianą identyfikatora i migracją danych z instalacji Todo Track.
+- **część N** (N1): nowa nazwa TukTuk Track z pełną zmianą identyfikatora i migracją danych z instalacji Todo Track.
 
 Nazwy techniczne w częściach B i A (`todo-track-hook.exe`, `todo-track-mcp.exe`, `\\.\pipe\todo-track-*`, `TODO_TRACK_AI`, serwer MCP `todo-track`, katalog `%APPDATA%\pl.todotrack.desktop`) są robocze: zadania B i A używają obecnych nazw, a N1 na końcu zmienia wszystkie naraz. Dzięki temu teksty zadań zgadzają się z kodem, na którym pracują.
 
@@ -34,7 +34,7 @@ Realizacja: workflow `.claude/workflows/backlog.js` (zadanie po zadaniu: impleme
 | A4 | Asystent przypisań: nieprzypisane sesje agentów, zadanie TS dla zadania | M | A1, B8, B4 (podgląd „Wyślij do TS”) |
 | A5 | Zamknięcie dnia z asystentem: luki, czas nieprzypisany, opisy TS | L | A1, A4, B3 (luki) |
 | A6 | Rano i przegląd tygodnia: komentarz asystenta (opcjonalnie) | S | A1 |
-| N1 | Nowa nazwa TukTukTrack: interfejs, pliki, identyfikator, migracja danych, poświadczeń, rozszerzenia i instalacji | L | wszystkie zadania B i A (zmienia nazwy, które one tworzą) |
+| N1 | Nowa nazwa TukTuk Track: interfejs, pliki, identyfikator, migracja danych, poświadczeń, rozszerzenia i instalacji | L | wszystkie zadania B i A (zmienia nazwy, które one tworzą) |
 
 Rozmiary: S do pół dnia, M jeden do dwóch dni, L dwa do trzech dni z testami.
 
@@ -50,7 +50,7 @@ Jeden implementator naraz w jednym drzewie roboczym (zadania dotykają `store.ts
 6. **B8**, **B9** — hooki agentów i Orka.
 7. **A0**, **A1**, **A2** — filtr osobowy, silnik, serwer MCP.
 8. **A3**, **A4**, **A5**, **A6** — czat i funkcje asystenta.
-9. **N1** — nowa nazwa TukTukTrack i migracja z Todo Track (na końcu, jednym przejściem po całym kodzie).
+9. **N1** — nowa nazwa TukTuk Track i migracja z Todo Track (na końcu, jednym przejściem po całym kodzie).
 10. **R20** — przygotowanie wydania 2.0.0.
 
 Workflow zatrzymuje się na pierwszej blokadzie i podaje, jak wznowić.
@@ -350,23 +350,23 @@ Testy: Playwright z symulatorem.
 
 # Część N — nowa nazwa
 
-## N1 — TukTukTrack: nazwa, identyfikator i migracja z Todo Track
+## N1 — TukTuk Track: nazwa, identyfikator i migracja z Todo Track
 
-Decyzja użytkownika (20 października 2026): aplikacja od 2.0 nazywa się **TukTukTrack**, zmiana **pełna** — także identyfikator, katalog danych, poświadczenia i nazwy techniczne — z automatycznym przeniesieniem wszystkiego z instalacji Todo Track. Zadanie idzie na końcu, jednym przejściem po kodzie, który powstał w B i A. Logo i ikony bez zmian (osobna decyzja, poza planem).
+Decyzja użytkownika (20 października 2026): aplikacja od 2.0 nazywa się **TukTuk Track**, zmiana **pełna** — także identyfikator, katalog danych, poświadczenia i nazwy techniczne — z automatycznym przeniesieniem wszystkiego z instalacji Todo Track. Nazewnictwo jak dotąd: **nazwa aplikacji „TukTuk Track”** (dziś „Todo Track”), **nazwa kodowa `tuktuk-track`** (dziś `todo-track`: pakiety, binaria, potoki, serwer MCP, klucze `localStorage`), identyfikatory w zapisie odwróconej domeny bez myślnika: `pl.tuktuktrack.*` (dziś `pl.todotrack.*`). Zadanie idzie na końcu, jednym przejściem po kodzie, który powstał w B i A. Logo i ikony bez zmian (osobna decyzja, poza planem).
 
 Stan dziś: `productName` „Todo Track”, `identifier` `pl.todotrack.desktop` (katalog `%APPDATA%\pl.todotrack.desktop`, usługi poświadczeń `pl.todotrack.desktop.{jira,calendar,timesheet,redmine}` budowane z `app.config().identifier`), host rozszerzenia `pl.todotrack.bridge` (`native_msg::HOST_NAME`, manifest `pl.todotrack.bridge.json`, klucze `HKCU\Software\{Google\Chrome,Microsoft\Edge}\NativeMessagingHosts\…`), binaria `todo-track.exe` i `todo-track-bridge.exe` (po B8 i A2 także `todo-track-hook.exe`, `todo-track-mcp.exe`), potoki `\\.\pipe\todo-track-*`, wpis autostartu `Run\Todo Track`, instalator w `%LOCALAPPDATA%\Todo Track` z kluczem `Uninstall\Todo Track`, klucze `localStorage` `todo-track-*`, około 200 wystąpień „Todo Track” w interfejsie i dokumentacji.
 
-1. **Nazwa widoczna**: „TukTukTrack” w `productName`, tytułach okien, trayu, powiadomieniach, wszystkich tekstach interfejsu, instalatorze (`template.nsi`, `Polish.nsh`, grafiki z `make-artwork.ps1` wygenerowane na nowo), rozszerzeniu (`name`, `short_name`, teksty opcji), README, `RELEASE.md`, `browser-extension/README.md`, `notes.md` i `scripts/*.mjs` (nazwa pliku instalatora `TukTukTrack_<wersja>_x64-setup.exe`, sprawdzanie notatek w `ship.mjs`).
-2. **Nazwy techniczne**: pakiet i binaria `tuktuktrack`, `tuktuktrack-bridge`, `tuktuktrack-hook`, `tuktuktrack-mcp` (`Cargo.toml`, `package.json`, zasoby instalatora); potoki `\\.\pipe\tuktuktrack-*`; znacznik `TUKTUKTRACK_AI=1`; serwer MCP `tuktuktrack` (narzędzia `mcp__tuktuktrack__*`, `--allowedTools` czatu); klucze `localStorage` `tuktuktrack-*` (podgląd i preferencje okna). Repozytoria na GitHubie zostają bez zmian (decyzja użytkownika): kod w `matkrajnik/todo-track-private`, wydania w `matkrajnik/todo-track`; tak samo lokalny folder `to-do-track`, klucz podpisu `~/.tauri/todotrack.key` i adres `latest.json` — 1.9 musi znaleźć aktualizację 2.0 pod starym adresem.
+1. **Nazwa widoczna**: „TukTuk Track” w `productName`, tytułach okien, trayu, powiadomieniach, wszystkich tekstach interfejsu, instalatorze (`template.nsi`, `Polish.nsh`, grafiki z `make-artwork.ps1` wygenerowane na nowo), rozszerzeniu (`name`, `short_name`, teksty opcji), README, `RELEASE.md`, `browser-extension/README.md`, `notes.md` i `scripts/*.mjs` (nazwa pliku instalatora `TukTuk Track_<wersja>_x64-setup.exe`, sprawdzanie notatek w `ship.mjs`).
+2. **Nazwy techniczne**: pakiet i binaria `tuktuk-track`, `tuktuk-track-bridge`, `tuktuk-track-hook`, `tuktuk-track-mcp` (`Cargo.toml`, `package.json`, zasoby instalatora); potoki `\\.\pipe\tuktuk-track-*`; znacznik `TUKTUK_TRACK_AI=1`; serwer MCP `tuktuk-track` (narzędzia `mcp__tuktuk-track__*`, `--allowedTools` czatu); klucze `localStorage` `tuktuk-track-*` (podgląd i preferencje okna). Repozytoria na GitHubie zostają bez zmian (decyzja użytkownika): kod w `matkrajnik/todo-track-private`, wydania w `matkrajnik/todo-track`; tak samo lokalny folder `to-do-track`, klucz podpisu `~/.tauri/todotrack.key` i adres `latest.json` — 1.9 musi znaleźć aktualizację 2.0 pod starym adresem.
 3. **Identyfikator** `pl.tuktuktrack.desktop`, host rozszerzenia `pl.tuktuktrack.bridge` (manifest, rejestr, `background.js`); klucz `key` w `manifest.json` rozszerzenia bez zmian, więc ID rozszerzenia zostaje i lista dozwolonych źródeł hosta się zgadza.
 4. **Migracja przy pierwszym starcie 2.0** (nowy moduł `legacy.rs`, przed otwarciem bazy, idempotentna, z logiem):
-   - gdy `%APPDATA%\pl.tuktuktrack.desktop` nie ma bazy, a `%APPDATA%\pl.todotrack.desktop` ma: kopia całego katalogu (baza z plikami `-wal` / `-shm`, kopie zapasowe, stan okien); stary katalog zostaje jako zapas z plikiem `PRZENIESIONO-DO-TUKTUKTRACK.txt`; gdy oba katalogi mają bazę, nic nie jest nadpisywane i Ustawienia pokazują informację. Najlepszym wysiłkiem także `%LOCALAPPDATA%\pl.todotrack.desktop` (dane WebView2, w tym `localStorage`);
+   - gdy `%APPDATA%\pl.tuktuktrack.desktop` nie ma bazy, a `%APPDATA%\pl.todotrack.desktop` ma: kopia całego katalogu (baza z plikami `-wal` / `-shm`, kopie zapasowe, stan okien); stary katalog zostaje jako zapas z plikiem `PRZENIESIONO-DO-TUKTUK-TRACK.txt`; gdy oba katalogi mają bazę, nic nie jest nadpisywane i Ustawienia pokazują informację. Najlepszym wysiłkiem także `%LOCALAPPDATA%\pl.todotrack.desktop` (dane WebView2, w tym `localStorage`);
    - poświadczenia: dla `jira`, `calendar`, `timesheet`, `redmine` odczyt wpisu `pl.todotrack.desktop.<rodzaj>` z użytkownikiem z przeniesionej konfiguracji, zapis pod `pl.tuktuktrack.desktop.<rodzaj>`, odczyt kontrolny i dopiero wtedy usunięcie starego; błąd jednego nie blokuje pozostałych, a przy błędzie dany moduł pokazuje „Połącz ponownie”;
    - rozszerzenie: rejestracja nowego hosta i usunięcie starych kluczy `pl.todotrack.bridge` i manifestu;
-   - autostart: włączony wpis `Run\Todo Track` zamieniony na `Run\TukTukTrack` z tymi samymi argumentami (`--hidden`);
+   - autostart: włączony wpis `Run\Todo Track` zamieniony na `Run\TukTuk Track` z tymi samymi argumentami (`--hidden`);
    - hooki (B8) i MCP (A2): przy rejestracji usuwane są także wpisy wskazujące `todo-track-hook.exe` i serwer `todo-track`;
    - znacznik `legacy_migrated_at` w `settings`; dostęp do rejestru, poświadczeń i katalogów za warstwą testowalną (trait / parametry), żeby testy działały w katalogu tymczasowym.
-5. **Instalator i aktualizacja z 1.9**: instalator 2.0 wykrywa instalację Todo Track (`Uninstall\Todo Track`) i pyta „Zaktualizować Todo Track z wersji X do TukTukTrack 2.0.0? Zadania, historia, ustawienia i logowania zostaną przeniesione.”; zamyka działającą aplikację (jak `TodoTrackRequireClosed`), odinstalowuje ją po cichu starym deinstalatorem **bez usuwania danych** (sprawdzić, że ciche odinstalowanie nie kasuje `%APPDATA%`), usuwa stare skróty, instaluje do `%LOCALAPPDATA%\TukTukTrack` i uruchamia aplikację (migracja z pkt 4). Ścieżka przez updater 1.9 (`--prepare-update`, potem instalator w trybie `passive`) daje ten sam wynik.
+5. **Instalator i aktualizacja z 1.9**: instalator 2.0 wykrywa instalację Todo Track (`Uninstall\Todo Track`) i pyta „Zaktualizować Todo Track z wersji X do TukTuk Track 2.0.0? Zadania, historia, ustawienia i logowania zostaną przeniesione.”; zamyka działającą aplikację (jak `TodoTrackRequireClosed`), odinstalowuje ją po cichu starym deinstalatorem **bez usuwania danych** (sprawdzić, że ciche odinstalowanie nie kasuje `%APPDATA%`), usuwa stare skróty, instaluje do `%LOCALAPPDATA%\TukTuk Track` i uruchamia aplikację (migracja z pkt 4). Ścieżka przez updater 1.9 (`--prepare-update`, potem instalator w trybie `passive`) daje ten sam wynik.
 6. **Kontrola kompletności**: test (Rust albo skrypt w `npm run check`) szukający „Todo Track”, `todo-track`, `todotrack` w `src`, `src-tauri/src`, `src-tauri/installer`, `browser-extension`, `scripts` i `tauri.conf.json`; dozwolone tylko w `legacy.rs`, w obsłudze starej instalacji w `template.nsi`, w stałych repozytorium wydań i pliku klucza oraz w historii wersji w README.
 
 Testy: Rust dla migracji katalogu (brak starego, stary bez nowego, oba z bazą, ponowne uruchomienie), poświadczeń na zastępczym magazynie (sukces, brak wpisu, błąd zapisu, odczyt kontrolny), budowy kluczy rejestru hosta i autostartu, usuwania starych wpisów hooków i MCP, kontroli kompletności. Playwright: nazwa w tytule, nawigacji i Ustawieniach, nowe klucze `localStorage`; wszystkie dotychczasowe testy po mechanicznej zmianie nazw.
@@ -377,7 +377,7 @@ Zielone `npm run build`, `npm test` (Playwright), `cargo test --locked`, `cargo 
 
 ## Wydanie 2.0.0 (R20)
 
-Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przechodzą same, potem najważniejsze nowości), README: tytuł i opis TukTukTrack, sekcja „Nowości 2.0” (zmiana nazwy i migracja z Todo Track; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania; SearchSelect i czytelne przyciski; plan dnia rano; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez `/hooks`; worktree Orki; Asystent AI: subskrypcja zamiast klucza API, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z przykładem wpisu do CLAUDE.md, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, „Wersja w repozytorium”; `NEXT_SESSION.md` z pełną listą ręcznych sprawdzeń. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 2.0.0`.
+Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przechodzą same, potem najważniejsze nowości), README: tytuł i opis TukTuk Track, sekcja „Nowości 2.0” (zmiana nazwy i migracja z Todo Track; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania; SearchSelect i czytelne przyciski; plan dnia rano; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez `/hooks`; worktree Orki; Asystent AI: subskrypcja zamiast klucza API, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z przykładem wpisu do CLAUDE.md, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, „Wersja w repozytorium”; `NEXT_SESSION.md` z pełną listą ręcznych sprawdzeń. Wersję podbija, buduje i publikuje użytkownik: scalenie `backlog` do `master` i `npm run ship -- 2.0.0`.
 
 ## Do ręcznego sprawdzenia (po instalacji, przez użytkownika)
 
@@ -392,4 +392,4 @@ Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przech
 - A3: czas pierwszej odpowiedzi, zatrzymanie w trakcie, rozmowa z Codexem; czat nie pojawia się w kafelku „Agenci AI”.
 - A4: sesja w nowym folderze bez klucza w gałęzi daje trafny baner; „Przypisz folder” działa następnym razem bez modelu.
 - A5: analiza dnia z kilkoma lukami i pracą agentów; trafność propozycji opisów TS.
-- N1: aktualizacja z zainstalowanej 1.9.0 przez updater i przez ręczne uruchomienie instalatora 2.0: stara instalacja usunięta, `%APPDATA%\pl.todotrack.desktop` zostaje jako zapas, zadania, historia i ustawienia są w TukTukTrack; logowania Jira, TS, Redmine i Microsoft działają bez ponownego łączenia; rozszerzenie przeglądarki łączy się z nowym hostem (po przeładowaniu z folderu `browser-extension` nowej instalacji); autostart, skróty w menu Start i powiadomienia Windows z nową nazwą; świeża instalacja 2.0 bez Todo Track.
+- N1: aktualizacja z zainstalowanej 1.9.0 przez updater i przez ręczne uruchomienie instalatora 2.0: stara instalacja usunięta, `%APPDATA%\pl.todotrack.desktop` zostaje jako zapas, zadania, historia i ustawienia są w TukTuk Track; logowania Jira, TS, Redmine i Microsoft działają bez ponownego łączenia; rozszerzenie przeglądarki łączy się z nowym hostem (po przeładowaniu z folderu `browser-extension` nowej instalacji); autostart, skróty w menu Start i powiadomienia Windows z nową nazwą; świeża instalacja 2.0 bez Todo Track.
