@@ -210,6 +210,63 @@ export function seed(options: SeedOptions = {}) {
 }
 export type Seed = ReturnType<typeof seed>;
 
+export const TS_KEY = "todo-track-preview-ts-v1";
+
+/**
+ * Dane do wysyłki Raportu TS (PLAN_1.8.md, T5) na bazie `seed()` (domyślny
+ * `seed()` zostaje bez zmian, żeby nie ruszać innych testów i zrzutów):
+ * - „Analiza importu” (notatka dnia „Import CSV”, 08:30–10:30) i „Wdrożenie
+ *   etykiet” (10:30–11:00) mają jawne `tsTaskId` na to samo zadanie TS 1101
+ *   „Rozwój” — scalają się w jeden wpis 2,50 h;
+ * - „Spotkanie zespołu” (projekt „Zespół”, 08:00–08:30) nie ma jawnego wyboru,
+ *   zadanie TS bierze z mapowania projektu (`tsFixture().projectMap`);
+ * - „Code review” (projekt „Foundation”) nie ma niczego — ostrzeżenie; domyślnie
+ *   trwający pomiar od 11:00 (do „teraz” 12:00 to 1,00 h).
+ */
+export function tsSeed(options: SeedOptions = { active: { task: ids.review, from: "11:00" } }) {
+  const data = seed(options);
+  const task = (id: number) => data.tasks.find((x) => x.id === id)!;
+  Object.assign(task(ids.analysis).details, {
+    tsTaskId: "1101",
+    tsTaskName: "Rozwój",
+    notes: { ...task(ids.analysis).details.notes, [TODAY]: "Import CSV" },
+  });
+  Object.assign(task(ids.labels).details, {
+    tsTaskId: "1101",
+    tsTaskName: "Rozwój",
+  });
+  data.sessions.push({
+    id: 100,
+    taskId: ids.labels,
+    startedAt: at(TODAY, "10:30"),
+    endedAt: at(TODAY, "11:00"),
+  });
+  return data;
+}
+
+/** Wpis już zapisany w symulowanym TS na dzień `TODAY` (zadanie „Administracja”). */
+export const TS_EXISTING = {
+  id: "2202",
+  hours: "1,00",
+  overtime: "0",
+  description: "Rozliczenie delegacji",
+};
+
+/**
+ * Symulowany TS podglądu (`openPreview({ ts })`, klucz `TS_KEY`): przykładowe
+ * projekty „WMS” i „Wewnętrzne” z `store.ts`, domyślne zadanie TS projektu
+ * „Zespół” → „Spotkania” i jeden wpis już zapisany w TS na `TODAY`.
+ * `connected: false` — konto rozłączone (login zostaje, jak po „Rozłącz”).
+ */
+export function tsFixture(options: { connected?: boolean } = {}) {
+  return {
+    connected: options.connected ?? true,
+    login: "jan",
+    projectMap: [{ project: "Zespół", tsTaskId: "2201", tsTaskName: "Spotkania" }],
+    filled: { [TODAY]: [{ ...TS_EXISTING }] },
+  };
+}
+
 /**
  * Połączona Jira dla zastępczego IPC (`openDesktop({ jira })`): tablice
  * i zgłoszenia zgodne z zadaniami fixture. WMS-12 jest powiązane z „Analizą
@@ -364,6 +421,8 @@ export interface PreviewOptions extends SeedOptions {
   calendar?: unknown;
   /** Okresy pracy agentów w podglądzie, np. `agentSessions()`. */
   agentSessions?: unknown[];
+  /** Symulowany Ideo TS w podglądzie, np. `tsFixture()`. */
+  ts?: unknown;
 }
 
 /**
@@ -382,13 +441,14 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
         options.agents ? JSON.stringify(options.agents) : null,
         options.calendar ? JSON.stringify(options.calendar) : null,
         options.agentSessions ? JSON.stringify(options.agentSessions) : null,
+        options.ts ? JSON.stringify(options.ts) : null,
       ],
     ] as const,
   );

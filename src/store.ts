@@ -3254,7 +3254,8 @@ export async function tsConnect(
   password: string,
 ): Promise<TsSettings> {
   tsForgetTasks();
-  if (desktop) return invoke("ts_connect", { apiUrl, login, password });
+  if (desktop)
+    return notifyTsAfter(invoke("ts_connect", { apiUrl, login, password }));
   const name = login.trim();
   if (!name || [...name].length > 100 || tsControl.test(name))
     throw new Error("Podaj login TS (do 100 znaków).");
@@ -3272,15 +3273,17 @@ export async function tsConnect(
       (b) => b.toString(16).padStart(2, "0"),
     ).join("");
   savePreviewTs(state);
+  notifyTs();
   return previewTsSettings();
 }
 /** `ts_disconnect`: usuwa hasło, zostawia login i identyfikator urządzenia. */
 export async function tsDisconnect(): Promise<TsSettings> {
   tsForgetTasks();
-  if (desktop) return invoke("ts_disconnect");
+  if (desktop) return notifyTsAfter(invoke("ts_disconnect"));
   const state = previewTs();
   state.connected = false;
   savePreviewTs(state);
+  notifyTs();
   return previewTsSettings();
 }
 /** `ts_tasks`: projekty i zadania TS z formularza dnia. */
@@ -3306,7 +3309,8 @@ export async function tsSend(
   entries: TsEntry[],
   mode: TsMode,
 ): Promise<TsSendResult> {
-  if (desktop) return invoke("ts_send", { date, entries, mode });
+  if (desktop)
+    return notifyTsAfter(invoke("ts_send", { date, entries, mode }));
   if (previewJson(previewSettingsKey).tsSend === false)
     throw new Error(tsSendDisabled);
   tsCheckDate(date);
@@ -3326,7 +3330,37 @@ export async function tsSend(
   savePreviewTs(state);
   const result: TsSendResult = { filled: structuredClone(filled), sentAt };
   if (warning) result.warning = warning;
+  notifyTs();
   return result;
+}
+/**
+ * Zmiana konta, wysyłki albo domyślnych zadań TS: zdarzenie okna po każdej
+ * udanej komendzie zmieniającej stan, a w podglądzie także zdarzenie `storage`
+ * dla `previewTsKey` (inne okno albo test zmienia symulowany TS), jak przy Jirze.
+ */
+export const tsChangedEvent = "todo-track-ts-changed";
+function notifyTs() {
+  window.dispatchEvent(new Event(tsChangedEvent));
+}
+async function notifyTsAfter<T>(result: Promise<T>): Promise<T> {
+  const value = await result;
+  notifyTs();
+  return value;
+}
+/** Nasłuch zmian TS; zwraca funkcję odłączającą. */
+export function onTsChanged(handler: () => void): () => void {
+  const storage = (e: StorageEvent) => {
+    if (e.key !== previewTsKey) return;
+    // Lista zadań TS mogła się zmienić w symulowanym TS.
+    tsForgetTasks();
+    handler();
+  };
+  window.addEventListener(tsChangedEvent, handler);
+  if (!desktop) window.addEventListener("storage", storage);
+  return () => {
+    window.removeEventListener(tsChangedEvent, handler);
+    window.removeEventListener("storage", storage);
+  };
 }
 /** `ts_sent`: ostatnia wysyłka dnia albo null. */
 export async function tsSent(day: string): Promise<TsSent | null> {
@@ -3372,7 +3406,9 @@ export async function tsSetProjectMap(
   tsTaskName: string,
 ): Promise<TsProjectMapping[]> {
   if (desktop)
-    return invoke("ts_set_project_map", { project, tsTaskId, tsTaskName });
+    return notifyTsAfter(
+      invoke("ts_set_project_map", { project, tsTaskId, tsTaskName }),
+    );
   const name = project.trim();
   const id = tsTaskId.trim();
   const label = tsTaskName.trim();
@@ -3392,6 +3428,7 @@ export async function tsSetProjectMap(
   }
   state.projectMap = rest;
   savePreviewTs(state);
+  notifyTs();
   return tsSortMap(structuredClone(rest));
 }
 /**

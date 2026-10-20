@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RefreshCw } from "lucide-vue-next";
 import {
   detailsOf,
+  onTsChanged,
   saveDetails,
   tsSettings,
   tsTodayTasks,
@@ -62,7 +63,8 @@ async function load(refresh = false) {
       state.value = "offline";
       return;
     }
-    state.value = "loading";
+    // Odświeżenie po zmianie TS nie chowa listy na czas pobierania.
+    if (state.value !== "ready") state.value = "loading";
     projects.value = await tsTodayTasks(refresh);
     state.value = "ready";
   } catch (e) {
@@ -71,6 +73,8 @@ async function load(refresh = false) {
   }
 }
 onMounted(() => void load());
+// Połączenie lub rozłączenie konta w Ustawieniach, zmiana symulowanego TS.
+onBeforeUnmount(onTsChanged(() => void load()));
 
 async function run(action: () => Promise<void>) {
   if (busy.value) return;

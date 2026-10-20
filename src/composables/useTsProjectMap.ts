@@ -1,5 +1,6 @@
 import { readonly, ref } from "vue";
 import {
+  onTsChanged,
   tsProjectMap,
   tsSetProjectMap,
   type TsProjectMapping,
@@ -34,7 +35,15 @@ export async function setTsProjectMap(
   map.value = await tsSetProjectMap(project, tsTaskId, tsTaskName);
 }
 
+let listening = false;
+
 export function useTsProjectMap() {
+  // Jeden nasłuch na czas działania: mapowania zmienione w Ustawieniach,
+  // w innym oknie albo w symulowanym TS podglądu.
+  if (!listening) {
+    listening = true;
+    onTsChanged(() => void loadTsProjectMap(true));
+  }
   void loadTsProjectMap();
   return readonly(map);
 }

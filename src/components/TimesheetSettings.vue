@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
+  onTsChanged,
   read,
   tsConnect,
   tsDefaultApi,
@@ -192,8 +193,15 @@ onMounted(async () => {
     if (alive) error.value = message(e);
   }
 });
+// Zmiana konta w innym oknie (w podglądzie zdarzenie `storage` symulowanego TS).
+const stopTs = onTsChanged(() => {
+  void load()
+    .then(() => (alive ? loadTsList() : undefined))
+    .catch(() => {});
+});
 onUnmounted(() => {
   alive = false;
+  stopTs();
 });
 </script>
 
