@@ -36,6 +36,14 @@ pub struct Details {
     /// Przypięcie do widgetu („w toku”): chwila przypięcia (Unix ms, kolejność
     /// przycisków), 0 = nieprzypięte.
     pub pinned_at: i64,
+    /// Jawnie wybrane zadanie Ideo TS (T2, 1.8); puste = mapowanie projektu albo brak.
+    /// Backend tylko je przechowuje (rozstrzyga frontend), więc w starych zapisach
+    /// pól nie ma i nie są dopisywane, dopóki zadanie nie dostanie wyboru.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ts_task_id: String,
+    /// Nazwa zadania TS z chwili wyboru (do pokazania bez połączenia).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub ts_task_name: String,
 }
 
 /// Reguła cyklu w `task_details` (`repeatRule`). Rodzaj:
@@ -168,6 +176,15 @@ pub fn validate(details: &mut Details) -> Result<(), String> {
         normalize_rule(&details.repeat_rule).ok_or("Niepoprawna reguła cyklu.")?;
     if monthly(&details.repeat_rule.kind) {
         details.repeat_days.clear();
+    }
+    details.ts_task_id = details.ts_task_id.trim().into();
+    details.ts_task_name = details.ts_task_name.trim().into();
+    if details.ts_task_id.is_empty() {
+        details.ts_task_name.clear();
+    } else if !crate::timesheet::valid_task_id(&details.ts_task_id)
+        || !crate::timesheet::valid_task_name(&details.ts_task_name)
+    {
+        return Err("Niepoprawne zadanie TS.".into());
     }
     details.waiting_status = details.waiting_status.trim().into();
     details.waiting_dismissed = details.waiting_dismissed.trim().into();
@@ -633,6 +650,73 @@ mod tests {
             d.planned_start = bad.into();
             assert!(save(&mut db, 2, d.clone()).is_err(), "{bad}");
         }
+    }
+    #[test]
+    fn ts_task_fields_are_optional_and_round_trip() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("Old".into()), 0).unwrap();
+        db::change(&mut db, "add", None, Some("New".into()), 0).unwrap();
+        // Zapis sprzed 1.8: bez pól TS wczytuje się jak dotąd.
+        db.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(1,?1)",
+            [r#"{"priority":1,"project":"WMS","notes":{"2026-10-14":"x"},"pinnedAt":5}"#],
+        )
+        .unwrap();
+        let snap = db::snapshot(&db).unwrap();
+        let old = snap
+            .tasks
+            .iter()
+            .find(|t| t.id == 1)
+            .unwrap()
+            .details
+            .clone();
+        assert_eq!(
+            (old.ts_task_id.as_str(), old.ts_task_name.as_str()),
+            ("", "")
+        );
+        assert_eq!((old.priority, old.pinned_at), (1, 5));
+        // Zapis bez wyboru TS nie dopisuje pustych pól do JSON.
+        save(&mut db, 1, old.clone()).unwrap();
+        let json = |db: &Connection, id: i64| -> String {
+            db.query_row(
+                "SELECT json FROM task_details WHERE task_id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(!json(&db, 1).contains("tsTask"));
+        // Wybór zadania TS przechodzi w obie strony (przycięty).
+        let d = Details {
+            ts_task_id: " 1101 ".into(),
+            ts_task_name: "Rozwój".into(),
+            ..Details::default()
+        };
+        let snap = save(&mut db, 2, d.clone()).unwrap();
+        let new = &snap.tasks.iter().find(|t| t.id == 2).unwrap().details;
+        assert_eq!(
+            (new.ts_task_id.as_str(), new.ts_task_name.as_str()),
+            ("1101", "Rozwój")
+        );
+        assert!(json(&db, 2).contains(r#""tsTaskId":"1101""#));
+        // Puste id czyści też nazwę; zły identyfikator jest odrzucany.
+        let cleared = Details {
+            ts_task_id: " ".into(),
+            ts_task_name: "Rozwój".into(),
+            ..Details::default()
+        };
+        let snap = save(&mut db, 2, cleared).unwrap();
+        let new = &snap.tasks.iter().find(|t| t.id == 2).unwrap().details;
+        assert_eq!(
+            (new.ts_task_id.as_str(), new.ts_task_name.as_str()),
+            ("", "")
+        );
+        let bad = Details {
+            ts_task_id: "1".repeat(21),
+            ..Details::default()
+        };
+        assert!(save(&mut db, 2, bad).is_err());
     }
     #[test]
     fn reorder_sets_only_order_and_priority() {

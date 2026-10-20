@@ -2294,3 +2294,42 @@ html.widget-root body {
   height: 8px;
   accent-color: var(--accent);
 }
+/* „Zadanie TS” w rozwiniętym kafelku (1.8, T2). */
+.ts-task {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 12px;
+  font-size: var(--fs-sm);
+}
+.ts-task-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+.ts-task-select {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  color: var(--muted);
+}
+.ts-task-select select {
+  width: 100%;
+}
+.ts-task-stored {
+  margin: 0;
+  flex: 1;
+}
+.ts-task-label {
+  color: var(--muted);
+}
+.ts-task-warning {
+  color: var(--warning);
+}
+.ts-task-default {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}

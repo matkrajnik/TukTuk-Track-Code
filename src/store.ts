@@ -4,6 +4,7 @@ import { ref } from "vue";
 import { renderTitle, type Parsed } from "./quickadd";
 import { exportCsv, exportRows } from "./export";
 import { agentTotals, type AgentPeriod, type AgentTime } from "./agenttime";
+import { tsProjectKey } from "./timesheet";
 import {
   emptyRule,
   isRecurring,
@@ -68,6 +69,13 @@ export interface TaskDetails {
   jiraNoAsk?: boolean;
   /** Przypięcie do widgetu („w toku”): chwila przypięcia (ms), 0 = nieprzypięte. */
   pinnedAt?: number;
+  /**
+   * Jawnie wybrane zadanie Ideo TS (1.8); brak = domyślne zadanie projektu
+   * (`ts_project_map`) albo żadne. Rozstrzyga `resolveTsTask` w `timesheet.ts`.
+   */
+  tsTaskId?: string;
+  /** Nazwa zadania TS z chwili wyboru (do pokazania bez połączenia). */
+  tsTaskName?: string;
 }
 const validTime = (value: string) => /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 export const detailsOf = (task: Task): TaskDetails => ({
@@ -770,6 +778,17 @@ export async function saveDetails(
   const saved: TaskDetails = JSON.parse(JSON.stringify(details));
   saved.project = details.project.trim();
   saved.waiting = details.waiting.trim();
+  // Zadanie TS jak planner::validate: puste id czyści nazwę, puste pola znikają.
+  const tsId = (details.tsTaskId ?? "").trim();
+  const tsName = (details.tsTaskName ?? "").trim();
+  delete saved.tsTaskId;
+  delete saved.tsTaskName;
+  if (tsId) {
+    if (!tsValidTaskId(tsId) || !tsValidTaskName(tsName))
+      throw new Error("Niepoprawne zadanie TS.");
+    saved.tsTaskId = tsId;
+    if (tsName) saved.tsTaskName = tsName;
+  }
   // Jak planner::validate: reguła cyklu i dane blokady.
   const rule = normalizeRule(saved.repeatRule);
   if (!rule) throw new Error("Niepoprawna reguła cyklu.");
@@ -1321,7 +1340,8 @@ export interface NavigateRequest {
    * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo
    * `week-review` (Plan i historia → Tydzień → Przegląd), albo przy
    * `view: "settings"` sekcja Ustawień (`work`, `calendar`, `jira`,
-   * `notifications`, `focus`, `templates`, `windows`, `shortcuts`, `startup`).
+   * `notifications`, `focus`, `templates`, `windows`, `shortcuts`, `startup`;
+   * `timesheet` od T4 — do tego czasu nieznana sekcja otwiera ostatnią).
    */
   section?: string | null;
   /** Plan i historia → Zamknięcie dnia. */
@@ -3074,6 +3094,8 @@ interface PreviewTs {
   tasks?: TsProject[];
   filled?: Record<string, TsFilled[]>;
   sent?: Record<string, { sentAt: number; hours: string }>;
+  /** Domyślne zadania TS projektów (`ts_project_map`). */
+  projectMap?: TsProjectMapping[];
 }
 export const previewTsTasks: readonly TsProject[] = Object.freeze([
   {
@@ -3231,6 +3253,7 @@ export async function tsConnect(
   login: string,
   password: string,
 ): Promise<TsSettings> {
+  tsForgetTasks();
   if (desktop) return invoke("ts_connect", { apiUrl, login, password });
   const name = login.trim();
   if (!name || [...name].length > 100 || tsControl.test(name))
@@ -3253,6 +3276,7 @@ export async function tsConnect(
 }
 /** `ts_disconnect`: usuwa hasło, zostawia login i identyfikator urządzenia. */
 export async function tsDisconnect(): Promise<TsSettings> {
+  tsForgetTasks();
   if (desktop) return invoke("ts_disconnect");
   const state = previewTs();
   state.connected = false;
@@ -3310,4 +3334,88 @@ export async function tsSent(day: string): Promise<TsSent | null> {
   tsCheckDate(day);
   const sent = previewTs().sent?.[day];
   return sent ? { day, ...sent } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Zadania TS dla zadań Todo Track (PLAN_1.8.md, T2).
+
+/** Domyślne zadanie TS projektu Todo Track (`timesheet::ProjectMap`). */
+export interface TsProjectMapping {
+  project: string;
+  tsTaskId: string;
+  tsTaskName: string;
+}
+/** Identyfikator zadania TS jak `timesheet::valid_task_id`. */
+export const tsValidTaskId = (id: string) =>
+  !!id && [...id].length <= 20 && !tsControl.test(id);
+/** Nazwa zadania TS jak `timesheet::valid_task_name`. */
+export const tsValidTaskName = (name: string) =>
+  [...name].length <= 300 && !tsControl.test(name);
+const tsSortMap = (list: TsProjectMapping[]) =>
+  [...list].sort((a, b) => {
+    const x = tsProjectKey(a.project);
+    const y = tsProjectKey(b.project);
+    return x < y ? -1 : x > y ? 1 : 0;
+  });
+/** `ts_project_map`: domyślne zadania TS projektów. */
+export async function tsProjectMap(): Promise<TsProjectMapping[]> {
+  if (desktop) return invoke("ts_project_map");
+  return tsSortMap(structuredClone(previewTs().projectMap ?? []));
+}
+/**
+ * `ts_set_project_map`: domyślne zadanie TS projektu (puste `tsTaskId` usuwa
+ * mapowanie); zwraca całą listę.
+ */
+export async function tsSetProjectMap(
+  project: string,
+  tsTaskId: string,
+  tsTaskName: string,
+): Promise<TsProjectMapping[]> {
+  if (desktop)
+    return invoke("ts_set_project_map", { project, tsTaskId, tsTaskName });
+  const name = project.trim();
+  const id = tsTaskId.trim();
+  const label = tsTaskName.trim();
+  if (!name || [...name].length > 80 || tsControl.test(name))
+    throw new Error("Niepoprawna nazwa projektu.");
+  const state = previewTs();
+  const key = tsProjectKey(name);
+  const rest = (state.projectMap ?? []).filter(
+    (m) => tsProjectKey(m.project) !== key,
+  );
+  if (id) {
+    if (!tsValidTaskId(id))
+      throw new Error("Niepoprawny identyfikator zadania TS.");
+    if (!tsValidTaskName(label))
+      throw new Error("Niepoprawna nazwa zadania TS.");
+    rest.push({ project: name, tsTaskId: id, tsTaskName: label });
+  }
+  state.projectMap = rest;
+  savePreviewTs(state);
+  return tsSortMap(structuredClone(rest));
+}
+/**
+ * Lista zadań TS do wyboru w edycji zadania: `ts_tasks(dzisiaj)` pobrane raz na
+ * czas działania aplikacji (pamięć podręczna w pamięci); `refresh` pobiera
+ * ponownie. Nieudane pobranie nie zostaje w pamięci.
+ */
+let tsTaskCache: { day: string; list: Promise<TsProject[]> } | null = null;
+export function tsTodayTasks(refresh = false): Promise<TsProject[]> {
+  const day = localDay(Date.now());
+  if (refresh || !tsTaskCache || tsTaskCache.day !== day) {
+    const entry: { day: string; list: Promise<TsProject[]> } = {
+      day,
+      list: Promise.resolve([]),
+    };
+    entry.list = tsTasks(day).catch((e) => {
+      if (tsTaskCache === entry) tsTaskCache = null;
+      throw e;
+    });
+    tsTaskCache = entry;
+  }
+  return tsTaskCache.list;
+}
+/** Czyści pamięć podręczną listy zadań TS (połączenie, rozłączenie). */
+export function tsForgetTasks() {
+  tsTaskCache = null;
 }

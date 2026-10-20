@@ -812,6 +812,71 @@ pub fn load_sent(db: &Connection, day: &str) -> rusqlite::Result<Option<Sent>> {
 }
 
 // ---------------------------------------------------------------------------
+// ts_project_map (T2): domyślne zadanie TS dla projektu Todo Track
+
+/// Domyślne zadanie TS projektu. Nazwa projektu porównywana bez wielkości liter
+/// (`COLLATE NOCASE`, jak w SQLite: tylko litery ASCII).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectMap {
+    pub project: String,
+    pub ts_task_id: String,
+    pub ts_task_name: String,
+}
+/// Identyfikator zadania TS jak w `validate_entries`.
+pub fn valid_task_id(id: &str) -> bool {
+    !id.is_empty() && id.chars().count() <= 20 && !id.chars().any(char::is_control)
+}
+/// Nazwa zadania TS zapamiętywana do pokazania bez połączenia.
+pub fn valid_task_name(name: &str) -> bool {
+    name.chars().count() <= 300 && !name.chars().any(char::is_control)
+}
+pub fn load_project_map(db: &Connection) -> rusqlite::Result<Vec<ProjectMap>> {
+    db.prepare(
+        "SELECT project,ts_task_id,ts_task_name FROM ts_project_map ORDER BY project COLLATE NOCASE",
+    )?
+    .query_map([], |r| {
+        Ok(ProjectMap {
+            project: r.get(0)?,
+            ts_task_id: r.get(1)?,
+            ts_task_name: r.get(2)?,
+        })
+    })?
+    .collect()
+}
+/// Ustawia domyślne zadanie TS projektu; puste `ts_task_id` usuwa mapowanie.
+pub fn set_project_map(
+    db: &Connection,
+    project: &str,
+    ts_task_id: &str,
+    ts_task_name: &str,
+) -> Result<Vec<ProjectMap>, String> {
+    let project = project.trim();
+    let id = ts_task_id.trim();
+    let name = ts_task_name.trim();
+    if project.is_empty() || project.chars().count() > 80 || project.chars().any(char::is_control) {
+        return Err("Niepoprawna nazwa projektu.".into());
+    }
+    if id.is_empty() {
+        db.execute("DELETE FROM ts_project_map WHERE project=?1", [project])
+            .map_err(|e| e.to_string())?;
+    } else {
+        if !valid_task_id(id) {
+            return Err("Niepoprawny identyfikator zadania TS.".into());
+        }
+        if !valid_task_name(name) {
+            return Err("Niepoprawna nazwa zadania TS.".into());
+        }
+        db.execute(
+            "INSERT INTO ts_project_map(project,ts_task_id,ts_task_name) VALUES(?1,?2,?3) ON CONFLICT(project) DO UPDATE SET project=excluded.project, ts_task_id=excluded.ts_task_id, ts_task_name=excluded.ts_task_name",
+            params![project, id, name],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    load_project_map(db).map_err(|e| e.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Komendy
 
 fn settings_of(app: &tauri::AppHandle, config: Config) -> Result<Settings, String> {
@@ -975,6 +1040,25 @@ pub fn ts_sent(app: tauri::AppHandle, day: String) -> Result<Option<Sent>, Strin
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
     load_sent(&db, &day).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn ts_project_map(app: tauri::AppHandle) -> Result<Vec<ProjectMap>, String> {
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    load_project_map(&db).map_err(|e| e.to_string())
+}
+/// Domyślne zadanie TS projektu (puste `ts_task_id` usuwa); zwraca całą listę.
+#[tauri::command]
+pub fn ts_set_project_map(
+    app: tauri::AppHandle,
+    project: String,
+    ts_task_id: String,
+    ts_task_name: String,
+) -> Result<Vec<ProjectMap>, String> {
+    let state = app.state::<Database>();
+    let db = state.0.lock().map_err(|e| e.to_string())?;
+    set_project_map(&db, &project, &ts_task_id, &ts_task_name)
 }
 
 #[cfg(test)]
@@ -1302,6 +1386,44 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn project_map_insert_replace_delete_nocase() {
+        let db = Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        assert!(load_project_map(&db).unwrap().is_empty());
+        let list = set_project_map(&db, " WMS ", " 1101 ", "Rozwój").unwrap();
+        assert_eq!(
+            list,
+            vec![ProjectMap {
+                project: "WMS".into(),
+                ts_task_id: "1101".into(),
+                ts_task_name: "Rozwój".into()
+            }]
+        );
+        set_project_map(&db, "Zespół", "2201", "Spotkania").unwrap();
+        // Nadpisanie tego samego projektu w innej wielkości liter (NOCASE).
+        let list = set_project_map(&db, "wms", "1103", "Code review").unwrap();
+        assert_eq!(list.len(), 2);
+        let wms = list.iter().find(|m| m.ts_task_id == "1103").unwrap();
+        assert_eq!(
+            (wms.project.as_str(), wms.ts_task_name.as_str()),
+            ("wms", "Code review")
+        );
+        assert!(!list.iter().any(|m| m.ts_task_id == "1101"));
+        // Usunięcie pustym id, też bez względu na wielkość liter.
+        let list = set_project_map(&db, "WMS", "  ", "").unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].project, "Zespół");
+        // Usunięcie nieistniejącego mapowania niczego nie psuje.
+        assert_eq!(set_project_map(&db, "Inny", "", "").unwrap().len(), 1);
+        // Walidacja: projekt, identyfikator i nazwa.
+        assert!(set_project_map(&db, "  ", "1", "x").is_err());
+        assert!(set_project_map(&db, &"p".repeat(81), "1", "x").is_err());
+        assert!(set_project_map(&db, "WMS", &"1".repeat(21), "x").is_err());
+        assert!(set_project_map(&db, "WMS", "1", "a\nb").is_err());
+        assert_eq!(load_project_map(&db).unwrap().len(), 1);
     }
 
     #[test]

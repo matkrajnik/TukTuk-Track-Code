@@ -109,6 +109,21 @@ watch(
     draft.value.waitingRemindDay = d.waitingRemindDay;
   },
 );
+// Zadanie TS zmienia się w polu „Zadanie TS” kafelka; zapis starszego szkicu
+// nie może cofnąć wyboru.
+watch(
+  () => [props.task.details?.tsTaskId, props.task.details?.tsTaskName],
+  () => {
+    const d = props.task.details;
+    if (d?.tsTaskId) {
+      draft.value.tsTaskId = d.tsTaskId;
+      draft.value.tsTaskName = d.tsTaskName ?? "";
+    } else {
+      delete draft.value.tsTaskId;
+      delete draft.value.tsTaskName;
+    }
+  },
+);
 watch(
   () => props.task.details,
   () => {

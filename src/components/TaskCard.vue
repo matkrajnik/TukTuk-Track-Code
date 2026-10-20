@@ -43,6 +43,9 @@ import { openSettings } from "../navigation";
 import { estimateMs, overEstimate, percent, type CorrectionOf } from "../estimates";
 import { useSettings } from "../target";
 import { waitingAge, waitingProposal } from "../recurrence";
+import TsTaskField from "./TsTaskField.vue";
+import { resolveTsTask } from "../timesheet";
+import { useTsProjectMap } from "../composables/useTsProjectMap";
 
 const props = defineProps<{
   task: Task;
@@ -86,6 +89,9 @@ const plannedLabel = computed(() => {
     d.plannedDay === props.todayKey ? "Dziś" : dayText(d.plannedDay);
   return d.plannedStart ? `${day} ${d.plannedStart}` : day;
 });
+/** Zadanie TS (jawne albo z domyślnego mapowania projektu) do chipa „TS: …”. */
+const tsMap = useTsProjectMap();
+const tsTask = computed(() => resolveTsTask(props.task, tsMap.value));
 /** „Zapisz jako szablon”: nazwa wpisywana w kafelku, reszta z zadania. */
 const templateName = ref<string | null>(null);
 const templateSaved = ref("");
@@ -229,6 +235,7 @@ async function openJira(url: string) {
             v-if="
               task.jiraKey ||
               task.details?.project ||
+              tsTask ||
               plannedLabel ||
               (!task.done && (task.details?.waiting || running))
             "
@@ -238,6 +245,19 @@ async function openJira(url: string) {
             <span v-if="task.details?.project" class="task-chip">{{
               task.details.project
             }}</span>
+            <span
+              v-if="tsTask"
+              class="task-chip task-ts"
+              :title="
+                tsTask.source === 'project'
+                  ? 'Zadanie TS z domyślnego mapowania projektu'
+                  : 'Zadanie TS wybrane dla tego zadania'
+              "
+              >TS: {{ tsTask.name
+              }}<template v-if="tsTask.source === 'project'">
+                (z projektu)</template
+              ></span
+            >
             <span
               v-if="plannedLabel"
               class="task-chip task-planned"
@@ -551,6 +571,11 @@ async function openJira(url: string) {
         Zatrzymaj bieżący pomiar, aby edytować jego godziny.
       </p>
       <AgentTaskTime :task="task" :sessions="sessions" :own="taskTime" />
+      <TsTaskField
+        :task="task"
+        @updated="emit('updated', $event)"
+        @error="emit('error', $event)"
+      />
       <TaskPlanning
         :task="task"
         :projects="projects"

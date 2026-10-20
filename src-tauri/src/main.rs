@@ -533,7 +533,9 @@ fn main() {
             timesheet::ts_tasks,
             timesheet::ts_filled,
             timesheet::ts_send,
-            timesheet::ts_sent
+            timesheet::ts_sent,
+            timesheet::ts_project_map,
+            timesheet::ts_set_project_map
         ])
         .run(tauri::generate_context!())
         .expect("Nie udało się uruchomić Todo Track");
