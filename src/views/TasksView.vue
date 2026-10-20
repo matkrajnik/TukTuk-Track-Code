@@ -17,6 +17,7 @@ import {
   redmineConnected,
   refreshJiraConnected,
   refreshRedmineConnected,
+  onRedmineChanged,
   templates,
   setPriority,
   type NavigateRequest,
@@ -275,6 +276,9 @@ async function focusRun(action: "start" | "stop") {
 const templateNames = computed(() => templates.value.map((t) => t.name));
 let stopTemplates: (() => void) | undefined;
 let mounted = true;
+// Połączenie albo rozłączenie Redmine (Ustawienia, inne okno): `#1234` w
+// szybkim dodawaniu zmienia znaczenie od razu.
+const stopRedmine = onRedmineChanged(() => void refreshRedmineConnected());
 onMounted(async () => {
   void refreshJiraConnected();
   void refreshRedmineConnected();
@@ -291,6 +295,7 @@ onMounted(async () => {
 onUnmounted(() => {
   mounted = false;
   stopTemplates?.();
+  stopRedmine();
 });
 /** Poprawka szacunków (podpowiedzi „zwykle ~…”); przeliczana co minutę. */
 const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);

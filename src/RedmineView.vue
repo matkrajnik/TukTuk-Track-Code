@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-vue-next";
 import {
   desktop,
   read,
   redmineAccount,
   redmineConnected,
+  onRedmineChanged,
   redmineGroups,
   redmineIssues,
   redmineIssueTransition,
@@ -345,14 +346,46 @@ function openSettings() {
   openView({ view: "settings", section: "redmine" });
 }
 
-onMounted(() =>
+/** Konto i lista od nowa (wejście do widoku, zmiana konta albo projektów). */
+const load = () =>
   run(async () => {
     account.value = await redmineAccount();
     // Szybkie dodawanie rozpoznaje `#1234` tylko przy połączonym Redmine.
     redmineConnected.value = account.value.connected;
     if (account.value.connected) await fetchIssues();
-  }),
-);
+    else {
+      issues.value = [];
+      groups.value = [];
+      outside.value = [];
+    }
+  });
+/**
+ * Połączenie, rozłączenie albo nowe śledzone projekty (Ustawienia, inne okno,
+ * w podglądzie także zmiana symulowanego Redmine): widok wczytuje się od
+ * nowa; gdy właśnie trwa inna operacja, zaraz po niej.
+ */
+let pending = false;
+function changed() {
+  if (!alive) return;
+  if (busy.value) pending = true;
+  else {
+    pending = false;
+    void load();
+  }
+}
+let alive = true;
+let stopChanges: (() => void) | undefined;
+watch(busy, (now) => {
+  if (!now && pending) changed();
+});
+onMounted(() => {
+  stopChanges = onRedmineChanged(changed);
+  void load();
+});
+onUnmounted(() => {
+  alive = false;
+  stopChanges?.();
+});
 </script>
 <template>
   <section class="jira-view redmine-view">

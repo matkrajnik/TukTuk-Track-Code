@@ -1,6 +1,12 @@
 import type { Page } from "@playwright/test";
 import { defaultSettings } from "../../src/settings";
-import { JIRA_SITE, NOW, REDMINE_SITE, seed } from "./seed";
+import {
+  JIRA_SITE,
+  NOW,
+  REDMINE_SITE,
+  seed,
+  type RedmineFixture,
+} from "./seed";
 
 /**
  * Zastępcze IPC Tauri dla testów funkcji, które w trybie podglądu są wyłączone
@@ -12,6 +18,10 @@ import { JIRA_SITE, NOW, REDMINE_SITE, seed } from "./seed";
  * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`),
  * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
  * - `redmine::sync_assigned` tak samo, osobno od Jiry (`redmineCheck`, R3),
+ * - odczyty Redmine i `redmine::start_issue` na danych `redmineFixture()`
+ *   (`redmine_settings`, `redmine_issues` z `group_by_status`,
+ *   `redmine_projects`, `redmine_statuses`, `redmine_start`, szybkie
+ *   dodawanie `#1234`, R6),
  * - `planner::set_waiting` (`set_waiting`: blokada „Czekam na” z kafelka),
  * - `suggest::refresh` jako gotowa lista propozycji (`suggest`: zdarzenie
  *   `agent-suggestions`), `agent_switch` i `agent_dismiss`.
@@ -54,6 +64,11 @@ export interface TauriOptions {
    * (sprawdzenie kończy się błędem sieci) albo brak aktualizacji (domyślnie).
    */
   update?: { version: string; notes?: string; date?: string } | "offline" | null;
+  /**
+   * Połączony Redmine (`redmineFixture()`): konto, statusy, projekty i
+   * zgłoszenia dla komend `redmine_*`. Domyślnie Redmine nie jest połączony.
+   */
+  redmine?: RedmineFixture;
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -69,6 +84,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     site: JIRA_SITE,
     redmineSite: REDMINE_SITE,
     update: options.update ?? null,
+    redmine: options.redmine ?? null,
   });
   await page.goto("/");
 }
@@ -102,6 +118,7 @@ function install(init: {
   site: string;
   redmineSite: string;
   update: { version: string; notes?: string; date?: string } | "offline" | null;
+  redmine: RedmineFixture | null;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -376,6 +393,111 @@ function install(init: {
     return imported;
   }
 
+  // Odczyty Redmine na danych redmineFixture() (R6): redmine::parse_issue,
+  // tracked_project_ids (projekt z podprojektami) i group_by_status (kolejność
+  // statusów z /issue_statuses.json; w grupie pasmo priorytetu, potem termin).
+  const rm = init.redmine;
+  const rmIssue = (i: any) => {
+    const status = rm?.statuses.find((s: any) => s.name === i.status);
+    return {
+      id: i.id,
+      subject: i.subject,
+      projectId: i.projectId,
+      project: rm?.projects.find((p: any) => p.id === i.projectId)?.name ?? "",
+      tracker: i.tracker,
+      status: i.status,
+      statusId: status?.id ?? 0,
+      closed: status?.isClosed ?? false,
+      priority: i.priority,
+      assignedToId: i.assignedToId,
+      assignedTo: i.assignedTo,
+      version: i.version,
+      category: i.category,
+      dueDate: i.dueDate,
+      updatedOn: "",
+      url: `${init.redmineSite}/issues/${i.id}`,
+    };
+  };
+  const rmWithChildren = (ids: number[]) => {
+    const out = [...ids];
+    for (let before = -1; before !== out.length; ) {
+      before = out.length;
+      for (const p of rm?.projects ?? [])
+        if (
+          !out.includes(p.id) &&
+          p.parentId !== null &&
+          out.includes(p.parentId)
+        )
+          out.push(p.id);
+    }
+    return out;
+  };
+  function rmGroups(issues: any[]) {
+    return (rm?.statuses ?? [])
+      .map((s: any) => ({
+        status: s.name,
+        closed: s.isClosed,
+        ids: issues
+          .map((i, index) => ({ i, index }))
+          .filter(({ i }) => i.statusId === s.id)
+          .sort(
+            (a, b) =>
+              (band(b.i.priority) ?? 0) - (band(a.i.priority) ?? 0) ||
+              Number(!a.i.dueDate) - Number(!b.i.dueDate) ||
+              a.i.dueDate.localeCompare(b.i.dueDate) ||
+              a.index - b.index,
+          )
+          .map(({ i }) => i.id),
+      }))
+      .filter((g: any) => g.ids.length);
+  }
+  // redmine::start_issue: zadanie zgłoszenia (nowe albo z kosza) i jeden pomiar.
+  function redmineStart(id: number) {
+    const source = rm?.issues.find((i: any) => i.id === id);
+    if (!source) throw "Odśwież listę zgłoszeń przed rozpoczęciem.";
+    const issue = rmIssue(source);
+    const now = Date.now();
+    let task = snapshot.tasks.find((t: any) => t.redmineId === id);
+    const trashed = snapshot.trash.find((t: any) => t.redmineId === id);
+    if (!task && trashed) {
+      snapshot.trash = snapshot.trash.filter((t: any) => t !== trashed);
+      snapshot.tasks.unshift(trashed);
+      task = trashed;
+    }
+    if (!task) {
+      task = {
+        id: nextTaskId(),
+        title: [...issue.subject].slice(0, 240).join(""),
+        done: false,
+        createdAt: now,
+        redmineId: id,
+        redmineUrl: issue.url,
+        redmineStatus: issue.status,
+        redmineTracker: issue.tracker,
+        redmineDue: issue.dueDate,
+      };
+      snapshot.tasks.unshift(task);
+    }
+    task.done = false;
+    task.archived = false;
+    if (
+      !snapshot.sessions.some(
+        (s: any) => s.taskId === task.id && s.endedAt === null,
+      )
+    ) {
+      stopAll(now);
+      snapshot.sessions.unshift({
+        id: nextSessionId(),
+        taskId: task.id,
+        startedAt: now,
+        endedAt: null,
+      });
+    }
+    emit("data-changed");
+    return clone(snapshot);
+  }
+  const rmNotConnected = "Połącz konto Redmine: podaj adres i klucz API.";
+
   // suggest::refresh: lista propozycji ustawiana z testu; zmiana wysyła zdarzenie.
   let suggestions: any[] = structuredClone(init.suggestions);
   const target = (t: any) =>
@@ -523,20 +645,56 @@ function install(init: {
             },
             connected: !!init.jira,
           };
-        // Redmine (PLAN_1.9.md): w zastępczym backendzie niepołączone, więc
-        // `#1234` w szybkim dodawaniu jest projektem; R6 dodaje fixture Redmine.
+        // Redmine (PLAN_1.9.md): bez `redmine` w opcjach niepołączone, więc
+        // `#1234` w szybkim dodawaniu jest projektem; z `redmineFixture()`
+        // połączone kontem i danymi fixture (R6).
         case "redmine_settings":
           return {
             config: {
-              site: "",
-              login: "",
-              userId: 0,
-              displayName: "",
+              site: rm ? init.redmineSite : "",
+              login: rm?.user.login ?? "",
+              userId: rm?.user.id ?? 0,
+              displayName: rm?.user.name ?? "",
               acceptInvalidCert: false,
-              projects: [],
+              projects: rm
+                ? clone(
+                    rm.projects.filter((p: any) => rm.tracked.includes(p.id)),
+                  )
+                : [],
             },
-            connected: false,
+            connected: !!rm,
           };
+        case "redmine_issues": {
+          if (!rm) throw rmNotConnected;
+          const scope =
+            args.projectId == null ? null : rmWithChildren([args.projectId]);
+          const issues = rm.issues
+            .map(rmIssue)
+            .filter((i: any) => scope === null || scope.includes(i.projectId))
+            .filter(
+              (i: any) =>
+                !(args.mine || args.projectId == null) ||
+                i.assignedToId === rm.user.id,
+            )
+            .filter((i: any) => !args.openOnly || !i.closed);
+          return {
+            issues,
+            warnings: [],
+            groups: rmGroups(issues),
+            tracked: rmWithChildren(rm.tracked),
+          };
+        }
+        case "redmine_projects":
+          if (!rm) throw rmNotConnected;
+          return clone(rm.projects);
+        case "redmine_statuses":
+          if (!rm) throw rmNotConnected;
+          return clone(rm.statuses);
+        case "redmine_start":
+          if (!rm) throw rmNotConnected;
+          return redmineStart(args.id);
+        case "redmine_open":
+          return null;
         case "jira_boards":
           return { values: clone(init.jira?.boards ?? []), nextStart: null };
         case "jira_issues":
@@ -732,6 +890,48 @@ function install(init: {
           const key = task.jiraKey || null;
           if (key && !init.jira)
             throw `Jira nie jest połączona, więc ${key} nie zostanie powiązane.`;
+          // Redmine (quickadd::create z `#1234`): temat z listy
+          // (redmine::cached_subject), jedno zgłoszenie na zadanie, bez duplikatu.
+          const redmineId: number | null = task.redmineId ?? null;
+          if (redmineId !== null) {
+            if (key) throw "Zadanie może mieć jedno zgłoszenie: Jira albo Redmine.";
+            if (!rm)
+              throw `Redmine nie jest połączone, więc #${redmineId} nie zostanie powiązane.`;
+            const existing = [...snapshot.tasks, ...snapshot.trash].find(
+              (t: any) => t.redmineId === redmineId,
+            );
+            if (existing)
+              throw `#${redmineId} ma już zadanie „${existing.title}”.`;
+            const source = rm.issues.find((i: any) => i.id === redmineId);
+            const title = String(task.title).trim() || source?.subject || "";
+            if (!title)
+              throw `Nie znam tematu #${redmineId}. Wpisz tytuł albo odśwież listę w widoku Redmine.`;
+            const issue = source ? rmIssue(source) : null;
+            const id = nextTaskId();
+            snapshot.tasks.unshift({
+              id,
+              title,
+              done: false,
+              createdAt: now,
+              redmineId,
+              redmineUrl: `${init.redmineSite}/issues/${redmineId}`,
+              redmineStatus: issue?.status ?? "",
+              redmineTracker: issue?.tracker ?? "",
+              redmineDue: issue?.dueDate ?? "",
+              ...(task.details ? { details: clone(task.details) } : {}),
+            });
+            if (task.start) {
+              stopAll(now);
+              snapshot.sessions.unshift({
+                id: nextSessionId(),
+                taskId: id,
+                startedAt: now,
+                endedAt: null,
+              });
+            }
+            emit("data-changed");
+            return clone(snapshot);
+          }
           const summary = (k: string) =>
             init.jira?.issues.find((i: any) => i.key === k)?.summary ?? null;
           const template = task.template ? findTemplate(task.template) : null;

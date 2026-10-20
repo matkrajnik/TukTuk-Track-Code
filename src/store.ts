@@ -322,9 +322,12 @@ const previewJiraSite = "https://asistonwms.atlassian.net";
 /** Adres symulowanego Redmine w podglądzie (przykładowy, PLAN_1.9.md). */
 export const previewRedmineSite = "https://redmine.example.pl";
 /**
- * Symulowane Redmine podglądu (PLAN_1.9.md, R2 — minimum do szybkiego dodawania
- * `#1234` i chipów; R6 rozbudowuje stan o projekty, statusy i zapisy).
- * Brak klucza w `localStorage` = połączone z przykładowymi zgłoszeniami.
+ * Symulowane Redmine podglądu (PLAN_1.9.md, R6): stan `{ connected, site,
+ * login, displayName, acceptInvalidCert, fail, write, statuses, projects,
+ * selectedProjects, issues }` w `localStorage`; każde brakujące pole ma wartość
+ * z przykładu (`previewRedmine*`). Brak klucza = połączone z przykładowymi
+ * zgłoszeniami. Klucz API „zly” w „Połącz” daje błąd 401. Inne okno albo test
+ * zmieniające ten klucz wywołują `onRedmineChanged` i `onMovePromptsChanged`.
  */
 export const previewRedmineKey = "todo-track-preview-redmine-v1";
 /**
@@ -351,6 +354,15 @@ interface PreviewRedmine {
   connected?: boolean;
   /** Adres z „Połącz” (R5); brak = `previewRedmineSite`. */
   site?: string;
+  /** Login i imię i nazwisko z `/users/current.json`; brak = `previewRedmineMe`. */
+  login?: string;
+  displayName?: string;
+  /**
+   * `false` = symulowany backend odrzuca zapisy jak przy wyłączonym
+   * `redmine_write` (`redmine::ensure_write`), niezależnie od przełącznika w
+   * Ustawieniach podglądu; brak = decyduje ustawienie `redmineWrite`.
+   */
+  write?: boolean;
   /** „Akceptuj niezaufany certyfikat” zapamiętane w konfiguracji (R5). */
   acceptInvalidCert?: boolean;
   /** Serwer z certyfikatem spoza magazynu Windows (testy R5). */
@@ -478,6 +490,20 @@ function previewRedmineState(): PreviewRedmine {
 }
 function savePreviewRedmine(state: PreviewRedmine) {
   localStorage.setItem(previewRedmineKey, JSON.stringify(state));
+}
+/** Użytkownik symulowanego Redmine: login i nazwa ze stanu albo z przykładu. */
+function previewRedmineUser(state: PreviewRedmine) {
+  const login =
+    typeof state.login === "string" && state.login.trim()
+      ? state.login.trim()
+      : previewRedmineMe.login;
+  const name =
+    typeof state.displayName === "string" && state.displayName.trim()
+      ? state.displayName.trim()
+      : login === previewRedmineMe.login
+        ? previewRedmineMe.name
+        : login;
+  return { id: previewRedmineMe.id, login, name };
 }
 /** Zgłoszenie symulowanego Redmine po numerze (ze stanu albo z listy przykładowej). */
 function previewRedmineIssue(id: number): PreviewRedmineIssue | undefined {
@@ -2209,7 +2235,8 @@ export async function onMovePromptsChanged(
 ): Promise<() => void> {
   if (desktop) return listen(jiraMoveEvent, handler);
   const storage = (e: StorageEvent) => {
-    if (e.key === previewJiraKey || e.key === key) handler();
+    if (e.key === previewJiraKey || e.key === previewRedmineKey || e.key === key)
+      handler();
   };
   window.addEventListener(jiraMoveEvent, handler);
   window.addEventListener("storage", storage);
@@ -3801,7 +3828,7 @@ export function chooseRedmineStatus(
 function previewRedmineSettings() {
   const s = previewJson(previewSettingsKey);
   return {
-    write: s.redmineWrite !== false,
+    write: s.redmineWrite !== false && previewRedmineState().write !== false,
     ask: s.redmineAskMove !== false,
     status:
       typeof s.redmineMoveStatus === "string" && s.redmineMoveStatus.trim()
@@ -4089,7 +4116,9 @@ function previewRedmineFull(
     closed: status?.isClosed ?? false,
     priority: issue.priority ?? "",
     assignedToId: mine ? previewRedmineMe.id : (issue.assignedToId ?? null),
-    assignedTo: mine ? previewRedmineMe.name : (issue.assignedTo ?? ""),
+    assignedTo: mine
+      ? previewRedmineUser(state).name
+      : (issue.assignedTo ?? ""),
     version: issue.version ?? "",
     category: issue.category ?? "",
     dueDate: issue.dueDate,
@@ -4172,17 +4201,46 @@ export function trackedProjectIds(
   return ids;
 }
 
+/**
+ * Zmiana konta albo śledzonych projektów Redmine: zdarzenie okna po „Połącz”,
+ * „Rozłącz” i wyborze projektów, a w podglądzie także zdarzenie `storage` dla
+ * `previewRedmineKey` (inne okno albo test zmienia symulowany Redmine), jak
+ * przy Jirze i TS.
+ */
+export const redmineChangedEvent = "todo-track-redmine-changed";
+function notifyRedmine() {
+  window.dispatchEvent(new Event(redmineChangedEvent));
+}
+async function notifyRedmineAfter<T>(result: Promise<T>): Promise<T> {
+  const value = await result;
+  notifyRedmine();
+  return value;
+}
+/** Nasłuch zmian Redmine; zwraca funkcję odłączającą. */
+export function onRedmineChanged(handler: () => void): () => void {
+  const storage = (e: StorageEvent) => {
+    if (e.key === previewRedmineKey || e.key === null) handler();
+  };
+  window.addEventListener(redmineChangedEvent, handler);
+  if (!desktop) window.addEventListener("storage", storage);
+  return () => {
+    window.removeEventListener(redmineChangedEvent, handler);
+    window.removeEventListener("storage", storage);
+  };
+}
+
 /** `redmine_settings` (w podglądzie konto przykładowe, chyba że rozłączone). */
 export async function redmineAccount(): Promise<RedmineAccount> {
   if (desktop) return invoke("redmine_settings");
   const state = previewRedmineState();
   const connected = state.connected !== false;
+  const user = previewRedmineUser(state);
   return {
     config: {
       site: typeof state.site === "string" ? state.site : previewRedmineSite,
-      login: connected ? previewRedmineMe.login : "",
+      login: connected ? user.login : "",
       userId: connected ? previewRedmineMe.id : 0,
-      displayName: connected ? previewRedmineMe.name : "",
+      displayName: connected ? user.name : "",
       acceptInvalidCert: state.acceptInvalidCert === true,
       projects: previewRedmineTracked(state).map((p) => ({ ...p })),
     },
@@ -4254,7 +4312,9 @@ export async function redmineConnect(
   acceptInvalidCert: boolean,
 ): Promise<RedmineAccount> {
   if (desktop)
-    return invoke("redmine_connect", { site, apiKey, acceptInvalidCert });
+    return notifyRedmineAfter(
+      invoke("redmine_connect", { site, apiKey, acceptInvalidCert }),
+    );
   const normalized = redmineNormalizeSite(site);
   const key = apiKey.trim();
   if (!redmineValidApiKey(key)) throw new Error(redmineKeyError);
@@ -4269,7 +4329,7 @@ export async function redmineConnect(
   state.connected = true;
   savePreviewRedmine(state);
   redmineConnected.value = true;
-  return redmineAccount();
+  return notifyRedmineAfter(redmineAccount());
 }
 /** `redmine_test`: „Połączono jako Imię Nazwisko (login), Redmine odpowiada.” */
 export async function redmineTest(): Promise<string> {
@@ -4278,16 +4338,17 @@ export async function redmineTest(): Promise<string> {
   if (state.certError && !state.acceptInvalidCert)
     throw new Error(redmineCertError);
   if (state.failTest) throw new Error(state.failTest);
-  return `Połączono jako ${previewRedmineMe.name} (${previewRedmineMe.login}), Redmine odpowiada.`;
+  const user = previewRedmineUser(state);
+  return `Połączono jako ${user.name} (${user.login}), Redmine odpowiada.`;
 }
 /** `redmine_disconnect`: usuwa klucz; adres, projekty i powiązania zostają. */
 export async function redmineDisconnect(): Promise<RedmineAccount> {
-  if (desktop) return invoke("redmine_disconnect");
+  if (desktop) return notifyRedmineAfter(invoke("redmine_disconnect"));
   const state = previewRedmineState();
   state.connected = false;
   savePreviewRedmine(state);
   redmineConnected.value = false;
-  return redmineAccount();
+  return notifyRedmineAfter(redmineAccount());
 }
 /**
  * `redmine_issues`: zgłoszenia projektu (z podprojektami, jak Redmine) albo —
@@ -4345,7 +4406,8 @@ export async function redmineProjects(): Promise<RedmineProject[]> {
 export async function redmineSelectProjects(
   projects: RedmineProject[],
 ): Promise<void> {
-  if (desktop) return invoke("redmine_select_projects", { projects });
+  if (desktop)
+    return notifyRedmineAfter(invoke("redmine_select_projects", { projects }));
   if (
     projects.length > 50 ||
     projects.some((p) => p.id <= 0 || !p.name.trim())
@@ -4357,6 +4419,7 @@ export async function redmineSelectProjects(
     .filter((p) => !seen.has(p.id) && Boolean(seen.add(p.id)))
     .map((p) => ({ ...p, name: p.name.trim() }));
   savePreviewRedmine(state);
+  notifyRedmine();
 }
 /** `redmine_statuses`: statusy w kolejności z Redmine. */
 export async function redmineStatuses(

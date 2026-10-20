@@ -315,6 +315,120 @@ export function jiraFixture() {
 }
 
 
+/**
+ * Dane fixture plus dwa zadania powiązane ze zgłoszeniami symulowanego
+ * Redmine (PLAN_1.9.md, R6; domyślny `seed()` zostaje bez zmian, żeby nie
+ * ruszać innych testów i zrzutów):
+ * - „Import CSV zamówień” (id 20) z `#1234` w statusie „New” (status
+ *   początkowy, więc start pracy pyta o przesunięcie), tracker „Funkcja”,
+ *   termin 30.10, projekt „Sklep”, zaplanowane na dziś;
+ * - „Błąd zapisu etykiet” (id 21) z `#1240` w „Feedback” (status „Czekam na”),
+ *   tracker „Błąd”, bez terminu, zaplanowane na dziś.
+ */
+export function redmineSeed(options: SeedOptions = {}) {
+  const data = seed(options);
+  const created = at("2026-10-14", "09:00");
+  const plain = (extra: Record<string, unknown>) =>
+    details({ plannedDay: TODAY, ...extra });
+  (data.tasks as any[]).unshift(
+    {
+      id: redmineIds.importCsv,
+      title: "Import CSV zamówień",
+      done: false,
+      createdAt: created,
+      redmineId: 1234,
+      redmineUrl: `${REDMINE_SITE}/issues/1234`,
+      redmineStatus: "New",
+      redmineTracker: "Funkcja",
+      redmineDue: "2026-10-30",
+      details: plain({ project: "Sklep" }),
+    },
+    {
+      id: redmineIds.labels,
+      title: "Błąd zapisu etykiet",
+      done: false,
+      createdAt: created,
+      redmineId: 1240,
+      redmineUrl: `${REDMINE_SITE}/issues/1240`,
+      redmineStatus: "Feedback",
+      redmineTracker: "Błąd",
+      redmineDue: "",
+      details: plain({}),
+    },
+  );
+  return data;
+}
+/** Identyfikatory zadań Redmine z `redmineSeed()`. */
+export const redmineIds = { importCsv: 20, labels: 21 } as const;
+
+/**
+ * Połączony Redmine dla zastępczego IPC (`openDesktop({ redmine })`): te same
+ * dane co symulowany Redmine podglądu (`previewRedmine*` w `store.ts`) —
+ * statusy New / In Progress / Feedback / Resolved / Closed (dwa ostatnie
+ * zamknięte), projekty Magazyn WMS (śledzony) z podprojektem „WMS – integracje”
+ * i Portal klienta, siedem zgłoszeń: w Magazynie WMS #1234 (New, z terminem),
+ * #1240 (Feedback), #1250 (In Progress), #1251 (New, Anny Nowak) i #1245
+ * (Closed); #1260 w podprojekcie; moje #1270 w nieśledzonym Portalu klienta.
+ */
+export function redmineFixture() {
+  const me = { id: 12, login: "jkowalski", name: "Jan Kowalski" };
+  const issue = (
+    id: number,
+    subject: string,
+    projectId: number,
+    status: string,
+    tracker: string,
+    priority: string,
+    extra: Record<string, unknown> = {},
+  ) => ({
+    id,
+    subject,
+    projectId,
+    status,
+    tracker,
+    priority,
+    assignedToId: me.id as number | null,
+    assignedTo: me.name,
+    dueDate: "",
+    version: "",
+    category: "",
+    ...extra,
+  });
+  return {
+    user: me,
+    statuses: [
+      { id: 1, name: "New", isClosed: false },
+      { id: 2, name: "In Progress", isClosed: false },
+      { id: 3, name: "Feedback", isClosed: false },
+      { id: 4, name: "Resolved", isClosed: true },
+      { id: 5, name: "Closed", isClosed: true },
+    ],
+    projects: [
+      { id: 7, name: "Magazyn WMS", identifier: "wms", parentId: null as number | null },
+      { id: 8, name: "WMS – integracje", identifier: "wms-integracje", parentId: 7 },
+      { id: 9, name: "Portal klienta", identifier: "portal", parentId: null },
+    ],
+    /** Śledzone projekty (`Config.projects`). */
+    tracked: [7],
+    issues: [
+      issue(1234, "Import CSV zamówień", 7, "New", "Funkcja", "High", {
+        dueDate: "2026-10-30",
+        version: "2.4",
+      }),
+      issue(1240, "Błąd zapisu etykiet", 7, "Feedback", "Błąd", "Normal"),
+      issue(1250, "Aktualizacja dokumentacji API", 7, "In Progress", "Wsparcie", "Low"),
+      issue(1251, "Raport stanów magazynowych", 7, "New", "Funkcja", "Normal", {
+        assignedToId: 31,
+        assignedTo: "Anna Nowak",
+      }),
+      issue(1245, "Eksport faktur do ERP", 7, "Closed", "Błąd", "Normal"),
+      issue(1260, "Mapowanie kodów EDI", 8, "In Progress", "Funkcja", "Normal"),
+      issue(1270, "Formularz reklamacji", 9, "New", "Błąd", "Urgent"),
+    ],
+  };
+}
+export type RedmineFixture = ReturnType<typeof redmineFixture>;
+
 export const CALENDAR_KEY = "todo-track-preview-calendar-v1";
 /** Identyfikator aplikacji w Entra ID używany w testach kalendarza. */
 export const CALENDAR_CLIENT_ID = "0a1b2c3d-4e5f-4789-abcd-ef0123456789";
@@ -427,6 +541,11 @@ export interface PreviewOptions extends SeedOptions {
   agentSessions?: unknown[];
   /** Symulowany Ideo TS w podglądzie, np. `tsFixture()`. */
   ts?: unknown;
+  /**
+   * Stan symulowanego Redmine (`REDMINE_KEY`), np. `{ connected: false }`;
+   * domyślnie brak, czyli połączone z przykładowymi zgłoszeniami.
+   */
+  redmine?: Record<string, unknown>;
 }
 
 /**
@@ -445,7 +564,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
@@ -453,6 +572,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
         options.calendar ? JSON.stringify(options.calendar) : null,
         options.agentSessions ? JSON.stringify(options.agentSessions) : null,
         options.ts ? JSON.stringify(options.ts) : null,
+        options.redmine ? JSON.stringify(options.redmine) : null,
       ],
     ] as const,
   );
