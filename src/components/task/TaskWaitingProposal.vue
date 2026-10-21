@@ -3,6 +3,7 @@
  * Propozycja „Czekam na” ze statusu zgłoszenia: oznaczyć albo odblokować;
  * nic nie zmienia się samo. Zmianę wykonuje kafelek (`change`).
  */
+import { Hourglass, LockOpen, X } from "lucide-vue-next";
 import type { WaitingChange } from "../../store";
 import type { IssueRef } from "../../issue";
 import type { WaitingProposal } from "../../recurrence";
@@ -42,14 +43,19 @@ const emit = defineEmits<{ change: [change: WaitingChange] }>();
         )
       "
     >
-      {{ proposal.action === "block" ? "Oznacz jako czekam na" : "Odblokuj" }}
+      <Hourglass v-if="proposal.action === 'block'" :size="14" /><LockOpen
+        v-else
+        :size="14"
+      />{{
+        proposal.action === "block" ? "Oznacz jako czekam na" : "Odblokuj"
+      }}
     </button>
     <button
       class="action-button"
       :disabled="disabled"
       @click="emit('change', { action: 'dismiss' })"
     >
-      Nie teraz
+      <X :size="14" />Nie teraz
     </button>
   </div>
 </template>

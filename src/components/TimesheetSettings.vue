@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { Plug, PlugZap, Plus, RefreshCw, Trash2, Unplug } from "lucide-vue-next";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import SearchSelect from "./SearchSelect.vue";
 import {
   onTsChanged,
   read,
@@ -266,14 +268,14 @@ onUnmounted(() => {
       :disabled="busy || !login.trim() || !password"
       @click="connect"
     >
-      Połącz
+      <Plug :size="14" />Połącz
     </button>
     <template v-if="account.connected">
       <button class="today-button" :disabled="busy" @click="testConnection">
-        Testuj połączenie
+        <PlugZap :size="14" />Testuj połączenie
       </button>
       <button class="today-button" :disabled="busy" @click="openConfirm">
-        Rozłącz
+        <Unplug :size="14" />Rozłącz
       </button>
     </template>
   </div>
@@ -306,7 +308,7 @@ onUnmounted(() => {
             :disabled="mapBusy"
             @click="removeMapping(m.project)"
           >
-            Usuń
+            <Trash2 :size="14" />Usuń
           </button>
         </td>
       </tr>
@@ -315,33 +317,29 @@ onUnmounted(() => {
   <p v-else class="hint">Brak domyślnych zadań TS.</p>
   <div class="planning-fields settings-fields ts-map-add">
     <label
-      >Projekt<select
+      >Projekt<SearchSelect
         v-model="newProject"
-        aria-label="Projekt"
+        label="Projekt"
+        placeholder="— wybierz —"
+        :options="projects.map((p) => ({ value: p, label: p }))"
         :disabled="mapBusy || !projects.length"
-      >
-        <option value="">— wybierz —</option>
-        <option v-for="p in projects" :key="p" :value="p">{{ p }}</option>
-      </select></label
-    >
+    /></label>
     <label
-      >Domyślne zadanie TS<select
-        aria-label="Domyślne zadanie TS"
+      >Domyślne zadanie TS<SearchSelect
         v-model="newTask"
+        label="Domyślne zadanie TS"
+        placeholder="— wybierz —"
+        :options="
+          tsProjects.flatMap((p) =>
+            p.tasks.map((t) => ({ value: t.id, label: t.name, group: p.name })),
+          )
+        "
         :disabled="mapBusy || !tsProjects.length"
-      >
-        <option value="">— wybierz —</option>
-        <optgroup v-for="p in tsProjects" :key="p.name" :label="p.name">
-          <option v-for="t in p.tasks" :key="t.id" :value="t.id">
-            {{ t.name }}
-          </option>
-        </optgroup>
-      </select></label
-    >
+    /></label>
   </div>
   <div class="planning-actions">
     <button class="action-button" :disabled="!canAdd" @click="addMapping">
-      Dodaj mapowanie
+      <Plus :size="14" />Dodaj mapowanie
     </button>
     <button
       v-if="account.connected"
@@ -349,7 +347,7 @@ onUnmounted(() => {
       :disabled="mapBusy"
       @click="loadTsList(true)"
     >
-      Odśwież listę zadań TS
+      <RefreshCw :size="14" />Odśwież listę zadań TS
     </button>
   </div>
   <p v-if="!account.connected" class="hint">

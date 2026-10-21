@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { pick } from "./fixtures/searchSelect";
 test.use({ timezoneId: "Europe/Warsaw" });
 test("planning, priorities, daily notes, waiting and time reconstruction persist", async ({
   page,
@@ -63,7 +64,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
   await page
     .getByRole("button", { name: "Dodaj czas ręcznie", exact: true })
     .click();
-  await page.getByLabel("Zadanie do uzupełnienia").selectOption("2");
+  await pick(page.getByLabel("Zadanie do uzupełnienia"), "Spotkanie");
   await page.getByLabel("Początek ręcznego czasu").fill("2026-10-14T09:30");
   await page.getByLabel("Koniec ręcznego czasu").fill("2026-10-14T10:30");
   await page.getByRole("button", { name: "Zapisz ręczny czas" }).click();
@@ -134,7 +135,7 @@ test("higher priority sorts first and plan works on an empty day", async ({
     .getByRole("button", { name: "Plan i historia", exact: true })
     .click();
   await page.getByLabel("Dzień planu").fill("2026-11-02");
-  await page.getByLabel("Zadanie do planu").selectOption({ label: "Ważne" });
+  await pick(page.getByLabel("Zadanie do planu"), "Ważne");
   await page
     .getByRole("button", { name: "Dodaj do planu", exact: true })
     .click();

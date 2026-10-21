@@ -8,6 +8,7 @@ import {
   openPreview,
   stored,
 } from "./fixtures/seed";
+import { pick } from "./fixtures/searchSelect";
 
 /**
  * K2: spotkania w planie i pojemności. Pojemność dnia (`src/capacity.ts`) i bloki
@@ -443,9 +444,7 @@ test("Zamknięcie dnia: „Dodaj jako czas” otwiera ręczne dodanie z godzinam
   await expect(page.getByLabel("Koniec ręcznego czasu")).toHaveValue(
     `${TODAY}T11:30`,
   );
-  await page
-    .getByLabel("Zadanie do uzupełnienia")
-    .selectOption({ label: "Code review" });
+  await pick(page.getByLabel("Zadanie do uzupełnienia"), "Code review");
   await page.getByRole("button", { name: "Zapisz ręczny czas" }).click();
   await expect(
     page.getByRole("button", { name: "Dodaj czas ręcznie" }),

@@ -420,14 +420,6 @@
 .details-actions-spacer {
   flex: 1;
 }
-.action-button {
-  padding: 6px 10px;
-  font-size: var(--fs-sm);
-  color: var(--muted);
-}
-.action-button:hover:not(:disabled) {
-  color: var(--text);
-}
 h3.details-heading {
   margin: var(--space-2) 0 0;
   font-weight: 500;

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** Ustawienia → Szablony: lista szablonów zadań i nowy szablon. */
 import { ref } from "vue";
+import { Plus } from "lucide-vue-next";
 import TemplateEditor from "../TemplateEditor.vue";
 import { templates } from "../../store";
 /** Formularz nowego szablonu; błędy pokazuje `TemplateEditor` przy szablonie. */
@@ -30,6 +31,6 @@ const addingTemplate = ref(false);
     class="action-button"
     @click="addingTemplate = true"
   >
-    Nowy szablon
+    <Plus :size="14" />Nowy szablon
   </button>
 </template>

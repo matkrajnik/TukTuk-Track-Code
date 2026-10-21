@@ -288,7 +288,7 @@ test("nowe zgłoszenie tworzy zadanie w Todo Track; typ z wymaganymi polami odsy
   await openBoard(page);
   await page.getByRole("button", { name: "Nowe zgłoszenie", exact: true }).click();
   const form = page.getByRole("form", { name: "Nowe zgłoszenie" });
-  await expect(form.getByLabel("Projekt")).toHaveValue("WMS");
+  await expect(form.getByLabel("Projekt")).toHaveAttribute("data-value", "WMS");
   await form.getByLabel("Typ zgłoszenia").selectOption({ label: "Błąd" });
   await expect(form.getByRole("alert")).toContainText(
     "Typ „Błąd” wymaga pól, których Todo Track nie wypełnia: Środowisko.",

@@ -14,10 +14,12 @@ import {
   Check,
   ChevronDown,
   ExternalLink,
+  LockOpen,
   Pencil,
   Pin,
   PinOff,
   Play,
+  RotateCcw,
   Square,
   Trash2,
 } from "lucide-vue-next";
@@ -210,7 +212,7 @@ const issueWrite = computed(() =>
         :disabled="busy || waitingBusy"
         @click="changeWaiting({ action: 'unblock' })"
       >
-        Odblokuj
+        <LockOpen :size="14" />Odblokuj
       </button>
       <button
         v-if="!task.done"
@@ -334,12 +336,12 @@ const issueWrite = computed(() =>
         Bez pytania o przesunięcie {{ issue.key }} przy starcie pracy.
         <button
           type="button"
-          class="text-link"
+          class="action-button"
           :disabled="moves.busy"
           :aria-label="'Pytaj o przesunięcie: ' + task.title"
           @click="moves.askAgain"
         >
-          Pytaj znowu
+          <RotateCcw :size="14" />Pytaj znowu
         </button>
       </p>
       <TaskTemplateForm

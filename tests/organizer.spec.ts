@@ -201,6 +201,7 @@ test("recurrence creates separate dated tasks once and resets checklist", async 
     .getByRole("button", { name: "Przedziały: Daily", exact: true })
     .click();
   await page.getByLabel("Szacowany czas (minuty)").fill("30");
+  await page.getByLabel("Rodzaj cyklu").selectOption("");
   await page.getByLabel("Początek cyklu").fill("2026-10-12");
   await page.getByLabel("Pon", { exact: true }).check();
   await page.getByLabel("Śr", { exact: true }).check();

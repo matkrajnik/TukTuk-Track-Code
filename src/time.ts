@@ -68,6 +68,23 @@ const dayLabel = (time: number) =>
   }).format(time);
 /** Data i godzina przedziału, np. „14 paź 2026, 09:00:00”. */
 export const stamp = (time: number) => `${dayLabel(time)}, ${clock(time, true)}`;
+/**
+ * Początek i koniec przedziału w podglądzie, bez sekund (sekundy są w edycji):
+ * „20 paź 2026, 08:30” i „10:30”; data przy końcu tylko, gdy wypada on
+ * innego dnia (przedział przez północ). Trwający przedział: koniec pusty.
+ */
+export function intervalText(
+  start: number,
+  end: number | null,
+): [from: string, to: string] {
+  const from = `${dayLabel(start)}, ${clock(start)}`;
+  if (end === null) return [from, ""];
+  const to =
+    dayKey(end) === dayKey(start)
+      ? clock(end)
+      : `${dayLabel(end)}, ${clock(end)}`;
+  return [from, to];
+}
 
 const shortDay = new Intl.DateTimeFormat("pl-PL", {
   weekday: "short",

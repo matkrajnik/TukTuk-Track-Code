@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import SearchSelect from "./SearchSelect.vue";
 import {
   duration,
   editSession,
@@ -226,16 +227,19 @@ async function split() {
         required
         :disabled="busy"
       /><label for="split-target">Zadanie drugiej części</label
-      ><select
-        id="split-target"
+      ><SearchSelect
         v-model="target"
+        input-id="split-target"
         class="split-target"
+        label="Zadanie drugiej części"
         :disabled="busy"
-      >
-        <option v-for="task in targets" :key="task.id" :value="task.id">
-          {{ task.archived ? `${task.title} (archiwum)` : task.title }}
-        </option>
-      </select>
+        :options="
+          targets.map((task) => ({
+            value: task.id,
+            label: task.archived ? `${task.title} (archiwum)` : task.title,
+          }))
+        "
+      />
       <ol class="split-preview" aria-label="Podgląd podziału">
         <li>
           <strong>{{ taskTitle(session.taskId) }}</strong>

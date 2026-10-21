@@ -57,6 +57,21 @@ const views: {
   calendar?: boolean;
 }[] = [
   {
+    // B1: rozwinięty kafelek — przyciski drugorzędne z tłem i ikoną, przedziały
+    // bez sekund, pole „Cykl” z „Bez cyklu”.
+    name: "zadania-kafelek",
+    open: (page) =>
+      page
+        .getByRole("button", { name: "Przedziały: Analiza importu", exact: true })
+        .click(),
+    ready: async (page) => {
+      await expect(
+        page.getByRole("group", { name: "Akcje zadania" }),
+      ).toBeVisible();
+      await expect(page.getByLabel("Rodzaj cyklu")).toHaveValue("none");
+    },
+  },
+  {
     name: "zadania",
     open: async () => {},
     ready: (page) =>

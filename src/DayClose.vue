@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import {
+  CalendarArrowUp,
+  Copy,
+  FileText,
+  Plus,
+  Save,
+  Send,
+  Square,
+} from "lucide-vue-next";
+import {
   change,
   closeDay,
   detailsOf,
@@ -220,7 +229,7 @@ async function move() {
         :disabled="busy"
         @click="run(async () => emit('updated', await change('stop')))"
       >
-        Zatrzymaj pomiar
+        <Square :size="12" />Zatrzymaj pomiar
       </button>
     </p>
     <h3>Co było robione?</h3>
@@ -231,7 +240,7 @@ async function move() {
           v-model="notes[row.task.id]"
           :aria-label="'Notatka: ' + row.task.title"
           maxlength="4000"
-          :placeholder="'Uzupełnij opis pracy z ' + day"
+          :placeholder="'Uzupełnij opis pracy z ' + dayText(day)"
         />
       </label>
     </div>
@@ -242,7 +251,7 @@ async function move() {
       :disabled="busy"
       @click="saveNotes"
     >
-      Zapisz notatki dnia
+      <Save :size="14" />Zapisz notatki dnia
     </button>
     <h3>Przerwy między zapisanymi przedziałami</h3>
     <p v-for="gap in gaps" :key="gap[0]">
@@ -259,7 +268,7 @@ async function move() {
       Nie oceniamy czasu przed pierwszym i po ostatnim wpisie.
     </p>
     <button class="today-button" @click="emit('report', day)">
-      Otwórz raport i popraw czas
+      <FileText :size="14" />Otwórz raport i popraw czas
     </button>
     <template v-if="meetings.length">
       <h3>Spotkania</h3>
@@ -279,7 +288,7 @@ async function move() {
             :aria-label="'Dodaj jako czas: ' + m.title + ' ' + m.time"
             @click="addMeeting(m)"
           >
-            Dodaj jako czas
+            <Plus :size="14" />Dodaj jako czas
           </button>
         </li>
       </ul>
@@ -302,7 +311,7 @@ async function move() {
       :disabled="busy || !unfinished.length"
       @click="move"
     >
-      Przenieś niedokończone na jutro
+      <CalendarArrowUp :size="14" />Przenieś niedokończone na jutro
     </button>
     <h3>Raport TS</h3>
     <textarea
@@ -321,7 +330,7 @@ async function move() {
           })
         "
       >
-        Kopiuj raport TS</button
+        <Copy :size="14" />Kopiuj raport TS</button
       ><button
         v-if="tsEnabled && tsConnected"
         class="secondary-button"
@@ -333,7 +342,7 @@ async function move() {
         "
         @click="tsOpen = true"
       >
-        Wyślij do TS</button
+        <Send :size="14" />Wyślij do TS</button
       ><button
         class="primary-button"
         :disabled="busy || active || day > dayKey(now)"

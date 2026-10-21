@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RefreshCw } from "lucide-vue-next";
+import SearchSelect from "./SearchSelect.vue";
+import type { SearchOption } from "../searchSelect";
 import {
   detailsOf,
   onTsChanged,
@@ -94,25 +96,31 @@ async function run(action: () => Promise<void>) {
  * Nie zmienia domyślnego zadania projektu — to osobna akcja pola wyboru,
  * żeby zmiana w jednym zadaniu nie przestawiała po cichu innych zadań projektu.
  */
-function choose(event: Event) {
-  const select = event.target as HTMLSelectElement;
-  const id = select.value;
+function choose(id: string) {
   if (id === explicitId.value) return;
   const name = id ? (findTsTask(projects.value, id)?.name ?? "") : "";
+  // Pole pokazuje `explicitId`, więc po błędzie zapisu wraca samo.
   void run(async () => {
-    try {
-      const snapshot = await saveDetails(props.task.id, {
+    emit(
+      "updated",
+      await saveDetails(props.task.id, {
         ...detailsOf(props.task),
         tsTaskId: id,
         tsTaskName: name,
-      });
-      emit("updated", snapshot);
-    } catch (e) {
-      select.value = explicitId.value;
-      throw e;
-    }
+      }),
+    );
   });
 }
+/** Pozycje pola: „— brak —”, niedostępne zapamiętane, zadania w grupach projektów TS. */
+const options = computed<SearchOption<string>[]>(() => [
+  { value: "", label: "— brak —" },
+  ...(unavailable.value
+    ? [{ value: explicitId.value, label: `(niedostępne) ${explicitName.value}` }]
+    : []),
+  ...projects.value.flatMap((p) =>
+    p.tasks.map((t) => ({ value: t.id, label: t.name, group: p.name })),
+  ),
+]);
 /** „Ustaw jako domyślne dla projektu”: mapowanie projektu na wybrane zadanie. */
 function toggleDefault() {
   const on = asDefault.value;
@@ -133,22 +141,13 @@ function connect() {
   <section class="ts-task" :aria-label="'Zadanie TS: ' + task.title">
     <div class="ts-task-row">
       <label v-if="state === 'ready'" class="ts-task-select"
-        >Zadanie TS<select
-          :value="explicitId"
-          :aria-label="'Zadanie TS: ' + task.title"
+        >Zadanie TS<SearchSelect
+          :model-value="explicitId"
+          :label="'Zadanie TS: ' + task.title"
+          :options="options"
           :disabled="busy"
           @change="choose"
-        >
-          <option value="">— brak —</option>
-          <option v-if="unavailable" :value="explicitId">
-            (niedostępne) {{ explicitName }}
-          </option>
-          <optgroup v-for="p in projects" :key="p.name" :label="p.name">
-            <option v-for="t in p.tasks" :key="t.id" :value="t.id">
-              {{ t.name }}
-            </option>
-          </optgroup>
-        </select></label
+      /></label
       >
       <p v-else class="ts-task-stored">
         <span class="ts-task-label">Zadanie TS:</span>

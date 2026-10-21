@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** Ustawienia → Jira: zapisy, przesuwanie przy starcie, gałęzie i pola na kafelku. */
 import { computed, onMounted, ref } from "vue";
+import { Download, Plus } from "lucide-vue-next";
 import { openView } from "../../navigation";
 import { maxCardFields, type AppSettings } from "../../settings";
 import {
@@ -226,13 +227,15 @@ function moveField(index: number, delta: -1 | 1) {
       :aria-expanded="pickingFields"
       @click="toggleFieldPicker()"
     >
-      {{ pickingFields ? "Zwiń listę pól" : "Dodaj pole…" }}</button
+      <Plus v-if="!pickingFields" :size="14" />{{
+        pickingFields ? "Zwiń listę pól" : "Dodaj pole…"
+      }}</button
     ><button
       class="secondary-button"
       :disabled="busy || fieldsBusy"
       @click="loadFields(true)"
     >
-      Pobierz listę pól z Jiry</button
+      <Download :size="14" />Pobierz listę pól z Jiry</button
     ><span class="hint"
       >Wybrano {{ settings.jiraCardFields.length }} / {{ maxCardFields }}</span
     >

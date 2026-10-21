@@ -2,6 +2,8 @@
 import { nextTick, ref, watch } from "vue";
 import { addSession, type Task, type Snapshot } from "./store";
 import { localInput } from "./time";
+import { Plus } from "lucide-vue-next";
+import SearchSelect from "./components/SearchSelect.vue";
 
 /** Wstępne godziny z zewnątrz, np. „Dodaj jako czas” przy spotkaniu. */
 interface ManualPreset {
@@ -91,7 +93,7 @@ async function save() {
       :aria-expanded="opened"
       @click="opened = !opened"
     >
-      Dodaj czas ręcznie
+      <Plus :size="14" />Dodaj czas ręcznie
     </button>
     <form
       v-if="opened"
@@ -102,16 +104,13 @@ async function save() {
       <p v-if="error" class="error" role="alert">{{ error }}</p>
       <div class="planning-fields">
         <label
-          >Zadanie do uzupełnienia<select
-            v-model.number="taskId"
-            aria-label="Zadanie do uzupełnienia"
+          >Zadanie do uzupełnienia<SearchSelect
+            v-model="taskId"
+            label="Zadanie do uzupełnienia"
+            placeholder="Wybierz zadanie"
             required
-          >
-            <option :value="0" disabled>Wybierz zadanie</option>
-            <option v-for="task in tasks" :key="task.id" :value="task.id">
-              {{ task.title }}
-            </option>
-          </select></label
+            :options="tasks.map((t) => ({ value: t.id, label: t.title }))"
+        /></label
         >
         <label
           >Początek ręcznego czasu<input

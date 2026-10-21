@@ -7,6 +7,8 @@ import {
   type AgentTask,
 } from "../agents";
 import { bindAgentFolder, duration, type Task } from "../store";
+import { FolderCheck } from "lucide-vue-next";
+import SearchSelect from "./SearchSelect.vue";
 
 const props = defineProps<{ now: number; tasks: Task[] }>();
 const agents = ref<Agent[]>([]);
@@ -96,23 +98,21 @@ onUnmounted(() => {
         class="agent-bind"
         @submit.prevent="bind(agent)"
       >
-        <select
+        <SearchSelect
           v-model="picked[agent.cwd]"
-          :aria-label="`Zadanie dla folderu ${agent.cwd}`"
+          class="agent-bind-select"
+          :label="`Zadanie dla folderu ${agent.cwd}`"
+          placeholder="Wybierz zadanie dla tego folderu…"
           :title="agent.cwd"
-        >
-          <option value="">Wybierz zadanie dla tego folderu…</option>
-          <option v-for="t in choices" :key="t.id" :value="t.id">
-            {{ t.title }}
-          </option>
-        </select>
+          :options="choices.map((t) => ({ value: t.id, label: t.title }))"
+        />
         <button
           class="today-button"
           type="submit"
           :disabled="!picked[agent.cwd]"
           :aria-label="`Zapamiętaj dla folderu ${agent.cwd}`"
         >
-          Zapamiętaj dla tego folderu
+          <FolderCheck :size="14" />Zapamiętaj dla tego folderu
         </button>
         <span
           v-if="bindError[agent.cwd]"

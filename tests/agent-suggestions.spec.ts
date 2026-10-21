@@ -10,6 +10,7 @@ import {
   TODAY,
 } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
+import { optionLabels, pick } from "./fixtures/searchSelect";
 import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
@@ -326,13 +327,11 @@ test("kafelek Agenci AI: wybór zadania dla folderu agenta bez dopasowania", asy
   await expect(save).toBeDisabled();
   const select = card.getByLabel(`Zadanie dla folderu ${cwd}`);
   // Ukończone i zarchiwizowane zadania nie są do wyboru.
-  await expect(
-    select.locator("option", { hasText: "Dokumentacja API" }),
-  ).toHaveCount(0);
-  await expect(
-    select.locator("option", { hasText: "Stary raport" }),
-  ).toHaveCount(0);
-  await select.selectOption({ label: "Code review" });
+  const choices = await optionLabels(select);
+  expect(choices).toContain("Code review");
+  expect(choices).not.toContain("Dokumentacja API");
+  expect(choices).not.toContain("Stary raport");
+  await pick(select, "Code review");
   await save.click();
   await expect(card.getByLabel("Praca agenta Nowy")).toContainText(
     "zadanie „Code review” (folder)",

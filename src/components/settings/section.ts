@@ -1,5 +1,10 @@
 import { ref, type Ref } from "vue";
-import { readSettings, writeSettings, type AppSettings } from "../../settings";
+import {
+  checkSettingsPatch,
+  readSettings,
+  writeSettings,
+  type AppSettings,
+} from "../../settings";
 
 /**
  * Stan sekcji Ustawień: własne `busy` i `error` oraz zapis zmiany ustawień.
@@ -13,6 +18,8 @@ export function useSettingsSection(settings: Ref<AppSettings>) {
     busy.value = true;
     error.value = "";
     try {
+      // Najpierw w kliencie: komunikat o zakresie pola (np. puste pole liczbowe).
+      checkSettingsPatch(patch);
       settings.value = await writeSettings(patch);
     } catch (e) {
       error.value = message(e);
@@ -32,7 +39,7 @@ export const message = (e: unknown) => String(e instanceof Error ? e.message : e
 export const checked = (e: Event) => (e.target as HTMLInputElement).checked;
 /** Tekst pola ze zdarzenia `change`. */
 export const text = (e: Event) => (e.target as HTMLInputElement).value;
-/** Liczba z pola; puste pole to NaN (walidacja odrzuci zapis). */
+/** Liczba z pola; puste pole to NaN (walidacja w kliencie odrzuci zapis z komunikatem o zakresie). */
 export const number = (e: Event) => {
   const value = (e.target as HTMLInputElement).value;
   return value === "" ? NaN : Number(value);

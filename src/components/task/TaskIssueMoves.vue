@@ -3,6 +3,7 @@
  * Rozwinięte listy „Przesuń w Jirze…” i „Przesuń w Redmine…” kafelka zadania
  * oraz błąd zmiany z linkiem do zgłoszenia (stan w `useIssueMoves`).
  */
+import { ArrowRight, X } from "lucide-vue-next";
 import type { Task } from "../../store";
 import type { IssueRef } from "../../issue";
 import type { IssueMoves } from "./issueMoves";
@@ -35,9 +36,13 @@ defineProps<{
       :aria-label="`Przesuń ${task.jiraKey} do: ${t.toStatus}`"
       @click="moves.moveJira(t)"
     >
-      {{ t.name && t.name !== t.toStatus ? `${t.name} → ${t.toStatus}` : t.toStatus }}
+      <ArrowRight :size="14" />{{
+        t.name && t.name !== t.toStatus ? `${t.name} → ${t.toStatus}` : t.toStatus
+      }}
     </button>
-    <button class="action-button" @click="moves.closeJira()">Anuluj</button>
+    <button class="action-button" @click="moves.closeJira()">
+      <X :size="14" />Anuluj
+    </button>
   </div>
   <div
     v-if="moves.redmineList !== null && issue?.system === 'redmine'"
@@ -59,9 +64,11 @@ defineProps<{
       :aria-label="`Przesuń ${issue.key} do: ${s.name}`"
       @click="moves.moveRedmine(s)"
     >
-      {{ s.name }}
+      <ArrowRight :size="14" />{{ s.name }}
     </button>
-    <button class="action-button" @click="moves.closeRedmine()">Anuluj</button>
+    <button class="action-button" @click="moves.closeRedmine()">
+      <X :size="14" />Anuluj
+    </button>
   </div>
   <p v-if="moves.error" class="jira-move-error" role="alert">
     {{ moves.error }}

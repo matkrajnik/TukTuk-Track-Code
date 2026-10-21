@@ -208,11 +208,36 @@ h2 {
   line-height: 1.6;
   margin: 8px 0 0;
 }
-.today-button {
+/* Przycisk drugorzędny (B1): akcje mają tło i zwykle ikonę lucide, żeby
+   odróżniały się od tekstu; link tekstowy (.text-link) tylko dla nawigacji.
+   .today-button i .action-button to ten sam poziom (różne miejsca w kodzie). */
+.today-button,
+.action-button {
   min-height: 32px;
-  padding: 6px 10px;
-  color: var(--accent);
+  padding: 5px 12px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  color: var(--text);
   font-size: var(--fs-sm);
+}
+.today-button:hover:not(:disabled),
+.action-button:hover:not(:disabled) {
+  background: var(--raised);
+  border-color: var(--line-strong);
+}
+.today-button > svg,
+.action-button > svg {
+  color: var(--accent);
+}
+.today-button.danger > svg,
+.action-button.danger > svg,
+.today-button.danger:hover:not(:disabled),
+.action-button.danger:hover:not(:disabled) {
+  color: var(--danger);
+}
+.today-button.danger:hover:not(:disabled),
+.action-button.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
 }
 .error {
   display: flex;
@@ -230,8 +255,12 @@ h2 {
   min-height: 32px;
   border: 1px solid var(--line-strong);
   padding: 8px 12px;
+  background: var(--raised);
   color: var(--text);
   font-size: var(--fs-sm);
+}
+.secondary-button > svg {
+  color: var(--accent);
 }
 .text-link {
   /* Obszar klikania co najmniej 24 px (WCAG 2.5.8). */
@@ -256,4 +285,92 @@ input[type="checkbox"] {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+/* Pole wyboru z wyszukiwaniem (SearchSelect.vue). */
+.search-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+.search-select > input[role="combobox"] {
+  width: 100%;
+  padding-right: 30px;
+  text-overflow: ellipsis;
+}
+.search-select-chevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-select.open .search-select-chevron {
+  transform: translateY(-50%) rotate(180deg);
+}
+.search-select-list {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 100%;
+  max-width: min(480px, 90vw);
+  max-height: 280px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 30%);
+  color: var(--text);
+  font-size: var(--fs-base);
+  font-weight: 400;
+  text-align: left;
+}
+.search-select-option {
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.search-select-option.grouped {
+  padding-left: 20px;
+}
+.search-select-option.active {
+  background: var(--accent-bg);
+}
+.search-select-option[aria-selected="true"] {
+  font-weight: 600;
+}
+.search-select-option[aria-disabled="true"] {
+  color: var(--muted);
+  cursor: default;
+}
+.search-select-group {
+  padding: 8px 10px 2px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.search-select-empty {
+  padding: 6px 10px;
+  color: var(--muted);
+}
+/* SearchSelect w paskach narzędzi (tablica Jiry, projekt Redmine) i w wierszach. */
+.toolbar-select {
+  display: inline-block;
+  width: 240px;
+  max-width: 100%;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.plan-task-select {
+  flex: 1 1 240px;
+  max-width: 420px;
+}
+.agent-bind-select {
+  flex: 1 1 180px;
+  max-width: 100%;
 }

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { pick } from "./fixtures/searchSelect";
 import { resolveTsTask, tsCheckSaved, tsEntries } from "../src/timesheet";
 import { dayTotal, decimalHours } from "../src/report";
 import {
@@ -94,6 +95,9 @@ async function setTs(page: Page, state: Record<string, unknown>) {
 }
 const tsState = (page: Page) =>
   page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "{}"), previewTsKey);
+/** Nagłówki grup (projekty TS) otwartej listy pola SearchSelect. */
+const groups = (page: Page) =>
+  page.getByRole("listbox").locator(".search-select-group");
 const detailsOf = async (page: Page, id: number) =>
   (await stored(page)).tasks.find((t: { id: number }) => t.id === id).details;
 
@@ -104,12 +108,16 @@ test("pole „Zadanie TS” w kafelku: wybór z listy, zapamiętanie i stan bez 
   await setTs(page, { connected: true, login: "jan" });
   await expand(page, "Code review");
   const select = page.getByRole("combobox", { name: "Zadanie TS: Code review" });
-  await expect(select).toHaveValue("");
+  await expect(select).toHaveAttribute("data-value", "");
   // Grupy per projekt TS i opcja „— brak —”.
-  await expect(select.locator("optgroup")).toHaveCount(2);
-  await expect(select.locator("optgroup").first()).toHaveAttribute("label", "WMS");
-  await expect(select.locator("option").first()).toHaveText("— brak —");
-  await select.selectOption("1103");
+  await select.click();
+  await expect(groups(page)).toHaveCount(2);
+  await expect(groups(page).first()).toHaveText("WMS");
+  await expect(
+    page.getByRole("listbox").getByRole("option").first(),
+  ).toHaveText("— brak —");
+  await select.press("Escape");
+  await pick(select, "Code review");
   await expect(card(page, "Code review").locator(".task-ts")).toHaveText(
     "TS: Code review",
   );
@@ -123,7 +131,7 @@ test("pole „Zadanie TS” w kafelku: wybór z listy, zapamiętanie i stan bez 
   await expand(page, "Code review");
   await expect(
     page.getByRole("combobox", { name: "Zadanie TS: Code review" }),
-  ).toHaveValue("1103");
+  ).toHaveAttribute("data-value", "1103");
 
   // Zadanie zniknęło z listy TS: opcja „(niedostępne)” z ostrzeżeniem.
   await setTs(page, {
@@ -133,8 +141,8 @@ test("pole „Zadanie TS” w kafelku: wybór z listy, zapamiętanie i stan bez 
   });
   await expand(page, "Code review");
   const gone = page.getByRole("combobox", { name: "Zadanie TS: Code review" });
-  await expect(gone).toHaveValue("1103");
-  await expect(gone.locator("option:checked")).toHaveText("(niedostępne) Code review");
+  await expect(gone).toHaveAttribute("data-value", "1103");
+  await expect(gone).toHaveValue("(niedostępne) Code review");
   await expect(
     page
       .getByRole("region", { name: "Zadanie TS: Code review" })
@@ -148,17 +156,21 @@ test("pole „Zadanie TS” w kafelku: wybór z listy, zapamiętanie i stan bez 
     delete s.tasks;
     localStorage.setItem(k, JSON.stringify(s));
   }, previewTsKey);
-  await expect(gone.locator("optgroup")).toHaveCount(1);
+  await gone.click();
+  await expect(groups(page)).toHaveCount(1);
+  await gone.press("Escape");
   await page.getByRole("button", { name: "Odśwież listę zadań TS" }).click();
-  await expect(gone.locator("optgroup")).toHaveCount(2);
-  await expect(gone.locator("option:checked")).toHaveText("Code review");
+  await gone.click();
+  await expect(groups(page)).toHaveCount(2);
+  await gone.press("Escape");
+  await expect(gone).toHaveValue("Code review");
 
   // „— brak —” usuwa wybór z zadania.
-  await gone.selectOption("");
+  await pick(gone, "— brak —", "brak");
   await expect(card(page, "Code review").locator(".task-ts")).toHaveCount(0);
   const cleared = await detailsOf(page, ids.review);
   expect("tsTaskId" in cleared || "tsTaskName" in cleared).toBe(false);
-  await gone.selectOption("1102");
+  await pick(gone, "Błędy i wsparcie");
   await expect(card(page, "Code review").locator(".task-ts")).toHaveText(
     "TS: Błędy i wsparcie",
   );
@@ -187,7 +199,7 @@ test("„Ustaw jako domyślne dla projektu”: mapowanie projektu działa na zad
   });
   // Pole wyboru pojawia się dopiero po wybraniu zadania TS.
   await expect(asDefault).toHaveCount(0);
-  await select.selectOption("1101");
+  await pick(select, "Rozwój");
   await expect(asDefault).not.toBeChecked();
   await asDefault.check();
   await expect.poll(async () => (await tsState(page)).projectMap).toEqual([
@@ -210,7 +222,7 @@ test("„Ustaw jako domyślne dla projektu”: mapowanie projektu działa na zad
   await page.reload();
   await expand(page, "Wdrożenie etykiet");
   await expect(asDefault).toBeChecked();
-  await select.selectOption("1103");
+  await pick(select, "Code review");
   await expect(card(page, "Wdrożenie etykiet").locator(".task-ts")).toHaveText(
     "TS: Code review",
   );
@@ -222,11 +234,11 @@ test("„Ustaw jako domyślne dla projektu”: mapowanie projektu działa na zad
     { project: "WMS", tsTaskId: "1101", tsTaskName: "Rozwój" },
   ]);
   // „— brak —” przy zadaniu równym domyślnemu: zadanie dziedziczy z projektu.
-  await select.selectOption("");
+  await pick(select, "— brak —", "brak");
   await expect(card(page, "Wdrożenie etykiet").locator(".task-ts")).toHaveText(
     "TS: Rozwój (z projektu)",
   );
-  await select.selectOption("1103");
+  await pick(select, "Code review");
   // Dopiero zaznaczenie pola przenosi domyślne zadanie projektu.
   await asDefault.check();
   await expect(card(page, "Analiza importu").locator(".task-ts")).toHaveText(
@@ -236,7 +248,7 @@ test("„Ustaw jako domyślne dla projektu”: mapowanie projektu działa na zad
   await expand(page, "Analiza importu");
   await expect(
     page.getByRole("combobox", { name: "Zadanie TS: Analiza importu" }),
-  ).toHaveValue("");
+  ).toHaveAttribute("data-value", "");
   await expect(
     page.getByRole("region", { name: "Zadanie TS: Analiza importu" }),
   ).toContainText("Domyślnie z projektu „WMS”: Code review");
@@ -986,16 +998,18 @@ test("domyślne zadania TS projektów: dodanie, lista i usunięcie mapowania", a
 
   // Projekty z listy projektów zadań, zadania TS z formularza dnia (dzisiaj).
   const project = panel(page).getByLabel("Projekt", { exact: true });
-  await expect(project.locator("option")).toHaveText([
-    "— wybierz —",
+  await expect(project).toHaveAttribute("placeholder", "— wybierz —");
+  await project.click();
+  await expect(page.getByRole("listbox").getByRole("option")).toHaveText([
     "Foundation",
     "WMS",
     "Zespół",
   ]);
+  await project.press("Escape");
   const add = panel(page).getByRole("button", { name: "Dodaj mapowanie" });
   await expect(add).toBeDisabled();
-  await project.selectOption("WMS");
-  await panel(page).getByLabel("Domyślne zadanie TS").selectOption({ label: "Code review" });
+  await pick(project, "WMS");
+  await pick(panel(page).getByLabel("Domyślne zadanie TS"), "Code review");
   await add.click();
   await expect(table.locator("tbody tr")).toHaveText([
     /WMS\s*WMS → Code review\s*Usuń/,
@@ -1076,10 +1090,8 @@ test("pełna ścieżka: Ustawienia → mapowanie projektu → Zamknięcie dnia �
   await expect(panel(page).getByText("Połączono jako jan", { exact: true })).toBeVisible();
 
   // 2. Domyślne zadanie TS projektu „Zespół” → „Spotkania”.
-  await panel(page).getByLabel("Projekt", { exact: true }).selectOption("Zespół");
-  await panel(page)
-    .getByLabel("Domyślne zadanie TS")
-    .selectOption({ label: "Spotkania" });
+  await pick(panel(page).getByLabel("Projekt", { exact: true }), "Zespół");
+  await pick(panel(page).getByLabel("Domyślne zadanie TS"), "Spotkania");
   await panel(page).getByRole("button", { name: "Dodaj mapowanie" }).click();
   await expect(
     panel(page)

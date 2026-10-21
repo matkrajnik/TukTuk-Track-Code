@@ -1,4 +1,5 @@
 ﻿import { test, expect, type Page } from "@playwright/test";
+import { optionLabels, pick } from "./fixtures/searchSelect";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 const add = async (page: Page, title: string) => {
@@ -226,8 +227,8 @@ test("dark theme persists, compact cards show intervals only when expanded", asy
     .getByRole("button", { name: "Przedziały: Projekt strony", exact: true })
     .click();
   await expect(page.locator(".session-row")).toHaveCount(3);
-  await expect(page.locator(".session-row").last()).toContainText("23:00:00");
-  await expect(page.locator(".session-row").last()).toContainText("01:00:00");
+  await expect(page.locator(".session-row").last()).toContainText("23:00");
+  await expect(page.locator(".session-row").last()).toContainText("01:00");
   await page.screenshot({
     path: "test-results/tasks-dark.png",
     fullPage: true,
@@ -444,9 +445,10 @@ test("splitting onto an archived task takes it out of the archive", async ({
   await page.reload();
   await page.getByRole("button", { name: "Podziel bieżący pomiar" }).click();
   await page.getByLabel("Moment podziału").fill("2026-10-12T11:50");
-  await page.getByLabel("Zadanie drugiej części").selectOption({
-    label: "Stary projekt (archiwum)",
-  });
+  await pick(
+    page.getByLabel("Zadanie drugiej części"),
+    "Stary projekt (archiwum)",
+  );
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Podziel przedział" })
@@ -481,12 +483,10 @@ test("splitting the active measurement from the bar keeps the timer on the new t
     dialog.getByRole("button", { name: "Podziel przedział" }),
   ).toBeDisabled();
   await page.getByLabel("Moment podziału").fill("2026-10-12T11:50");
-  await page.getByLabel("Zadanie drugiej części").selectOption({
-    label: "Przegląd kodu",
-  });
-  await expect(page.getByLabel("Zadanie drugiej części")).not.toContainText(
-    "Spotkanie zespołu",
-  );
+  await pick(page.getByLabel("Zadanie drugiej części"), "Przegląd kodu");
+  expect(
+    await optionLabels(page.getByLabel("Zadanie drugiej części")),
+  ).not.toContain("Spotkanie zespołu");
   const preview = page.getByLabel("Podgląd podziału").locator("li");
   await expect(preview.nth(0)).toContainText("Projekt strony");
   await expect(preview.nth(0)).toContainText("00:05:00");

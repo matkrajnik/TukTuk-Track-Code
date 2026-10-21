@@ -1,8 +1,11 @@
 <script setup lang="ts">
-/** „Przedziały pracy” w rozwiniętym kafelku: lista z czasem i edycją. */
+/**
+ * „Przedziały pracy” w rozwiniętym kafelku: lista z czasem i edycją. Godziny
+ * bez sekund, data po prawej tylko przy przedziale przez północ (B1).
+ */
 import { Pencil } from "lucide-vue-next";
 import { duration, type Session } from "../../store";
-import { stamp } from "../../time";
+import { intervalText } from "../../time";
 
 const props = defineProps<{
   /** Przedziały zadania, od najnowszego. */
@@ -14,6 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{ session: [session: Session] }>();
 const elapsed = (s: Session) =>
   Math.max(0, (s.endedAt ?? props.now) - s.startedAt);
+const text = (s: Session) => intervalText(s.startedAt, s.endedAt);
 </script>
 
 <template>
@@ -21,13 +25,13 @@ const elapsed = (s: Session) =>
   <div v-for="session in sessions" :key="session.id" class="session-row">
     <div class="interval">
       <time :datetime="new Date(session.startedAt).toISOString()">{{
-        stamp(session.startedAt)
+        text(session)[0]
       }}</time
       ><span class="interval-arrow">→</span
       ><time
         v-if="session.endedAt !== null"
         :datetime="new Date(session.endedAt).toISOString()"
-        >{{ stamp(session.endedAt) }}</time
+        >{{ text(session)[1] }}</time
       ><span v-else class="running-label">W trakcie</span>
     </div>
     <span class="mono session-duration">{{

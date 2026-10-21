@@ -413,6 +413,16 @@ function applyFields(
   return s;
 }
 
+/**
+ * Walidacja zmiany w kliencie przed zapisem (B1): każde pole osobno na tle
+ * wartości domyślnych, jak `applyFields` przy wczytywaniu. Puste pole liczbowe
+ * (NaN) daje komunikat o zakresie pola zamiast ogólnego błędu z Rust
+ * („Niepoprawna wartość ustawienia.”, bo NaN przechodzi przez JSON jako null).
+ */
+export function checkSettingsPatch(patch: Partial<AppSettings>): void {
+  applyFields(fresh(), patch);
+}
+
 /** Ta sama walidacja co w Rust; zwraca nowe ustawienia albo rzuca błąd po polsku. */
 export function applySettings(
   current: AppSettings,

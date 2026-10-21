@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { Plus, Trash2 } from "lucide-vue-next";
 import { detailsOf, saveDetails, type Task, type Snapshot } from "./store";
 import { correctionTitle, usuallyText, type CorrectionOf } from "./estimates";
 import { dayKey } from "./time";
@@ -8,6 +9,7 @@ import {
   isRecurring,
   ruleText,
   ruleUsesWeekdays,
+  type RepeatKind,
   type RepeatRule,
 } from "./recurrence";
 const props = withDefaults(
@@ -66,6 +68,33 @@ function ruleKindChanged() {
     if (!r.weekday) r.weekday = 1;
   }
 }
+/**
+ * Pole „Cykl” (B1): „Bez cyklu” (`none`) to reguła tygodniowa bez dni; pozostałe
+ * wartości to rodzaje reguły (`""` = w wybrane dni tygodnia). Wybór „W wybrane
+ * dni tygodnia” przed zaznaczeniem dni pamięta `weekdaysChosen`, żeby
+ * parametry cyklu nie znikały.
+ */
+const weekdaysChosen = ref(false);
+const cycle = computed<RepeatKind | "none">({
+  get: () =>
+    rule.value.kind === "" &&
+    !draft.value.repeatDays.length &&
+    !weekdaysChosen.value
+      ? "none"
+      : rule.value.kind,
+  set: (value) => {
+    if (!draft.value.repeatRule) draft.value.repeatRule = emptyRule();
+    const r = draft.value.repeatRule;
+    weekdaysChosen.value = value === "";
+    if (value === "none") {
+      r.kind = "";
+      draft.value.repeatDays = [];
+      return;
+    }
+    r.kind = value;
+    ruleKindChanged();
+  },
+});
 watch(
   () => props.task.details?.priority,
   (value) => {
@@ -127,7 +156,10 @@ watch(
 watch(
   () => props.task.details,
   () => {
-    if (!dirty.value) draft.value = structuredClone(detailsOf(props.task));
+    if (!dirty.value) {
+      draft.value = structuredClone(detailsOf(props.task));
+      weekdaysChosen.value = false;
+    }
   },
 );
 async function save() {
@@ -136,6 +168,7 @@ async function save() {
   try {
     const result = await saveDetails(props.task.id, draft.value);
     dirty.value = false;
+    weekdaysChosen.value = false;
     draft.value = structuredClone(
       detailsOf(result.tasks.find((t) => t.id === props.task.id)!),
     );
@@ -202,9 +235,6 @@ async function save() {
           step="60"
           title="Opcjonalnie. Bez godziny blok planu układa się za poprzednim."
       /></label>
-      <label
-        >Początek cyklu<input v-model="draft.repeatFrom" type="date"
-      /></label>
     </div>
     <p
       v-if="usual.text"
@@ -216,11 +246,8 @@ async function save() {
     </p>
     <div class="planning-fields repeat-rule">
       <label
-        >Cykl<select
-          v-model="rule.kind"
-          aria-label="Rodzaj cyklu"
-          @change="ruleKindChanged"
-        >
+        >Cykl<select v-model="cycle" aria-label="Rodzaj cyklu">
+          <option value="none">Bez cyklu</option>
           <option value="">W wybrane dni tygodnia</option>
           <option value="weeks">Co N tygodni</option>
           <option value="monthDay">Miesięcznie w dniu</option>
@@ -228,6 +255,9 @@ async function save() {
           <option value="nthWeekday">N-ty dzień tygodnia w miesiącu</option>
         </select></label
       >
+      <label v-if="cycle !== 'none'"
+        >Początek cyklu<input v-model="draft.repeatFrom" type="date"
+      /></label>
       <label v-if="rule.kind === 'weeks'"
         >Co ile tygodni<input
           v-model.number="rule.interval"
@@ -271,7 +301,10 @@ async function save() {
         >
       </template>
     </div>
-    <fieldset v-if="ruleUsesWeekdays(rule.kind)" class="repeat-options">
+    <fieldset
+      v-if="cycle !== 'none' && ruleUsesWeekdays(rule.kind)"
+      class="repeat-options"
+    >
       <legend>Powtarzaj w wybrane dni</legend>
       <label v-for="(name, index) in weekdays" :key="name" class="inline-check"
         ><input
@@ -284,8 +317,8 @@ async function save() {
     <p v-if="isRecurring(draft)" class="hint">
       Każda data tworzy osobne zadanie ({{ ruleText(draft) }}). Kopie mają
       wyzerowaną checklistę. Po przerwie uzupełniane są maksymalnie ostatnie 366
-      dni. Aby wyłączyć cykl, wybierz „W wybrane dni tygodnia” i odznacz dni;
-      archiwizacja też go wstrzymuje.
+      dni. Aby wyłączyć cykl, wybierz „Bez cyklu”; archiwizacja też go
+      wstrzymuje.
     </p>
     <div class="task-checklist">
       <h3>Lista kroków</h3>
@@ -313,7 +346,7 @@ async function save() {
             dirty = true;
           "
         >
-          Usuń
+          <Trash2 :size="14" />Usuń
         </button>
       </div>
       <div class="checklist-add">
@@ -329,7 +362,7 @@ async function save() {
           :disabled="!newCheck.trim() || draft.checklist.length >= 100"
           @click="addCheck"
         >
-          Dodaj krok
+          <Plus :size="14" />Dodaj krok
         </button>
       </div>
     </div>

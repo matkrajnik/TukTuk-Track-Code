@@ -5,6 +5,7 @@
  * informacja z linkiem do Ustawień → Szablony.
  */
 import { nextTick, ref, watch } from "vue";
+import { X } from "lucide-vue-next";
 import { saveTemplate, templateFromTask, type Task } from "../../store";
 import { openSettings } from "../../navigation";
 
@@ -61,7 +62,7 @@ async function save() {
       Zapisz szablon
     </button>
     <button type="button" class="action-button" @click="open = false">
-      Anuluj
+      <X :size="14" />Anuluj
     </button>
   </form>
   <p v-if="saved" class="hint template-saved" role="status">

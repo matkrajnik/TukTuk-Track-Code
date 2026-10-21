@@ -7,7 +7,16 @@
  * i błąd; tu zostaje odczyt listy i tablicy.
  */
 import { computed, onMounted, ref, watch } from "vue";
-import { Columns3, List, Plus, RefreshCw, Search, Settings2 } from "lucide-vue-next";
+import {
+  Columns3,
+  List,
+  ListChecks,
+  Plus,
+  RefreshCw,
+  Search,
+  Settings2,
+} from "lucide-vue-next";
+import SearchSelect from "./components/SearchSelect.vue";
 import {
   desktop,
   jiraAccount,
@@ -351,7 +360,7 @@ onMounted(async () => {
           :disabled="busy"
           @click="chooseBoards"
         >
-          Wybierz tablice
+          <ListChecks :size="15" />Wybierz tablice
         </button>
       </div>
       <JiraBoardPicker
@@ -417,23 +426,19 @@ onMounted(async () => {
         class="jira-board-toolbar"
       >
         <label class="check-label"
-          >Tablica<select
-            :value="boardId ?? settings.config.boards[0]?.id"
-            aria-label="Tablica Jiry"
+          >Tablica<SearchSelect
+            class="toolbar-select"
+            :model-value="boardId ?? settings.config.boards[0]?.id"
+            label="Tablica Jiry"
+            :options="
+              settings.config.boards.map((b) => ({ value: b.id, label: b.name }))
+            "
             :disabled="busy"
             @change="
-              boardId = Number(($event.target as HTMLSelectElement).value);
+              boardId = $event;
               run(() => fetchBoard());
             "
-          >
-            <option
-              v-for="b in settings.config.boards"
-              :key="b.id"
-              :value="b.id"
-            >
-              {{ b.name }}
-            </option>
-          </select></label
+        /></label
         >
         <div class="jira-mode" role="group" aria-label="Zakres tablicy">
           <button

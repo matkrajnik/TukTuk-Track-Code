@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { Plug, RefreshCw, Unplug, X } from "lucide-vue-next";
 import {
   calendarConnect,
   calendarDisconnect,
@@ -117,15 +118,17 @@ onUnmounted(() => {
   <div class="planning-actions">
     <template v-if="status.connected">
       <button class="action-button" :disabled="busy" @click="refresh">
-        Odśwież
+        <RefreshCw :size="14" />Odśwież
       </button>
       <button class="today-button" :disabled="busy" @click="disconnect">
-        Rozłącz
+        <Unplug :size="14" />Rozłącz
       </button>
     </template>
     <template v-else-if="connecting || status.connecting">
       <span class="hint">Czekam na logowanie w przeglądarce (do 5 minut)…</span>
-      <button class="today-button" @click="disconnect">Anuluj</button>
+      <button class="today-button" @click="disconnect">
+        <X :size="14" />Anuluj
+      </button>
     </template>
     <button
       v-else
@@ -133,7 +136,7 @@ onUnmounted(() => {
       :disabled="busy"
       @click="connect"
     >
-      Połącz konto Microsoft
+      <Plug :size="14" />Połącz konto Microsoft
     </button>
   </div>
   <template v-if="status.connected">

@@ -6,6 +6,7 @@
  */
 import { computed, onMounted, ref } from "vue";
 import { ExternalLink } from "lucide-vue-next";
+import SearchSelect from "../SearchSelect.vue";
 import {
   jiraCreate,
   jiraIssueTypeFields,
@@ -103,16 +104,18 @@ const submit = () =>
     <h2>Nowe zgłoszenie</h2>
     <div class="jira-create-fields">
       <label
-        >Projekt<select
+        >Projekt<SearchSelect
           v-model="form.project"
-          aria-label="Projekt"
+          label="Projekt"
+          :options="
+            projects.map((p) => ({
+              value: p.key,
+              label: `${p.key} (${p.boards.join(', ')})`,
+            }))
+          "
           :disabled="busy"
           @change="run(loadTypes)"
-        >
-          <option v-for="p in projects" :key="p.key" :value="p.key">
-            {{ p.key }} ({{ p.boards.join(", ") }})
-          </option>
-        </select></label
+      /></label
       ><label
         >Typ<select
           v-model="form.issueTypeId"

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** Ustawienia → Czas pracy: bezczynność, propozycje, cel i dni robocze. */
 import { computed } from "vue";
+import { BellRing } from "lucide-vue-next";
 import BrowserExtensionStatus from "../BrowserExtensionStatus.vue";
 import type { AppSettings } from "../../settings";
 import { hm } from "../../time";
@@ -91,7 +92,7 @@ function toggleDay(day: number, on: boolean) {
       <li v-for="folder in settings.agentMutedFolders" :key="folder">
         <code class="mono">{{ folder }}</code
         ><button
-          class="text-link"
+          class="action-button"
           :disabled="busy"
           :aria-label="`Proponuj znowu dla ${folder}`"
           @click="
@@ -102,7 +103,7 @@ function toggleDay(day: number, on: boolean) {
             })
           "
         >
-          Proponuj znowu
+          <BellRing :size="14" />Proponuj znowu
         </button>
       </li>
     </ul>

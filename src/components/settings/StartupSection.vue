@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** Ustawienia → Uruchamianie: autostart z Windows i aktualizacje. */
 import { onMounted, onUnmounted, ref } from "vue";
+import { RefreshCw } from "lucide-vue-next";
 import { checkForUpdate } from "../../updater";
 import type { AppSettings } from "../../settings";
 import { readAutostart, writeAutostart, type Autostart } from "../../store";
@@ -105,7 +106,9 @@ onUnmounted(() => {
       :disabled="updateBusy"
       @click="checkNow"
     >
-      {{ updateBusy ? "Sprawdzanie…" : "Sprawdź teraz" }}
+      <RefreshCw :size="14" />{{
+        updateBusy ? "Sprawdzanie…" : "Sprawdź teraz"
+      }}
     </button>
   </div>
   <p v-if="updateMessage" class="hint" role="status">

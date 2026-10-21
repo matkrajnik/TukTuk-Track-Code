@@ -1,6 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
-import { ChevronLeft, ChevronRight } from "lucide-vue-next";
+import {
+  CalendarArrowUp,
+  CalendarPlus,
+  CalendarX,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  Pencil,
+  Play,
+  Plus,
+  Scissors,
+  Square,
+} from "lucide-vue-next";
+import SearchSelect from "./components/SearchSelect.vue";
 import {
   change,
   detailsOf,
@@ -370,13 +383,14 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           plan(taskMap.get(selectedTask)!, day)
         "
       >
-        <select v-model.number="selectedTask" aria-label="Zadanie do planu">
-          <option :value="0">Wybierz zadanie</option>
-          <option v-for="task in unplanned" :key="task.id" :value="task.id">
-            {{ task.title }}
-          </option></select
-        ><button class="secondary-button" :disabled="busy || !selectedTask">
-          Dodaj do planu
+        <SearchSelect
+          v-model="selectedTask"
+          class="plan-task-select"
+          label="Zadanie do planu"
+          placeholder="Wybierz zadanie"
+          :options="unplanned.map((t) => ({ value: t.id, label: t.title }))"
+        /><button class="secondary-button" :disabled="busy || !selectedTask">
+          <Plus :size="14" />Dodaj do planu
         </button>
       </form>
       <p v-if="!planned.length" class="report-note">
@@ -428,26 +442,28 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
               )
             "
           >
-            {{
-              data.sessions.some(
-                (s) => s.taskId === task.id && s.endedAt === null,
-              )
-                ? "Stop"
-                : "Start"
-            }}</button
+            <template
+              v-if="
+                data.sessions.some(
+                  (s) => s.taskId === task.id && s.endedAt === null,
+                )
+              "
+              ><Square :size="12" />Stop</template
+            ><template v-else><Play :size="12" />Start</template></button
           ><button
             v-if="!task.done"
             class="today-button"
             :disabled="busy"
             @click="plan(task, nextDay())"
           >
-            Przełóż na {{ dayText(nextDay()) }}</button
+            <CalendarArrowUp :size="14" />Przełóż na
+            {{ dayText(nextDay()) }}</button
           ><button
             class="today-button"
             :disabled="busy"
             @click="plan(task, '')"
           >
-            Usuń z planu
+            <CalendarX :size="14" />Usuń z planu
           </button>
         </div>
         <TaskPlanning
@@ -473,7 +489,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             :disabled="busy"
             @click="plan(task, day)"
           >
-            Przenieś na ten dzień
+            <CalendarPlus :size="14" />Przenieś na ten dzień
           </button>
         </div>
       </details>
@@ -500,7 +516,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
           {{ duration(intervals.reduce((sum, i) => sum + i.end - i.start, 0)) }}
         </h2>
         <button class="today-button" @click="emit('report', day)">
-          Raport dzienny / TS
+          <FileText :size="14" />Raport dzienny / TS
         </button>
       </div>
       <ManualTime
@@ -542,14 +558,14 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             "
             @click="emit('edit', item.session)"
           >
-            Edytuj</button
+            <Pencil :size="14" />Edytuj</button
           ><button
             v-if="item.session"
             class="today-button"
             :aria-label="'Podziel przedział ' + item.session.id"
             @click="emit('split', item.session)"
           >
-            Podziel
+            <Scissors :size="14" />Podziel
           </button></span
         >
       </div>

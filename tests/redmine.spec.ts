@@ -25,6 +25,7 @@ import {
 } from "./fixtures/seed";
 import { openSettings } from "./fixtures/settings";
 import { backend, openDesktop } from "./fixtures/tauri";
+import { pick } from "./fixtures/searchSelect";
 
 /**
  * Redmine obok Jiry (PLAN_1.9.md): wszystkie scenariusze e2e w jednym pliku,
@@ -567,8 +568,8 @@ test.describe("R3 — widok Redmine", () => {
     });
     await openRedmine(page);
     const select = page.getByLabel("Projekt Redmine");
-    await expect(select).toHaveValue("7");
-    await select.selectOption({ label: "Portal klienta" });
+    await expect(select).toHaveAttribute("data-value", "7");
+    await pick(select, "Portal klienta");
     await expect(numbers(page, "New")).toHaveText(["#1270"]);
     // Wszystkie moje zgłoszenia są w śledzonych projektach.
     await expect(
@@ -578,7 +579,10 @@ test.describe("R3 — widok Redmine", () => {
     ).toBeVisible();
     await page.reload();
     await openRedmine(page);
-    await expect(page.getByLabel("Projekt Redmine")).toHaveValue("9");
+    await expect(page.getByLabel("Projekt Redmine")).toHaveAttribute(
+      "data-value",
+      "9",
+    );
   });
 
   test("without tracked projects the view lists my issues from all projects", async ({

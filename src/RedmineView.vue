@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ChevronDown, ChevronRight, RefreshCw, Search } from "lucide-vue-next";
+import SearchSelect from "./components/SearchSelect.vue";
 import {
   desktop,
   read,
@@ -428,18 +429,14 @@ onUnmounted(() => {
           </button>
         </div>
         <label v-else class="check-label"
-          >Projekt<select
-            :value="projectId ?? projects[0]?.id"
-            aria-label="Projekt Redmine"
+          >Projekt<SearchSelect
+            class="toolbar-select"
+            :model-value="projectId ?? projects[0]?.id"
+            label="Projekt Redmine"
+            :options="projects.map((p) => ({ value: p.id, label: p.name }))"
             :disabled="busy"
-            @change="
-              selectProject(Number(($event.target as HTMLSelectElement).value))
-            "
-          >
-            <option v-for="p in projects" :key="p.id" :value="p.id">
-              {{ p.name }}
-            </option>
-          </select></label
+            @change="selectProject"
+        /></label
         >
         <div class="jira-mode" role="group" aria-label="Zakres zgłoszeń">
           <button

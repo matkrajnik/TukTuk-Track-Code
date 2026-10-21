@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import {
+  Download,
+  Plug,
+  PlugZap,
+  Plus,
+  Trash2,
+  Unplug,
+} from "lucide-vue-next";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import {
   redmineAccount,
@@ -369,14 +377,14 @@ onUnmounted(() => {
       :disabled="busy || !site.trim() || !apiKey"
       @click="connect"
     >
-      Połącz
+      <Plug :size="14" />Połącz
     </button>
     <template v-if="account.connected">
       <button class="today-button" :disabled="busy" @click="testConnection">
-        Testuj połączenie
+        <PlugZap :size="14" />Testuj połączenie
       </button>
       <button class="today-button" :disabled="busy" @click="openConfirm">
-        Rozłącz
+        <Unplug :size="14" />Rozłącz
       </button>
     </template>
   </div>
@@ -395,12 +403,12 @@ onUnmounted(() => {
       <span>{{ p.name }}</span>
       <small v-if="p.identifier" class="mono">{{ p.identifier }}</small>
       <button
-        class="text-link"
+        class="action-button"
         :aria-label="`Usuń projekt ${p.name}`"
         :disabled="projectsBusy"
         @click="removeProject(p.id)"
       >
-        Usuń
+        <Trash2 :size="14" />Usuń
       </button>
     </li>
   </ul>
@@ -415,7 +423,9 @@ onUnmounted(() => {
       :aria-expanded="picking"
       @click="openPicker"
     >
-      {{ picking ? "Zwiń listę projektów" : "Dodaj projekt…" }}
+      <Plus v-if="!picking" :size="14" />{{
+        picking ? "Zwiń listę projektów" : "Dodaj projekt…"
+      }}
     </button>
   </div>
   <p v-if="!account.connected" class="hint">
@@ -542,7 +552,9 @@ onUnmounted(() => {
         :aria-expanded="statuses.length > 0"
         @click="loadStatuses"
       >
-        {{ statuses.length ? "Zwiń statusy z Redmine" : "Wstaw statusy z Redmine" }}
+        <Download v-if="!statuses.length" :size="14" />{{
+          statuses.length ? "Zwiń statusy z Redmine" : "Wstaw statusy z Redmine"
+        }}
       </button>
     </div>
     <p v-if="statusesError" class="error" role="alert">{{ statusesError }}</p>
