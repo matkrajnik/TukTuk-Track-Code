@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { Coffee, Timer } from "lucide-vue-next";
 import { countdown, focusAction, useFocus, type FocusAction } from "../focus";
 import { read, type Snapshot } from "../store";
+import { clock } from "../time";
 
 /**
  * Baner trybu skupienia (wzór: baner bezczynności): po ukończonym bloku
@@ -16,11 +17,6 @@ const emit = defineEmits<{
 }>();
 const focus = useFocus();
 const busy = ref(false);
-const time = (ms: number) =>
-  new Intl.DateTimeFormat("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(ms);
 const minutes = computed(() => {
   const b = focus.value.ended;
   return b ? Math.round((b.end - b.start) / 60_000) : 0;
@@ -75,7 +71,7 @@ async function run(action: FocusAction) {
       }}</span>
     </h2>
     <p>
-      Do {{ time(focus.pause.until) }}.
+      Do {{ clock(focus.pause.until) }}.
       {{
         focus.pause.stops
           ? "Pomiar zatrzymany."

@@ -1,5 +1,6 @@
 import type { Snapshot, Task, TsProject, TsProjectMapping } from "./store";
 import { byTotal, dayRows, decimalHours } from "./report";
+import { plural } from "./time";
 
 /**
  * Wysyłka Raportu TS do Ideo Timesheet (PLAN_1.8.md): czyste funkcje bez
@@ -213,11 +214,6 @@ export function tsCheckSaved(
   };
 }
 
-/** Polska liczba mnoga: `plural(5, "wpis", "wpisy", "wpisów")` → „5 wpisów”. */
-export function tsPlural(n: number, one: string, few: string, many: string) {
-  const d = n % 10,
-    t = n % 100;
-  const word =
-    n === 1 ? one : d >= 2 && d <= 4 && (t < 12 || t > 14) ? few : many;
-  return `${n} ${word}`;
-}
+/** Liczba ze słowem: `tsPlural(5, "wpis", "wpisy", "wpisów")` → „5 wpisów”. */
+export const tsPlural = (n: number, one: string, few: string, many: string) =>
+  `${n} ${plural(n, one, few, many)}`;

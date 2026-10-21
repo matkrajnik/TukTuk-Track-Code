@@ -54,6 +54,7 @@ import {
   type Task,
 } from "./store";
 import { issueRef } from "./issue";
+import { clock, plural } from "./time";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -111,7 +112,7 @@ const proposals = computed(() =>
 const proposalName = (s: Suggestion) => s.task.title || s.task.key || "";
 /** „2 zadania”, „5 zadań” (jak `notify::tasks_word`). */
 const tasksWord = (n: number) =>
-  `${n} ${n % 10 >= 2 && n % 10 <= 4 && !(n % 100 >= 12 && n % 100 <= 14) ? "zadania" : "zadań"}`;
+  `${n} ${plural(n, "zadanie", "zadania", "zadań")}`;
 /** Linia propozycji: jedno zadanie z nazwy, kilka jako liczba. */
 const proposalLine = computed(() =>
   proposals.value.length === 1
@@ -181,16 +182,11 @@ async function useMovePrompt() {
 }
 /** Tryb skupienia: odliczanie bloku zamiast zegara pomiaru, przerwa i pytania. */
 const focus = useFocus();
-const hhmm = (ms: number) =>
-  new Date(ms).toLocaleTimeString("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 const focusLine = computed(() => {
   const f = focus.value;
-  if (f.block) return `Skupienie do ${hhmm(f.block.end)}`;
+  if (f.block) return `Skupienie do ${clock(f.block.end)}`;
   if (f.ended) return "Koniec bloku: przerwa czy kolejny?";
-  if (f.pause) return `Przerwa do ${hhmm(f.pause.until)}`;
+  if (f.pause) return `Przerwa do ${clock(f.pause.until)}`;
   if (f.resume) return `Wracasz do: ${f.resume.title}?`;
   return "";
 });

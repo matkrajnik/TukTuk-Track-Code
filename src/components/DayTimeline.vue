@@ -12,7 +12,7 @@ import {
 import { meetingSpans } from "../capacity";
 import { corrections, plannedMs } from "../estimates";
 import { hhmm, signedDiff, targetDiffMinutes, useSettings } from "../target";
-import { dayBounds, dayKey } from "../time";
+import { clock, dayBounds, dayKey } from "../time";
 import { useMeetings } from "../composables/useMeetings";
 import { useAgentTime } from "../composables/useAgentTime";
 import { agentName } from "../agenttime";
@@ -111,11 +111,6 @@ const pct = (at: number) => {
 };
 const width = (start: number, end: number) =>
   Math.max(0.4, pct(end) - pct(start));
-const clock = (at: number) =>
-  new Intl.DateTimeFormat("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(at);
 const span = (start: number, end: number) => `${clock(start)}–${clock(end)}`;
 const showNow = computed(
   () =>

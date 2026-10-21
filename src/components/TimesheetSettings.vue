@@ -13,7 +13,7 @@ import {
   type TsProject,
   type TsSettings,
 } from "../store";
-import { dayKey } from "../time";
+import { dayKey, plural } from "../time";
 import { findTsTask } from "../timesheet";
 import {
   loadTsProjectMap,
@@ -50,14 +50,6 @@ const newTask = ref("");
 const mapBusy = ref(false);
 const mapError = ref("");
 
-/** „1 zadanie”, „3 zadania”, „5 zadań” (forms: 1, 2–4, reszta). */
-function plural(n: number, forms: [string, string, string]) {
-  const tens = n % 100;
-  const ones = n % 10;
-  if (n === 1) return forms[0];
-  if (ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)) return forms[1];
-  return forms[2];
-}
 const message = (e: unknown) => String(e instanceof Error ? e.message : e);
 
 async function loadTsList(refresh = false) {
@@ -108,7 +100,7 @@ async function testConnection() {
   try {
     const list = await tsTasks(dayKey(Date.now()));
     const tasks = list.reduce((sum, p) => sum + p.tasks.length, 0);
-    notice.value = `Połączono: ${tasks} ${plural(tasks, ["zadanie", "zadania", "zadań"])} w ${list.length} ${plural(list.length, ["projekcie", "projektach", "projektach"])}.`;
+    notice.value = `Połączono: ${tasks} ${plural(tasks, "zadanie", "zadania", "zadań")} w ${list.length} ${plural(list.length, "projekcie", "projektach", "projektach")}.`;
     tsProjects.value = list;
     tsListError.value = "";
   } catch (e) {

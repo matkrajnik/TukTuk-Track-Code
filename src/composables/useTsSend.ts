@@ -14,6 +14,7 @@ import {
   type TsSettings,
 } from "../store";
 import { useSettings } from "../target";
+import { clock } from "../time";
 
 /**
  * Stan przycisku „Wyślij do TS” i znacznika wysyłki dnia (PLAN_1.8.md, T3):
@@ -52,10 +53,10 @@ export function rememberSentReport(day: string, hours: string) {
   }
 }
 
-const clock = (at: number) => {
+const sentClock = (at: number) => {
   const d = new Date(at);
   const two = (n: number) => String(n).padStart(2, "0");
-  return `${two(d.getDate())}.${two(d.getMonth() + 1)} ${two(d.getHours())}:${two(d.getMinutes())}`;
+  return `${two(d.getDate())}.${two(d.getMonth() + 1)} ${clock(at)}`;
 };
 
 export function useTsSend(day: () => string, reportHours: () => string) {
@@ -102,7 +103,7 @@ export function useTsSend(day: () => string, reportHours: () => string) {
   /** „Wysłano do TS 19.10 17:02 (7,50 h)”. */
   const marker = computed(() =>
     sent.value
-      ? `Wysłano do TS ${clock(sent.value.sentAt)} (${sent.value.hours} h)`
+      ? `Wysłano do TS ${sentClock(sent.value.sentAt)} (${sent.value.hours} h)`
       : "",
   );
   /** Suma wpisów raportu różni się od wysłanej (znanej tylko lokalnie). */

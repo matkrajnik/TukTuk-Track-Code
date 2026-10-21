@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { desktop, type Snapshot, type Task } from "../store";
 import type { AgentTask } from "../agents";
+import { clock } from "../time";
 
 defineProps<{ tasks: Task[] }>();
 const emit = defineEmits<{
@@ -62,17 +63,13 @@ onUnmounted(() => unlisten?.());
     <p>
       {{ tasks.find((t) => t.id === idleNotice?.taskId)?.title }} · brak
       aktywności od
-      {{ new Date(idleNotice.idleAt).toLocaleTimeString("pl-PL") }}. Czy cały
+      {{ clock(idleNotice.idleAt, true) }}. Czy cały
       ten czas był pracą?
     </p>
     <p v-if="idleNotice.agentTasks?.length" class="hint">
       W tym czasie agent AI pracował nad innym zadaniem. Przerwę możesz
       przypisać do niego: pomiar zostanie podzielony o
-      {{
-        new Date(idleNotice.awaySince ?? idleNotice.idleAt).toLocaleTimeString(
-          "pl-PL",
-        )
-      }}
+      {{ clock(idleNotice.awaySince ?? idleNotice.idleAt, true) }}
       (ostatnia aktywność przy komputerze).
     </p>
     <div class="planning-actions">

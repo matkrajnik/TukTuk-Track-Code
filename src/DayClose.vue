@@ -10,7 +10,7 @@ import {
   meetingTitle,
   type Snapshot,
 } from "./store";
-import { dayBounds, dayKey, dayText, inDay } from "./time";
+import { clock, dayBounds, dayKey, dayText, inDay } from "./time";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 import { copyReport } from "./clipboard";
 import { dayGoal } from "./capacity";
@@ -71,11 +71,6 @@ const target = computed(() =>
     props.now,
   ),
 );
-const meetingClock = (at: number) =>
-  new Intl.DateTimeFormat("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(at);
 /**
  * Spotkania dnia, które zajmują czas (bez całodniowych). Przy każdym albo
  * „Dodaj jako czas”, albo ostrzeżenie o nakładaniu na pomiar (także w koszu
@@ -89,7 +84,7 @@ const meetings = computed(() => {
     .map((e) => ({
       event: e,
       title: meetingTitle(e, settings.value.calendarShowTitles),
-      time: `${meetingClock(e.start)}–${meetingClock(e.end)}`,
+      time: `${clock(e.start)}–${clock(e.end)}`,
       overlaps: all.some(
         (s) => s.startedAt < e.end && (s.endedAt === null || s.endedAt > e.start),
       ),
@@ -251,8 +246,8 @@ async function move() {
     </button>
     <h3>Przerwy między zapisanymi przedziałami</h3>
     <p v-for="gap in gaps" :key="gap[0]">
-      {{ new Date(gap[0]).toLocaleTimeString("pl-PL") }} –
-      {{ new Date(gap[1]).toLocaleTimeString("pl-PL") }} ·
+      {{ clock(gap[0], true) }} –
+      {{ clock(gap[1], true) }} ·
       {{ duration(gap[1] - gap[0]) }}
     </p>
     <p class="hint">

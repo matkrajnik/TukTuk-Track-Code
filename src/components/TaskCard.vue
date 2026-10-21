@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue";
+/**
+ * Kafelek zadania na liście: wiersz z akcjami i rozwinięte szczegóły. Części
+ * w `components/task/`: tytuł i chipy (`TaskSummary`), propozycja „Czekam na”
+ * (`TaskWaitingProposal`), zmiany zgłoszenia (`useIssueMoves`,
+ * `TaskIssueMoves`), szablon z zadania (`TaskTemplateForm`) i przedziały
+ * (`TaskSessions`).
+ */
+import { computed, ref } from "vue";
 import {
   Archive,
   ArrowRightCircle,
@@ -14,45 +21,33 @@ import {
   Square,
   Trash2,
 } from "lucide-vue-next";
-import { invoke } from "@tauri-apps/api/core";
 import TaskPlanning from "../TaskPlanning.vue";
 import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
 import JiraIssueActions from "./JiraIssueActions.vue";
-import JiraFieldChips from "./JiraFieldChips.vue";
 import RedmineIssueActions from "./RedmineIssueActions.vue";
+import TsTaskField from "./TsTaskField.vue";
+import TaskSummary from "./task/TaskSummary.vue";
+import TaskWaitingProposal from "./task/TaskWaitingProposal.vue";
+import TaskIssueMoves from "./task/TaskIssueMoves.vue";
+import TaskTemplateForm from "./task/TaskTemplateForm.vue";
+import TaskSessions from "./task/TaskSessions.vue";
+import { useIssueMoves } from "./task/issueMoves";
 import {
-  desktop,
   duration,
   jiraConnected,
-  jiraTransition,
-  jiraTransitions,
   redmineConnected,
-  redmineOpen,
-  redmineTransition,
-  redmineTransitions,
-  saveTemplate,
-  setJiraNoAsk,
   setPinned,
   setWaiting,
-  templateFromTask,
-  type JiraTransition,
-  type RedmineStatus,
   type WaitingChange,
   type Session,
   type Snapshot,
   type Task,
 } from "../store";
-import { dayText, stamp } from "../time";
-import { hhmm } from "../target";
-import { openSettings } from "../navigation";
-import { estimateMs, overEstimate, percent, type CorrectionOf } from "../estimates";
+import type { CorrectionOf } from "../estimates";
 import { useSettings } from "../target";
-import { waitingAge, waitingProposal } from "../recurrence";
-import { dueChip, issueRef, statusTitle, type IssueRef } from "../issue";
-import TsTaskField from "./TsTaskField.vue";
-import { resolveTsTask } from "../timesheet";
-import { useTsProjectMap } from "../composables/useTsProjectMap";
+import { waitingProposal } from "../recurrence";
+import { issueRef } from "../issue";
 
 const props = defineProps<{
   task: Task;
@@ -81,66 +76,22 @@ const emit = defineEmits<{
   dragstart: [event: DragEvent];
   dragend: [];
 }>();
+const message = (e: unknown) => String(e instanceof Error ? e.message : e);
 
 const elapsed = (s: Session) =>
   Math.max(0, (s.endedAt ?? props.now) - s.startedAt);
 const taskTime = computed(() =>
   props.sessions.reduce((sum, s) => sum + elapsed(s), 0),
 );
-const estimate = computed(() => estimateMs(props.task));
-/** „Dziś 14:00”, „pt., 16 paź” – kiedy zadanie jest zaplanowane. */
-const plannedLabel = computed(() => {
-  const d = props.task.details;
-  if (!d?.plannedDay || props.task.done) return "";
-  const day =
-    d.plannedDay === props.todayKey ? "Dziś" : dayText(d.plannedDay);
-  return d.plannedStart ? `${day} ${d.plannedStart}` : day;
-});
-/** Zadanie TS (jawne albo z domyślnego mapowania projektu) do chipa „TS: …”. */
-const tsMap = useTsProjectMap();
-const tsTask = computed(() => resolveTsTask(props.task, tsMap.value));
-/** „Zapisz jako szablon”: nazwa wpisywana w kafelku, reszta z zadania. */
-const templateName = ref<string | null>(null);
-const templateSaved = ref("");
-const templateBusy = ref(false);
-const templateInput = ref<HTMLInputElement | null>(null);
-async function openTemplateForm() {
-  templateSaved.value = "";
-  templateName.value = "";
-  await nextTick();
-  templateInput.value?.focus();
-}
-async function saveAsTemplate() {
-  const name = templateName.value?.trim() ?? "";
-  if (!name || templateBusy.value) return;
-  templateBusy.value = true;
-  emit("error", "");
-  try {
-    await saveTemplate(null, name, templateFromTask(props.task));
-    templateName.value = null;
-    templateSaved.value = `Zapisano szablon „${name}”. Użyj go, wpisując /${name} w polu „Nowe zadanie”; zmienisz go w`;
-  } catch (e) {
-    emit("error", String(e instanceof Error ? e.message : e));
-  } finally {
-    templateBusy.value = false;
-  }
-}
+/** „Zapisz jako szablon”: formularz pod paskiem akcji. */
+const templateOpen = ref(false);
 /** Zgłoszenie zadania (Jira albo Redmine): klucz, status, link na kafelku. */
 const issue = computed(() => issueRef(props.task));
-/** Chipy Redmine: tracker i termin „DD.MM” (stały zestaw, odpowiednik `JiraFieldChips`). */
-const redmineDue = computed(() =>
-  issue.value?.system === "redmine" ? dueChip(props.task.redmineDue) : "",
-);
 /**
- * „Czekam na”: od kiedy trwa blokada i propozycja ze statusu zgłoszenia
- * (lista statusów czekania zależy od systemu zgłoszenia).
+ * Propozycja „Czekam na” ze statusu zgłoszenia (lista statusów czekania
+ * zależy od systemu zgłoszenia).
  */
 const settings = useSettings();
-const waitingSince = computed(() =>
-  props.task.details?.waiting && !props.task.done
-    ? waitingAge(props.task.details.waitingSince, props.now)
-    : "",
-);
 const proposal = computed(() =>
   waitingProposal(
     props.task,
@@ -157,7 +108,7 @@ async function changeWaiting(change: WaitingChange) {
   try {
     emit("updated", await setWaiting(props.task.id, change));
   } catch (e) {
-    emit("error", String(e instanceof Error ? e.message : e));
+    emit("error", message(e));
   } finally {
     waitingBusy.value = false;
   }
@@ -172,77 +123,22 @@ async function togglePin() {
   try {
     emit("updated", await setPinned(props.task.id, !pinned.value));
   } catch (e) {
-    emit("error", String(e instanceof Error ? e.message : e));
+    emit("error", message(e));
   } finally {
     pinBusy.value = false;
   }
 }
-/** „Przesuń w Jirze…”: lista przejść zgłoszenia (J1); nic nie zmienia się samo. */
-const moveList = ref<JiraTransition[] | null>(null);
-const moveBusy = ref(false);
-/** Błąd Jiry przy kafelku: komunikat z linkiem do zgłoszenia. */
-const moveError = ref("");
-async function jiraRun(action: () => Promise<void>) {
-  if (moveBusy.value) return;
-  moveBusy.value = true;
-  moveError.value = "";
-  try {
-    await action();
-  } catch (e) {
-    moveError.value = String(e instanceof Error ? e.message : e);
-  } finally {
-    moveBusy.value = false;
-  }
-}
-const openMoveList = () =>
-  jiraRun(async () => {
-    moveList.value =
-      moveList.value === null ? await jiraTransitions(props.task.id) : null;
-  });
-const moveTo = (t: JiraTransition) =>
-  jiraRun(async () => {
-    emit("updated", await jiraTransition(props.task.id, t.id));
-    moveList.value = null;
-  });
-const askAgain = () =>
-  jiraRun(async () => emit("updated", await setJiraNoAsk(props.task.id, false)));
-/**
- * „Przesuń w Redmine…” (PLAN_1.9.md, R4): dozwolone statusy zgłoszenia bez
- * bieżącego; status zmienia się tylko po kliknięciu.
- */
-const redmineList = ref<RedmineStatus[] | null>(null);
-const openRedmineList = () =>
-  jiraRun(async () => {
-    redmineList.value =
-      redmineList.value === null ? await redmineTransitions(props.task.id) : null;
-  });
-const redmineMoveTo = (s: RedmineStatus) =>
-  jiraRun(async () => {
-    emit("updated", await redmineTransition(props.task.id, s.id));
-    redmineList.value = null;
-  });
+const moves = useIssueMoves(
+  () => props.task,
+  (data) => emit("updated", data),
+  (text) => emit("error", text),
+);
 /** Zapisy do systemu zgłoszenia zadania włączone (`jiraWrite` / `redmineWrite`). */
 const issueWrite = computed(() =>
   issue.value?.system === "redmine"
     ? settings.value.redmineWrite
     : settings.value.jiraWrite,
 );
-async function openJira(url: string) {
-  try {
-    if (desktop) await invoke("jira_open", { url });
-  } catch (e) {
-    emit("error", String(e));
-  }
-}
-/** „Otwórz w Jirze” / „Otwórz w Redmine”: link tylko pod adresem skonfigurowanego konta. */
-async function openIssue(ref: IssueRef) {
-  if (ref.system === "jira") return openJira(ref.url);
-  try {
-    await redmineOpen(ref.url);
-  } catch (e) {
-    emit("error", String(e));
-  }
-}
 </script>
 
 <template>
@@ -280,88 +176,15 @@ async function openIssue(ref: IssueRef) {
         :aria-controls="'sessions-' + task.id"
         @click="emit('toggle')"
       >
-        <span class="task-name-status">
-          <span class="task-title">{{ task.title }}</span>
-          <span
-            v-if="
-              issue ||
-              task.details?.project ||
-              tsTask ||
-              plannedLabel ||
-              (!task.done && (task.details?.waiting || running))
-            "
-            class="task-meta"
-          >
-            <span v-if="running" class="task-status task-live">W trakcie</span>
-            <span v-if="task.details?.project" class="task-chip">{{
-              task.details.project
-            }}</span>
-            <span
-              v-if="tsTask"
-              class="task-chip task-ts"
-              :title="
-                tsTask.source === 'project'
-                  ? 'Zadanie TS z domyślnego mapowania projektu'
-                  : 'Zadanie TS wybrane dla tego zadania'
-              "
-              >TS: {{ tsTask.name
-              }}<template v-if="tsTask.source === 'project'">
-                (z projektu)</template
-              ></span
-            >
-            <span
-              v-if="plannedLabel"
-              class="task-chip task-planned"
-              :class="{ today: task.details?.plannedDay === todayKey }"
-              :title="'Zaplanowane: ' + task.details?.plannedDay"
-              >{{ plannedLabel }}</span
-            >
-            <span
-              v-if="issue"
-              class="task-issue-key mono"
-              :class="`task-${issue.system}-key`"
-              >{{ issue.key }}</span
-            >
-            <span
-              v-if="issue?.status"
-              class="task-issue-status"
-              :class="`task-${issue.system}-status`"
-              :title="statusTitle(issue)"
-              >{{ issue.status }}</span
-            >
-            <JiraFieldChips v-if="task.jiraKey" :fields="task.jiraFields" />
-            <span
-              v-if="issue?.system === 'redmine' && task.redmineTracker"
-              class="task-chip task-redmine-tracker"
-              title="Tracker w Redmine"
-              >{{ task.redmineTracker }}</span
-            >
-            <span
-              v-if="redmineDue"
-              class="task-chip task-redmine-due"
-              :title="'Termin w Redmine: ' + task.redmineDue"
-              >termin {{ redmineDue }}</span
-            >
-            <span v-if="task.details?.waiting && !task.done" class="task-status"
-              >Czekam na: {{ task.details.waiting
-              }}<template v-if="waitingSince"> · {{ waitingSince }}</template></span
-            >
-          </span>
-          <span v-if="task.details?.estimateMinutes" class="task-status"
-            >Plan {{ hhmm(estimate) }} ·
-            <span :class="{ 'estimate-over': overEstimate(taskTime, estimate) }"
-              >{{ percent(taskTime, estimate) }}%</span
-            ></span
-          >
-          <span
-            v-if="task.details?.dueDay && !task.done"
-            class="task-deadline"
-            :class="{ overdue: task.details.dueDay < todayKey }"
-            >Termin: {{ dayText(task.details.dueDay) }}</span
-          > </span
-        ><span class="task-duration mono" :class="{ zero: !taskTime }">{{
-          duration(taskTime)
-        }}</span
+        <TaskSummary
+          :task="task"
+          :running="running"
+          :now="now"
+          :today-key="todayKey"
+          :task-time="taskTime" /><span
+          class="task-duration mono"
+          :class="{ zero: !taskTime }"
+          >{{ duration(taskTime) }}</span
         ><ChevronDown :size="16" :class="{ rotated: expanded }" />
       </button>
       <select
@@ -403,48 +226,21 @@ async function openIssue(ref: IssueRef) {
       </button>
       <span v-else class="done-label">Gotowe</span>
     </div>
-    <div
+    <TaskWaitingProposal
       v-if="proposal && issue"
-      class="waiting-proposal"
-      role="group"
-      :aria-label="`Propozycja z ${issue.system === 'jira' ? 'Jiry' : 'Redmine'}: ${task.title}`"
-    >
-      <span
-        >{{ issue.label }}: {{ proposal.status }} —
-        {{
-          proposal.action === "block"
-            ? "oznaczyć jako czekam na?"
-            : "odblokować?"
-        }}</span
-      >
-      <button
-        class="action-button"
-        :disabled="busy || waitingBusy"
-        @click="
-          changeWaiting(
-            proposal.action === 'block'
-              ? { action: 'block', text: `${issue.label}: ${proposal.status}` }
-              : { action: 'unblock' },
-          )
-        "
-      >
-        {{ proposal.action === "block" ? "Oznacz jako czekam na" : "Odblokuj" }}
-      </button>
-      <button
-        class="action-button"
-        :disabled="busy || waitingBusy"
-        @click="changeWaiting({ action: 'dismiss' })"
-      >
-        Nie teraz
-      </button>
-    </div>
+      :title="task.title"
+      :issue="issue"
+      :proposal="proposal"
+      :disabled="busy || waitingBusy"
+      @change="changeWaiting"
+    />
     <div v-if="expanded" :id="'sessions-' + task.id" class="task-details">
       <div class="details-actions" role="group" aria-label="Akcje zadania">
         <button
           v-if="issue?.url"
           class="action-button"
           :aria-label="`Otwórz w ${issue.system === 'jira' ? 'Jirze' : 'Redmine'}: ${issue.key}`"
-          @click="openIssue(issue)"
+          @click="moves.openIssue(issue)"
         >
           <ExternalLink :size="14" />{{ issue.key }}
         </button>
@@ -452,10 +248,10 @@ async function openIssue(ref: IssueRef) {
           v-if="task.jiraKey && settings.jiraWrite"
           class="action-button"
           :aria-label="'Przesuń w Jirze: ' + task.jiraKey"
-          :aria-expanded="moveList !== null"
-          :disabled="moveBusy"
+          :aria-expanded="moves.jiraList !== null"
+          :disabled="moves.busy"
           title="Wybierz przejście zgłoszenia w Jirze"
-          @click="openMoveList"
+          @click="moves.openJiraList"
         >
           <ArrowRightCircle :size="14" />Przesuń w Jirze…
         </button>
@@ -463,10 +259,10 @@ async function openIssue(ref: IssueRef) {
           v-if="issue?.system === 'redmine' && settings.redmineWrite"
           class="action-button"
           :aria-label="'Przesuń w Redmine: ' + issue.key"
-          :aria-expanded="redmineList !== null"
-          :disabled="moveBusy"
+          :aria-expanded="moves.redmineList !== null"
+          :disabled="moves.busy"
           title="Wybierz nowy status zgłoszenia w Redmine"
-          @click="openRedmineList"
+          @click="moves.openRedmineList"
         >
           <ArrowRightCircle :size="14" />Przesuń w Redmine…
         </button>
@@ -491,8 +287,8 @@ async function openIssue(ref: IssueRef) {
           class="action-button"
           :aria-label="'Zapisz jako szablon: ' + task.title"
           title="Tytuł, szacunek, kroki listy, projekt i priorytet jako szablon /nazwa"
-          :aria-expanded="templateName !== null"
-          @click="templateName === null ? openTemplateForm() : (templateName = null)"
+          :aria-expanded="templateOpen"
+          @click="templateOpen = !templateOpen"
         >
           <BookmarkPlus :size="14" />Zapisz jako szablon
         </button>
@@ -504,90 +300,24 @@ async function openIssue(ref: IssueRef) {
           <Archive :size="14" />Archiwizuj
         </button>
         <button
-            class="action-button"
-            :disabled="busy"
-            :aria-label="'Edytuj: ' + task.title"
-            title="Edytuj zadanie"
-            @click="emit('edit')"
-          >
-            <Pencil :size="14" />Zmień nazwę</button
-          ><button
-            class="action-button danger"
-            :disabled="busy"
-            :aria-label="'Usuń: ' + task.title"
-            title="Usuń zadanie"
-            @click="emit('remove')"
-          >
-            <Trash2 :size="14" />Usuń
-          </button>
-      </div>
-      <div
-        v-if="moveList !== null"
-        class="jira-move-list"
-        role="group"
-        :aria-label="'Przejścia w Jirze: ' + task.jiraKey"
-      >
-        <span v-if="moveList.length"
-          >{{ task.jiraKey }}<template v-if="task.jiraStatus">
-            ({{ task.jiraStatus }})</template
-          >:</span
-        >
-        <span v-else>Jira nie ma dostępnych przejść dla {{ task.jiraKey }}.</span>
-        <button
-          v-for="t in moveList"
-          :key="t.id"
           class="action-button"
-          :disabled="moveBusy"
-          :aria-label="`Przesuń ${task.jiraKey} do: ${t.toStatus}`"
-          @click="moveTo(t)"
+          :disabled="busy"
+          :aria-label="'Edytuj: ' + task.title"
+          title="Edytuj zadanie"
+          @click="emit('edit')"
         >
-          {{ t.name && t.name !== t.toStatus ? `${t.name} → ${t.toStatus}` : t.toStatus }}
+          <Pencil :size="14" />Zmień nazwę</button
+        ><button
+          class="action-button danger"
+          :disabled="busy"
+          :aria-label="'Usuń: ' + task.title"
+          title="Usuń zadanie"
+          @click="emit('remove')"
+        >
+          <Trash2 :size="14" />Usuń
         </button>
-        <button class="action-button" @click="moveList = null">Anuluj</button>
       </div>
-      <div
-        v-if="redmineList !== null && issue?.system === 'redmine'"
-        class="jira-move-list redmine-move-list"
-        role="group"
-        :aria-label="'Statusy w Redmine: ' + issue.key"
-      >
-        <span v-if="redmineList.length"
-          >{{ issue.key }}<template v-if="issue.status">
-            ({{ issue.status }})</template
-          >:</span
-        >
-        <span v-else>Redmine nie ma dozwolonych statusów dla {{ issue.key }}.</span>
-        <button
-          v-for="s in redmineList"
-          :key="s.id"
-          class="action-button"
-          :disabled="moveBusy"
-          :aria-label="`Przesuń ${issue.key} do: ${s.name}`"
-          @click="redmineMoveTo(s)"
-        >
-          {{ s.name }}
-        </button>
-        <button class="action-button" @click="redmineList = null">Anuluj</button>
-      </div>
-      <p v-if="moveError" class="jira-move-error" role="alert">
-        {{ moveError }}
-        <button
-          v-if="task.jiraUrl"
-          type="button"
-          class="text-link"
-          @click="openJira(task.jiraUrl)"
-        >
-          Otwórz {{ task.jiraKey }} w Jirze
-        </button>
-        <button
-          v-else-if="issue?.system === 'redmine' && issue.url"
-          type="button"
-          class="text-link"
-          @click="openIssue(issue)"
-        >
-          Otwórz {{ issue.key }} w Redmine
-        </button>
-      </p>
+      <TaskIssueMoves :task="task" :issue="issue" :moves="moves" />
       <JiraIssueActions
         v-if="task.jiraKey && jiraConnected"
         :issue-key="task.jiraKey"
@@ -605,85 +335,25 @@ async function openIssue(ref: IssueRef) {
         <button
           type="button"
           class="text-link"
-          :disabled="moveBusy"
+          :disabled="moves.busy"
           :aria-label="'Pytaj o przesunięcie: ' + task.title"
-          @click="askAgain"
+          @click="moves.askAgain"
         >
           Pytaj znowu
         </button>
       </p>
-      <form
-        v-if="templateName !== null"
-        class="template-save"
-        @submit.prevent="saveAsTemplate"
-        @keydown.esc.stop="templateName = null"
-      >
-        <label
-          >Nazwa szablonu
-          <span class="template-slash">/</span
-          ><input
-            ref="templateInput"
-            v-model="templateName"
-            :aria-label="'Nazwa szablonu: ' + task.title"
-            placeholder="np. review"
-            maxlength="60"
-        /></label>
-        <button
-          class="primary-button"
-          :disabled="templateBusy || !templateName.trim()"
-        >
-          Zapisz szablon
-        </button>
-        <button type="button" class="action-button" @click="templateName = null">
-          Anuluj
-        </button>
-      </form>
-      <p v-if="templateSaved" class="hint template-saved" role="status">
-        {{ templateSaved }}
-        <button
-          type="button"
-          class="text-link"
-          @click="openSettings('templates')"
-        >
-          Ustawieniach → Szablony</button
-        >.
-      </p>
-      <h3 class="details-heading">Przedziały pracy</h3>
-      <div v-for="session in sessions" :key="session.id" class="session-row">
-        <div class="interval">
-          <time :datetime="new Date(session.startedAt).toISOString()">{{
-            stamp(session.startedAt)
-          }}</time
-          ><span class="interval-arrow">→</span
-          ><time
-            v-if="session.endedAt !== null"
-            :datetime="new Date(session.endedAt).toISOString()"
-            >{{ stamp(session.endedAt) }}</time
-          ><span v-else class="running-label">W trakcie</span>
-        </div>
-        <span class="mono session-duration">{{
-          duration(elapsed(session))
-        }}</span>
-        <button
-          class="icon-button"
-          :aria-label="'Edytuj przedział ' + session.id"
-          :disabled="busy || session.endedAt === null"
-          :title="
-            session.endedAt === null
-              ? 'Zatrzymaj pomiar przed edycją'
-              : 'Edytuj przedział'
-          "
-          @click="emit('session', session)"
-        >
-          <Pencil :size="14" />
-        </button>
-      </div>
-      <p v-if="!sessions.length" class="empty-detail">
-        Brak przedziałów. Kliknij Start, aby rozpocząć pomiar.
-      </p>
-      <p v-if="running" class="hint">
-        Zatrzymaj bieżący pomiar, aby edytować jego godziny.
-      </p>
+      <TaskTemplateForm
+        v-model:open="templateOpen"
+        :task="task"
+        @error="emit('error', $event)"
+      />
+      <TaskSessions
+        :sessions="sessions"
+        :running="running"
+        :busy="busy"
+        :now="now"
+        @session="emit('session', $event)"
+      />
       <AgentTaskTime :task="task" :sessions="sessions" :own="taskTime" />
       <TsTaskField
         :task="task"

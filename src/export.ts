@@ -1,5 +1,5 @@
 import type { Snapshot } from "./store";
-import { dayBounds } from "./time";
+import { clock, dayBounds } from "./time";
 import { redmineKey, validRedmineId } from "./issue";
 
 /**
@@ -84,10 +84,6 @@ export function exportRows(
 const field = (value: string) => {
   const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
   return /[;"\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
-};
-const clock = (at: number) => {
-  const d = new Date(at);
-  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 export const exportMinutes = (ms: number) => Math.floor((ms + 30_000) / 60_000);
 export function exportHours(ms: number) {

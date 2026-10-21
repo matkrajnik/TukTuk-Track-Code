@@ -3,7 +3,7 @@ import { computed, ref } from "vue";
 import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { duration, type Snapshot, type Task } from "../store";
 import { issueRef } from "../issue";
-import { dayBounds, dayKey } from "../time";
+import { dayBounds, dayKey, plural } from "../time";
 import { addToDays, closedDayTotals, decimalHours } from "../report";
 import { holidays } from "../holidays";
 import TargetBar from "./TargetBar.vue";
@@ -91,15 +91,9 @@ const freeHolidays = computed(() =>
     : [],
 );
 /** Odmiana: 1 dzień roboczy, 2–4 dni robocze, 5+ dni roboczych (12–14 też). */
-const workDaysWord = computed(() => {
-  const n = workDays.value;
-  if (n === 1) return "dzień roboczy";
-  const ones = n % 10;
-  const tens = n % 100;
-  return ones >= 2 && ones <= 4 && (tens < 12 || tens > 14)
-    ? "dni robocze"
-    : "dni roboczych";
-});
+const workDaysWord = computed(() =>
+  plural(workDays.value, "dzień roboczy", "dni robocze", "dni roboczych"),
+);
 const missing = computed(() => Math.max(0, target.value - total.value));
 const over = computed(() => Math.max(0, total.value - target.value));
 const maxDay = computed(() =>

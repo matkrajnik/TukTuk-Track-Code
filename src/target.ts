@@ -5,16 +5,11 @@ import {
   readSettings,
   type AppSettings,
 } from "./settings";
-import { dayBounds, dayKey } from "./time";
+import { dayBounds, dayKey, hm } from "./time";
 import { holidayName } from "./holidays";
 
-/** Czas jako G:MM, np. „8:00”, „12:05”. Minuty w dół, jak w trayu. */
-export function hm(ms: number): string {
-  const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
-}
-/** Czas jako GG:MM, np. „03:12”. */
-export const hhmm = (ms: number) => hm(ms).padStart(5, "0");
+/** Formaty czasu trwania (z `time.ts`), eksportowane też stąd. */
+export { hm, hhmm } from "./time";
 
 /** Dzień tygodnia ISO (1 = poniedziałek, 7 = niedziela) dla klucza dnia. */
 export function isoWeekday(day: string): number {

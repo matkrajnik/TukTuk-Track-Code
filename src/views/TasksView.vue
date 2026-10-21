@@ -25,7 +25,7 @@ import {
   type Snapshot,
   type Task,
 } from "../store";
-import { dayBounds, dayKey, inDay } from "../time";
+import { clock, dayBounds, dayKey, inDay } from "../time";
 import { dayGoal } from "../capacity";
 import { corrections } from "../estimates";
 import { useMeetings } from "../composables/useMeetings";
@@ -105,10 +105,6 @@ const today = computed(() =>
   ),
 );
 const settings = useSettings();
-const clockText = (at: number) =>
-  new Intl.DateTimeFormat("pl-PL", { hour: "2-digit", minute: "2-digit" }).format(
-    at,
-  );
 /** Spotkania dziś: lista nadchodzących i cel dnia pomniejszony o spotkania. */
 const calendar = useMeetings(() => dayBounds(todayKey.value));
 /** Cel mierzonego czasu: cel dnia minus spotkania niepokryte pomiarem. */
@@ -130,7 +126,7 @@ const upcomingMeetings = computed(() => {
       event: e,
       time: e.allDay
         ? "Cały dzień"
-        : clockText(e.start) + "–" + clockText(e.end),
+        : clock(e.start) + "–" + clock(e.end),
       title: meetingTitle(e, settings.value.calendarShowTitles),
       now: e.start <= props.now,
     }));
@@ -400,7 +396,7 @@ async function priority(task: Task, e: Event) {
       v-if="focusBlock"
       class="focus-countdown mono"
       aria-label="Pozostało w bloku skupienia"
-      :title="`Blok skupienia do ${new Date(focusBlock.end).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}`"
+      :title="`Blok skupienia do ${clock(focusBlock.end)}`"
       ><Timer :size="12" />{{ countdown(focusBlock.end - now) }}</span
     ><button
       v-if="focusBlock"

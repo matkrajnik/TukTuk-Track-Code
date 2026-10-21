@@ -1,6 +1,7 @@
 import type { Task } from "./store";
 import { compareTasks } from "./order";
 import { isRecurring } from "./recurrence";
+import { hm } from "./time";
 
 /**
  * „Rozłóż” na tablicy tygodnia (PLAN_1.7.md, P1). Funkcje czyste: dostają
@@ -65,10 +66,6 @@ export function spreadOrder(a: Task, b: Task): number {
 }
 
 const dayLabel = (day: string) => `${day.slice(8, 10)}.${day.slice(5, 7)}`;
-const clock = (ms: number) => {
-  const minutes = Math.floor(Math.max(0, ms) / 60_000);
-  return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, "0")}`;
-};
 
 /**
  * Układa `tasks` (kandydatów; zakończone i zarchiwizowane też są pomijane) na
@@ -119,7 +116,7 @@ export function spread(
     } else {
       const largest = Math.max(...eligible.map((d) => d.capacity));
       if (length > largest)
-        reason = `Dłuższe niż pojemność dnia (${clock(largest)})`;
+        reason = `Dłuższe niż pojemność dnia (${hm(largest)})`;
       else if (due) reason = `Brak miejsca do terminu ${dayLabel(due)}`;
       else reason = "Brak miejsca do końca tygodnia";
     }

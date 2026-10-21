@@ -13,7 +13,7 @@ import {
 import { writeSettings } from "./settings";
 import { offerAfterDone } from "./jiramove";
 import { issueRef } from "./issue";
-import { dayBounds, dayKey, dayText } from "./time";
+import { clock, dayBounds, dayKey, dayText } from "./time";
 import { plannedTasks } from "./dayplan";
 import { dayCapacity } from "./capacity";
 import { corrections, plannedMs } from "./estimates";
@@ -70,11 +70,6 @@ const fresh = computed(() =>
 /** Krok 4: plan dnia w ręcznej kolejności, spotkania i pojemność. */
 const plan = computed(() => plannedTasks(props.data.tasks, today.value));
 const calendar = useMeetings(() => dayBounds(today.value));
-const clock = (at: number) =>
-  new Intl.DateTimeFormat("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(at);
 const meetings = computed(() => {
   const [from, to] = dayBounds(today.value);
   return calendar.events.value

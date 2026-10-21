@@ -1,54 +1,37 @@
 <script setup lang="ts">
+/**
+ * Widok Jira: konto, wybrane tablice, lista „Przypisane do mnie” i tablica.
+ * Części w `components/jira/`: połączenie (`JiraConnectionForm`), wybór
+ * tablic (`JiraBoardPicker`), nowe zgłoszenie (`JiraCreateForm`), lista
+ * (`JiraIssueList`) i tablica (`JiraBoard`). Formularze mają własne `busy`
+ * i błąd; tu zostaje odczyt listy i tablicy.
+ */
 import { computed, onMounted, ref, watch } from "vue";
-import {
-  Columns3,
-  Ellipsis,
-  ExternalLink,
-  List,
-  Play,
-  Plus,
-  RefreshCw,
-  Search,
-  Settings2,
-  Square,
-} from "lucide-vue-next";
+import { Columns3, List, Plus, RefreshCw, Search, Settings2 } from "lucide-vue-next";
 import {
   desktop,
-  duration,
-  initials,
   jiraAccount,
   jiraBoard,
-  jiraBoardMove,
-  jiraBoards,
-  jiraConnect,
   jiraConnected,
-  jiraCreate,
-  jiraDisconnect,
   jiraIssues,
-  jiraIssueTypeFields,
-  jiraIssueTypes,
   jiraOpen,
-  jiraProjects,
-  jiraSelectBoards,
   jiraStart,
-  read,
   type JiraAccount,
-  type JiraBoardIssue,
   type JiraBoardRef,
   type JiraBoardView,
-  type JiraIssueType,
+  type JiraCreated,
   type JiraListIssue,
-  type JiraMoveOption,
-  type JiraPerson,
-  type JiraProject,
   type JiraScope,
   type Snapshot,
 } from "./store";
 import { openSettings } from "./navigation";
 import { useSettings } from "./target";
-import { dayKey, dayText } from "./time";
-import JiraIssueActions from "./components/JiraIssueActions.vue";
-import JiraFieldChips from "./components/JiraFieldChips.vue";
+import { clock, dayKey, dayText } from "./time";
+import JiraConnectionForm from "./components/jira/JiraConnectionForm.vue";
+import JiraBoardPicker from "./components/jira/JiraBoardPicker.vue";
+import JiraCreateForm from "./components/jira/JiraCreateForm.vue";
+import JiraIssueList from "./components/jira/JiraIssueList.vue";
+import JiraBoard from "./components/jira/JiraBoard.vue";
 
 const props = defineProps<{
   activeUrl?: string | null;
@@ -77,30 +60,24 @@ watch(
     if (desktop) jiraConnected.value = connected;
   },
 );
-const site = ref(settings.value.config.site),
-  email = ref(""),
-  apiToken = ref("");
 const busy = ref(false),
   error = ref(""),
   warnings = ref<string[]>([]);
 const editingConnection = ref(false),
-  pickingBoards = ref(false);
-const boardName = ref(""),
-  boards = ref<JiraBoardRef[]>([]),
-  chosen = ref<JiraBoardRef[]>([]),
-  nextStart = ref<number | null>(null);
+  pickingBoards = ref(false),
+  /** Każde otwarcie wyboru tablic zaczyna od zapisanych tablic. */
+  pickerKey = ref(0);
 const issues = ref<JiraListIssue[]>([]),
   query = ref(""),
   openOnly = ref(true),
   loaded = ref(false),
   updatedAt = ref("");
-const matches = (text: string) =>
-  text
-    .toLocaleLowerCase("pl")
-    .includes(query.value.trim().toLocaleLowerCase("pl"));
-const visible = computed(() =>
-  issues.value.filter((i) => matches(`${i.key} ${i.summary}`)),
-);
+const visible = computed(() => {
+  const q = query.value.trim().toLocaleLowerCase("pl");
+  return issues.value.filter((i) =>
+    `${i.key} ${i.summary}`.toLocaleLowerCase("pl").includes(q),
+  );
+});
 
 /** Zapamiętany widok: lista albo tablica, tablica i zakres. */
 const prefsKey = "todo-track-jira-view-v1";
@@ -142,26 +119,6 @@ watch([mode, boardId, scope], () => {
 
 const board = ref<JiraBoardView | null>(null);
 const notice = ref("");
-const boardError = ref("");
-const openMenu = ref<string | null>(null);
-const dragging = ref<string | null>(null);
-const dropTarget = ref<number | null>(null);
-const pending = ref<string[]>([]);
-/** Kilka przejść do kolumny: wybór użytkownika (karta czeka w nowej kolumnie). */
-const choice = ref<{
-  card: JiraBoardIssue;
-  column: number;
-  from: number;
-  options: JiraMoveOption[];
-} | null>(null);
-
-const columnCards = computed(() =>
-  (board.value?.columns ?? []).map((_, i) =>
-    (board.value?.issues ?? []).filter(
-      (c) => c.column === i && matches(`${c.key} ${c.summary}`),
-    ),
-  ),
-);
 
 /** Lokalne zadania zgłoszeń: czas, pomiar teraz i dzień planu. */
 const local = computed(() => {
@@ -207,11 +164,7 @@ async function run(fn: () => Promise<void>) {
     busy.value = false;
   }
 }
-const stamp = () =>
-  new Date().toLocaleTimeString("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+const stamp = () => clock(Date.now());
 async function fetchIssues() {
   issues.value = [];
   warnings.value = [];
@@ -226,9 +179,6 @@ async function fetchIssues() {
 }
 async function fetchBoard(refresh = false) {
   board.value = null;
-  boardError.value = "";
-  choice.value = null;
-  openMenu.value = null;
   updatedAt.value = "";
   const list = settings.value.config.boards;
   if (!list.length) return;
@@ -254,64 +204,32 @@ function setScope(next: JiraScope) {
   scope.value = next;
   void run(() => fetchBoard());
 }
-async function connect() {
-  await run(async () => {
-    try {
-      settings.value = await jiraConnect(site.value, email.value, apiToken.value);
-    } finally {
-      apiToken.value = "";
-    }
-    site.value = settings.value.config.site;
-    email.value = settings.value.config.email;
+/** Wybór tablic od zapisanych (lista tablic ładuje się w `JiraBoardPicker`). */
+function chooseBoards() {
+  pickerKey.value++;
+  pickingBoards.value = true;
+}
+function connected(account: JiraAccount) {
+  void run(async () => {
+    settings.value = account;
     editingConnection.value = false;
-    if (!settings.value.config.boards.length) {
-      chosen.value = [];
-      pickingBoards.value = true;
-      await fetchBoards(false);
-    } else await refresh();
+    if (!settings.value.config.boards.length) chooseBoards();
+    else await refresh();
   });
 }
-async function disconnect() {
-  await run(async () => {
-    settings.value = await jiraDisconnect();
-    issues.value = [];
-    board.value = null;
-    boards.value = [];
-    chosen.value = [];
-    apiToken.value = "";
-    email.value = "";
-    warnings.value = [];
-    loaded.value = false;
-    updatedAt.value = "";
-    editingConnection.value = false;
-    pickingBoards.value = false;
-  });
+function disconnected(account: JiraAccount) {
+  settings.value = account;
+  issues.value = [];
+  board.value = null;
+  warnings.value = [];
+  loaded.value = false;
+  updatedAt.value = "";
+  editingConnection.value = false;
+  pickingBoards.value = false;
 }
-async function fetchBoards(more: boolean) {
-  const page = await jiraBoards(
-    boardName.value.trim(),
-    more ? (nextStart.value ?? 0) : 0,
-  );
-  const combined = more ? [...boards.value, ...page.values] : page.values;
-  boards.value = [...new Map(combined.map((b) => [b.id, b])).values()];
-  nextStart.value = page.nextStart;
-}
-function select(b: JiraBoardRef) {
-  if (chosen.value.some((x) => x.id === b.id))
-    chosen.value = chosen.value.filter((x) => x.id !== b.id);
-  else if (chosen.value.length < 20) chosen.value.push(b);
-}
-async function chooseBoards() {
-  await run(async () => {
-    chosen.value = [...settings.value.config.boards];
-    pickingBoards.value = true;
-    await fetchBoards(false);
-  });
-}
-async function saveBoards() {
-  await run(async () => {
-    await jiraSelectBoards(chosen.value);
-    settings.value.config.boards = [...chosen.value];
+function boardsSaved(boards: JiraBoardRef[]) {
+  void run(async () => {
+    settings.value.config.boards = boards;
     pickingBoards.value = false;
     await refresh();
   });
@@ -325,173 +243,21 @@ async function open(url: string) {
   });
 }
 
-// --- Tablica: przejścia przez przeciągnięcie i „Przesuń do…” -------------
-function onDragStart(event: DragEvent, card: JiraBoardIssue) {
-  if (!writable.value || pending.value.includes(card.key)) {
-    event.preventDefault();
-    return;
-  }
-  dragging.value = card.key;
-  event.dataTransfer?.setData("text/plain", card.key);
-  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
-}
-function onDragOver(event: DragEvent, column: number) {
-  if (!dragging.value) return;
-  event.preventDefault();
-  if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-  dropTarget.value = column;
-}
-function onDrop(event: DragEvent, column: number) {
-  event.preventDefault();
-  const key = dragging.value || event.dataTransfer?.getData("text/plain");
-  dragging.value = null;
-  dropTarget.value = null;
-  const card = board.value?.issues.find((c) => c.key === key);
-  if (card) void moveCard(card, column);
-}
-function onDragEnd() {
-  dragging.value = null;
-  dropTarget.value = null;
-}
-/**
- * Optymistyczne przesunięcie karty; błąd, brak przejścia albo przejście
- * wymagające pól cofa kartę z komunikatem. Nic nie dzieje się samo: tylko
- * przeciągnięcie albo „Przesuń do…” wywołuje przejście w Jirze.
- */
-async function moveCard(
-  card: JiraBoardIssue,
-  column: number,
-  transitionId: string | null = null,
-  from = card.column,
-) {
-  if (!writable.value || !board.value) return;
-  if (pending.value.includes(card.key)) return;
-  // Otwarty wybór przejścia: karta stoi w kolumnie docelowej tylko
-  // optymistycznie. Prawdziwa kolumna to choice.from.
-  if (choice.value?.card === card) {
-    card.column = choice.value.from;
-    from = choice.value.from;
-    choice.value = null;
-  }
-  if (card.column === column && transitionId === null) return;
-  const id = board.value.boardId;
-  card.column = column;
-  openMenu.value = null;
-  choice.value = null;
-  notice.value = "";
-  boardError.value = "";
-  pending.value = [...pending.value, card.key];
-  const columnName = board.value.columns[column]?.name ?? "";
-  try {
-    const out = await jiraBoardMove(id, card.key, column, transitionId);
-    if (out.result === "moved") {
-      Object.assign(card, {
-        status: out.status,
-        statusId: out.statusId,
-        category: out.category,
-        column: out.column,
-      });
-      notice.value = `${card.key} → ${out.status}.`;
-      emit("updated", await read());
-    } else if (out.result === "choose") {
-      choice.value = { card, column, from, options: out.options };
-    } else {
-      card.column = from;
-      boardError.value = out.message;
-      await jiraOpen(out.url);
-    }
-  } catch (e) {
-    card.column = from;
-    boardError.value = `Nie przesunięto ${card.key} do „${columnName}”. ${String(
-      e instanceof Error ? e.message : e,
-    )}`;
-  } finally {
-    pending.value = pending.value.filter((k) => k !== card.key);
-  }
-}
-function cancelChoice() {
-  if (choice.value) choice.value.card.column = choice.value.from;
-  choice.value = null;
-}
-function assigned(card: JiraBoardIssue, person: JiraPerson) {
-  card.assignee = { ...person };
-}
-
-// --- Nowe zgłoszenie ------------------------------------------------------
+// --- Nowe zgłoszenie (formularz w `JiraCreateForm`) -------------------------
 const creating = ref(false);
-const projects = ref<JiraProject[]>([]);
-const types = ref<JiraIssueType[]>([]);
-const form = ref({
-  project: "",
-  issueTypeId: "",
-  summary: "",
-  description: "",
-  assignMe: true,
-  createTask: true,
-  plannedDay: "",
-});
-const extraRequired = ref<string[]>([]);
-const createUrl = ref("");
-async function openCreate() {
-  if (creating.value) {
+function toggleCreate() {
+  if (!creating.value) notice.value = "";
+  creating.value = !creating.value;
+}
+function created(result: JiraCreated) {
+  void run(async () => {
     creating.value = false;
-    return;
-  }
-  await run(async () => {
-    notice.value = "";
-    projects.value = await jiraProjects();
-    const preferred = board.value?.project;
-    form.value = {
-      project:
-        projects.value.find((p) => p.key === preferred)?.key ??
-        projects.value[0]?.key ??
-        "",
-      issueTypeId: "",
-      summary: "",
-      description: "",
-      assignMe: true,
-      createTask: true,
-      plannedDay: "",
-    };
-    creating.value = true;
-    await loadTypes();
-  });
-}
-async function loadTypes() {
-  types.value = [];
-  extraRequired.value = [];
-  form.value.issueTypeId = "";
-  if (!form.value.project) return;
-  types.value = await jiraIssueTypes(form.value.project);
-  form.value.issueTypeId = types.value[0]?.id ?? "";
-  await loadFields();
-}
-async function loadFields() {
-  extraRequired.value = [];
-  if (!form.value.project || !form.value.issueTypeId) return;
-  const fields = await jiraIssueTypeFields(
-    form.value.project,
-    form.value.issueTypeId,
-  );
-  extraRequired.value = fields.extraRequired;
-  createUrl.value = fields.createUrl;
-}
-const typeName = computed(
-  () => types.value.find((t) => t.id === form.value.issueTypeId)?.name ?? "",
-);
-async function submitCreate() {
-  await run(async () => {
-    const f = form.value;
-    const created = await jiraCreate({
-      ...f,
-      plannedDay: f.createTask ? f.plannedDay : "",
-    });
-    creating.value = false;
-    notice.value = `Utworzono ${created.key}${
-      created.snapshot ? " i zadanie w Todo Track" : ""
+    notice.value = `Utworzono ${result.key}${
+      result.snapshot ? " i zadanie w Todo Track" : ""
     }.`;
-    if (created.warning) error.value = `Utworzono ${created.key}. ${created.warning}`;
-    if (created.snapshot) emit("updated", created.snapshot);
+    if (result.warning)
+      error.value = `Utworzono ${result.key}. ${result.warning}`;
+    if (result.snapshot) emit("updated", result.snapshot);
     await refresh();
   });
 }
@@ -499,14 +265,9 @@ async function submitCreate() {
 onMounted(async () => {
   await run(async () => {
     settings.value = await jiraAccount();
-    site.value = settings.value.config.site;
-    email.value = settings.value.config.email;
     if (settings.value.connected) {
       if (settings.value.config.boards.length) await refresh();
-      else {
-        pickingBoards.value = true;
-        await fetchBoards(false);
-      }
+      else chooseBoards();
     }
   });
 });
@@ -535,67 +296,12 @@ onMounted(async () => {
       Podgląd: symulowana Jira z przykładowymi zgłoszeniami.
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
-    <form
+    <JiraConnectionForm
       v-if="!settings.connected || editingConnection"
-      class="jira-connection"
-      @submit.prevent="connect"
-    >
-      <h2>
-        {{ settings.connected ? "Połączenie z Jirą" : "Połącz swoje konto" }}
-      </h2>
-      <div class="connection-fields">
-        <label
-          >Adres Jiry<input
-            v-model="site"
-            type="url"
-            required
-            aria-label="Adres Jiry"
-            :disabled="busy" /></label
-        ><label
-          >E-mail Atlassian<input
-            v-model="email"
-            type="email"
-            required
-            autocomplete="username"
-            aria-label="E-mail Atlassian"
-            :disabled="busy" /></label
-        ><label
-          >Token API<input
-            v-model="apiToken"
-            type="password"
-            required
-            autocomplete="off"
-            aria-label="Token API"
-            :disabled="busy"
-        /></label>
-      </div>
-      <p class="hint">
-        Użyj tokenu API bez zakresów. Token zostanie zapisany w magazynie
-        poświadczeń Windows.
-      </p>
-      <div class="connection-actions">
-        <button
-          class="text-link"
-          type="button"
-          :disabled="busy"
-          @click="
-            open('https://id.atlassian.com/manage-profile/security/api-tokens')
-          "
-        >
-          Utwórz token Atlassian <ExternalLink :size="13" /></button
-        ><button
-          v-if="settings.connected"
-          type="button"
-          class="danger"
-          :disabled="busy"
-          @click="disconnect"
-        >
-          Rozłącz konto</button
-        ><button class="primary-button" :disabled="busy">
-          {{ busy ? "Łączenie…" : "Połącz i sprawdź" }}
-        </button>
-      </div>
-    </form>
+      :account="settings"
+      @connected="connected"
+      @disconnected="disconnected"
+    />
     <template v-if="settings.connected">
       <div class="jira-toolbar">
         <div class="jira-board-chips">
@@ -616,7 +322,7 @@ onMounted(async () => {
               ? 'Nowe zgłoszenie w projekcie wybranej tablicy'
               : 'Zmiany w Jirze są wyłączone w Ustawieniach → Jira'
           "
-          @click="openCreate"
+          @click="toggleCreate"
         >
           <Plus :size="15" />Nowe zgłoszenie</button
         ><button
@@ -627,159 +333,19 @@ onMounted(async () => {
           Wybierz tablice
         </button>
       </div>
-      <section
+      <JiraBoardPicker
         v-if="pickingBoards"
-        class="board-picker"
-        aria-label="Wybór tablic"
-      >
-        <form
-          class="board-search"
-          @submit.prevent="run(() => fetchBoards(false))"
-        >
-          <input
-            v-model="boardName"
-            aria-label="Szukaj tablicy"
-            placeholder="Nazwa tablicy…"
-            :disabled="busy"
-          /><button class="secondary-button" :disabled="busy">
-            Szukaj tablic
-          </button>
-        </form>
-        <div class="chosen-boards">
-          <button
-            v-for="b in chosen"
-            :key="b.id"
-            :disabled="busy"
-            :aria-label="'Odznacz tablicę: ' + b.name"
-            @click="select(b)"
-          >
-            {{ b.name }} ×
-          </button>
-        </div>
-        <div class="board-options">
-          <label v-for="b in boards" :key="b.id"
-            ><input
-              type="checkbox"
-              :checked="chosen.some((x) => x.id === b.id)"
-              :disabled="
-                busy ||
-                (chosen.length >= 20 && !chosen.some((x) => x.id === b.id))
-              "
-              @change="select(b)"
-            />{{ b.name }} <small>#{{ b.id }}</small></label
-          >
-          <p v-if="!boards.length && !busy" class="hint">
-            Brak tablic pasujących do wyszukiwania.
-          </p>
-        </div>
-        <div class="connection-actions">
-          <button
-            v-if="nextStart !== null"
-            class="secondary-button"
-            :disabled="busy"
-            @click="run(() => fetchBoards(true))"
-          >
-            Pokaż więcej tablic</button
-          ><span class="hint">Wybrano {{ chosen.length }} / 20</span
-          ><button
-            class="secondary-button"
-            :disabled="busy"
-            @click="pickingBoards = false"
-          >
-            Anuluj</button
-          ><button
-            class="primary-button"
-            :disabled="busy"
-            @click="saveBoards"
-          >
-            Zapisz tablice
-          </button>
-        </div>
-      </section>
-      <form
+        :key="pickerKey"
+        :selected="settings.config.boards"
+        @saved="boardsSaved"
+        @cancel="pickingBoards = false"
+      />
+      <JiraCreateForm
         v-if="creating"
-        class="jira-create"
-        aria-label="Nowe zgłoszenie"
-        @submit.prevent="submitCreate"
-        @keydown.esc.stop="creating = false"
-      >
-        <h2>Nowe zgłoszenie</h2>
-        <div class="jira-create-fields">
-          <label
-            >Projekt<select
-              v-model="form.project"
-              aria-label="Projekt"
-              :disabled="busy"
-              @change="run(loadTypes)"
-            >
-              <option v-for="p in projects" :key="p.key" :value="p.key">
-                {{ p.key }} ({{ p.boards.join(", ") }})
-              </option>
-            </select></label
-          ><label
-            >Typ<select
-              v-model="form.issueTypeId"
-              aria-label="Typ zgłoszenia"
-              :disabled="busy"
-              @change="run(loadFields)"
-            >
-              <option v-for="t in types" :key="t.id" :value="t.id">
-                {{ t.name }}
-              </option>
-            </select></label
-          ><label class="wide"
-            >Tytuł<input
-              v-model="form.summary"
-              aria-label="Tytuł zgłoszenia"
-              maxlength="255"
-              required
-              :disabled="busy"
-          /></label>
-          <label class="wide"
-            >Opis (opcjonalnie)<textarea
-              v-model="form.description"
-              aria-label="Opis zgłoszenia"
-              rows="3"
-              maxlength="5000"
-              :disabled="busy"
-          /></label>
-        </div>
-        <div class="jira-create-options">
-          <label class="check-label"
-            ><input v-model="form.assignMe" type="checkbox" />Przypisz do
-            mnie</label
-          ><label class="check-label"
-            ><input v-model="form.createTask" type="checkbox" />Utwórz też
-            zadanie w Todo Track</label
-          ><label v-if="form.createTask" class="check-label"
-            >Dzień planu<input
-              v-model="form.plannedDay"
-              type="date"
-              aria-label="Dzień planu zadania"
-          /></label>
-        </div>
-        <p v-if="extraRequired.length" class="jira-move-error" role="alert">
-          Typ „{{ typeName }}” wymaga pól, których Todo Track nie wypełnia:
-          {{ extraRequired.join(", ") }}.
-          <button type="button" class="text-link" @click="open(createUrl)">
-            Utwórz w Jirze <ExternalLink :size="12" />
-          </button>
-        </p>
-        <div class="connection-actions">
-          <button
-            type="button"
-            class="secondary-button"
-            @click="creating = false"
-          >
-            Anuluj</button
-          ><button
-            class="primary-button"
-            :disabled="busy || !!extraRequired.length || !form.summary.trim()"
-          >
-            Utwórz zgłoszenie
-          </button>
-        </div>
-      </form>
+        :preferred-project="board?.project"
+        @created="created"
+        @close="creating = false"
+      />
       <div
         v-if="settings.config.boards.length"
         class="jira-search-toolbar"
@@ -873,261 +439,36 @@ onMounted(async () => {
         </div>
       </div>
       <p v-if="notice" class="hint jira-notice" role="status">{{ notice }}</p>
-      <template v-if="mode === 'list'">
-        <p v-if="settings.config.boards.length" class="jira-result-info">
-          Przypisane do mnie · {{ visible.length }} zgłoszeń<span
-            v-if="updatedAt"
-          >
-            · Odświeżono {{ updatedAt }}</span
-          >
-        </p>
-        <p v-if="busy" class="hint" role="status">Proszę czekać…</p>
-        <div class="jira-issues" :aria-busy="busy">
-          <article
-            v-for="issue in visible"
-            :key="issue.key"
-            class="jira-issue"
-            :class="{ isRunning: props.activeUrl === issue.url }"
-          >
-            <div class="jira-issue-body">
-              <div class="jira-issue-meta">
-                <button
-                  class="text-link"
-                  :aria-label="'Otwórz w Jirze: ' + issue.key"
-                  :disabled="busy"
-                  @click="open(issue.url)"
-                >
-                  {{ issue.key }}<ExternalLink :size="12" /></button
-                ><span class="jira-status">{{ issue.status }}</span>
-              </div>
-              <h2>{{ issue.summary }}</h2>
-              <p>{{ issue.boards.join(" · ") }}</p>
-              <div v-if="issue.fields?.length" class="jira-issue-fields">
-                <JiraFieldChips :fields="issue.fields" />
-              </div>
-            </div>
-            <button
-              v-if="props.activeUrl === issue.url"
-              class="row-timer stop"
-              :disabled="busy"
-              :aria-label="'Zatrzymaj: ' + issue.key"
-              @click="emit('stop')"
-            >
-              <Square :size="12" />Stop</button
-            ><button
-              v-else
-              class="row-timer"
-              :disabled="busy"
-              :aria-label="'Rozpocznij: ' + issue.key"
-              @click="start(issue.key)"
-            >
-              <Play :size="12" />Rozpocznij
-            </button>
-          </article>
-        </div>
-        <p
-          v-if="loaded && !visible.length && !busy && !warnings.length"
-          class="empty-state"
-        >
-          {{
-            query
-              ? "Brak zgłoszeń pasujących do wyszukiwania."
-              : "Brak przypisanych Ci zgłoszeń na wybranych tablicach."
-          }}
-        </p>
-      </template>
-      <template v-else-if="board">
-        <p class="jira-result-info">
-          {{ scope === "mine" ? "Moje" : "Cała tablica" }} ·
-          {{ board.issues.length }} zgłoszeń<span v-if="updatedAt">
-            · Odświeżono {{ updatedAt }}</span
-          >
-        </p>
-        <p v-if="board.truncated" class="hint jira-truncated" role="status">
-          Tablica ma więcej niż {{ board.limit }} otwartych zgłoszeń — pokazano
-          pierwsze {{ board.limit }}. Zawęź zakres do „Moje” albo szukaj po
-          kluczu.
-        </p>
-        <p v-if="!writable" class="hint jira-read-only">
-          Tablica tylko do odczytu: zmiany w Jirze są wyłączone (Ustawienia →
-          Jira).
-        </p>
-        <p v-if="boardError" class="jira-move-error" role="alert">
-          {{ boardError }}
-        </p>
-        <div
-          v-if="choice"
-          class="jira-move-list"
-          role="group"
-          :aria-label="'Wybierz przejście: ' + choice.card.key"
-        >
-          <span
-            >{{ choice.card.key }} do „{{
-              board.columns[choice.column]?.name
-            }}”:</span
-          >
-          <button
-            v-for="o in choice.options"
-            :key="o.id"
-            class="action-button"
-            :aria-label="`Przesuń ${choice.card.key} do: ${o.toStatus}`"
-            @click="
-              moveCard(choice.card, choice.column, o.id, choice.from)
-            "
-          >
-            {{ o.name && o.name !== o.toStatus ? `${o.name} → ${o.toStatus}` : o.toStatus }}
-          </button>
-          <button class="action-button" @click="cancelChoice">Anuluj</button>
-        </div>
-        <div class="jira-board" :aria-busy="busy || !!pending.length">
-          <section
-            v-for="(column, index) in board.columns"
-            :key="index"
-            class="jira-column"
-            :class="{ dropping: dropTarget === index }"
-            :aria-label="'Kolumna ' + column.name"
-            @dragover="onDragOver($event, index)"
-            @dragleave="dropTarget === index && (dropTarget = null)"
-            @drop="onDrop($event, index)"
-          >
-            <header>
-              <h2>{{ column.name }}</h2>
-              <span
-                class="jira-column-count"
-                :aria-label="'Zgłoszeń w kolumnie: ' + columnCards[index].length"
-                >{{ columnCards[index].length }}</span
-              >
-            </header>
-            <article
-              v-for="card in columnCards[index]"
-              :key="card.key"
-              class="jira-card"
-              :class="{
-                isRunning: props.activeUrl === card.url,
-                isPending: pending.includes(card.key),
-              }"
-              :data-key="card.key"
-              :draggable="writable && !pending.includes(card.key)"
-              @dragstart="onDragStart($event, card)"
-              @dragend="onDragEnd"
-            >
-              <div class="jira-card-meta">
-                <button
-                  class="text-link mono"
-                  :aria-label="'Otwórz w Jirze: ' + card.key"
-                  title="Otwórz w Jirze"
-                  @click="open(card.url)"
-                >
-                  {{ card.key }}<ExternalLink :size="11" /></button
-                ><span v-if="card.issueType" class="jira-tag">{{
-                  card.issueType
-                }}</span
-                ><span
-                  v-if="card.priority"
-                  class="jira-tag jira-priority"
-                  :class="card.priority.toLowerCase()"
-                  :title="'Priorytet: ' + card.priority"
-                  >{{ card.priority }}</span
-                >
-                <span
-                  class="jira-avatar"
-                  :title="card.assignee?.displayName ?? 'Nieprzypisane'"
-                  :aria-label="
-                    card.assignee
-                      ? 'Przypisane: ' + card.assignee.displayName
-                      : 'Nieprzypisane'
-                  "
-                  >{{ card.assignee ? initials(card.assignee.displayName) : "–" }}</span
-                >
-              </div>
-              <h3>{{ card.summary }}</h3>
-              <div v-if="card.fields?.length" class="jira-card-fields">
-                <JiraFieldChips :fields="card.fields" />
-              </div>
-              <div class="jira-card-local">
-                <span
-                  v-if="props.activeUrl === card.url"
-                  class="task-status task-live"
-                  >mierzone teraz</span
-                ><span
-                  v-if="local.get(card.key)?.ms"
-                  class="mono"
-                  :title="'Czas zmierzony w Todo Track'"
-                  >{{ duration(local.get(card.key)!.ms) }}</span
-                ><span
-                  v-if="local.get(card.key)?.planned"
-                  class="task-chip task-planned"
-                  >zaplanowane na {{ local.get(card.key)!.planned }}</span
-                ><span
-                  v-if="card.statusId === '' || !column.statusIds.includes(card.statusId)"
-                  class="jira-status"
-                  >{{ card.status }}</span
-                >
-              </div>
-              <div class="jira-card-actions">
-                <button
-                  v-if="props.activeUrl === card.url"
-                  class="row-timer stop"
-                  :disabled="busy"
-                  :aria-label="'Zatrzymaj: ' + card.key"
-                  @click="emit('stop')"
-                >
-                  <Square :size="12" />Stop</button
-                ><button
-                  v-else
-                  class="row-timer"
-                  :disabled="busy"
-                  :aria-label="'Rozpocznij: ' + card.key"
-                  @click="start(card.key)"
-                >
-                  <Play :size="12" />Start</button
-                ><button
-                  class="icon-button"
-                  :aria-label="'Akcje: ' + card.key"
-                  :aria-expanded="openMenu === card.key"
-                  title="Przesuń do…, przypisz, komentarz, gałąź"
-                  @click="openMenu = openMenu === card.key ? null : card.key"
-                >
-                  <Ellipsis :size="16" />
-                </button>
-              </div>
-              <div
-                v-if="openMenu === card.key"
-                class="jira-card-menu"
-                @keydown.esc.stop="openMenu = null"
-              >
-                <div
-                  v-if="writable"
-                  class="jira-card-move"
-                  role="group"
-                  :aria-label="'Przesuń do: ' + card.key"
-                >
-                  <span class="hint">Przesuń do…</span>
-                  <button
-                    v-for="(target, ti) in board.columns"
-                    v-show="ti !== card.column"
-                    :key="ti"
-                    class="action-button"
-                    :disabled="pending.includes(card.key)"
-                    :aria-label="`Przesuń ${card.key} do kolumny: ${target.name}`"
-                    @click="moveCard(card, ti)"
-                  >
-                    {{ target.name }}
-                  </button>
-                </div>
-                <JiraIssueActions
-                  :issue-key="card.key"
-                  :summary="card.summary"
-                  @assigned="assigned(card, $event)"
-                />
-              </div>
-            </article>
-            <p v-if="!columnCards[index].length" class="hint jira-column-empty">
-              Brak zgłoszeń
-            </p>
-          </section>
-        </div>
-      </template>
+      <JiraIssueList
+        v-if="mode === 'list'"
+        :issues="visible"
+        :has-boards="settings.config.boards.length > 0"
+        :busy="busy"
+        :loaded="loaded"
+        :warned="warnings.length > 0"
+        :query="query"
+        :updated-at="updatedAt"
+        :active-url="activeUrl"
+        @open="open"
+        @start="start"
+        @stop="emit('stop')"
+      />
+      <JiraBoard
+        v-else-if="board"
+        :board="board"
+        :scope="scope"
+        :busy="busy"
+        :writable="writable"
+        :query="query"
+        :updated-at="updatedAt"
+        :active-url="activeUrl"
+        :local="local"
+        @open="open"
+        @start="start"
+        @stop="emit('stop')"
+        @updated="emit('updated', $event)"
+        @notice="notice = $event"
+      />
       <p v-else-if="mode === 'board' && busy" class="hint" role="status">
         Proszę czekać…
       </p>

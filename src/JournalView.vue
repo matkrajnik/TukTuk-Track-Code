@@ -10,7 +10,7 @@ import {
   type Task,
   type Session,
 } from "./store";
-import { dayKey, dayBounds, dayText, inDay } from "./time";
+import { clock, dayKey, dayBounds, dayText, inDay } from "./time";
 import { plannedTasks } from "./dayplan";
 import { corrections } from "./estimates";
 import {
@@ -218,12 +218,6 @@ const timeline = computed(() => {
   }
   return result;
 });
-const clock = (at: number) =>
-  new Intl.DateTimeFormat("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(at);
 const week = computed(() => {
   const d = new Date(dayBounds(day.value)[0]);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -528,8 +522,8 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         :class="{ gap: !item.session }"
       >
         <span class="mono"
-          >{{ clock(item.start) }} →
-          {{ item.session?.endedAt === null ? "teraz" : clock(item.end) }}</span
+          >{{ clock(item.start, true) }} →
+          {{ item.session?.endedAt === null ? "teraz" : clock(item.end, true) }}</span
         ><span>{{
           item.session
             ? taskMap.get(item.session.taskId)?.title

@@ -20,7 +20,7 @@ import {
   type Snapshot,
 } from "./store";
 import { openView } from "./navigation";
-import { dayKey, dayText } from "./time";
+import { clock, dayKey, dayText } from "./time";
 import RedmineIssueCard from "./components/RedmineIssueCard.vue";
 
 /**
@@ -190,11 +190,7 @@ async function run(fn: () => Promise<void>) {
     busy.value = false;
   }
 }
-const stamp = () =>
-  new Date().toLocaleTimeString("pl-PL", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+const stamp = () => clock(Date.now());
 async function fetchIssues() {
   loaded.value = false;
   warnings.value = [];
