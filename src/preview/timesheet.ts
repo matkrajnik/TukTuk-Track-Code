@@ -40,7 +40,8 @@ import { tsProjectKey } from "../timesheet";
  * (`overtime`) są zapisywane i odczytywane jak godziny; `dropOvertime`: TS
  * zapisuje nadgodziny jako „0” (rozjazd po zapisie). `changeBeforeSave`: wpisy
  * dopisane w TS „przez kogoś innego” tuż przed zapisem (między otwarciem
- * podglądu a zapisem), jednorazowo.
+ * podglądu a zapisem), jednorazowo. `failRead`: dni, których odczyt
+ * (`ts_filled`) kończy się błędem.
  */
 export const previewTsKey = "todo-track-preview-ts-v1";
 interface PreviewTs {
@@ -50,6 +51,7 @@ interface PreviewTs {
   deviceId?: string;
   failLogin?: boolean;
   failReadBack?: boolean;
+  failRead?: string[];
   ignoreSave?: boolean;
   dropOvertime?: boolean;
   changeBeforeSave?: Record<string, TsFilled[]>;
@@ -143,6 +145,8 @@ export async function tsTasks(date: string): Promise<TsProject[]> {
 export async function tsFilled(date: string): Promise<TsFilled[]> {
   tsCheckDate(date);
   const state = previewTsConnected();
+  if (state.failRead?.includes(date))
+    throw new Error("TS nie odpowiada (symulowany błąd odczytu).");
   return structuredClone(state.filled?.[date] ?? []);
 }
 export async function tsSend(

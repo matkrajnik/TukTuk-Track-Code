@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { Pencil, RotateCcw } from "lucide-vue-next";
 import SearchSelect from "./SearchSelect.vue";
 import type { SearchOption } from "../searchSelect";
@@ -90,6 +90,8 @@ interface DayState {
   /** Opisy edytowalne w podglądzie (nie zmieniają notatek w Todo Track). */
   descriptions: Record<string, string>;
   edits: Record<string, Amounts>;
+  /** Informacja po przypisaniu zadania TS (godziny przeliczone z pomiarów). */
+  notice: string;
   error: string;
   result: DayResult | null;
 }
@@ -107,6 +109,7 @@ const states = reactive<DayState[]>(
     mode: "keep",
     descriptions: {},
     edits: {},
+    notice: "",
     error: "",
     result: null,
   })),
@@ -219,10 +222,24 @@ function sums(i: number) {
   return { hours: h, overtime: o, total: h + o };
 }
 const curSums = computed(() => sums(active.value));
-/** Suma godzin ponad normę dnia (ostrzeżenie; nadwyżka należy do nadgodzin). */
+/**
+ * Godziny (bez nadgodzin, setne) wpisów TS, które zostaną w dniu obok raportu:
+ * przy „Zachowaj pozostałe wpisy TS” wpisy o zadaniach spoza raportu
+ * (jak `tsMergeKeep`), przy „Zastąp wszystko” żadne.
+ */
+const keptHours = computed(() =>
+  cur.value.mode === "keep" && !cur.value.result
+    ? cur.value.filled
+        .filter((f) => !ours.value.has(f.id.trim()))
+        .reduce((sum, f) => sum + tsHundredths(f.hours), 0)
+    : 0,
+);
+/** Godziny dnia w TS po zapisie: raport i zachowane wpisy TS. */
+const dayHours = computed(() => curSums.value.hours + keptHours.value);
+/** Norma dnia, gdy suma godzin ją przekracza (ostrzeżenie; nadwyżka należy do nadgodzin). */
 const overNorm = computed(() => {
   const norm = plan.value.norm;
-  return norm !== null && curSums.value.hours > norm ? norm : null;
+  return norm !== null && dayHours.value > norm ? norm : null;
 });
 const otText = (value: string) => tsOvertimeText(tsHundredths(value));
 
@@ -254,6 +271,8 @@ async function assign(task: Task, id: string) {
   const name = findTsTask(s.projects, id)?.name ?? "";
   busy.value = true;
   s.error = "";
+  s.notice = "";
+  let done = false;
   try {
     const project = projectOf(task);
     if (asDefault.value[task.id] && project)
@@ -266,11 +285,37 @@ async function assign(task: Task, id: string) {
         tsTaskName: name,
       }),
     );
+    done = true;
+    // Czas wpisu i podział nadgodzin dnia się zmieniają: wpisane ręcznie
+    // wartości byłyby nieaktualne, więc wracają do podziału z pomiarów.
+    if (Object.keys(s.edits).length) {
+      s.edits = {};
+      s.notice =
+        "Po przypisaniu zadania TS godziny i nadgodziny przeliczono z pomiarów — poprzednie zmiany godzin odrzucono.";
+    }
   } catch (e) {
     s.error = String(e instanceof Error ? e.message : e);
   } finally {
     busy.value = false;
   }
+  if (done) await refocus();
+}
+/**
+ * Po przypisaniu wiersz z polem wyboru znika z listy „Bez zadania TS”, a z nim
+ * fokus. Fokus wraca do okna: następne pole przypisania, przycisk zapisu albo
+ * nagłówek okna.
+ */
+async function refocus() {
+  await nextTick();
+  const box = root.value;
+  if (!box || box.contains(document.activeElement)) return;
+  const target =
+    box.querySelector<HTMLElement>(
+      '.ts-send-unmapped [role="combobox"]:not(:disabled)',
+    ) ??
+    box.querySelector<HTMLElement>(".modal-actions .primary-button:not(:disabled)") ??
+    box.querySelector<HTMLElement>("h2");
+  target?.focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -282,17 +327,30 @@ const pending = computed(() =>
     .map((s, i) => ({ s, i }))
     .filter(({ s, i }) => !s.result && plans.value[i].entries.length > 0),
 );
+/** Dzień nie może być zapisany: wczytywanie, błąd odczytu albo błędne pola. */
+const blocked = (i: number) =>
+  states[i].loading || !!states[i].loadError || dayInvalid(i);
+/**
+ * Dni gotowe do zapisu. Przy kilku dniach dzień z błędem odczytu albo
+ * z błędnymi godzinami jest pomijany (podsumowanie podaje powód), a nie
+ * blokuje pozostałych; zapis czeka tylko na zakończenie wczytywania.
+ */
+const ready = computed(() => pending.value.filter(({ i }) => !blocked(i)));
 const canSave = computed(
   () =>
     !busy.value &&
-    pending.value.length > 0 &&
-    pending.value.every(
-      ({ s, i }) => !s.loading && !s.loadError && !dayInvalid(i),
-    ),
+    ready.value.length > 0 &&
+    !pending.value.some(({ s }) => s.loading) &&
+    (multi || ready.value.length === pending.value.length),
 );
-/** Pierwszy dzień, który blokuje zapis (do podpowiedzi w zakładkach). */
-const blocked = (i: number) =>
-  states[i].loading || !!states[i].loadError || dayInvalid(i);
+/** Powód pominięcia dnia przy zapisie kilku dni. */
+const skipReason = (i: number) =>
+  states[i].loadError
+    ? "błąd odczytu dnia z TS"
+    : dayInvalid(i)
+      ? "błędne godziny lub nadgodziny"
+      : "";
+const skipped = computed(() => pending.value.filter(({ i }) => skipReason(i)));
 
 async function saveDay(s: DayState, i: number) {
   s.error = "";
@@ -323,7 +381,9 @@ async function save() {
   busy.value = true;
   editing.value = false;
   try {
-    for (const { s, i } of pending.value) await saveDay(s, i);
+    for (const s of states) s.notice = "";
+    // Lista ustalona przed zapisem: zapisane dni wypadają z `pending`.
+    for (const { s, i } of [...ready.value]) await saveDay(s, i);
     if (multi) summary.value = true;
     // Pierwszy dzień z błędem na wierzchu.
     const failed = states.findIndex((s) => s.error);
@@ -335,13 +395,19 @@ async function save() {
 const savedDays = computed(() => states.filter((s) => s.result));
 const savedTotal = computed(() =>
   tsHoursText(
-    savedDays.value.reduce((sum, s) => sum + tsHundredths(s.result!.hours), 0),
+    savedDays.value.reduce(
+      (sum, s) =>
+        // Bez odczytu po zapisie: suma wysłanych wpisów (odczyt jest pusty).
+        sum +
+        tsHundredths(s.result!.warning ? s.result!.sentHours : s.result!.hours),
+      0,
+    ),
   ),
 );
 const dayStatus = (s: DayState, i: number) =>
   s.result
     ? "wysłano"
-    : s.error
+    : s.error || s.loadError
       ? "błąd"
       : plans.value[i].entries.length
         ? ""
@@ -359,7 +425,12 @@ function showTask(id: number) {
 const saveLabel = computed(() => {
   if (busy.value) return "Zapisywanie…";
   if (multi)
-    return `Zapisz w TS (${tsPlural(pending.value.length, "dzień", "dni", "dni")})`;
+    return `Zapisz w TS (${tsPlural(
+      pending.value.length - skipped.value.length,
+      "dzień",
+      "dni",
+      "dni",
+    )})`;
   return cur.value.mode === "replace" && cur.value.filled.length
     ? "Zastąp i zapisz"
     : "Zapisz w TS";
@@ -376,10 +447,10 @@ const saveLabel = computed(() => {
       aria-label="Wyślij do TS"
       @keydown="trapFocus"
     >
-      <h2 v-if="multi">
+      <h2 v-if="multi" tabindex="-1">
         Wyślij do TS · {{ tsPlural(states.length, "dzień", "dni", "dni") }}
       </h2>
-      <h2 v-else>Wyślij do TS · {{ dayText(states[0].day) }}</h2>
+      <h2 v-else tabindex="-1">Wyślij do TS · {{ dayText(states[0].day) }}</h2>
       <div
         v-if="multi"
         class="tabs ts-send-days"
@@ -410,6 +481,9 @@ const saveLabel = computed(() => {
         :aria-labelledby="multi ? 'ts-send-tab-' + cur.day : undefined"
       >
         <p v-if="cur.error" class="error" role="alert">{{ cur.error }}</p>
+        <p v-if="cur.notice" class="hint ts-send-notice" aria-live="polite">
+          {{ cur.notice }}
+        </p>
         <template v-if="plan.entries.length">
           <div class="ts-send-tools">
             <button
@@ -568,7 +642,13 @@ const saveLabel = computed(() => {
           role="note"
           aria-label="Ostrzeżenia wysyłki"
         >
-          <p v-if="overNorm !== null">
+          <p v-if="overNorm !== null && keptHours > 0">
+            Suma godzin dnia w TS {{ tsHoursText(dayHours) }} h (raport
+            {{ tsHoursText(curSums.hours) }} h + pozostałe wpisy TS
+            {{ tsHoursText(keptHours) }} h) przekracza normę dnia
+            {{ tsHoursText(overNorm) }} h — nadwyżkę wpisz w nadgodzinach.
+          </p>
+          <p v-else-if="overNorm !== null">
             Suma godzin {{ tsHoursText(curSums.hours) }} h przekracza normę
             dnia {{ tsHoursText(overNorm) }} h — nadwyżkę wpisz w nadgodzinach.
           </p>
@@ -761,12 +841,26 @@ const saveLabel = computed(() => {
             <template v-else-if="!plans[i].entries.length"
               >brak wpisów do wysłania</template
             >
+            <span v-else-if="skipReason(i)" class="ts-send-warning"
+              >nie wysłano: {{ skipReason(i) }}</span
+            >
             <template v-else>nie wysłano</template>
           </li>
         </ul>
       </section>
       <p v-else-if="!cur.result" class="hint">
         Zapis w TS zastępuje cały dzień. Wysyłka nie zamyka dnia w Todo Track.
+      </p>
+      <p
+        v-if="multi && skipped.length && !busy"
+        class="hint ts-send-skipped"
+      >
+        Pominięte przy zapisie:
+        {{
+          skipped
+            .map(({ s, i }) => `${dayText(s.day)} (${skipReason(i)})`)
+            .join(", ")
+        }}.
       </p>
       <div class="modal-actions">
         <button :disabled="busy" @click="close">

@@ -518,3 +518,118 @@ test("„Wyślij dni do TS”: błąd jednego dnia nie zatrzymuje pozostałych, 
     "Zapisano w TS 2 z 2 dni, razem 13,50 h.",
   );
 });
+
+test("„Wyślij dni do TS”: dzień z błędem odczytu jest pomijany, pozostałe dni zapisane", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: tsSeed({}),
+    ts: emptyTs({ failRead: ["2026-10-14"] }),
+  });
+  await nav(page, "Raporty dzienne");
+  await nav(page, "Wybrane dni");
+  for (const label of [
+    "13 października 2026",
+    "14 października 2026",
+    "15 października 2026",
+  ])
+    await page.getByRole("button", { name: label, exact: true }).click();
+  await page.getByRole("button", { name: "Wyślij dni do TS" }).click();
+  const d = dialog(page);
+  const tabs = d.getByRole("tab");
+  await expect(tabs).toHaveCount(3);
+  await expect(tabs.nth(1)).toContainText("błąd");
+  await expect(d.getByText("Pominięte przy zapisie: śr., 14 paź (błąd odczytu dnia z TS).")).toBeVisible();
+  await d.getByRole("button", { name: "Zapisz w TS (2 dni)" }).click();
+  const summary = d.getByRole("region", { name: "Podsumowanie wysyłki" });
+  await expect(summary.getByRole("status")).toHaveText(
+    "Zapisano w TS 2 z 3 dni, razem 10,00 h.",
+  );
+  await expect(summary.locator("li")).toHaveText([
+    "wt., 13 paź: 1 wpis w TS, razem 7,00 h",
+    "śr., 14 paź: nie wysłano: błąd odczytu dnia z TS",
+    "czw., 15 paź: 2 wpisy w TS, razem 3,00 h",
+  ]);
+  expect(Object.keys((await tsState(page)).filled).sort()).toEqual([
+    "2026-10-13",
+    TODAY,
+  ]);
+  // Ponowny odczyt po naprawie: dzień wraca do zapisu.
+  await page.evaluate((k) => {
+    const s = JSON.parse(localStorage.getItem(k)!);
+    s.failRead = [];
+    localStorage.setItem(k, JSON.stringify(s));
+  }, previewTsKey);
+  await tabs.nth(1).click();
+  await d.getByRole("button", { name: "Spróbuj ponownie" }).click();
+  await d.getByRole("button", { name: "Zapisz w TS (1 dzień)" }).click();
+  await expect(summary.getByRole("status")).toHaveText(
+    "Zapisano w TS 3 z 3 dni, razem 16,50 h.",
+  );
+});
+
+test("„Wyślij dni do TS”: bez odczytu po zapisie suma w podsumowaniu z wysłanych wpisów", async ({
+  page,
+}) => {
+  await openPreview(page, { data: tsSeed({}), ts: emptyTs({ failReadBack: true }) });
+  await nav(page, "Raporty dzienne");
+  await nav(page, "Wybrane dni");
+  for (const label of ["13 października 2026", "14 października 2026"])
+    await page.getByRole("button", { name: label, exact: true }).click();
+  await page.getByRole("button", { name: "Wyślij dni do TS" }).click();
+  const d = dialog(page);
+  await d.getByRole("button", { name: "Zapisz w TS (2 dni)" }).click();
+  const summary = d.getByRole("region", { name: "Podsumowanie wysyłki" });
+  await expect(summary.getByRole("status")).toHaveText(
+    "Zapisano w TS 2 z 2 dni, razem 13,50 h.",
+  );
+  await expect(summary.locator("li").first()).toHaveText(
+    "wt., 13 paź: wysłano 1 wpis (7,00 h), bez odczytu po zapisie",
+  );
+});
+
+test("norma dnia: przy „Zachowaj pozostałe wpisy TS” liczą się też godziny zachowanych wpisów TS", async ({
+  page,
+}) => {
+  await openPreview(page, { data: overtimeSeed(), ts: tsFixture(), now: EVENING });
+  await openReportSend(page);
+  const d = dialog(page);
+  const warnings = d.getByRole("note", { name: "Ostrzeżenia wysyłki" });
+  // Raport 8,00 h w godzinach (do normy) + 1,00 h wpisu „Administracja” w TS.
+  await expect(warnings).toContainText(
+    "Suma godzin dnia w TS 9,00 h (raport 8,00 h + pozostałe wpisy TS 1,00 h) przekracza normę dnia 8,00 h — nadwyżkę wpisz w nadgodzinach.",
+  );
+  await d.getByRole("radio", { name: "Zastąp wszystko" }).check();
+  await expect(warnings).toHaveCount(0);
+  await d.getByRole("radio", { name: "Zachowaj pozostałe wpisy TS" }).check();
+  await expect(warnings).toContainText("pozostałe wpisy TS 1,00 h");
+});
+
+test("przypisanie zadania TS po edycji godzin: godziny przeliczone z pomiarów, fokus zostaje w oknie", async ({
+  page,
+}) => {
+  await openPreview(page, { data: tsSeed(), ts: emptyTs() });
+  await openReportSend(page);
+  const d = dialog(page);
+  await d.getByRole("button", { name: "Edytuj godziny" }).click();
+  const hours = d.getByRole("textbox", { name: "Godziny: Rozwój", exact: true });
+  const before = await hours.inputValue();
+  await hours.fill("0,25");
+  await expect(d.getByRole("button", { name: "Przywróć z pomiarów: Rozwój" })).toBeVisible();
+  await pick(
+    d.getByRole("combobox", { name: "Przypisz zadanie TS: Code review" }),
+    "Rozwój",
+  );
+  await expect(rows(page).nth(0).locator("td").nth(0)).toHaveText(
+    "Analiza importu, Code review, Wdrożenie etykiet",
+  );
+  // Wpisana wartość odrzucona: czas Rozwoju z pomiarów razem z Code review.
+  await expect(hours).not.toHaveValue("0,25");
+  await expect(hours).not.toHaveValue(before);
+  await expect(d.getByRole("button", { name: "Przywróć z pomiarów: Rozwój" })).toHaveCount(0);
+  await expect(d.getByText("godziny i nadgodziny przeliczono z pomiarów")).toBeVisible();
+  // Pole wyboru zniknęło razem z wierszem; fokus wraca do okna (przycisk zapisu).
+  await expect(d.getByRole("button", { name: "Zapisz w TS" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  expect(await d.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+});
