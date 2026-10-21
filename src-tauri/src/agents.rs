@@ -518,6 +518,7 @@ impl Watch {
 /// Rejestruje stan agentów; wołać przed utworzeniem okien.
 pub fn setup(app: &tauri::AppHandle) {
     app.manage(State::default());
+    app.manage(crate::orca::State::default());
 }
 
 /// Pętla co 5 s. Kończy się, gdy okno main zniknie, więc wołać po `create_windows`.
@@ -539,6 +540,11 @@ pub fn start(app: &tauri::AppHandle) {
                 // `.git` (także z dysku sieciowego) czytany poza blokadą stanu, żeby
                 // `agents_status` w wątku głównym na niego nie czekał.
                 branches.recognize(&mut found, now, git_branch);
+                // Mapowanie folderów worktree Orki odświeża się w tle tylko wtedy,
+                // gdy ktoś nie ma jeszcze klucza (B9); Orki nie uruchamia.
+                if found.iter().any(|a| a.key.is_none()) {
+                    crate::orca::refresh_if_due(&app, now);
+                }
                 match_tasks(&app, &mut found);
                 // Czas agentów jako osobny tor (`agent_sessions`).
                 crate::agent_time::observe(&app, &found, now);
@@ -578,6 +584,10 @@ fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
             return;
         };
         for agent in agents.iter_mut() {
+            // Dodatkowe źródło klucza: zgłoszenie podpięte do worktree w Orce (B9).
+            if agent.key.is_none() {
+                agent.key = crate::orca::lookup(app, &agent.cwd);
+            }
             agent.task = resolve(&db, &agent.cwd, agent.key.as_deref())
                 .ok()
                 .flatten();
@@ -593,7 +603,7 @@ fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
 }
 
 /// Ponowne dopasowanie po zmianie przypisań folderów, bez czekania na pętlę.
-fn rematch(app: &tauri::AppHandle) {
+pub(crate) fn rematch(app: &tauri::AppHandle) {
     let Some(mut agents) = app.state::<State>().0.lock().ok().map(|w| w.agents.clone()) else {
         return;
     };
@@ -914,6 +924,25 @@ mod tests {
         db.execute("UPDATE task_lifecycle SET deleted_at=9 WHERE task_id=3", [])
             .unwrap();
         assert_eq!(found("C:\\kosz", Some("WMS-123")).unwrap().source, "task");
+    }
+
+    #[test]
+    fn orca_worktree_folder_gives_the_key_when_branch_and_session_do_not() {
+        // B9: folder worktree z `orca worktree list` jest dodatkowym źródłem klucza.
+        let db = open();
+        let map = crate::orca::folder_keys(&[crate::orca::Worktree {
+            path: r"C:\Orca\wms\praca".into(),
+            references: vec!["https://x.atlassian.net/browse/WMS-123".into()],
+            ..Default::default()
+        }]);
+        let cwd = r"C:\Orca\wms\praca\src";
+        let key = crate::orca::key_for_folder(&map, cwd);
+        let m = resolve(&db, cwd, key.as_deref()).unwrap().unwrap();
+        assert_eq!((m.task_id, m.source.as_str()), (Some(1), "task"));
+        // Przypisanie folderu wygrywa z kluczem z Orki.
+        bind(&db, r"C:\Orca\wms\praca", 2).unwrap();
+        let m = resolve(&db, cwd, key.as_deref()).unwrap().unwrap();
+        assert_eq!((m.task_id, m.source.as_str()), (Some(2), "folder"));
     }
 
     #[test]

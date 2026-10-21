@@ -1,0 +1,39 @@
+{
+  "ok": true,
+  "result": {
+    "worktrees": [
+      {
+        "id": "repo-wms::C:\\Orca\\wms\\WMS-123-popraw-eksport",
+        "repoId": "repo-wms",
+        "path": "C:\\Orca\\wms\\WMS-123-popraw-eksport",
+        "branch": "refs/heads/WMS-123-popraw-eksport",
+        "displayName": "WMS-123 popraw eksport",
+        "linkedIssue": { "type": "jira", "key": "WMS-123", "url": "https://asistonwms.atlassian.net/browse/WMS-123" }
+      },
+      {
+        "id": "repo-api::C:\\Orca\\api\\redmine-4521-raport",
+        "repoId": "repo-api",
+        "path": "C:\\Orca\\api\\redmine-4521-raport",
+        "branch": "redmine-4521-raport",
+        "name": "redmine-4521-raport",
+        "references": ["https://redmine.firma.pl/issues/4521"]
+      },
+      {
+        "id": "repo-wms::C:\\Projekty\\wms",
+        "repoId": "repo-wms",
+        "path": "C:\\Projekty\\wms",
+        "branch": "master",
+        "displayName": "wms",
+        "isMain": true
+      },
+      {
+        "id": "repo-wms::C:\\Orca\\wms\\spike",
+        "repoId": "repo-wms",
+        "path": "C:\\Orca\\wms\\spike/",
+        "branch": "spike",
+        "name": "spike",
+        "reference": "WMS-9"
+      }
+    ]
+  }
+}

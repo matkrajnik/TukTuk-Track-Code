@@ -25,6 +25,10 @@ pub struct AppSettings {
     /// Hooki agentów (B8): wpisy w `~/.claude/settings.json` i `~/.codex/hooks.json`,
     /// z których aplikacja wie, że agent pracuje albo czeka na zgodę.
     pub agent_hooks: bool,
+    /// Ścieżka do `orca.cmd` (B9); pusta = wykrywana (katalog Programs\orca w LOCALAPPDATA).
+    pub orca_path: String,
+    /// Uruchamiaj Orkę, gdy nie działa (B9); domyślnie wyłączone.
+    pub orca_autostart: bool,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     /// Polskie święta ustawowe nie są dniami roboczymi w celu dnia, tygodnia i miesiąca.
@@ -154,6 +158,8 @@ impl Default for AppSettings {
             window_suggest: false,
             browser_extension: false,
             agent_hooks: true,
+            orca_path: String::new(),
+            orca_autostart: false,
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             holidays_in_target: true,
@@ -327,6 +333,20 @@ pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
     Ok(s)
 }
 
+/// Komunikat dla niepoprawnej ścieżki do orca.cmd.
+pub const ORCA_PATH_ERROR: &str =
+    "Ścieżka do orca.cmd musi wskazywać plik .cmd albo .exe (do 1024 znaków, bez cudzysłowów).";
+/// Pusta ścieżka (wykrywanie) albo plik `.cmd` / `.exe` bez cudzysłowów i znaków sterujących.
+fn valid_orca_path(path: &str) -> bool {
+    if path.is_empty() {
+        return true;
+    }
+    let lower = path.to_lowercase();
+    path.chars().count() <= 1024
+        && (lower.ends_with(".cmd") || lower.ends_with(".exe"))
+        && !path.chars().any(|c| c.is_control() || c == '"' || c == '%')
+}
+
 /// Sprawdza zakresy każdego pola osobno i porządkuje dni robocze (rosnąco, bez powtórzeń).
 fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     if s.target_day_minutes > 1440 {
@@ -365,6 +385,10 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
         return Err("Za dużo wyciszonych folderów agentów.".into());
     }
     s.agent_muted_folders = folders;
+    s.orca_path = s.orca_path.trim().to_string();
+    if !valid_orca_path(&s.orca_path) {
+        return Err(ORCA_PATH_ERROR.into());
+    }
     if s.waiting_notify_days > 30 {
         return Err("Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.".into());
     }
@@ -1035,6 +1059,38 @@ mod tests {
         assert_eq!(s.shortcut_quick, d.shortcut_quick);
         assert_eq!(s.shortcut_toggle, d.shortcut_toggle);
         assert_eq!(s.day_start, "09:00");
+    }
+
+    #[test]
+    fn orca_settings_default_validate_and_save() {
+        let mut db = Connection::open_in_memory().unwrap();
+        crate::db::init(&db).unwrap();
+        let base = AppSettings::default();
+        assert_eq!(base.orca_path, "");
+        assert!(!base.orca_autostart);
+        for bad in [
+            r"C:\orca\orca.txt",
+            r#"C:\"orca".cmd"#,
+            r"C:\%X%\orca.cmd",
+            "orca",
+        ] {
+            assert!(apply(&base, &json!({"orcaPath": bad})).is_err(), "{bad}");
+        }
+        assert!(apply(&base, &json!({"orcaPath": 5})).is_err());
+        let saved = save(
+            &mut db,
+            &json!({"orcaPath": "  D:/Orca/bin/orca.cmd ", "orcaAutostart": true}),
+        )
+        .unwrap();
+        assert_eq!(saved.orca_path, "D:/Orca/bin/orca.cmd");
+        let loaded = load(&db);
+        assert_eq!(loaded.orca_path, "D:/Orca/bin/orca.cmd");
+        assert!(loaded.orca_autostart);
+        // Pusta ścieżka wraca do wykrywania.
+        assert_eq!(
+            save(&mut db, &json!({"orcaPath": ""})).unwrap().orca_path,
+            ""
+        );
     }
 
     #[test]

@@ -34,6 +34,7 @@ import TaskWaitingProposal from "./task/TaskWaitingProposal.vue";
 import TaskIssueMoves from "./task/TaskIssueMoves.vue";
 import TaskTemplateForm from "./task/TaskTemplateForm.vue";
 import TaskSessions from "./task/TaskSessions.vue";
+import TaskOrca from "./task/TaskOrca.vue";
 import { useIssueMoves } from "./task/issueMoves";
 import {
   duration,
@@ -339,6 +340,7 @@ const issueWrite = computed(() =>
         v-if="issue?.system === 'redmine' && task.redmineId && redmineConnected"
         :issue-id="task.redmineId"
       />
+      <TaskOrca v-if="issue" :task="task" :today-key="todayKey" />
       <p
         v-if="issue && task.details?.jiraNoAsk && issueWrite"
         class="hint jira-no-ask"

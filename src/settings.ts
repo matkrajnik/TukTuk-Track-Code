@@ -16,6 +16,10 @@ export interface AppSettings {
   browserExtension: boolean;
   /** Hooki agentów (Claude Code, Codex): wpisy w ich plikach ustawień (B8). */
   agentHooks: boolean;
+  /** Ścieżka do `orca.cmd` (B9); pusta = wykrywana. */
+  orcaPath: string;
+  /** Uruchamiaj Orkę, gdy nie działa (B9). */
+  orcaAutostart: boolean;
   targetDayMinutes: number;
   workDays: number[];
   /** Święta ustawowe nie są dniami roboczymi w celu. */
@@ -107,6 +111,8 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   windowSuggest: false,
   browserExtension: false,
   agentHooks: true,
+  orcaPath: "",
+  orcaAutostart: false,
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   holidaysInTarget: true,
@@ -294,6 +300,16 @@ const fresh = (): AppSettings => ({
   redmineNewStatuses: [...defaultSettings.redmineNewStatuses],
   jiraCardFields: [...defaultSettings.jiraCardFields],
 });
+/** Komunikat dla niepoprawnej ścieżki do orca.cmd (`settings::ORCA_PATH_ERROR`). */
+export const orcaPathError =
+  "Ścieżka do orca.cmd musi wskazywać plik .cmd albo .exe (do 1024 znaków, bez cudzysłowów).";
+/** Pusta (wykrywanie) albo plik .cmd / .exe bez cudzysłowów, % i znaków sterujących. */
+const validOrcaPath = (path: string) =>
+  path === "" ||
+  ([...path].length <= 1024 &&
+    /\.(cmd|exe)$/i.test(path) &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f"%]/.test(path));
 /** Najwięcej pól Jiry na kafelku (`settings::MAX_CARD_FIELDS`). */
 export const maxCardFields = 6;
 /** Komunikat dla niepoprawnej listy pól (`settings::CARD_FIELDS_ERROR`). */
@@ -364,6 +380,8 @@ function applyFields(
   if (folders.length > 200)
     throw new Error("Za dużo wyciszonych folderów agentów.");
   s.agentMutedFolders = folders;
+  s.orcaPath = s.orcaPath.trim();
+  if (!validOrcaPath(s.orcaPath)) throw new Error(orcaPathError);
   if (!range(s.waitingNotifyDays, 0, 30))
     throw new Error(
       "Przypomnienie o blokadzie musi mieć od 0 do 30 dni roboczych.",

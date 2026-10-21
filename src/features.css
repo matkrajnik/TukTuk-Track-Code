@@ -2933,3 +2933,41 @@ html.widget-root body {
   gap: 2px;
   overflow-wrap: anywhere;
 }
+
+/* Worktree Orki z kafelka zadania (B9). */
+.task-orca {
+  margin-top: 8px;
+}
+.modal.orca-modal {
+  width: min(640px, 100%);
+}
+.orca-fields .orca-prompt textarea {
+  width: 100%;
+  resize: vertical;
+}
+.orca-command {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: var(--surface-2, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+  font-size: var(--fs-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.orca-modal .planning-fields label {
+  margin: 0;
+}
+.orca-modal .orca-prompt,
+.orca-modal .inline-check {
+  grid-column: 1 / -1;
+}
+.orca-modal select,
+.orca-modal textarea {
+  width: 100%;
+  padding: 8px;
+}
+.orca-modal .inline-check input {
+  width: auto;
+  padding: 0;
+}

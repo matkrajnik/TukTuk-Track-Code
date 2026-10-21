@@ -24,6 +24,7 @@ mod maintenance;
 mod meetings;
 mod native_msg;
 mod notify;
+mod orca;
 mod planner;
 mod quickadd;
 mod recurrence;
@@ -603,6 +604,11 @@ fn main() {
             browser::browser_status,
             browser::browser_open_folder,
             agents::agent_bindings,
+            orca::orca_status,
+            orca::orca_command,
+            orca::orca_repos,
+            orca::orca_find,
+            orca::orca_create,
             agents::agent_bind,
             agents::agent_unbind,
             agent_time::agent_time,

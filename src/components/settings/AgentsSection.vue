@@ -6,10 +6,15 @@
  * zostają); poniżej stan rejestracji, zaufanie Codexa i ostatnie zdarzenia.
  */
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { agentHooksStatus, type AgentHooksStatus } from "../../store";
+import {
+  agentHooksStatus,
+  orcaStatus,
+  type AgentHooksStatus,
+  type OrcaStatus,
+} from "../../store";
 import type { AppSettings } from "../../settings";
 import { clock } from "../../time";
-import { checked, message, useSettingsSection } from "./section";
+import { checked, message, text, useSettingsSection } from "./section";
 
 const settings = defineModel<AppSettings>("settings", { required: true });
 const { busy, error, save } = useSettingsSection(settings);
@@ -65,9 +70,30 @@ const folderName = (cwd: string) =>
     .split(/[\\/]/)
     .pop() ?? "";
 
+/** Stan orca.cmd (B9): wykryta albo podana ścieżka. */
+const orca = ref<OrcaStatus | null>(null);
+async function loadOrca() {
+  try {
+    orca.value = await orcaStatus();
+  } catch {
+    orca.value = null;
+  }
+}
+async function savePath(event: Event) {
+  await save({ orcaPath: text(event).trim() });
+  await loadOrca();
+}
+const orcaInfo = computed(() => {
+  const o = orca.value;
+  if (!o) return "";
+  if (o.found) return `Znaleziono: ${o.path}`;
+  return "Nie znaleziono orca.cmd. Zainstaluj Orkę albo podaj ścieżkę.";
+});
+
 let timer: number | undefined;
 onMounted(() => {
   void load();
+  void loadOrca();
   // Zdarzenia przychodzą co kilka sekund.
   timer = window.setInterval(() => void load(), 5_000);
 });
@@ -110,6 +136,39 @@ watch(
     <p v-if="status.error" class="error">{{ status.error }}</p>
     <p v-if="loadError" class="error" role="alert">{{ loadError }}</p>
   </div>
+  <h3>Orca</h3>
+  <p class="hint">
+    Akcja „Otwórz worktree w Orce” na rozwiniętym kafelku zadania ze zgłoszeniem
+    (Jira, Redmine) używa wiersza poleceń Orki (orca.cmd). Aplikacja czyta też
+    listę worktree Orki, żeby rozpoznać zadanie agenta po folderze worktree
+    (tylko odczyt, gdy Orca działa).
+  </p>
+  <div class="planning-fields settings-fields">
+    <label
+      >Ścieżka do orca.cmd<input
+        :value="settings.orcaPath"
+        maxlength="1024"
+        :placeholder="orca?.defaultPath || 'Wykrywana automatycznie'"
+        :disabled="busy"
+        @change="savePath"
+    /></label>
+  </div>
+  <p v-if="orcaInfo" class="hint" role="status" aria-label="Stan orca.cmd">
+    {{ orcaInfo }}
+  </p>
+  <label class="inline-check"
+    ><input
+      :checked="settings.orcaAutostart"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ orcaAutostart: checked($event) })"
+    />Uruchamiaj Orkę, gdy nie działa</label
+  >
+  <p class="hint">
+    Wyłączone (domyślnie): przy nieuruchomionej Orce dialog pokazuje „Orca nie
+    działa” i nic nie tworzy. Włączone: aplikacja uruchomi Orkę (orca open)
+    dopiero przy otwarciu dialogu worktree.
+  </p>
   <h3>Ostatnie zdarzenia</h3>
   <ul
     v-if="status.events.length"

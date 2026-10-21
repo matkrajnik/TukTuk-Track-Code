@@ -284,6 +284,10 @@ export const settingsSections = [
       "/hooks",
       "ostatnie zdarzenia",
       "Hooki agentów (Claude Code, Codex)",
+      "Orca",
+      "worktree",
+      "Ścieżka do orca.cmd",
+      "Uruchamiaj Orkę, gdy nie działa",
     ],
   },
 ] as const;

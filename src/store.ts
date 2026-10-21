@@ -85,12 +85,20 @@ import {
   type RedmineProject,
   type RedmineStatus,
 } from "./api/redmine";
+import type {
+  OrcaCreated,
+  OrcaCreateRequest,
+  OrcaRepo,
+  OrcaStatus,
+  OrcaWorktree,
+} from "./api/orca";
 import * as snapshotSim from "./preview/snapshot";
 import { snapshotKey } from "./preview/snapshot";
 import * as tasksSim from "./preview/tasks";
 import * as templatesSim from "./preview/templates";
 import * as agentsSim from "./preview/agents";
 import * as hooksSim from "./preview/hooks";
+import * as orcaSim from "./preview/orca";
 import * as calendarSim from "./preview/calendar";
 import * as jiraSim from "./preview/jira";
 import { previewJiraKey } from "./preview/jira-state";
@@ -104,6 +112,7 @@ export * from "./api/calendar";
 export * from "./api/jira";
 export * from "./api/timesheet";
 export * from "./api/redmine";
+export * from "./api/orca";
 export { previewDataEvent } from "./preview/storage";
 export {
   previewWidgetSettingsChanged,
@@ -116,6 +125,7 @@ export {
   agentSessionsKey,
 } from "./preview/agents";
 export { agentHooksKey } from "./preview/hooks";
+export { orcaKey } from "./preview/orca";
 export { calendarKey, previewCalendarEmail } from "./preview/calendar";
 export {
   previewJiraKey,
@@ -620,6 +630,31 @@ export async function saveWeekNote(week: string, text: string): Promise<string> 
 export async function agentHooksStatus(): Promise<AgentHooksStatus> {
   if (desktop) return invoke("agent_hooks_status");
   return hooksSim.agentHooksStatus();
+}
+/** `orca_status`: orca.cmd, ścieżka i czy Orca działa (B9). */
+export async function orcaStatus(): Promise<OrcaStatus> {
+  if (desktop) return invoke("orca_status");
+  return orcaSim.orcaStatus();
+}
+/** `orca_command`: polecenie `worktree create` do podglądu w dialogu; nic nie uruchamia. */
+export async function orcaCommand(req: OrcaCreateRequest): Promise<string> {
+  if (desktop) return invoke("orca_command", { req });
+  return orcaSim.orcaCommand(req);
+}
+/** `orca_repos`: repozytoria Orki (wymaga działającej Orki). */
+export async function orcaRepos(): Promise<OrcaRepo[]> {
+  if (desktop) return invoke("orca_repos");
+  return orcaSim.orcaRepos();
+}
+/** `orca_find`: worktree podpięte do zgłoszenia (`reference find`). */
+export async function orcaFind(key: string): Promise<OrcaWorktree[]> {
+  if (desktop) return invoke("orca_find", { key });
+  return orcaSim.orcaFind(key);
+}
+/** `orca_create`: tworzy worktree w Orce; wołać tylko po kliknięciu w dialogu. */
+export async function orcaCreate(req: OrcaCreateRequest): Promise<OrcaCreated> {
+  if (desktop) return invoke("orca_create", { req });
+  return orcaSim.orcaCreate(req);
 }
 /** `browser_status`: stan wyłącznika, rejestracji i ostatniego sygnału. */
 export async function browserStatus(): Promise<BrowserStatus> {

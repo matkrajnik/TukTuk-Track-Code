@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "result": [
+    {
+      "path": "C:\\Orca\\wms\\WMS-123-popraw-eksport",
+      "branch": "WMS-123-popraw-eksport",
+      "displayName": "WMS-123 popraw eksport",
+      "reference": "WMS-123"
+    }
+  ]
+}

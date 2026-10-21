@@ -1,0 +1,11 @@
+{
+  "ok": true,
+  "result": {
+    "worktree": {
+      "id": "repo-wms::C:\\Orca\\wms\\WMS-200-nowy",
+      "path": "C:\\Orca\\wms\\WMS-200-nowy",
+      "branch": "refs/heads/wms-200-nowy",
+      "displayName": "wms-200-nowy"
+    }
+  }
+}

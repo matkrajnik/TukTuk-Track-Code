@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "result": {
+    "repos": [
+      { "id": "repo-wms", "displayName": "wms", "path": "C:\\Projekty\\wms" },
+      { "id": "repo-api", "name": "api", "path": "C:\\Projekty\\api" },
+      { "id": "repo-bez-sciezki", "name": "uszkodzone" }
+    ]
+  }
+}
