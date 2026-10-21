@@ -182,6 +182,14 @@ async function navigate(request: NavigateRequest) {
   // Otwartego okna dialogowego nie zamykamy: niezapisane zmiany zostają, a
   // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
   // wtedy, gdy żadne okno nie jest otwarte.
+  // Żądanie Zadań ustawia nowe filtry, więc pozycja przewinięcia starej listy
+  // nie ma sensu: nowa lista zaczyna się od góry (zadanie lub sekcję przewija
+  // potem sam widok Zadań).
+  if (target === "tasks") {
+    scrollPositions.delete("tasks");
+    if (view.value === "tasks")
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+  }
   view.value = target;
   if (target === "settings" && isSettingsSection(request.section))
     settingsSection.value = request.section;

@@ -187,13 +187,11 @@ const matching = computed(() =>
 );
 /** „Pokaż starsze”: ukończone zadania sprzed ostatnich 30 dni. */
 const showOlder = ref(false);
+/** Bieżąca minuta: zmienia się co 60 s, więc zależne wyliczenia nie liczą się co sekundę. */
+const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
 /** Chwile ukończenia; trwający pomiar ukończonego zadania nie istnieje, więc wystarczy minuta. */
 const doneAt = computed(() =>
-  doneMoments(
-    props.data.tasks,
-    props.data.sessions,
-    Math.floor(props.now / 60_000) * 60_000,
-  ),
+  doneMoments(props.data.tasks, props.data.sessions, minute.value),
 );
 const recentFrom = computed(() => recentDoneFrom(todayKey.value));
 const recentDone = (t: Task) =>
@@ -350,7 +348,6 @@ onUnmounted(() => {
   stopRedmine();
 });
 /** Poprawka szacunków (podpowiedzi „zwykle ~…”); przeliczana co minutę. */
-const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
 const correctionOf = computed(() => corrections(props.data, minute.value));
 const newInput = ref<HTMLInputElement | null>(null);
 const parsed = computed(() =>

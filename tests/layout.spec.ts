@@ -69,6 +69,48 @@ test("zmiana widoku zaczyna od góry, Zadania wracają w zapamiętane miejsce", 
   expect(await page.evaluate(() => window.scrollY)).toBe(0);
 });
 
+test("navigate do Zadań zaczyna nową listę od góry", async ({
+  page,
+}) => {
+  const navigatePreview = (detail: object) =>
+    page.evaluate(
+      (d) =>
+        window.dispatchEvent(
+          new CustomEvent("todo-track-navigate", { detail: d }),
+        ),
+      detail,
+    );
+  await page.setViewportSize({ width: 1180, height: 600 });
+  await openPreview(page, { data: longSeed() });
+  await page.evaluate(() => window.scrollTo(0, 500));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(500);
+
+  const lastTask = page.getByText("Zadanie dodatkowe 25", { exact: true });
+  const scrollY = () => page.evaluate(() => window.scrollY);
+
+  // Z innego widoku: zapamiętana pozycja starej listy nie wraca, choć nowa
+  // lista (wszystkie aktywne) jest równie długa.
+  await nav(page, "Dashboard");
+  await expect.poll(scrollY).toBe(0);
+  await navigatePreview({ view: "tasks" });
+  await expect(lastTask).toBeAttached();
+  await page.waitForTimeout(100);
+  expect(await scrollY()).toBe(0);
+
+  // Już na Zadaniach: żądanie też przewija na górę.
+  await page.evaluate(() => window.scrollTo(0, 400));
+  await expect.poll(scrollY).toBe(400);
+  await navigatePreview({ view: "tasks" });
+  await expect.poll(scrollY).toBe(0);
+
+  // Zwykły powrót przyciskiem nadal przywraca zapamiętane miejsce.
+  await page.evaluate(() => window.scrollTo(0, 300));
+  await expect.poll(scrollY).toBe(300);
+  await nav(page, "Dashboard");
+  await nav(page, "Zadania");
+  await expect.poll(scrollY).toBe(300);
+});
+
 test("main.wide: tablica tygodnia na całą szerokość, listy w 1120 px", async ({
   page,
 }) => {
