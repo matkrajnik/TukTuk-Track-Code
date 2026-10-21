@@ -31,7 +31,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readSettings } from "./settings";
+import { onSettingsChanged, parseShortcut, readSettings } from "./settings";
 import {
   markMorningShown,
   morningShown,
@@ -164,6 +164,26 @@ function openDelete(task: Task) {
   error.value = "";
   deleting.value = task;
 }
+/**
+ * Przejścia użytkownika (zakładka, link w widoku, powiadomienie, tray, skrót N).
+ * Automatyczne Rano nie przełącza widoku, jeśli w trakcie jego sprawdzania
+ * nastąpiło inne przejście. Żądanie spoza okna (powiadomienie, „Nowe zadanie”
+ * z traya) przychodzi razem z pokazaniem okna, więc od razu oznacza Rano tego
+ * dnia jako pokazane: pokazanie okna z celem nie kończy się na Rano.
+ */
+let navigations = 0;
+let morningNavigating = false;
+function userNavigated(external: boolean) {
+  navigations++;
+  if (external) markMorningShown(dayKey(Date.now()));
+}
+watch(
+  view,
+  () => {
+    if (!morningNavigating) navigations++;
+  },
+  { flush: "sync" },
+);
 /** Żądania z powiadomień Windows (`navigate`) dla Zadań i Zamknięcia dnia. */
 const tasksRequest = ref<NavigateRequest | null>(null);
 const journalDayClose = ref(false);
@@ -186,9 +206,13 @@ const views: View[] = [
  * ustawiamy widok, filtr, rozwinięcie i edytor na zakładce Podziel.
  * Niczego nie zapisuje i nie przełącza timera.
  */
-async function navigate(request: NavigateRequest) {
+async function navigate(
+  request: NavigateRequest,
+  source: "app" | "external" | "morning" = "app",
+) {
   const target = views.find((v) => v === request.view);
   if (!target) return;
+  if (source !== "morning") userNavigated(source === "external");
   // Otwartego okna dialogowego nie zamykamy: niezapisane zmiany zostają, a
   // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
   // wtedy, gdy żadne okno nie jest otwarte.
@@ -264,7 +288,8 @@ function skipToMain() {
   document.getElementById("main")?.focus();
 }
 /** Fokus w polu „Nowe zadanie” (skrót N i zdarzenie `prompt-task` z traya). */
-async function focusNewTask() {
+async function focusNewTask(external = false) {
+  userNavigated(external);
   view.value = "tasks";
   await nextTick();
   document
@@ -301,6 +326,21 @@ const dialogOpen = () =>
   modalOpen.value ||
   quickPreview.value ||
   document.querySelector('[role="dialog"], [aria-modal="true"]') !== null;
+/**
+ * Skróty globalne z Ustawień (postać kanoniczna, tylko aplikacja). Lokalny
+ * Ctrl+Shift+S ustępuje globalnemu skrótowi o tej samej kombinacji, żeby jedno
+ * naciśnięcie nie zatrzymało i od razu nie wznowiło pomiaru.
+ */
+const globalShortcuts = ref<string[]>([]);
+function rememberShortcuts(s: {
+  shortcutQuick: string;
+  shortcutToggle: string;
+}) {
+  globalShortcuts.value = [s.shortcutQuick, s.shortcutToggle]
+    .map(parseShortcut)
+    .filter((v): v is string => v !== null);
+}
+const localToggle = parseShortcut("Control+Shift+S");
 function shortcut(e: KeyboardEvent) {
   const key = e.key.toLowerCase();
   if (e.ctrlKey && key === "k") {
@@ -318,6 +358,8 @@ function shortcut(e: KeyboardEvent) {
     !e.metaKey &&
     e.code === "KeyS"
   ) {
+    // Ta sama kombinacja jako skrót globalny: obsługuje ją Rust.
+    if (desktop && globalShortcuts.value.includes(localToggle!)) return;
     e.preventDefault();
     if (!e.repeat && !dialogOpen()) void toggleShortcut();
   } else if (
@@ -357,6 +399,7 @@ async function openMorningIfDue() {
   const day = dayKey(Date.now());
   if (morningPending || morningShown(day)) return;
   morningPending = true;
+  const seen = navigations;
   try {
     if (!(await windowVisible())) return;
     const settings = await readSettings();
@@ -369,16 +412,27 @@ async function openMorningIfDue() {
     // Dzień mógł się zmienić w trakcie odczytu, a okno pokazać Rano gdzie indziej.
     if (dayKey(Date.now()) !== day || morningShown(day)) return;
     markMorningShown(day);
-    await navigate({ view: "journal", section: "morning" });
+    // W trakcie sprawdzania użytkownik przeszedł gdzie indziej: zostaje tam.
+    if (navigations !== seen) return;
+    morningNavigating = true;
+    try {
+      await navigate({ view: "journal", section: "morning" }, "morning");
+    } finally {
+      morningNavigating = false;
+    }
   } catch {
     /* bez ustawień zostaje bieżący widok */
   } finally {
     morningPending = false;
   }
 }
-watch(todayKey, () => void openMorningIfDue());
+// Zmiana dnia przy widocznym oknie nie przełącza widoku: Rano czeka na kolejne
+// pokazanie okna albo powrót fokusu (onFocusChanged, visibilitychange, focus).
 function onVisibility() {
   if (document.visibilityState === "visible") void openMorningIfDue();
+}
+function onWindowFocus() {
+  void openMorningIfDue();
 }
 
 const unsubscribers: UnlistenFn[] = [];
@@ -390,7 +444,9 @@ onMounted(async () => {
     now.value = Date.now();
   }, 1000);
   try {
-    unsubscribers.push(await onNavigate((request) => void navigate(request)));
+    unsubscribers.push(
+      await onNavigate((request) => void navigate(request, "external")),
+    );
   } catch (e) {
     error.value = String(e);
   }
@@ -399,10 +455,14 @@ onMounted(async () => {
       unsubscribers.push(
         await listen("prompt-task", async () => {
           closeModal();
-          await focusNewTask();
+          await focusNewTask(true);
         }),
       );
       unsubscribers.push(await onDataChanged(refresh));
+      unsubscribers.push(await onSettingsChanged(rememberShortcuts));
+      void readSettings()
+        .then(rememberShortcuts)
+        .catch(() => {});
       // Pokazanie okna z traya (show + set_focus w Rust) albo powrót do okna.
       unsubscribers.push(
         await getCurrentWindow().onFocusChanged(({ payload }) => {
@@ -426,6 +486,11 @@ onMounted(async () => {
   } else {
     // Podgląd: symulowana Jira zmienia dane poza widokiem (priorytet, pola).
     window.addEventListener(previewDataEvent, refresh);
+    // Podgląd: powrót do karty przeglądarki jak odzyskanie fokusu okna.
+    window.addEventListener("focus", onWindowFocus);
+    unsubscribers.push(() =>
+      window.removeEventListener("focus", onWindowFocus),
+    );
     unsubscribers.push(() =>
       window.removeEventListener(previewDataEvent, refresh),
     );

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures/test";
 import { ids, openPreview, stored } from "./fixtures/seed";
 import { openSettings } from "./fixtures/settings";
+import { backend, openDesktop } from "./fixtures/tauri";
 
 /**
  * B11: skróty w oknie aplikacji — Ctrl+Shift+S = Start/Stop (logika
@@ -106,4 +107,34 @@ test("Ustawienia → Skróty pokazują skróty w oknie aplikacji", async ({
   await expect(
     page.getByRole("tablist", { name: "Sekcje ustawień" }).getByRole("tab"),
   ).toHaveText(["Skróty"]);
+});
+
+test("aplikacja: Ctrl+Shift+S ustępuje globalnemu skrótowi o tej samej kombinacji", async ({
+  page,
+}) => {
+  const toggles = async () =>
+    (await backend<{ cmd: string }[]>(page, "calls")).filter(
+      (c) => c.cmd === "toggle_measurement",
+    ).length;
+  // Domyślne skróty globalne: lokalny Ctrl+Shift+S woła toggle_measurement.
+  await openDesktop(page);
+  await expect(newTask(page)).toBeVisible();
+  await page.keyboard.press("Control+Shift+S");
+  await expect.poll(toggles).toBe(1);
+
+  // Start/Stop ustawiony globalnie na Ctrl+Shift+S: obsługuje go tylko Rust.
+  await openDesktop(page, { settings: { shortcutToggle: "Control+Shift+S" } });
+  await expect(newTask(page)).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.keyboard.press("Control+Shift+S");
+  await page.waitForTimeout(200);
+  expect(await toggles()).toBe(0);
+
+  // Szybkie przełączanie na tej kombinacji też wyłącza lokalną obsługę.
+  await openDesktop(page, { settings: { shortcutQuick: "Shift+Control+S" } });
+  await expect(newTask(page)).toBeVisible();
+  await page.waitForTimeout(100);
+  await page.keyboard.press("Control+Shift+S");
+  await page.waitForTimeout(200);
+  expect(await toggles()).toBe(0);
 });

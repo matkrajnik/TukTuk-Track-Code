@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
-import { TODAY, at, ids, openPreview, seed } from "./fixtures/seed";
+import { TODAY, at, ids, openPreview, seed, stored } from "./fixtures/seed";
+import { pick } from "./fixtures/searchSelect";
 
 /**
  * B11: domyślne godziny „Dodaj czas ręcznie”. Dane z `fixtures/seed.ts`: dziś
@@ -66,7 +67,8 @@ test("moduł manualRange: przed początkiem dnia i przedział do północy", asy
       return {
         // 06:10, dzień zaczyna się o 08:00: ostatnia godzina do teraz.
         early: fmt(m.manualRange(today, [], early, "08:00")),
-        // Wczoraj przedział do 23:59: ostatnia godzina doby.
+        // Wczoraj przedział do 23:59: wolna reszta doby (godzina przed północą
+        // nachodziłaby na ten przedział).
         late: fmt(
           m.manualRange(
             "2026-10-14",
@@ -80,5 +82,79 @@ test("moduł manualRange: przed początkiem dnia i przedział do północy", asy
     [TODAY, at(TODAY, "06:10"), at("2026-10-14", "23:59")] as const,
   );
   expect(result.early).toBe(`${TODAY}T05:10:00–${TODAY}T06:10:00`);
-  expect(result.late).toBe("2026-10-14T23:00:00–2026-10-15T00:00:00");
+  expect(result.late).toBe("2026-10-14T23:59:00–2026-10-15T00:00:00");
+});
+
+/** Dziś tylko podane przedziały (bez przedziałów z `seed()`) i trwający pomiar. */
+function todayData(
+  closed: [number, string, string][],
+  running: { task: number; from: number },
+) {
+  const data = seed();
+  data.sessions = data.sessions.filter((x) => x.startedAt < at(TODAY, "00:00"));
+  closed.forEach(([taskId, from, to], i) =>
+    data.sessions.push({
+      id: 200 + i,
+      taskId,
+      startedAt: at(TODAY, from),
+      endedAt: at(TODAY, to),
+    }),
+  );
+  data.sessions.push({
+    id: 300,
+    taskId: running.task,
+    startedAt: running.from,
+    endedAt: null,
+  });
+  return data;
+}
+/** Zapis domyślnych godzin formularza: przedział trafia do bazy bez błędu nakładania. */
+async function saveDefault(page: Page, start: number, end: number) {
+  const before = (await stored(page)).sessions.length;
+  await pick(page.getByLabel("Zadanie do uzupełnienia"), "Code review");
+  await page.getByRole("button", { name: "Zapisz ręczny czas" }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect
+    .poll(async () => (await stored(page)).sessions.length)
+    .toBe(before + 1);
+  const sessions = (await stored(page)).sessions as {
+    taskId: number;
+    startedAt: number;
+    endedAt: number | null;
+  }[];
+  expect(
+    sessions.some(
+      (s) =>
+        s.taskId === ids.review && s.startedAt === start && s.endedAt === end,
+    ),
+  ).toBe(true);
+}
+
+test("trwający pomiar od końca ostatniego przedziału: wolna godzina przed nimi", async ({
+  page,
+}) => {
+  // 08:00–09:00 zamknięte, przełączenie zadania o 09:00 i pomiar trwa do teraz.
+  const data = todayData([[ids.standup, "08:00", "09:00"]], {
+    task: ids.analysis,
+    from: at(TODAY, "09:00"),
+  });
+  await openPreview(page, { data });
+  await nav(page, "Plan i historia");
+  await open(page);
+  await expect(startField(page)).toHaveValue(`${TODAY}T07:00`);
+  await expect(endField(page)).toHaveValue(`${TODAY}T08:00`);
+  await saveDefault(page, at(TODAY, "07:00"), at(TODAY, "08:00"));
+});
+
+test("pomiar trwa od przed początkiem dnia: przedział kończy się na jego starcie", async ({
+  page,
+}) => {
+  // Dzień od 08:00, bez zamkniętych przedziałów, pomiar trwa od 07:30.
+  const data = todayData([], { task: ids.analysis, from: at(TODAY, "07:30") });
+  await openPreview(page, { data });
+  await nav(page, "Plan i historia");
+  await open(page);
+  await expect(startField(page)).toHaveValue(`${TODAY}T06:30`);
+  await expect(endField(page)).toHaveValue(`${TODAY}T07:30`);
+  await saveDefault(page, at(TODAY, "06:30"), at(TODAY, "07:30"));
 });

@@ -166,12 +166,22 @@ test("zmiana dnia zegarem: po północy Rano otwiera się raz", async ({ page })
   await expect(newTask(page)).toBeVisible();
   await expect(review(page)).toHaveCount(0);
 
-  // Czwartek 15.10: nowy dzień roboczy bez przeglądu.
+  // Czwartek 15.10: nowy dzień roboczy bez przeglądu. Widoczne, używane okno
+  // nie przełącza się samo o północy (np. z Ustawień albo spod dialogu).
+  await nav(page, "Ustawienia");
   await page.clock.runFor(45_000);
+  await expect(page.getByRole("button", { name: "Ustawienia", exact: true }))
+    .toHaveAttribute("aria-current", "page");
+  await expect(review(page)).toHaveCount(0);
+  expect(await shown(page)).toBeNull();
+
+  // Powrót fokusu do okna po północy: Rano otwiera się raz.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(review(page)).toBeVisible();
   expect(await shown(page)).toBe(TODAY);
   await nav(page, "Zadania");
   await page.clock.runFor(60_000);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(newTask(page)).toBeVisible();
   await expect(review(page)).toHaveCount(0);
 });
@@ -212,4 +222,57 @@ test("aplikacja: widoczne okno bez przeglądu otwiera Rano od razu", async ({
   await openDesktop(page);
   await expect(review(page)).toBeVisible();
   await expect(journal(page)).toHaveAttribute("aria-current", "page");
+});
+
+test("aplikacja: pokazanie okna z powiadomienia zostaje w żądanym widoku", async ({
+  page,
+}) => {
+  // Kliknięcie powiadomienia: Rust pokazuje okno i zaraz emituje `navigate`.
+  await openDesktop(page, { hidden: true });
+  await expect(newTask(page)).toBeVisible();
+  await page.evaluate(() => {
+    const mock = (window as any).__tauriMock;
+    mock.show();
+    mock.emit("navigate", { view: "reports" });
+  });
+  await expect(
+    page.getByRole("button", { name: "Raporty dzienne", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.waitForTimeout(300);
+  await expect(review(page)).toHaveCount(0);
+  // Żądanie spoza okna oznacza Rano tego dnia jako pokazane.
+  expect(await shown(page)).toBe(TODAY);
+  await backend(page, "show");
+  await page.waitForTimeout(200);
+  await expect(review(page)).toHaveCount(0);
+});
+
+test("aplikacja: żądanie przed pokazaniem okna i „Nowe zadanie” z traya", async ({
+  page,
+}) => {
+  await openDesktop(page, { hidden: true });
+  await expect(newTask(page)).toBeVisible();
+  // Kolejność odwrotna: `navigate` przed zdarzeniem fokusu.
+  await page.evaluate(() => {
+    const mock = (window as any).__tauriMock;
+    mock.emit("navigate", { view: "dashboard" });
+    mock.show();
+  });
+  await expect(
+    page.getByRole("button", { name: "Dashboard", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.waitForTimeout(300);
+  await expect(review(page)).toHaveCount(0);
+
+  // „Nowe zadanie” z traya w nowym dniu: fokus zostaje w polu.
+  await page.evaluate((k) => localStorage.removeItem(k), MORNING_SHOWN_KEY);
+  await page.evaluate(() => {
+    const mock = (window as any).__tauriMock;
+    mock.show();
+    mock.emit("prompt-task");
+  });
+  await expect(newTask(page)).toBeFocused();
+  await page.waitForTimeout(300);
+  await expect(newTask(page)).toBeFocused();
+  await expect(review(page)).toHaveCount(0);
 });
