@@ -13,9 +13,12 @@ import {
 import { isoWeekday, isWorkDay, useSettings } from "../target";
 import { copyReport } from "../clipboard";
 import ExportButtons from "./ExportButtons.vue";
+import TsSendDialog from "./TsSendDialog.vue";
+import { useTsSend } from "../composables/useTsSend";
+import { openView } from "../navigation";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
-const emit = defineEmits<{ open: [day: string] }>();
+const emit = defineEmits<{ open: [day: string]; updated: [data: Snapshot] }>();
 
 /** Pamięć ostatniego zaznaczenia i układu (wygoda, nie dane użytkownika). */
 const storageKey = "todo-track-report-days-v1";
@@ -209,6 +212,39 @@ async function copy() {
   copyStatus.value = "";
   copyStatus.value = await copyReport(text.value, area.value);
 }
+
+/**
+ * „Wyślij dni do TS” (B4): jeden podgląd z zakładkami dni i jednym
+ * podsumowaniem. Wysyłane są zaznaczone dni do dzisiaj z zapisaną pracą.
+ */
+const MAX_TS_DAYS = 31;
+const {
+  account: tsAccount,
+  enabled: tsEnabled,
+  connected: tsConnected,
+  markSent: tsMarkSent,
+} = useTsSend(
+  () => todayKey.value,
+  () => "",
+);
+const tsDays = computed(() =>
+  selected.value.filter((d) => d <= todayKey.value && totalOf(d) > 0),
+);
+const tsTitle = computed(() =>
+  tsDays.value.length > MAX_TS_DAYS
+    ? `Jednorazowo najwyżej ${MAX_TS_DAYS} dni`
+    : "Podgląd wpisów TS zaznaczonych dni z pracą (do dzisiaj)",
+);
+const tsOpen = ref(false);
+/** Dni ustalone przy otwarciu podglądu. */
+const tsOpenDays = ref<string[]>([]);
+function openTs() {
+  tsOpenDays.value = [...tsDays.value];
+  tsOpen.value = true;
+}
+function connectTs() {
+  openView({ view: "settings", section: "timesheet" });
+}
 </script>
 
 <template>
@@ -319,10 +355,26 @@ async function copy() {
   <section class="ts-report" aria-label="Raport TS z wybranych dni">
     <div class="ts-heading">
       <h2>Raport TS</h2>
-      <button class="today-button" :disabled="!selected.length" @click="copy">
-        Kopiuj raport
-      </button>
+      <div class="ts-heading-actions">
+        <button class="today-button" :disabled="!selected.length" @click="copy">
+          Kopiuj raport
+        </button>
+        <button
+          v-if="tsEnabled && tsConnected"
+          class="today-button"
+          :disabled="!tsDays.length || tsDays.length > MAX_TS_DAYS"
+          :title="tsTitle"
+          @click="openTs"
+        >
+          Wyślij dni do TS
+        </button>
+      </div>
     </div>
+    <p v-if="tsEnabled && tsAccount && !tsConnected" class="report-note">
+      <button type="button" class="text-link" @click="connectTs">
+        Połącz konto TS w Ustawieniach</button
+      >, żeby wysłać dni do TS.
+    </p>
     <div class="ts-options">
       <div class="tabs" role="group" aria-label="Układ raportu">
         <button
@@ -360,5 +412,14 @@ async function copy() {
       @focus="($event.target as HTMLTextAreaElement).select()"
     />
     <p class="ts-copy-status" role="status">{{ copyStatus }}</p>
+    <TsSendDialog
+      v-if="tsOpen"
+      :data="data"
+      :days="tsOpenDays"
+      :now="now"
+      @close="tsOpen = false"
+      @sent="tsMarkSent"
+      @updated="emit('updated', $event)"
+    />
   </section>
 </template>

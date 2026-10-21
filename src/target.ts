@@ -6,34 +6,22 @@ import {
   type AppSettings,
 } from "./settings";
 import { dayBounds, dayKey, hm } from "./time";
-import { holidayName } from "./holidays";
+import {
+  dayTarget,
+  isoWeekday,
+  type TargetSettings,
+} from "./workday";
 
 /** Formaty czasu trwania (z `time.ts`), eksportowane też stąd. */
 export { hm, hhmm } from "./time";
-
-/** Dzień tygodnia ISO (1 = poniedziałek, 7 = niedziela) dla klucza dnia. */
-export function isoWeekday(day: string): number {
-  return ((new Date(dayBounds(day)[0]).getDay() + 6) % 7) + 1;
-}
-
-interface TargetSettings {
-  readonly targetDayMinutes: number;
-  readonly workDays: readonly number[];
-  /** Święta ustawowe nie są dniami roboczymi (domyślnie tak). */
-  readonly holidaysInTarget?: boolean;
-}
-
-/** Święto, które zwalnia dzień z celu (null, gdy święta nie są uwzględniane). */
-export const targetHoliday = (settings: TargetSettings, day: string) =>
-  settings.holidaysInTarget === false ? null : holidayName(day);
-
-/** Dzień roboczy: dzień tygodnia z ustawień, który nie jest uwzględnianym świętem. */
-export const isWorkDay = (settings: TargetSettings, day: string) =>
-  settings.workDays.includes(isoWeekday(day)) && !targetHoliday(settings, day);
-
-/** Cel dnia w ms; 0 dla dnia wolnego i święta. */
-export const dayTarget = (settings: TargetSettings, day: string) =>
-  isWorkDay(settings, day) ? settings.targetDayMinutes * 60_000 : 0;
+/** Norma dnia (`workday.ts`), eksportowana też stąd. */
+export {
+  dayTarget,
+  isoWeekday,
+  isWorkDay,
+  targetHoliday,
+  type TargetSettings,
+} from "./workday";
 
 /** Cel kilku dni (tygodnia, miesiąca) = suma celów dni roboczych. */
 export const daysTarget = (settings: TargetSettings, days: readonly string[]) =>

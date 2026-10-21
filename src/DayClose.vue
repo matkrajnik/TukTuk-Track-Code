@@ -381,10 +381,11 @@ async function move() {
     <TsSendDialog
       v-if="tsOpen"
       :data="data"
-      :day="day"
+      :days="[day]"
       :now="now"
       @close="tsOpen = false"
       @sent="tsMarkSent"
+      @updated="emit('updated', $event)"
     />
   </section>
 </template>

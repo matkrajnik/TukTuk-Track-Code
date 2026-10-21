@@ -184,6 +184,7 @@ function toggle(id: number) {
     :data="data"
     :now="now"
     @open="openDay"
+    @updated="emit('updated', $event)"
   />
   <template v-else>
     <section class="report-summary" aria-label="Podsumowanie dnia">
@@ -273,10 +274,11 @@ function toggle(id: number) {
       <TsSendDialog
         v-if="tsOpen"
         :data="data"
-        :day="day"
+        :days="[day]"
         :now="now"
         @close="tsOpen = false"
         @sent="tsMarkSent"
+        @updated="emit('updated', $event)"
       />
     </section>
     <div class="report-list">

@@ -42,6 +42,13 @@ export interface TsEntry {
 export type TsMode = "replace" | "keep";
 export interface TsSendResult {
   filled: TsFilled[];
+  /**
+   * Lista faktycznie wysłana w POST (przy `keep` z wpisami TS doklejonymi
+   * z odczytu tuż przed zapisem), z którą porównano odczyt po zapisie.
+   */
+  sent: TsEntry[];
+  /** Odczyt po zapisie różni się od `sent` (`timesheet::saved_differs`). */
+  differs: boolean;
   sentAt: number;
   /** Zapis przyjęty, ale odczyt dnia po zapisie się nie udał (`filled` puste). */
   warning?: string;
@@ -130,14 +137,33 @@ export function tsMergeKeep(entries: TsEntry[], filled: TsFilled[]): TsEntry[] {
       })),
   ];
 }
+/** Wartość godzin w setnych; nieczytelna liczy się jako 0. */
+const tsAmount = (value: string) => {
+  const raw = value.trim();
+  const v = Number(raw.replace(",", "."));
+  return raw && Number.isFinite(v) ? Math.round(v * 100) : 0;
+};
+const tsAmountText = (hundredths: number) =>
+  `${Math.trunc(hundredths / 100)},${String(Math.abs(hundredths % 100)).padStart(2, "0")}`;
 /** Suma godzin z odczytu TS jak `timesheet::hours_total` („7,50”). */
 export function tsHoursTotal(filled: TsFilled[]): string {
-  const hundredths = filled.reduce((sum, f) => {
-    const raw = f.hours.trim();
-    const v = Number(raw.replace(",", "."));
-    return raw && Number.isFinite(v) ? sum + Math.round(v * 100) : sum;
-  }, 0);
-  return `${Math.trunc(hundredths / 100)},${String(hundredths % 100).padStart(2, "0")}`;
+  return tsAmountText(filled.reduce((sum, f) => sum + tsAmount(f.hours), 0));
+}
+/** Suma godzin i nadgodzin jak `timesheet::work_total` („8,75”). */
+export function tsWorkTotal(filled: TsFilled[]): string {
+  return tsAmountText(
+    filled.reduce((sum, f) => sum + tsAmount(f.hours) + tsAmount(f.overtime), 0),
+  );
+}
+/** Rozjazd odczytu po zapisie z listą wysłaną jak `timesheet::saved_differs`. */
+export function tsSavedDiffers(sent: TsEntry[], read: TsFilled[]): boolean {
+  const sum = (list: { hours: string; overtime: string }[], key: "hours" | "overtime") =>
+    list.reduce((total, e) => total + tsAmount(e[key]), 0);
+  return (
+    sent.length !== read.length ||
+    Math.abs(sum(sent, "hours") - sum(read, "hours")) > 1 ||
+    Math.abs(sum(sent, "overtime") - sum(read, "overtime")) > 1
+  );
 }
 export const tsEntryRow = (e: TsEntry): TsFilled => ({
   id: e.taskId.trim(),
@@ -147,8 +173,9 @@ export const tsEntryRow = (e: TsEntry): TsFilled => ({
 });
 /**
  * Jak `timesheet::sent_outcome`: odczyt po zapisie musi zawierać każde wysłane
- * zadanie z niezerowymi godzinami (inaczej błąd, bez znacznika wysyłki); brak
- * odczytu (`null`) → znacznik z sumą wysłanych godzin i ostrzeżenie.
+ * zadanie z niezerowymi godzinami albo nadgodzinami (inaczej błąd, bez
+ * znacznika wysyłki); brak odczytu (`null`) → znacznik z sumą wysłanych godzin
+ * i ostrzeżenie. Suma znacznika to godziny razem z nadgodzinami.
  */
 export function tsSentOutcome(
   sent: TsEntry[],
@@ -157,14 +184,14 @@ export function tsSentOutcome(
   if (read === null)
     return {
       filled: [],
-      hours: tsHoursTotal(sent.map(tsEntryRow)),
+      hours: tsWorkTotal(sent.map(tsEntryRow)),
       warning: tsReadBackWarning,
     };
   const ok = sent
-    .filter((e) => Number(e.hours.trim().replace(",", ".")) > 0)
+    .filter((e) => tsAmount(e.hours) + tsAmount(e.overtime) > 0)
     .every((e) => read.some((f) => f.id.trim() === e.taskId.trim()));
   if (!ok) throw new Error(tsNotConfirmed);
-  return { filled: read, hours: tsHoursTotal(read) };
+  return { filled: read, hours: tsWorkTotal(read) };
 }
 /**
  * Zmiana konta, wysyłki albo domyślnych zadań TS: zdarzenie okna po każdej

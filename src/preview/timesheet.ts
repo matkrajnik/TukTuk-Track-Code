@@ -14,6 +14,7 @@ import {
   tsNormalizeApi,
   tsNotConnected,
   tsSendDisabled,
+  tsSavedDiffers,
   tsSentOutcome,
   tsSortMap,
   tsValidTaskId,
@@ -35,7 +36,11 @@ import { tsProjectKey } from "../timesheet";
  * Symulowany TS podglądu. `failLogin` wymusza odrzucenie logowania; hasło „zle”
  * odrzuca zawsze. `tasks` nadpisuje przykładową listę zadań. `failReadBack`:
  * zapis przyjęty, odczyt po zapisie nieudany. `ignoreSave`: TS przyjmuje zapis,
- * ale dzień się nie zmienia (odczyt bez wysłanych wpisów).
+ * ale dzień się nie zmienia (odczyt bez wysłanych wpisów). Nadgodziny wpisów
+ * (`overtime`) są zapisywane i odczytywane jak godziny; `dropOvertime`: TS
+ * zapisuje nadgodziny jako „0” (rozjazd po zapisie). `changeBeforeSave`: wpisy
+ * dopisane w TS „przez kogoś innego” tuż przed zapisem (między otwarciem
+ * podglądu a zapisem), jednorazowo.
  */
 export const previewTsKey = "todo-track-preview-ts-v1";
 interface PreviewTs {
@@ -46,6 +51,8 @@ interface PreviewTs {
   failLogin?: boolean;
   failReadBack?: boolean;
   ignoreSave?: boolean;
+  dropOvertime?: boolean;
+  changeBeforeSave?: Record<string, TsFilled[]>;
   tasks?: TsProject[];
   filled?: Record<string, TsFilled[]>;
   sent?: Record<string, { sentAt: number; hours: string }>;
@@ -150,17 +157,37 @@ export async function tsSend(
     throw new Error("Niepoprawny tryb zapisu w TS.");
   tsValidateEntries(entries);
   const state = previewTsConnected();
+  // Zmiana w TS między otwarciem podglądu a zapisem (jednorazowa).
+  const injected = state.changeBeforeSave?.[date];
+  if (injected) {
+    state.filled = {
+      ...state.filled,
+      [date]: [...(state.filled?.[date] ?? []), ...injected],
+    };
+    delete state.changeBeforeSave![date];
+  }
+  // Jak `ts_send`: `keep` dokleja wpisy z aktualnego dnia w TS.
   const current = state.filled?.[date] ?? [];
   const saved = mode === "keep" ? tsMergeKeep(entries, current) : entries;
   if (!state.ignoreSave)
-    state.filled = { ...state.filled, [date]: saved.map(tsEntryRow) };
+    state.filled = {
+      ...state.filled,
+      [date]: saved.map(tsEntryRow).map((row) =>
+        state.dropOvertime ? { ...row, overtime: "0" } : row,
+      ),
+    };
   savePreviewTs(state);
   const read = state.failReadBack ? null : (state.filled?.[date] ?? []);
   const { filled, hours, warning } = tsSentOutcome(saved, read);
   const sentAt = Date.now();
   state.sent = { ...state.sent, [date]: { sentAt, hours } };
   savePreviewTs(state);
-  const result: TsSendResult = { filled: structuredClone(filled), sentAt };
+  const result: TsSendResult = {
+    filled: structuredClone(filled),
+    sent: structuredClone(saved),
+    differs: read !== null && tsSavedDiffers(saved, read),
+    sentAt,
+  };
   if (warning) result.warning = warning;
   notifyTs();
   return result;

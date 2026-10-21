@@ -2456,6 +2456,102 @@ html.widget-root body {
 .ts-send-warning {
   color: var(--warning);
 }
+/* B4: nadgodziny, edycja godzin, przypisanie zadania TS i kilka dni. */
+.ts-send-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 6px;
+}
+.ts-send-tools .today-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ts-send-ot,
+.ts-send-edited {
+  color: var(--muted);
+  font-size: var(--fs-xs, 12px);
+}
+.ts-send-edited {
+  margin-left: 6px;
+  font-style: italic;
+}
+.ts-send-table .ts-send-edit {
+  white-space: normal;
+}
+.ts-send-amounts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.modal .ts-send-table .ts-send-amounts input {
+  width: 64px;
+  text-align: right;
+}
+.ts-send-table input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+.ts-send-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+.ts-send-field-error {
+  display: block;
+  margin-top: 4px;
+  color: var(--danger);
+  font-size: var(--fs-xs, 12px);
+  text-align: left;
+}
+.ts-send-table tfoot .ts-send-split th {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 0;
+}
+.ts-send-norm {
+  font-size: var(--fs-xs, 12px);
+}
+.ts-send-unmapped li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 4px 0;
+}
+.ts-send-assign {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--text);
+}
+.ts-send-assign .search-select {
+  min-width: 220px;
+}
+.ts-send-days {
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.ts-send-days .mono {
+  margin-left: 4px;
+}
+.ts-send-day-status {
+  color: var(--muted);
+}
+.ts-send-day-blocked {
+  color: var(--warning);
+}
+.ts-send-summary {
+  margin-top: 14px;
+  font-size: var(--fs-sm);
+}
+.ts-send-summary ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
 /* Ustawienia → Timesheet (TS): konto, zaawansowane i domyślne zadania projektów. */
 .ts-account {
   margin: 0;

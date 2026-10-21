@@ -1,5 +1,6 @@
 import type { Session, Snapshot, Task } from "./store";
 import { dayBounds, dayKey, inDay } from "./time";
+import { dayTarget, type TargetSettings } from "./workday";
 
 export interface DayRow {
   task: Task;
@@ -48,6 +49,29 @@ export const rowsTotal = (rows: DayRow[]) =>
 /** Suma pracy dnia (wszystkie zadania, podział przez lokalną północ). */
 export const dayTotal = (data: Snapshot, day: string, now: number) =>
   rowsTotal(dayRows(data, day, now));
+
+/** Nadgodziny dnia (ms) przy znanej sumie pracy: nadwyżka ponad normę dnia. */
+export const overtimeOf = (
+  worked: number,
+  day: string,
+  settings: TargetSettings,
+) => Math.max(0, worked - dayTarget(settings, day));
+
+/**
+ * Nadgodziny dnia (ms) z pomiarów (B4, B5): praca dnia ponad normę, czyli cel
+ * dzienny z Ustawień → Czas pracy; w dzień wolny lub święto norma to 0, więc
+ * cała praca to nadgodziny. `sessions` mogą obejmować inne dni — liczy się
+ * część w `day` (podział przez lokalną północ, trwający pomiar do `now`).
+ */
+export function overtime(
+  day: string,
+  sessions: readonly Session[],
+  settings: TargetSettings,
+  now: number = Date.now(),
+): number {
+  const worked = sessions.reduce((sum, s) => sum + inDay(s, day, now), 0);
+  return overtimeOf(worked, day, settings);
+}
 
 /**
  * Dodaje przedział `[start, end)` do sum dni, dzieląc go przez lokalne

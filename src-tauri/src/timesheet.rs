@@ -47,6 +47,19 @@ pub const READ_BACK_WARNING: &str =
 /// Odczyt po zapisie nie zawiera wysłanych wpisów.
 pub const NOT_CONFIRMED: &str = "TS nie potwierdził zapisu — sprawdź dzień w przeglądarce.";
 
+// Pola formularza `wypelnij` jak w konektorze `ideo-ts-api` (`createTimesheetForm`
+// przy zapisie, `timesheet-html.parser.ts` przy odczycie). Zapis wysyła
+// `<pole>[i]`, odczyt szuka `.jq-<pole z myślnikami> input` w wierszu.
+const FIELD_TASK: &str = "zadanie";
+const FIELD_HOURS: &str = "zadanie_godziny";
+/// Nadgodziny wpisu (`timeOvertime` w konektorze): `zadanie_nadgodziny[i]`.
+pub const FIELD_OVERTIME: &str = "zadanie_nadgodziny";
+const FIELD_DESCRIPTION: &str = "zadanie_opis";
+/// Selektor pola wiersza (`zadanie_nadgodziny` → `.jq-zadanie-nadgodziny input`).
+fn row_input(field: &str) -> String {
+    format!(".jq-{} input", field.replace('_', "-"))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
@@ -129,6 +142,12 @@ impl Mode {
 #[serde(rename_all = "camelCase")]
 pub struct SendResult {
     filled: Vec<Filled>,
+    /// Lista faktycznie wysłana w POST (przy `keep` z wpisami TS doklejonymi
+    /// z odczytu tuż przed zapisem), z którą porównano odczyt po zapisie.
+    sent: Vec<Entry>,
+    /// Odczyt po zapisie różni się od `sent` (liczba wpisów, suma godzin albo
+    /// nadgodzin o więcej niż 0,01 h); `false`, gdy odczytu brak.
+    differs: bool,
     sent_at: i64,
     /// Ostrzeżenie, gdy zapis przyjęto, ale odczyt dnia po zapisie się nie udał
     /// (`filled` jest wtedy puste).
@@ -318,31 +337,51 @@ pub fn merge_keep(entries: &[Entry], filled: &[Filled]) -> Vec<Entry> {
     );
     out
 }
+/// Godziny z TS w setnych („1,5”, „1.25”); nieczytelne liczą się jako 0.
+fn hundredths(value: &str) -> i64 {
+    value
+        .trim()
+        .replace(',', ".")
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .map_or(0, |v| (v * 100.0).round() as i64)
+}
+/// Setne części godziny jako „7,50”.
+fn hours_text(hundredths: i64) -> String {
+    format!("{},{:02}", hundredths / 100, (hundredths % 100).abs())
+}
 /// Czy odczyt po zapisie zawiera każde wysłane zadanie z niezerowymi godzinami
-/// (wiersz z 0 h TS może pominąć).
+/// albo nadgodzinami (wiersz z 0 h TS może pominąć).
 pub fn confirmed(sent: &[Entry], filled: &[Filled]) -> bool {
     sent.iter()
-        .filter(|e| {
-            e.hours
-                .trim()
-                .replace(',', ".")
-                .parse::<f64>()
-                .is_ok_and(|v| v > 0.0)
-        })
+        .filter(|e| hundredths(&e.hours) + hundredths(&e.overtime) > 0)
         .all(|e| filled.iter().any(|f| f.id.trim() == e.task_id.trim()))
 }
-/// Suma godzin wysłanych wpisów (gdy odczytu po zapisie brak).
-pub fn sent_total(entries: &[Entry]) -> String {
-    let rows: Vec<Filled> = entries
+fn as_filled(entries: &[Entry]) -> Vec<Filled> {
+    entries
         .iter()
         .map(|e| Filled {
-            id: e.task_id.clone(),
+            id: e.task_id.trim().to_owned(),
             hours: e.hours.clone(),
             overtime: e.overtime.clone(),
-            description: String::new(),
+            description: e.description.clone(),
         })
-        .collect();
-    hours_total(&rows)
+        .collect()
+}
+/// Suma godzin i nadgodzin wysłanych wpisów (gdy odczytu po zapisie brak).
+pub fn sent_total(entries: &[Entry]) -> String {
+    work_total(&as_filled(entries))
+}
+/// Porównanie odczytu po zapisie z listą faktycznie wysłaną: inna liczba
+/// wpisów albo suma godzin lub nadgodzin różna o więcej niż 0,01 h.
+pub fn saved_differs(sent: &[Entry], read: &[Filled]) -> bool {
+    let sent = as_filled(sent);
+    let hours = |rows: &[Filled]| rows.iter().map(|r| hundredths(&r.hours)).sum::<i64>();
+    let overtime = |rows: &[Filled]| rows.iter().map(|r| hundredths(&r.overtime)).sum::<i64>();
+    sent.len() != read.len()
+        || (hours(&sent) - hours(read)).abs() > 1
+        || (overtime(&sent) - overtime(read)).abs() > 1
 }
 /// Przekierowanie po zapisie oznacza przyjęcie tylko wtedy, gdy wraca na formularz
 /// dnia (albo nie ma `Location`); inne (np. strona logowania) to wygasła sesja.
@@ -368,7 +407,8 @@ pub fn sent_outcome(
 ) -> Result<(Vec<Filled>, String, Option<String>), String> {
     match read {
         Ok(filled) if confirmed(sent, &filled) => {
-            let hours = hours_total(&filled);
+            // Znacznik wysyłki: godziny razem z nadgodzinami.
+            let hours = work_total(&filled);
             Ok((filled, hours, None))
         }
         Ok(_) => Err(NOT_CONFIRMED.into()),
@@ -423,23 +463,29 @@ pub fn form_fields(date: &str, entries: &[Entry]) -> Vec<(String, String)> {
         ("submit".to_owned(), "Zapisz Timesheet".to_owned()),
     ];
     for (i, e) in entries.iter().enumerate() {
-        fields.push((format!("zadanie[{i}]"), e.task_id.trim().to_owned()));
-        fields.push((format!("zadanie_godziny[{i}]"), e.hours.clone()));
-        fields.push((format!("zadanie_nadgodziny[{i}]"), e.overtime.clone()));
-        fields.push((format!("zadanie_opis[{i}]"), e.description.clone()));
+        fields.push((format!("{FIELD_TASK}[{i}]"), e.task_id.trim().to_owned()));
+        fields.push((format!("{FIELD_HOURS}[{i}]"), e.hours.clone()));
+        fields.push((format!("{FIELD_OVERTIME}[{i}]"), e.overtime.clone()));
+        fields.push((format!("{FIELD_DESCRIPTION}[{i}]"), e.description.clone()));
     }
     fields
 }
 /// Suma godzin z odczytu TS jak `decimalHours` („7,50”).
 pub fn hours_total(filled: &[Filled]) -> String {
-    let hundredths: i64 = filled
-        .iter()
-        .filter_map(|f| {
-            let v: f64 = f.hours.trim().replace(',', ".").parse().ok()?;
-            v.is_finite().then(|| (v * 100.0).round() as i64)
-        })
-        .sum();
-    format!("{},{:02}", hundredths / 100, hundredths % 100)
+    hours_text(filled.iter().map(|f| hundredths(&f.hours)).sum())
+}
+/// Suma nadgodzin z odczytu TS („1,25”).
+pub fn overtime_total(filled: &[Filled]) -> String {
+    hours_text(filled.iter().map(|f| hundredths(&f.overtime)).sum())
+}
+/// Suma godzin i nadgodzin („8,75”): czas dnia zapisany w TS.
+pub fn work_total(filled: &[Filled]) -> String {
+    hours_text(
+        filled
+            .iter()
+            .map(|f| hundredths(&f.hours) + hundredths(&f.overtime))
+            .sum(),
+    )
 }
 
 fn selector(css: &str) -> Selector {
@@ -486,9 +532,9 @@ pub fn parse_filled(html: &str) -> Result<Vec<Filled>, String> {
     let document = Html::parse_document(html);
     first_select(&document)?;
     let selected = selector(".jq-zadanie select option[selected]");
-    let hours = selector(".jq-zadanie-godziny input");
-    let overtime = selector(".jq-zadanie-nadgodziny input");
-    let description = selector(".jq-zadanie-opis input");
+    let hours = selector(&row_input(FIELD_HOURS));
+    let overtime = selector(&row_input(FIELD_OVERTIME));
+    let description = selector(&row_input(FIELD_DESCRIPTION));
     let value = |row: ElementRef, s: &Selector| {
         row.select(s)
             .next()
@@ -784,6 +830,41 @@ impl Api {
             Err(TsError::Status(status))
         }
     }
+    /// Zapis dnia z odczytem przed (`keep`: wpisy TS spoza listy doklejone z
+    /// aktualnej strony, nie z podglądu) i po zapisie. Zwraca listę faktycznie
+    /// wysłaną i odczyt po zapisie (błąd odczytu nie jest błędem zapisu).
+    pub async fn send_day(
+        &self,
+        session: &mut Session,
+        date: &str,
+        entries: Vec<Entry>,
+        mode: Mode,
+    ) -> Result<(Vec<Entry>, Result<Vec<Filled>, String>), String> {
+        let to_send = if mode == Mode::Keep {
+            let html = self
+                .with_auth(session, |s| async move { self.fill_page(&s, date).await })
+                .await
+                .map_err(TsError::text)?;
+            merge_keep(&entries, &parse_filled(&html)?)
+        } else {
+            entries
+        };
+        let sent = &to_send;
+        self.with_auth(
+            session,
+            |s| async move { self.save_day(&s, date, sent).await },
+        )
+        .await
+        .map_err(TsError::text)?;
+        // Zapis przyjęty: od tej chwili dane są w TS, więc nieudany odczyt nie może
+        // wyglądać jak nieudana wysyłka.
+        let read = self
+            .with_auth(session, |s| async move { self.fill_page(&s, date).await })
+            .await
+            .map_err(TsError::text)
+            .and_then(|html| parse_filled(&html));
+        Ok((to_send, read))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -990,46 +1071,20 @@ pub async fn ts_send(
     let api = api(&app)?;
     let state = app.state::<TsState>();
     let mut session = state.0.lock().await;
-    let date = date.as_str();
-    let to_send = if mode == Mode::Keep {
-        let html = api
-            .with_auth(&mut session, |s| {
-                let api = &api;
-                async move { api.fill_page(&s, date).await }
-            })
-            .await
-            .map_err(TsError::text)?;
-        merge_keep(&entries, &parse_filled(&html)?)
-    } else {
-        entries
-    };
-    let to_send = &to_send;
-    api.with_auth(&mut session, |s| {
-        let api = &api;
-        async move { api.save_day(&s, date, to_send).await }
-    })
-    .await
-    .map_err(TsError::text)?;
-    // Zapis przyjęty: od tej chwili dane są w TS, więc nieudany odczyt nie może
-    // wyglądać jak nieudana wysyłka.
-    let read = api
-        .with_auth(&mut session, |s| {
-            let api = &api;
-            async move { api.fill_page(&s, date).await }
-        })
-        .await
-        .map_err(TsError::text)
-        .and_then(|html| parse_filled(&html));
+    let (sent, read) = api.send_day(&mut session, &date, entries, mode).await?;
     drop(session);
-    let (filled, hours, warning) = sent_outcome(to_send, read)?;
+    let (filled, hours, warning) = sent_outcome(&sent, read)?;
+    let differs = warning.is_none() && saved_differs(&sent, &filled);
     let sent_at = crate::db::now();
     {
         let db_state = app.state::<Database>();
         let db = db_state.0.lock().map_err(|e| e.to_string())?;
-        save_sent(&db, date, sent_at, &hours).map_err(|e| e.to_string())?;
+        save_sent(&db, &date, sent_at, &hours).map_err(|e| e.to_string())?;
     }
     Ok(SendResult {
         filled,
+        sent,
+        differs,
         sent_at,
         warning,
     })
@@ -1728,6 +1783,161 @@ mod tests {
             sent_total(&[entry("1", "1.25", ""), entry("2", "2,5", "")]),
             "3,75"
         );
+    }
+
+    fn with_overtime(mut e: Entry, overtime: &str) -> Entry {
+        e.overtime = overtime.into();
+        e
+    }
+    /// Strona formularza dnia z podanymi wierszami (id, godziny, nadgodziny, opis).
+    fn day_page(rows: &[(&str, &str, &str, &str)]) -> String {
+        let body: String = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (id, hours, overtime, description))| {
+                format!(
+                    r#"<tr class="jq-wiersz-ts">
+<td class="jq-zadanie"><select name="zadanie[{i}]"><optgroup label="P"><option value="{id}" selected>Z</option></optgroup></select></td>
+<td class="jq-zadanie-godziny"><input name="zadanie_godziny[{i}]" value="{hours}"></td>
+<td class="jq-zadanie-nadgodziny"><input name="zadanie_nadgodziny[{i}]" value="{overtime}"></td>
+<td class="jq-zadanie-opis"><input name="zadanie_opis[{i}]" value="{description}"></td>
+</tr>"#
+                )
+            })
+            .collect();
+        format!("<html><body><form><table><tbody>{body}</tbody></table></form></body></html>")
+    }
+
+    #[test]
+    fn overtime_field_constant_form_parser_and_totals() {
+        assert_eq!(FIELD_OVERTIME, "zadanie_nadgodziny");
+        assert_eq!(row_input(FIELD_OVERTIME), ".jq-zadanie-nadgodziny input");
+        let fields = form_fields(
+            "2026-10-15",
+            &[with_overtime(entry("101", "6,00", ""), "1,25")],
+        );
+        assert!(fields.contains(&("zadanie_nadgodziny[0]".into(), "1,25".into())));
+        let filled = parse_filled(&day_page(&[
+            ("101", "6,00", "1,25", "a"),
+            ("205", "0.5", "0.75", ""),
+        ]))
+        .unwrap();
+        assert_eq!(filled[0].overtime, "1,25");
+        assert_eq!(hours_total(&filled), "6,50");
+        assert_eq!(overtime_total(&filled), "2,00");
+        assert_eq!(work_total(&filled), "8,50");
+        // Wpis z samymi nadgodzinami (0 h) też musi być w odczycie po zapisie.
+        let only_overtime = [with_overtime(entry("300", "0", ""), "2")];
+        assert!(!confirmed(&only_overtime, &filled));
+        assert!(confirmed(
+            &only_overtime,
+            &parse_filled(&day_page(&[("300", "0", "2", "")])).unwrap()
+        ));
+        // Znacznik wysyłki i suma bez odczytu liczą godziny razem z nadgodzinami.
+        let (_, hours, _) = sent_outcome(&only_overtime, Err(NETWORK_ERROR.into())).unwrap();
+        assert_eq!(hours, "2,00");
+        let sent = [
+            with_overtime(entry("101", "6,00", "a"), "1,25"),
+            with_overtime(entry("205", "0,50", ""), "0,75"),
+        ];
+        let (_, hours, _) = sent_outcome(&sent, Ok(filled.clone())).unwrap();
+        assert_eq!(hours, "8,50");
+    }
+
+    #[test]
+    fn saved_comparison_counts_hours_and_overtime() {
+        let sent = [
+            with_overtime(entry("101", "6,00", ""), "1,25"),
+            entry("205", "0,5", ""),
+        ];
+        let read = |overtime: &str| {
+            parse_filled(&day_page(&[
+                ("101", "6", overtime, ""),
+                ("205", "0.50", "0", ""),
+            ]))
+            .unwrap()
+        };
+        assert!(!saved_differs(&sent, &read("1.25")));
+        // Inne nadgodziny (różnica > 0,01 h) to rozjazd; 0,01 h mieści się w zaokrągleniu.
+        assert!(saved_differs(&sent, &read("0")));
+        assert!(!saved_differs(&sent, &read("1,24")));
+        // Inna liczba wpisów.
+        assert!(saved_differs(&sent[..1], &read("1,25")));
+    }
+
+    #[test]
+    fn keep_compares_with_entries_actually_sent_after_ts_changed_since_preview() {
+        // Podgląd otwarty przy dniu z PAGE (101, 205); przed zapisem ktoś dopisał
+        // w TS wpis 300. `keep` dokleja wpisy z aktualnej strony, a porównanie
+        // idzie z listą faktycznie wysłaną, więc nie ma fałszywego rozjazdu.
+        let at_save = day_page(&[
+            ("101", "1,5", "0", "Analiza"),
+            ("205", "0.25", "0", "Daily"),
+            ("300", "1", "0", "Dopisane w TS"),
+        ]);
+        let after = day_page(&[
+            ("102", "6,00", "1,50", "Programowanie"),
+            ("101", "1,5", "0", "Analiza"),
+            ("205", "0.25", "0", "Daily"),
+            ("300", "1", "0", "Dopisane w TS"),
+        ]);
+        let html = "Content-Type: text/html; charset=utf-8";
+        let (base, server) = fake_server(vec![
+            reply("200 OK", &[html], &at_save),
+            reply(
+                "302 Found",
+                &["Location: /timesheet/wypelnij?dzien=2026-10-15"],
+                "",
+            ),
+            reply("200 OK", &[html], &after),
+        ]);
+        let api = Api::new(&base, &Config::default(), "x".into()).unwrap();
+        let mut session = live_session(&api);
+        let ours = vec![with_overtime(entry("102", "6,00", "Programowanie"), "1,50")];
+        let (sent, read) = tauri::async_runtime::block_on(api.send_day(
+            &mut session,
+            "2026-10-15",
+            ours.clone(),
+            Mode::Keep,
+        ))
+        .unwrap();
+        let read = read.unwrap();
+        assert_eq!(
+            sent.iter().map(|e| e.task_id.as_str()).collect::<Vec<_>>(),
+            ["102", "101", "205", "300"]
+        );
+        assert!(!saved_differs(&sent, &read));
+        // Porównanie z listą zbudowaną z dnia przy otwarciu podglądu dałoby rozjazd.
+        assert!(saved_differs(
+            &merge_keep(&ours, &parse_filled(PAGE).unwrap()),
+            &read
+        ));
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(requests[0].starts_with("GET /timesheet/wypelnij?dzien=2026-10-15 "));
+        assert!(requests[1].starts_with("POST /timesheet/wypelnij?dzien=2026-10-15 "));
+        assert!(requests[1].contains("name=\"zadanie_nadgodziny[0]\"\r\n\r\n1,50"));
+        assert!(requests[1].contains("name=\"zadanie[3]\"\r\n\r\n300"));
+        assert!(requests[2].starts_with("GET /timesheet/wypelnij?dzien=2026-10-15 "));
+
+        // `replace`: bez odczytu przed zapisem, wysłana lista = nasze wpisy.
+        let (base, server) = fake_server(vec![
+            reply("200 OK", &[], ""),
+            reply("200 OK", &[html], &day_page(&[("102", "6,00", "1,50", "")])),
+        ]);
+        let api = Api::new(&base, &Config::default(), "x".into()).unwrap();
+        let mut session = live_session(&api);
+        let (sent, read) = tauri::async_runtime::block_on(api.send_day(
+            &mut session,
+            "2026-10-15",
+            ours.clone(),
+            Mode::Replace,
+        ))
+        .unwrap();
+        assert_eq!(sent, ours);
+        assert!(!saved_differs(&sent, &read.unwrap()));
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST "));
     }
 
     fn live_session(api: &Api) -> Session {
