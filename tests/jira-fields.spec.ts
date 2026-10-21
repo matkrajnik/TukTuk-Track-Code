@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { applySettings, defaultSettings } from "../src/settings";
 import { jiraFieldName, priorityBand } from "../src/store";
 import { openPreview, stored } from "./fixtures/seed";

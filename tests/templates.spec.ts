@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { jiraFixture, openPreview, stored } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
 import { openSettings } from "./fixtures/settings";

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
@@ -309,4 +309,39 @@ test("pinned tasks: pin from the task card, switch with one click in the widget"
   await expect(
     page.locator("#widget").getByRole("group", { name: "Przypięte zadania" }),
   ).toHaveCount(0);
+});
+
+test("podlinia widgetu pokazuje sumę dnia jak tray: 2:00 / 8:00 (B11)", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 64 });
+  await seed(page);
+  const widget = page.locator("#widget");
+  // Środa 14.10: 8:00–9:00 zamknięte + trwający od 9:00, cel dnia 8:00.
+  await expect(widget.getByRole("status")).toHaveText(
+    "2:00 / 8:00 · Biuro",
+  );
+  await expect(widget.getByRole("status")).toHaveAttribute(
+    "title",
+    "Dziś: 2:00 z 8:00",
+  );
+  await page.clock.runFor(60_000);
+  await expect(widget.getByRole("status")).toHaveText(
+    "2:01 / 8:00 · Biuro",
+  );
+  // Inny cel dnia; dzień wolny (środa poza dniami roboczymi) bez celu.
+  await page.evaluate(
+    (key) => localStorage.setItem(key, JSON.stringify({ targetDayMinutes: 450 })),
+    settingsKey,
+  );
+  await page.reload();
+  await expect(widget.getByRole("status")).toHaveText(
+    "2:01 / 7:30 · Biuro",
+  );
+  await page.evaluate(
+    (key) => localStorage.setItem(key, JSON.stringify({ workDays: [1, 2] })),
+    settingsKey,
+  );
+  await page.reload();
+  await expect(widget.getByRole("status")).toHaveText("2:01 · Biuro");
 });

@@ -560,6 +560,7 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       <ManualTime
         :tasks="data.tasks"
         :day="day"
+        :sessions="data.sessions"
         @updated="emit('updated', $event)"
       />
       <p class="report-note">

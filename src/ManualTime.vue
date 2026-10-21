@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
-import { addSession, type Task, type Snapshot } from "./store";
+import {
+  addSession,
+  type Session,
+  type Task,
+  type Snapshot,
+} from "./store";
 import { localInput } from "./time";
+import { manualRange } from "./manualRange";
+import { useSettings } from "./target";
 import { Plus } from "lucide-vue-next";
 import SearchSelect from "./components/SearchSelect.vue";
 
@@ -20,22 +27,42 @@ const props = defineProps<{
   preset?: ManualPreset | null;
   /** Klucz localStorage zapamiętujący ostatnio wybrane zadanie. */
   rememberKey?: string;
+  /** Przedziały do domyślnych godzin (koniec ostatniego przedziału dnia, B11). */
+  sessions?: readonly Session[];
 }>();
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
 const opened = ref(false),
   busy = ref(false),
   error = ref("");
+const settings = useSettings();
 const taskId = ref(0),
-  start = ref(props.day + "T09:00"),
-  end = ref(props.day + "T10:00");
+  start = ref(""),
+  end = ref("");
 const form = ref<HTMLFormElement | null>(null);
-watch(
-  () => props.day,
-  (day) => {
-    start.value = day + "T09:00";
-    end.value = day + "T10:00";
-  },
-);
+/**
+ * Domyślne godziny (B11): od początku dnia z ustawień albo od końca ostatniego
+ * przedziału dnia, do teraz dla dzisiaj (`manualRange`).
+ */
+function suggest() {
+  const [from, to] = manualRange(
+    props.day,
+    props.sessions ?? [],
+    Date.now(),
+    settings.value.dayStart,
+  );
+  start.value = localInput(from);
+  end.value = localInput(to);
+}
+suggest();
+watch(() => props.day, suggest);
+/** Otwarcie przyciskiem podstawia świeże godziny; zamknięcie zostawia wpisane. */
+function toggleForm() {
+  if (!opened.value) {
+    suggest();
+    error.value = "";
+  }
+  opened.value = !opened.value;
+}
 function remembered(): number {
   if (!props.rememberKey) return 0;
   try {
@@ -96,7 +123,7 @@ async function save() {
     <button
       class="today-button"
       :aria-expanded="opened"
-      @click="opened = !opened"
+      @click="toggleForm"
     >
       <Plus :size="14" />Dodaj czas ręcznie
     </button>

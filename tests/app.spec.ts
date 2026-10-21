@@ -1,4 +1,4 @@
-﻿import { test, expect, type Page } from "@playwright/test";
+﻿import { test, expect, type Page } from "./fixtures/test";
 import { optionLabels, pick } from "./fixtures/searchSelect";
 
 test.use({ timezoneId: "Europe/Warsaw" });

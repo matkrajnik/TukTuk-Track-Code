@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { clock, dayKey, hhmm, hm, localInput, plural, stamp } from "../src/time";
 import { hm as targetHm, hhmm as targetHhmm } from "../src/target";
 import { tsPlural } from "../src/timesheet";

@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
 const key = "todo-track-preview-v1";
 test.beforeEach(async ({ page }) => {

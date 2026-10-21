@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { pick } from "./fixtures/searchSelect";
 test.use({ timezoneId: "Europe/Warsaw" });
 test("planning, priorities, daily notes, waiting and time reconstruction persist", async ({

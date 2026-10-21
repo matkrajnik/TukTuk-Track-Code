@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { at as atDay, ids, seed as seedData, TODAY } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";
 test.use({ timezoneId: "Europe/Warsaw" });

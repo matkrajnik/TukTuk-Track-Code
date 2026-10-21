@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { pick } from "./fixtures/searchSelect";
 import { overtime, overtimeOf } from "../src/report";
 import { tsEntries, tsSplitOvertime } from "../src/timesheet";

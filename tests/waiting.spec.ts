@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { waitingAge, waitingProposal } from "../src/recurrence";
 import { at, ids, openPreview, seed, stored } from "./fixtures/seed";
 import { backend, openDesktop } from "./fixtures/tauri";

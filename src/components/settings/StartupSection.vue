@@ -86,6 +86,19 @@ onUnmounted(() => {
     Przy starcie schowanym okno się nie pokazuje; otworzysz je ikoną w
     trayu. Wyłączenie wpisu w Menedżerze zadań też będzie tu widoczne.
   </p>
+  <label class="inline-check"
+    ><input
+      :checked="settings.openMorningOnStart"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ openMorningOnStart: checked($event) })"
+    />Otwieraj plan dnia przy pierwszym uruchomieniu</label
+  >
+  <p class="hint">
+    W dzień roboczy, dopóki nie klikniesz „Zaczynam dzień”, pierwsze
+    uruchomienie albo pokazanie okna otwiera Plan i historia → Rano. Raz
+    dziennie; nie w święto ani w całodniowy urlop z kalendarza.
+  </p>
   <h3>Aktualizacje</h3>
   <label class="inline-check"
     ><input

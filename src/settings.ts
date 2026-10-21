@@ -66,6 +66,11 @@ export interface AppSettings {
   weekReviewTime: string;
   /** Sprawdzaj aktualizacje przy starcie i raz dziennie (`updater.ts`). */
   autoUpdateCheck: boolean;
+  /**
+   * Plan dnia (Rano) przy pierwszym uruchomieniu albo pokazaniu okna w dniu
+   * roboczym bez zapisanego przeglądu (B11, `morningStart.ts`).
+   */
+  openMorningOnStart: boolean;
   /** Główny przełącznik wysyłki Raportu TS (Ideo Timesheet); wyłączony blokuje też backend. */
   tsSend: boolean;
   /** Statusy Redmine oznaczające czekanie (PLAN_1.9.md, R2; pole w Ustawieniach od R5). */
@@ -138,6 +143,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyWeekReview: true,
   weekReviewTime: "15:00",
   autoUpdateCheck: true,
+  openMorningOnStart: true,
   tsSend: true,
   waitingRedmineStatuses: ["Feedback"],
   redmineAutoImport: true,

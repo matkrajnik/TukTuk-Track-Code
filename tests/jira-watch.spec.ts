@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
 
 test("Jira status is shown on the task card and auto-import can be switched off", async ({

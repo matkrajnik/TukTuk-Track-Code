@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
 const key = "todo-track-preview-v1";
 const settingsKey = "todo-track-preview-settings-v1";

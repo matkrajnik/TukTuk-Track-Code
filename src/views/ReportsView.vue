@@ -233,6 +233,7 @@ function toggle(id: number) {
     <ManualTime
       :tasks="data.tasks"
       :day="day"
+      :sessions="data.sessions"
       @updated="emit('updated', $event)"
     />
     <p class="report-note">

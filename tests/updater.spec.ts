@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { backend, openDesktop } from "./fixtures/tauri";
 import { openSettings } from "./fixtures/settings";
 import { ids, seed } from "./fixtures/seed";

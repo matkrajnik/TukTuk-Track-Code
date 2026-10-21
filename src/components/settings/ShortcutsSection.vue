@@ -30,8 +30,19 @@ const shortcutError = (field: "quick" | "toggle") =>
 </script>
 <template>
   <h2>Skróty</h2>
+  <h3>W oknie aplikacji</h3>
+  <ul class="shortcut-list" aria-label="Skróty w oknie aplikacji">
+    <li><kbd>Ctrl+K</kbd> — szybkie przełączanie</li>
+    <li>
+      <kbd>Ctrl+Shift+S</kbd> — Start/Stop: zatrzymuje pomiar albo wznawia
+      ostatnio mierzone zadanie
+    </li>
+    <li><kbd>N</kbd> — przejście do pola „Nowe zadanie” (poza polami tekstowymi)</li>
+    <li><kbd>Ctrl+,</kbd> — Ustawienia</li>
+  </ul>
+  <h3>Globalnie</h3>
   <p>
-    Ctrl+K — szybkie przełączanie w aplikacji.<br />{{
+    {{
       settings.shortcutQuick
     }}
     — szybkie przełączanie z dowolnego okna.<br />{{

@@ -318,6 +318,7 @@ async function move() {
       <ManualTime
         :tasks="activeTasks"
         :day="day"
+        :sessions="data.sessions"
         :preset="preset"
         remember-key="todo-track-meeting-task"
         @updated="emit('updated', $event)"

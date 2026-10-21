@@ -75,6 +75,11 @@ export interface TauriOptions {
    * jeszcze nic nie sprawdzono.
    */
   jiraWatch?: { lastOk: number | null; lastError: string; lastErrorAt: number | null };
+  /**
+   * Główne okno schowane do traya (start z `--hidden`, B11): `isVisible()`
+   * zwraca false do `__tauriMock.show()`, które zgłasza też `tauri://focus`.
+   */
+  hidden?: boolean;
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -92,6 +97,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     update: options.update ?? null,
     redmine: options.redmine ?? null,
     jiraWatch: options.jiraWatch ?? null,
+    hidden: options.hidden ?? false,
   });
   await page.goto("/");
 }
@@ -105,7 +111,8 @@ export function backend<T = unknown>(
     | "redmineCheck"
     | "snapshot"
     | "calls"
-    | "suggest",
+    | "suggest"
+    | "show",
   arg?: unknown,
 ) {
   return page.evaluate(([n, a]) => (window as any).__tauriMock[n](a), [
@@ -127,6 +134,7 @@ function install(init: {
   update: { version: string; notes?: string; date?: string } | "offline" | null;
   redmine: RedmineFixture | null;
   jiraWatch: { lastOk: number | null; lastError: string; lastErrorAt: number | null } | null;
+  hidden: boolean;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -520,8 +528,15 @@ function install(init: {
     emit("agent-suggestions", clone(suggestions));
   }
 
+  /** Okno widoczne (`plugin:window|is_visible`); `show()` jak pokazanie z traya. */
+  let visible = !init.hidden;
+  function show() {
+    visible = true;
+    emit("tauri://focus");
+  }
   w.__tauriMock = {
     emit,
+    show,
     suggest,
     idleTick,
     jiraCheck,
@@ -557,6 +572,8 @@ function install(init: {
         }
         case "plugin:window|is_maximized":
           return false;
+        case "plugin:window|is_visible":
+          return visible;
         case "get_snapshot":
           return clone(snapshot);
         case "get_settings":

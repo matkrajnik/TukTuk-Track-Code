@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
 const key = "todo-track-preview-settings-v1";
 test.beforeEach(async ({ page }) => {

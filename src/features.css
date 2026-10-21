@@ -2878,3 +2878,17 @@ html.widget-root body {
   margin: -14px 0 8px;
   font-size: var(--fs-sm);
 }
+/* Ustawienia → Skróty: lista skrótów w oknie aplikacji (B11). */
+.shortcut-list {
+  margin: 0 0 var(--space-3, 12px);
+  padding-left: 20px;
+  line-height: 1.7;
+}
+.shortcut-list kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+}

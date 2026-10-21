@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/test";
 import { at, ids, NOW, openPreview, stored, TODAY } from "./fixtures/seed";
 test.use({ timezoneId: "Europe/Warsaw" });
 

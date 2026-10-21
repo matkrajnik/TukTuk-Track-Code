@@ -251,6 +251,8 @@ export const settingsSections = [
       "Ctrl+K",
       "Szybkie przełączanie (globalnie)",
       "Start/Stop (globalnie)",
+      "Ctrl+Shift+S",
+      "Nowe zadanie",
     ],
   },
   {
@@ -266,6 +268,8 @@ export const settingsSections = [
       "nowa wersja",
       "Sprawdzaj aktualizacje automatycznie",
       "Sprawdź teraz",
+      "Otwieraj plan dnia przy pierwszym uruchomieniu",
+      "plan dnia",
     ],
   },
 ] as const;

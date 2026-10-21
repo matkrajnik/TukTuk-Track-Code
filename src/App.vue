@@ -30,7 +30,16 @@ import {
 } from "./navigation";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { readSettings } from "./settings";
 import {
+  markMorningShown,
+  morningShown,
+  morningStartDue,
+} from "./morningStart";
+import {
+  calendarEvents,
+  toggleMeasurement,
   change,
   previewDataEvent,
   read,
@@ -43,7 +52,7 @@ import {
   type Session,
   duration,
 } from "./store";
-import { dayKey } from "./time";
+import { dayBounds, dayKey } from "./time";
 import { wideLayout } from "./layout";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
@@ -254,14 +263,122 @@ async function openQuick() {
 function skipToMain() {
   document.getElementById("main")?.focus();
 }
+/** Fokus w polu „Nowe zadanie” (skrót N i zdarzenie `prompt-task` z traya). */
+async function focusNewTask() {
+  view.value = "tasks";
+  await nextTick();
+  document
+    .querySelector<HTMLInputElement>('input[aria-label="Nowe zadanie"]')
+    ?.focus();
+}
+/** Start/Stop jak skrót globalny (`toggle_measurement`); bez zadania → szybkie przełączanie. */
+async function toggleShortcut() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    const result = await toggleMeasurement();
+    if (result.action === "quick") void openQuick();
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+  await refresh();
+}
+/** Pole tekstowe, lista albo edytowalny tekst: tam litera N to zwykłe pisanie. */
+function typing(target: EventTarget | null): boolean {
+  const el = target instanceof HTMLElement ? target : null;
+  if (!el) return false;
+  return (
+    el.isContentEditable ||
+    ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName) ||
+    el.closest('[role="combobox"], [role="listbox"], [role="dialog"]') !== null
+  );
+}
+/** Okno dialogowe na stronie (edycja, potwierdzenie, szybkie przełączanie). */
+const dialogOpen = () =>
+  modalOpen.value ||
+  quickPreview.value ||
+  document.querySelector('[role="dialog"], [aria-modal="true"]') !== null;
 function shortcut(e: KeyboardEvent) {
-  if (e.ctrlKey && e.key.toLowerCase() === "k") {
+  const key = e.key.toLowerCase();
+  if (e.ctrlKey && key === "k") {
     e.preventDefault();
     void openQuick();
   } else if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === ",") {
     e.preventDefault();
     void navigate({ view: "settings" });
+  } else if (e.defaultPrevented) {
+    return;
+  } else if (
+    e.ctrlKey &&
+    e.shiftKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    e.code === "KeyS"
+  ) {
+    e.preventDefault();
+    if (!e.repeat && !dialogOpen()) void toggleShortcut();
+  } else if (
+    key === "n" &&
+    !e.ctrlKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    !e.shiftKey &&
+    !e.repeat &&
+    !typing(e.target) &&
+    !dialogOpen()
+  ) {
+    e.preventDefault();
+    void focusNewTask();
   }
+}
+
+/** Okno widoczne dla użytkownika (w aplikacji: nie schowane do traya). */
+async function windowVisible(): Promise<boolean> {
+  if (document.visibilityState === "hidden") return false;
+  if (!desktop) return true;
+  try {
+    return await getCurrentWindow().isVisible();
+  } catch {
+    return false;
+  }
+}
+/**
+ * Plan dnia rano (B11): pierwsze uruchomienie albo pokazanie okna w dniu
+ * roboczym bez zapisanego przeglądu otwiera Plan i historia → Rano, raz
+ * dziennie. Wołane przy starcie, przy pokazaniu okna i przy zmianie dnia;
+ * okno schowane do traya czeka na pierwsze pokazanie. Niczego nie zapisuje
+ * w bazie i nie zmienia timera.
+ */
+let morningPending = false;
+async function openMorningIfDue() {
+  const day = dayKey(Date.now());
+  if (morningPending || morningShown(day)) return;
+  morningPending = true;
+  try {
+    if (!(await windowVisible())) return;
+    const settings = await readSettings();
+    const [from, to] = dayBounds(day);
+    const events =
+      settings.openMorningOnStart && settings.morningReviewDay !== day
+        ? await calendarEvents(from, to).catch(() => [])
+        : [];
+    if (!morningStartDue(settings, day, events)) return;
+    // Dzień mógł się zmienić w trakcie odczytu, a okno pokazać Rano gdzie indziej.
+    if (dayKey(Date.now()) !== day || morningShown(day)) return;
+    markMorningShown(day);
+    await navigate({ view: "journal", section: "morning" });
+  } catch {
+    /* bez ustawień zostaje bieżący widok */
+  } finally {
+    morningPending = false;
+  }
+}
+watch(todayKey, () => void openMorningIfDue());
+function onVisibility() {
+  if (document.visibilityState === "visible") void openMorningIfDue();
 }
 
 const unsubscribers: UnlistenFn[] = [];
@@ -281,15 +398,17 @@ onMounted(async () => {
     try {
       unsubscribers.push(
         await listen("prompt-task", async () => {
-          view.value = "tasks";
           closeModal();
-          await nextTick();
-          document
-            .querySelector<HTMLInputElement>('input[aria-label="Nowe zadanie"]')
-            ?.focus();
+          await focusNewTask();
         }),
       );
       unsubscribers.push(await onDataChanged(refresh));
+      // Pokazanie okna z traya (show + set_focus w Rust) albo powrót do okna.
+      unsubscribers.push(
+        await getCurrentWindow().onFocusChanged(({ payload }) => {
+          if (payload) void openMorningIfDue();
+        }),
+      );
       unsubscribers.push(
         await listen<string>("storage-error", (e) => {
           error.value = e.payload;
@@ -312,10 +431,13 @@ onMounted(async () => {
     );
   }
   await refresh();
+  document.addEventListener("visibilitychange", onVisibility);
+  void openMorningIfDue();
 });
 onUnmounted(() => {
   clearInterval(tick);
   window.removeEventListener("keydown", shortcut);
+  document.removeEventListener("visibilitychange", onVisibility);
   setNavigator(null);
   unsubscribers.forEach((fn) => fn());
 });

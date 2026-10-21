@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { easter, holidayName, holidays } from "../src/holidays";
 import { openSettings } from "./fixtures/settings";
 

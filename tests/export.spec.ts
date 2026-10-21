@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { BOM, exportCsv, exportRows } from "../src/export";
 
 test.use({ timezoneId: "Europe/Warsaw" });

@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { pick } from "./fixtures/searchSelect";
 import { resolveTsTask, tsCheckSaved, tsEntries } from "../src/timesheet";
 import { dayTotal, decimalHours } from "../src/report";

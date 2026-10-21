@@ -80,6 +80,10 @@ pub struct AppSettings {
     /// Sprawdzaj aktualizacje przy starcie i raz dziennie (`src/updater.ts`);
     /// wyłączone zostawia tylko „Sprawdź teraz” w Ustawieniach.
     pub auto_update_check: bool,
+    /// Przy pierwszym uruchomieniu albo pokazaniu okna w dniu roboczym bez
+    /// zapisanego przeglądu dnia główne okno otwiera się na Plan i historia →
+    /// Rano (B11). Stan „pokazano dziś” trzyma okno (`localStorage`), nie baza.
+    pub open_morning_on_start: bool,
     /// Główny przełącznik wysyłki Raportu TS do Ideo Timesheet (PLAN_1.8.md):
     /// wyłączony chowa przyciski i blokuje `timesheet::ts_send` w backendzie.
     pub ts_send: bool,
@@ -179,6 +183,7 @@ impl Default for AppSettings {
             notify_week_review: true,
             week_review_time: "15:00".into(),
             auto_update_check: true,
+            open_morning_on_start: true,
             ts_send: true,
             waiting_redmine_statuses: default_waiting_redmine_statuses(),
             redmine_auto_import: true,
@@ -889,6 +894,27 @@ mod tests {
             .unwrap();
         assert_eq!(raw, "false");
         assert!(!load(&db).auto_update_check);
+    }
+
+    /// Plan dnia przy pierwszym uruchomieniu (B11): domyślnie włączony,
+    /// zapisuje się pod kluczem snake_case, zła wartość jest odrzucana.
+    #[test]
+    fn open_morning_on_start_defaults_on_and_saves() {
+        let mut db = db();
+        assert!(load(&db).open_morning_on_start);
+        let saved = save(&mut db, &json!({ "openMorningOnStart": false })).unwrap();
+        assert!(!saved.open_morning_on_start);
+        let raw: String = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='open_morning_on_start'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "false");
+        assert!(!load(&db).open_morning_on_start);
+        assert!(save(&mut db, &json!({ "openMorningOnStart": "tak" })).is_err());
+        assert!(!load(&db).open_morning_on_start);
     }
 
     #[test]

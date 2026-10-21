@@ -55,7 +55,10 @@ import {
   type Task,
 } from "./store";
 import { issueRef } from "./issue";
-import { clock, plural } from "./time";
+import { clock, dayBounds, dayKey, hm, inDay, plural } from "./time";
+import { dayGoal } from "./capacity";
+import { dayTarget, useSettings } from "./target";
+import { useMeetings } from "./composables/useMeetings";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -206,6 +209,43 @@ async function runFocus(action: FocusAction, taskId: number | null = null) {
     busy.value = false;
   }
 }
+/**
+ * Suma dnia jak w trayu (B11): „5:10 / 8:00” (w wąskim widgecie bez słowa
+ * „dziś”, które jest w podpowiedzi), cel pomniejszony o spotkania
+ * (`dayGoal`, jak `capacity::goal_ms_in`), bez celu w dzień wolny. Zamknięte
+ * przedziały liczone przy zmianie danych, co sekundę tylko trwający pomiar (B6).
+ */
+const settings = useSettings();
+const today = computed(() => dayKey(now.value));
+const meetings = useMeetings(() => dayBounds(today.value));
+const closedToday = computed(() =>
+  data.value.sessions.reduce(
+    (sum, s) => (s.endedAt === null ? sum : sum + inDay(s, today.value, 0)),
+    0,
+  ),
+);
+const minuteNow = computed(() => Math.floor(now.value / 60_000) * 60_000);
+const todayGoal = computed(() =>
+  dayGoal(
+    dayTarget(settings.value, today.value),
+    meetings.events.value,
+    data.value.sessions,
+    today.value,
+    minuteNow.value,
+  ),
+);
+const dayLine = computed(() => {
+  const total =
+    closedToday.value +
+    (active.value ? inDay(active.value, today.value, now.value) : 0);
+  return `${hm(total)}${todayGoal.value > 0 ? ` / ${hm(todayGoal.value)}` : ""}`;
+});
+/** Podpowiedź podlinii z sumą dnia: „Dziś: 5:10 z 8:00”. */
+const dayTitle = computed(() =>
+  activeTask.value && subline.value.startsWith(dayLine.value)
+    ? `Dziś: ${dayLine.value.replace(" / ", " z ")}`
+    : undefined,
+);
 const subline = computed(
   () =>
     error.value ||
@@ -214,7 +254,9 @@ const subline = computed(
     proposalLine.value ||
     moveLine.value ||
     (activeTask.value
-      ? activeTask.value.details?.project || "Pomiar trwa"
+      ? [dayLine.value, activeTask.value.details?.project]
+          .filter(Boolean)
+          .join(" · ")
       : resume.value
         ? `Ostatnio: ${resume.value.title}`
         : "Wybierz zadanie przyciskiem ⇄"),
@@ -368,6 +410,7 @@ onUnmounted(() => {
           'widget-suggest':
             !error && !feedback && !!(proposalLine || moveLine),
         }"
+        :title="dayTitle"
         role="status"
         >{{ subline }}</small
       >

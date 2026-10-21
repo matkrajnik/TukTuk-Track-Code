@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page } from "./fixtures/test";
 import { filterOptions } from "../src/searchSelect";
 import { intervalText } from "../src/time";
 import { at, ids, openPreview, seed, stored, TODAY } from "./fixtures/seed";
