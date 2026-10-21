@@ -26,23 +26,30 @@ fn copy(source: &Connection, target: &mut Connection) -> Result<(), String> {
 /// - `jira`, `redmine`, `timesheet` (login, `device_id` — inny identyfikator
 ///   to dla TS nowe urządzenie), `calendar` (konto Microsoft): poświadczenia
 ///   w Menedżerze poświadczeń należą do bieżącej konfiguracji, nigdy do kopii;
-/// - `jira_watch`, `redmine_watch`: znacznik `site|użytkownik` obserwacji
-///   przypisań, spójny z bieżącą konfiguracją;
 /// - `redmine_statuses_at`: znacznik świeżości statusów Redmine (`site|czas`).
 ///
 /// Preferencje z `AppSettings` przychodzą z kopii.
-pub const KEEP_KEYS: [&str; 7] = [
+pub const KEEP_KEYS: [&str; 5] = [
     "jira",
-    "jira_watch",
     "timesheet",
     "calendar",
     "redmine",
-    "redmine_watch",
     "redmine_statuses_at",
 ];
-/// Przenosi do `staged` wartości `KEEP_KEYS` z bieżącej bazy; klucz bez
-/// wartości w bieżącej bazie znika także z kopii.
+/// Znaczniki obserwacji przypisań (`site|użytkownik`) usuwane przy
+/// przywracaniu kopii. Muszą być spójne z tabelami zgłoszeń (`jira_issues`,
+/// `jira_tasks`, `redmine_issues`, `redmine_tasks`), które przychodzą z kopii:
+/// znacznik z bieżącej bazy przy starszych tabelach wyłączyłby tryb bazowy
+/// i pierwsze sprawdzenie zaimportowałoby wszystkie otwarte przypisania jako
+/// nowe zadania. Bez znacznika pierwsze sprawdzenie po przywróceniu tylko
+/// zapamiętuje bieżące przypisania.
+pub const RESET_KEYS: [&str; 2] = ["jira_watch", "redmine_watch"];
+/// Przenosi do `staged` wartości `KEEP_KEYS` z bieżącej bazy (klucz bez
+/// wartości w bieżącej bazie znika także z kopii) i usuwa `RESET_KEYS`.
 fn carry_connections(current: &Connection, staged: &Connection) -> rusqlite::Result<()> {
+    for key in RESET_KEYS {
+        staged.execute("DELETE FROM settings WHERE key=?1", [key])?;
+    }
     for key in KEEP_KEYS {
         let value: Option<String> = current
             .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
@@ -431,7 +438,8 @@ mod tests {
 
     /// Przywrócenie starszej kopii (sprzed Redmine, z innym kontem TS i
     /// kalendarza) zostawia konfigurację połączeń bieżącej bazy: `timesheet`
-    /// z tym samym `device_id`, `calendar`, `redmine`, znaczniki obserwacji.
+    /// z tym samym `device_id`, `calendar`, `redmine`; znaczniki obserwacji
+    /// znikają (pierwsze sprawdzenie przypisań działa w trybie bazowym).
     #[test]
     fn restoring_older_backup_keeps_current_connection_keys() {
         let value = |db: &Connection, key: &str| -> Option<String> {
@@ -471,12 +479,14 @@ mod tests {
             ),
             ("calendar", "{\"account\":\"mk@example.pl\"}"),
             ("jira", "{\"site\":\"https://biezaca.atlassian.net\"}"),
-            ("jira_watch", "https://biezaca.atlassian.net|mk@example.pl"),
             ("redmine", "{\"site\":\"https://redmine.example.pl\"}"),
-            ("redmine_watch", "https://redmine.example.pl|mk"),
             ("redmine_statuses_at", "https://redmine.example.pl|1000"),
         ];
-        for (key, raw) in kept {
+        let reset = [
+            ("jira_watch", "https://biezaca.atlassian.net|mk@example.pl"),
+            ("redmine_watch", "https://redmine.example.pl|mk"),
+        ];
+        for (key, raw) in kept.into_iter().chain(reset) {
             current
                 .execute("INSERT INTO settings(key,value) VALUES(?1,?2)", [key, raw])
                 .unwrap();
@@ -499,6 +509,11 @@ mod tests {
         for (key, raw) in kept {
             assert_eq!(value(&current, key).as_deref(), Some(raw), "{key}");
         }
+        // Znaczniki obserwacji nie zostają ani z bieżącej bazy, ani z kopii.
+        for (key, _) in reset {
+            assert!(RESET_KEYS.contains(&key), "{key}");
+            assert_eq!(value(&current, key), None, "{key}");
+        }
         // Dane i preferencje przychodzą z kopii.
         assert_eq!(value(&current, "theme").as_deref(), Some("dark"));
         let snap = db::snapshot(&current).unwrap();
@@ -507,5 +522,48 @@ mod tests {
         drop(staged);
         drop(current);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Kopia bez `jira_watch` (sprzed połączenia Jiry) przy bieżącej bazie
+    /// ze znacznikiem: po przeniesieniu kluczy znacznika brak, więc pierwsze
+    /// sprawdzenie przypisań działa w trybie bazowym zamiast importować
+    /// wszystkie otwarte zgłoszenia jako nowe zadania. Znacznik z kopii też
+    /// znika.
+    #[test]
+    fn restore_drops_watch_markers_for_baseline() {
+        let value = |db: &Connection, key: &str| -> Option<String> {
+            db.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .ok()
+        };
+        let current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        current
+            .execute_batch(
+                "INSERT INTO settings(key,value) VALUES
+                 ('jira','{\"site\":\"https://biezaca.atlassian.net\"}'),
+                 ('jira_watch','https://biezaca.atlassian.net|mk@example.pl'),
+                 ('redmine','{\"site\":\"https://redmine.example.pl\"}'),
+                 ('redmine_watch','https://redmine.example.pl|mk');",
+            )
+            .unwrap();
+        let staged = Connection::open_in_memory().unwrap();
+        db::init(&staged).unwrap();
+        carry_connections(&current, &staged).unwrap();
+        assert_eq!(value(&staged, "jira_watch"), None);
+        assert_eq!(value(&staged, "redmine_watch"), None);
+        assert_eq!(
+            value(&staged, "jira").as_deref(),
+            Some("{\"site\":\"https://biezaca.atlassian.net\"}")
+        );
+        staged
+            .execute(
+                "INSERT INTO settings(key,value) VALUES('jira_watch','https://biezaca.atlassian.net|mk@example.pl')",
+                [],
+            )
+            .unwrap();
+        carry_connections(&current, &staged).unwrap();
+        assert_eq!(value(&staged, "jira_watch"), None);
     }
 }
