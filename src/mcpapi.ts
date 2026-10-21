@@ -27,6 +27,15 @@ export async function onMcpProposals(handler: () => void): Promise<() => void> {
   window.addEventListener(mcpSim.mcpProposalsEvent, handler);
   return () => window.removeEventListener(mcpSim.mcpProposalsEvent, handler);
 }
+/**
+ * Nasłuch końca synchronizacji rejestracji (zdarzenie Rust `mcp-status-changed`
+ * po starcie, zmianie `ai_mcp` albo silnika i „Zarejestruj ponownie”).
+ */
+export async function onMcpStatus(handler: () => void): Promise<() => void> {
+  if (desktop) return listen("mcp-status-changed", () => handler());
+  window.addEventListener(mcpSim.mcpStatusEvent, handler);
+  return () => window.removeEventListener(mcpSim.mcpStatusEvent, handler);
+}
 /** `mcp_status`: rejestracja serwera MCP w Claude Code i Codexie (ostatnia synchronizacja). */
 export async function mcpStatus(): Promise<McpStatus> {
   if (desktop) return invoke("mcp_status");

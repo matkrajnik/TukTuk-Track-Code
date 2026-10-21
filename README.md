@@ -352,6 +352,22 @@ Ograniczenia:
 - nieregularne odmiany (np. „Marca” od nazwiska „Marzec”) nie są rozpoznawane;
 - formy odmiany, które są popularnymi słowami (np. „ale” od imienia „Ala”, „idę” od „Ida”), są pomijane, żeby nie ukrywać zwykłych słów; samo imię i pozostałe formy działają.
 
+## Asystent AI — serwer MCP dla agentów
+
+`todo-track-mcp.exe` (instalowany obok aplikacji) to serwer MCP dla Claude Code i Codexa. Sam nie ma logiki: każde wywołanie narzędzia przekazuje potokiem `\\.\pipe\todo-track-mcp-<użytkownik>` do działającej aplikacji, a wynik przechodzi przez filtr danych osobowych (pseudonimy jak wyżej). Gdy aplikacja nie działa, narzędzie zwraca błąd „Todo Track nie działa”.
+
+**Rejestracja** — przełącznik „Serwer MCP dla agentów” w Ustawieniach → Asystent AI (`ai_mcp`), działa tylko przy wybranym silniku (Claude Code albo Codex). Aplikacja rejestruje serwer przez CLI, bez edycji plików konfiguracji: `claude mcp add --scope user todo-track -- <ścieżka exe>` i `codex mcp add todo-track -- <ścieżka exe>`; po wyłączeniu przełącznika albo wyborze „Nie używaj” wywołuje `… mcp remove todo-track`. Przy starcie (przy wybranym silniku) sprawdza `claude mcp get todo-track` i `codex mcp list` i rejestruje ponownie, gdy ścieżka wskazuje stary exe (np. po aktualizacji). Przy „Nie używaj” start nie uruchamia żadnego procesu CLI. Stan rejestracji i „Zarejestruj ponownie” są w tej samej sekcji Ustawień.
+
+**Narzędzia odczytu** (wykonywane od razu): `tasks_list` (filtry: otwarte, dzisiaj, zablokowane, projekt, szukaj), `task_get` (id, klucz Jiry, `#numer` Redmine albo tytuł), `day_summary`, `week_summary`, `current_measurement`, `ts_tasks` (lista zadań TS z pamięci, bez logowania do TS).
+
+**Narzędzia zapisu tylko proponują**: `propose_task_create` (klucz tylko w postaci Jiry `ABC-12` albo Redmine `#12`), `propose_note_append`, `propose_link_folder` (folder roboczy sesji, która wywołała narzędzie), `propose_switch`, `propose_plan`. Propozycja pojawia się w aplikacji jako baner z „Zastosuj” / „Odrzuć”; bez kliknięcia baza się nie zmienia. Kolejka propozycji jest w pamięci i znika po zamknięciu aplikacji. Nie ma narzędzi do wysyłki TS, zapisów w Jirze ani Redmine, usuwania i zmiany ustawień.
+
+Przykład wpisu do `CLAUDE.md` projektu, dzięki któremu opisy do TS powstają z pracy agenta:
+
+```markdown
+Po zakończeniu zadania wywołaj `propose_note_append` z jednym zdaniem podsumowania.
+```
+
 ## Timesheet (Ideo TS)
 
 Od 1.8 Raport TS dnia można wysłać do Ideo Timesheet (domyślnie `https://api.ts.ideo.pl`). Konto łączy się w Ustawieniach → Timesheet (TS): login i hasło konta TS, „Połącz”. Hasło trafia do Menedżera poświadczeń Windows (usługa `pl.todotrack.desktop.timesheet`, użytkownik `<adres API>|<login>`), konfiguracja (adres API, login, identyfikator urządzenia, nazwa urządzenia „Todo Track”) do tabeli `settings` pod kluczem `timesheet`. Token, refresh token i ciasteczko sesji są tylko w pamięci procesu; nie trafiają do SQLite, localStorage, logów ani komunikatów błędów. Kopia SQLite obejmuje tabele `ts_project_map` i `ts_sent_days`, hasła nie.

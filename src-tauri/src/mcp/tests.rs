@@ -292,9 +292,9 @@ fn reply_frames_are_parsed() {
 #[test]
 fn named_pipe_round_trip_and_app_not_running() {
     let name = mcp_wire::pipe_name_for(&format!("mcp-test-{}-{}", std::process::id(), db::now()));
-    let missing = mcp_wire::call_over_pipe(&name, "tasks_list", &json!({}));
+    let missing = mcp_wire::call_over_pipe(&name, "tasks_list", &json!({}), None);
     assert!(missing.is_err());
-    let mut forward = |tool: &str, args: &Value| mcp_wire::call_over_pipe(&name, tool, args);
+    let mut forward = |tool: &str, args: &Value| mcp_wire::call_over_pipe(&name, tool, args, None);
     let line = r#"{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"tasks_list","arguments":{}}}"#;
     let out = mcp_wire::respond(line, "1", &mut forward).unwrap();
     assert_eq!(out["result"]["isError"], true);
@@ -304,12 +304,17 @@ fn named_pipe_round_trip_and_app_not_running() {
     std::thread::spawn(move || {
         let _ = crate::browser::pipe::serve(&server, |body| {
             let request: Value = serde_json::from_slice(body).unwrap();
-            json!({"ok": true, "text": format!("{}:{}", request["tool"], request["arguments"]["filter"])})
+            json!({"ok": true, "text": format!("{}:{}:{}", request["tool"], request["arguments"]["filter"], request["cwd"])})
         });
     });
     let mut reply = Err("nie połączono".to_string());
     for _ in 0..50 {
-        reply = mcp_wire::call_over_pipe(&name, "tasks_list", &json!({"filter": "today"}));
+        reply = mcp_wire::call_over_pipe(
+            &name,
+            "tasks_list",
+            &json!({"filter": "today"}),
+            Some(r"C:\Projekty\wms"),
+        );
         if reply.is_ok() {
             break;
         }
@@ -319,7 +324,7 @@ fn named_pipe_round_trip_and_app_not_running() {
         reply.unwrap(),
         Reply {
             ok: true,
-            text: "\"tasks_list\":\"today\"".into()
+            text: r#""tasks_list":"today":"C:\\Projekty\\wms""#.into()
         }
     );
 }
@@ -932,7 +937,7 @@ fn mcp_is_wired_into_startup_in_the_right_order() {
     let windows = setup.find("create_windows(app)?;").unwrap();
     assert!(setup.find("mcp::setup(").unwrap() < windows);
     assert!(setup.find("mcp::start(").unwrap() > windows);
-    assert!(setup.find("mcp::sync(").unwrap() > windows);
+    assert!(setup.find("mcp::sync_at_startup(").unwrap() > windows);
     for command in [
         "mcp::mcp_proposals",
         "mcp::mcp_proposal_resolve",
@@ -951,4 +956,129 @@ fn the_mcp_program_is_declared_for_the_installer() {
     let manifest = include_str!("../../Cargo.toml");
     assert!(manifest.contains("name = \"todo-track-mcp\""));
     assert!(manifest.contains("path = \"src/bin/mcp.rs\""));
+}
+
+// ---------------------------------------------------------------------------
+// Uwagi z przeglądu A2
+
+/// Pierwszy pseudonim „Osoba N” w tekście.
+fn first_pseudonym(text: &str) -> String {
+    let words: Vec<&str> = text.split(' ').collect();
+    words
+        .windows(2)
+        .find(|w| w[0].ends_with("Osoba"))
+        .map(|w| {
+            format!(
+                "Osoba {}",
+                w[1].trim_matches(|c: char| !c.is_alphanumeric())
+            )
+        })
+        .unwrap_or_else(|| panic!("brak pseudonimu w {text}"))
+}
+
+#[test]
+fn search_by_a_pseudonym_from_an_earlier_answer_finds_the_task() {
+    let f = Fixture::new();
+    f.db.execute(
+        "UPDATE task_details SET json=?1 WHERE task_id=2",
+        [r#"{"project":"API","notes":{"2026-10-15":"Ustalenia: Jan Kowalski zatwierdza"}}"#],
+    )
+    .unwrap();
+    // Model zobaczył notatkę z pseudonimem i szuka po nim.
+    let task = f.call("task_get", json!({"id": 2})).unwrap();
+    assert!(!task.contains("Kowalski"), "{task}");
+    let pseudonym = first_pseudonym(&task);
+    let found = f.json(
+        "tasks_list",
+        json!({"filter": "search", "query": pseudonym}),
+    );
+    assert_eq!(ids(&found), vec![2], "{found}");
+    // Filtr projektu też przechodzi przez przywrócenie (bez pseudonimu bez zmian).
+    let project = f.json("tasks_list", json!({"filter": "project", "query": "api"}));
+    assert_eq!(ids(&project), vec![2]);
+}
+
+#[test]
+fn task_create_key_must_be_jira_or_redmine() {
+    let f = Fixture::new();
+    for (key, stored) in [("wms-99", "WMS-99"), ("#20", "#20"), ("  ", "")] {
+        f.call(
+            "propose_task_create",
+            json!({"title": format!("Zadanie {stored}"), "key": key}),
+        )
+        .unwrap();
+        assert_eq!(f.state.proposals().last().unwrap().key, stored, "{key}");
+    }
+    let before = f.state.proposals().len();
+    for key in [
+        "WMS",
+        "#",
+        "#12a",
+        "W-1",
+        "1WMS-2",
+        "WMS-",
+        "WMS-1x",
+        "zadanie z Jirą",
+    ] {
+        let error = f
+            .call("propose_task_create", json!({"title": "x", "key": key}))
+            .unwrap_err();
+        assert!(error.contains("Invalid key"), "{key}: {error}");
+    }
+    assert_eq!(f.state.proposals().len(), before);
+}
+
+fn agent(cwd: &str, since: i64) -> crate::agents::Agent {
+    crate::agents::Agent {
+        kind: "claude".into(),
+        name: "sesja".into(),
+        cwd: cwd.into(),
+        since,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn link_folder_uses_the_calling_session_folder_with_two_agents_working() {
+    let ai_dir = std::path::Path::new(r"C:\dane\todo-track\ai");
+    let agents = || {
+        vec![
+            agent(r"C:\Projekty\wms", 100),
+            agent(r"C:\Projekty\api", 200),
+            agent(r"C:\dane\todo-track\ai", 300),
+        ]
+    };
+    // Starsza sesja wywołuje narzędzie: jej folder, nie najnowszej.
+    assert_eq!(
+        session_folders(r"C:\Projekty\wms", Some(ai_dir), agents()),
+        vec![r"C:\Projekty\wms".to_string()]
+    );
+    // Bez `cwd`, z katalogiem asystenta albo ścieżką względną: sesje od najnowszej.
+    for cwd in ["", r"C:\dane\todo-track\ai", "wzgledna"] {
+        assert_eq!(
+            session_folders(cwd, Some(ai_dir), agents()),
+            vec![
+                r"C:\Projekty\api".to_string(),
+                r"C:\Projekty\wms".to_string()
+            ],
+            "{cwd}"
+        );
+    }
+}
+
+#[test]
+fn startup_runs_no_cli_when_ai_is_off_or_not_chosen() {
+    let mut s = AppSettings::default();
+    for (engine, needed) in [
+        ("", false),
+        ("off", false),
+        ("claude", true),
+        ("codex", true),
+    ] {
+        s.ai_engine = engine.into();
+        assert_eq!(startup_sync_needed(&s), needed, "{engine}");
+    }
+    // Wyłączone MCP przy wybranym silniku: start sprawdza, żeby usunąć stary wpis.
+    s.ai_mcp = false;
+    assert!(startup_sync_needed(&s));
 }

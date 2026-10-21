@@ -162,7 +162,8 @@ fn spec(cli: &Cli, args: Vec<String>, dir: &Path) -> Spec {
         args,
         stdin: String::new(),
         cwd: Some(dir.to_path_buf()),
-        env: Vec::new(),
+        // Znacznik jak przy każdym uruchomieniu CLI przez aplikację (hook pomija sesję).
+        env: crate::ai::call_env(),
     }
 }
 

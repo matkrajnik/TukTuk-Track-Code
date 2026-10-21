@@ -22,8 +22,13 @@ fn main() {
     let stdout = std::io::stdout();
     let mut output = stdout.lock();
     let pipe = mcp_wire::pipe_name();
-    let mut forward =
-        |tool: &str, arguments: &Value| mcp_wire::call_over_pipe(&pipe, tool, arguments);
+    // CLI uruchamia serwer w folderze sesji; aplikacja używa go w `propose_link_folder`.
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| p.to_string_lossy().into_owned());
+    let mut forward = |tool: &str, arguments: &Value| {
+        mcp_wire::call_over_pipe(&pipe, tool, arguments, cwd.as_deref())
+    };
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
         let Some(reply) = mcp_wire::respond(&line, env!("CARGO_PKG_VERSION"), &mut forward) else {

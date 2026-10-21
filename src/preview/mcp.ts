@@ -15,6 +15,8 @@ import type { McpEntry, McpProposal, McpStatus } from "../api/mcp";
 export const mcpKey = "todo-track-preview-mcp-v1";
 /** Zdarzenie okna po zmianie kolejki (odpowiednik zdarzenia Rust `ai-proposals-changed`). */
 export const mcpProposalsEvent = "todo-track-mcp-proposals";
+/** Zdarzenie okna po synchronizacji rejestracji (odpowiednik `mcp-status-changed`). */
+export const mcpStatusEvent = "todo-track-mcp-status";
 const previewExe = "C:\\Users\\ala\\AppData\\Local\\Todo Track\\todo-track-mcp.exe";
 
 function stored(): Record<string, unknown> {
@@ -75,5 +77,7 @@ export async function mcpStatus(): Promise<McpStatus> {
 
 /** „Zarejestruj ponownie” w podglądzie: stan jak po synchronizacji. */
 export async function mcpSync(): Promise<McpStatus> {
-  return mcpStatus();
+  const status = await mcpStatus();
+  window.dispatchEvent(new Event(mcpStatusEvent));
+  return status;
 }

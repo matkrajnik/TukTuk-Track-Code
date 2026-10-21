@@ -516,7 +516,7 @@ pub fn codex_args(schema_file: &Path, out_file: &Path, dir: &Path, model: &str) 
 }
 
 /// Zmienne środowiska każdego wywołania AI: znacznik dla hooka.
-fn call_env() -> Vec<(String, String)> {
+pub(crate) fn call_env() -> Vec<(String, String)> {
     vec![(hook_wire::AI_ENV.to_string(), "1".to_string())]
 }
 

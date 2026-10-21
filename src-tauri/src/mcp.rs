@@ -368,7 +368,12 @@ fn per_task(tasks: &[Task], sessions: &[(i64, i64, i64, bool)]) -> Vec<Value> {
         .collect()
 }
 
-fn tasks_list<Tz: TimeZone>(env: &Env<Tz>, tasks: &[Task], args: &Value) -> Result<Value, String> {
+fn tasks_list<Tz: TimeZone>(
+    env: &Env<Tz>,
+    tasks: &[Task],
+    args: &Value,
+    ps: &Pseudonyms,
+) -> Result<Value, String> {
     let filter = match text_arg(args, "filter").to_lowercase().as_str() {
         "" | "open" | "otwarte" => "open",
         "today" | "dzisiaj" => "today",
@@ -377,7 +382,8 @@ fn tasks_list<Tz: TimeZone>(env: &Env<Tz>, tasks: &[Task], args: &Value) -> Resu
         "search" | "szukaj" => "search",
         other => return Err(format!("Unknown filter \"{other}\".")),
     };
-    let query = text_arg(args, "query").to_lowercase();
+    // Jak inne argumenty od modelu: „Osoba 1” z wcześniejszej odpowiedzi to ta sama osoba.
+    let query = ps.restore(&text_arg(args, "query")).to_lowercase();
     if matches!(filter, "project" | "search") && query.is_empty() {
         return Err(format!("The {filter} filter needs a query."));
     }
@@ -676,6 +682,33 @@ fn ts_tasks(env_db: &Connection, cache: Option<Vec<Project>>) -> Result<Value, S
     }))
 }
 
+/// Klucz w `propose_task_create`: Jira `ABC-12` (wielkie litery) albo Redmine
+/// `#12`, pusty bez klucza. Ta sama reguła co `newTaskOf` w `aiproposals.ts`,
+/// więc baner nie obiecuje powiązania, którego „Zastosuj” nie utworzy.
+fn proposal_key(key: &str) -> Result<String, String> {
+    let key = key.trim();
+    if key.is_empty() {
+        return Ok(String::new());
+    }
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+    if let Some(number) = key.strip_prefix('#') {
+        if digits(number) {
+            return Ok(key.to_string());
+        }
+    } else if let Some((project, number)) = key.split_once('-') {
+        let mut chars = project.chars();
+        let first_letter = chars.next().is_some_and(|c| c.is_ascii_alphabetic());
+        if first_letter
+            && project.len() >= 2
+            && project.bytes().all(|c| c.is_ascii_alphanumeric())
+            && digits(number)
+        {
+            return Ok(key.to_ascii_uppercase());
+        }
+    }
+    Err("Invalid key: use a Jira key such as ABC-12 or a Redmine number such as #12.".into())
+}
+
 fn blank() -> Proposal {
     Proposal::default()
 }
@@ -708,7 +741,7 @@ fn propose<Tz: TimeZone>(
                 return Err("The title is required.".into());
             }
             proposal.project = restored("project", 100);
-            proposal.key = restored("key", 40);
+            proposal.key = proposal_key(&restored("key", 40))?;
             if !text_arg(args, "day").is_empty() {
                 proposal.day = day_arg(env, args, "day")?.format("%Y-%m-%d").to_string();
             }
@@ -783,7 +816,7 @@ fn run<Tz: TimeZone>(
     }
     let tasks = db::snapshot(env.db).map_err(|e| e.to_string())?.tasks;
     match tool {
-        "tasks_list" => tasks_list(env, &tasks, args),
+        "tasks_list" => tasks_list(env, &tasks, args, ps),
         "task_get" => task_get(env, &tasks, args, ps),
         "day_summary" => day_summary(env, &tasks, args),
         "week_summary" => week_summary(env, &tasks, args),
@@ -829,13 +862,22 @@ fn reply(result: Result<String, String>) -> Value {
     }
 }
 
-/// Foldery pracujących agentów (bez katalogu asystenta), od najnowszego.
-fn agent_folders(app: &tauri::AppHandle) -> Vec<String> {
-    let ai_dir = ai::dir(app);
-    let mut agents = crate::agents::current(app);
-    agents.retain(|a| {
-        !a.cwd.trim().is_empty() && !ai_dir.as_ref().is_some_and(|d| ai::is_ai_dir(&a.cwd, d))
-    });
+/// Folder dla `propose_link_folder`: katalog roboczy sesji, która wywołała
+/// narzędzie (`cwd` z ramki programu `todo-track-mcp`). Bez niego (albo gdy to
+/// katalog asystenta) foldery pracujących agentów od najnowszego.
+fn session_folders(
+    cwd: &str,
+    ai_dir: Option<&std::path::Path>,
+    mut agents: Vec<crate::agents::Agent>,
+) -> Vec<String> {
+    let usable = |folder: &str| {
+        !folder.trim().is_empty() && !ai_dir.is_some_and(|d| ai::is_ai_dir(folder, d))
+    };
+    let cwd = cwd.trim();
+    if usable(cwd) && std::path::Path::new(cwd).is_absolute() {
+        return vec![cwd.to_string()];
+    }
+    agents.retain(|a| usable(&a.cwd));
     agents.sort_by_key(|a| std::cmp::Reverse(a.since));
     agents.into_iter().map(|a| a.cwd).collect()
 }
@@ -863,7 +905,11 @@ fn on_request(app: &tauri::AppHandle, body: &[u8]) -> Value {
     };
     // Słownik czyta bazę sam, więc przed zablokowaniem bazy na czas narzędzia.
     let dict = ai::dictionary(app, &settings);
-    let folders = agent_folders(app);
+    let folders = session_folders(
+        request["cwd"].as_str().unwrap_or(""),
+        ai::dir(app).as_deref(),
+        crate::agents::current(app),
+    );
     let before = state.proposals().len();
     let result = {
         let database = app.state::<crate::Database>();
@@ -979,6 +1025,22 @@ pub fn sync(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         run_sync(&app);
     });
+}
+
+/// Czy przy starcie aplikacji sprawdzać rejestrację. Tylko przy wybranym
+/// silniku: przy `""` (jeszcze nie pytano) i `"off"` („Nie używaj”) start nie
+/// uruchamia żadnego procesu CLI. Rejestrację usuwa synchronizacja w chwili
+/// przełączenia na „Nie używaj” (`set_settings`) i po przywróceniu kopii, a
+/// pozostały wpis i tak nic nie zrobi: `gate` odrzuca każde narzędzie.
+fn startup_sync_needed(settings: &AppSettings) -> bool {
+    Engine::parse(&settings.ai_engine).is_some()
+}
+
+/// Synchronizacja przy starcie aplikacji (zob. `startup_sync_needed`).
+pub fn sync_at_startup(app: &tauri::AppHandle) {
+    if startup_sync_needed(&crate::settings::current(app)) {
+        sync(app);
+    }
 }
 
 // ---------------------------------------------------------------------------

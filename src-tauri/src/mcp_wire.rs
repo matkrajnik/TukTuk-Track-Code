@@ -292,9 +292,15 @@ pub fn respond(
     }
 }
 
-/// Ramka do aplikacji: `{"tool": …, "arguments": {…}}`.
-pub fn request(tool: &str, arguments: &Value) -> Vec<u8> {
-    serde_json::to_vec(&json!({"tool": tool, "arguments": arguments})).unwrap_or_default()
+/// Ramka do aplikacji: `{"tool": …, "arguments": {…}, "cwd": …}`. `cwd` to katalog
+/// roboczy procesu serwera: CLI uruchamia go w folderze sesji, więc
+/// `propose_link_folder` wskazuje folder sesji, która wywołała narzędzie.
+pub fn request(tool: &str, arguments: &Value, cwd: Option<&str>) -> Vec<u8> {
+    let mut frame = json!({"tool": tool, "arguments": arguments});
+    if let Some(cwd) = cwd.filter(|c| !c.trim().is_empty()) {
+        frame["cwd"] = Value::String(cwd.to_string());
+    }
+    serde_json::to_vec(&frame).unwrap_or_default()
 }
 
 /// Wysyła ramkę do aplikacji i czeka na odpowiedź. Zajęty potok (inna wiadomość
@@ -320,9 +326,14 @@ pub fn forward_to(pipe: &str, body: &[u8]) -> Result<Vec<u8>, FrameError> {
     read_frame(&mut file)?.ok_or(FrameError::Truncated)
 }
 
-/// Wywołanie narzędzia przez potok `pipe`.
-pub fn call_over_pipe(pipe: &str, tool: &str, arguments: &Value) -> Result<Reply, String> {
-    let reply = forward_to(pipe, &request(tool, arguments)).map_err(|e| e.to_string())?;
+/// Wywołanie narzędzia przez potok `pipe` z katalogu roboczego `cwd` sesji agenta.
+pub fn call_over_pipe(
+    pipe: &str,
+    tool: &str,
+    arguments: &Value,
+    cwd: Option<&str>,
+) -> Result<Reply, String> {
+    let reply = forward_to(pipe, &request(tool, arguments, cwd)).map_err(|e| e.to_string())?;
     let value: Value = serde_json::from_slice(&reply).map_err(|e| e.to_string())?;
     Ok(Reply::parse(&value))
 }

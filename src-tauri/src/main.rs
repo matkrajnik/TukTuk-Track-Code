@@ -521,7 +521,7 @@ fn main() {
             // Serwer MCP dla agentów (A2): potok z wywołaniami narzędzi i rejestracja
             // w Claude Code i Codexie zgodna z ustawieniem `ai_mcp` (ścieżka exe po aktualizacji).
             mcp::start(app.handle());
-            mcp::sync(app.handle());
+            mcp::sync_at_startup(app.handle());
             jira::start(app.handle());
             // Obserwacja przypisań w Redmine (R3): osobny wątek, niezależny od Jiry.
             redmine::start(app.handle());

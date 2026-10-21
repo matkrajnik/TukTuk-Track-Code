@@ -57,6 +57,14 @@ impl Fake {
 }
 impl Runner for Fake {
     fn run(&self, spec: &Spec, _timeout: Duration) -> Result<Output, RunError> {
+        // Każde polecenie rejestracji: w katalogu AI i ze znacznikiem dla hooka.
+        assert_eq!(spec.cwd.as_deref(), Some(dir()), "{:?}", spec.args);
+        assert!(
+            spec.env
+                .contains(&(crate::hook_wire::AI_ENV.to_string(), "1".to_string())),
+            "{:?}",
+            spec.args
+        );
         self.specs.lock().unwrap().push(spec.clone());
         (self.reply)(spec)
     }

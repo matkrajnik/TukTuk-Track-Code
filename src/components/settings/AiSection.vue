@@ -6,7 +6,7 @@
  * przełączniki funkcji oraz „Ostatnie wywołania” bez treści. Asystent korzysta
  * z subskrypcji Claude Code albo Codexa i tylko proponuje.
  */
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import AiPreview from "../AiPreview.vue";
 import {
   aiCalls,
@@ -20,7 +20,13 @@ import {
   type AiCli,
   type AiStatus,
 } from "../../store";
-import { mcpEntryLine, mcpStatus, mcpSync, type McpStatus } from "../../mcpapi";
+import {
+  mcpEntryLine,
+  mcpStatus,
+  mcpSync,
+  onMcpStatus,
+  type McpStatus,
+} from "../../mcpapi";
 import type { AppSettings } from "../../settings";
 import { clock } from "../../time";
 import { checked, message, text, useSettingsSection } from "./section";
@@ -76,22 +82,30 @@ async function registerAgain() {
     mcpBusy.value = false;
   }
 }
-onMounted(() => {
+let stopMcpStatus: (() => void) | null = null;
+let unmounted = false;
+onMounted(async () => {
   void load();
   void loadMcp();
+  // Rejestracja działa w tle (CLI do 30 s); stan odświeża się po jej zakończeniu.
+  const stop = await onMcpStatus(() => void loadMcp());
+  if (unmounted) stop();
+  else stopMcpStatus = stop;
+});
+onUnmounted(() => {
+  unmounted = true;
+  stopMcpStatus?.();
 });
 // Zmiana silnika zmienia „aktywny”; ścieżki wymagają ponownego wykrycia.
 watch(
   () => settings.value.aiEngine,
   () => void load(),
 );
-// Rejestracja MCP działa w tle po zmianie silnika albo przełącznika; stan odświeża się po chwili.
+// Zmiana silnika albo przełącznika uruchamia rejestrację w tle; wynik przychodzi
+// zdarzeniem `mcp-status-changed` (onMcpStatus wyżej).
 watch(
   () => [settings.value.aiEngine, settings.value.aiMcp],
-  () => {
-    void loadMcp();
-    setTimeout(() => void loadMcp(), 3000);
-  },
+  () => void loadMcp(),
 );
 
 const found = computed(
