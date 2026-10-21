@@ -115,6 +115,10 @@ pub struct AppSettings {
     pub redmine_new_statuses: Vec<String>,
     /// Prefiks nazwy gałęzi z „Kopiuj nazwę gałęzi” dla zgłoszeń Redmine.
     pub redmine_branch_prefix: String,
+    /// Nazwy (jedna osoba albo słowo na pozycję), które filtr danych osobowych
+    /// (`ai_privacy`, A0) zawsze ukrywa przed modelem; pole w Ustawieniach →
+    /// Asystent AI dochodzi w A1.
+    pub ai_hidden_names: Vec<String>,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -202,6 +206,7 @@ impl Default for AppSettings {
             redmine_move_status: "In Progress".into(),
             redmine_new_statuses: default_redmine_new_statuses(),
             redmine_branch_prefix: "feature/".into(),
+            ai_hidden_names: Vec::new(),
         }
     }
 }
@@ -324,6 +329,31 @@ fn clean_list(list: &[String], system: &str, purpose: &str) -> Result<Vec<String
     Ok(statuses)
 }
 
+/// Komunikat dla niepoprawnej listy ukrywanych nazw.
+pub const HIDDEN_NAMES_ERROR: &str =
+    "Ukrywane nazwy: najwyżej 200 pozycji po 80 znaków, bez znaków sterujących.";
+/// Lista „Ukrywaj te nazwy” (A0): przycięte pozycje, bez pustych i bez powtórek
+/// (wielkość liter bez znaczenia), w kolejności dodania.
+fn clean_hidden_names(list: &[String]) -> Result<Vec<String>, String> {
+    let mut names: Vec<String> = Vec::new();
+    for name in list.iter().map(|v| v.trim()) {
+        if name.chars().count() > 80 || name.chars().any(|c| c.is_control()) {
+            return Err(HIDDEN_NAMES_ERROR.into());
+        }
+        if !name.is_empty()
+            && !names
+                .iter()
+                .any(|v| v.to_lowercase() == name.to_lowercase())
+        {
+            names.push(name.to_string());
+        }
+    }
+    if names.len() > 200 {
+        return Err(HIDDEN_NAMES_ERROR.into());
+    }
+    Ok(names)
+}
+
 /// Pełna walidacja: pola osobno i reguły łączące pola.
 pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
     let s = validate_fields(s)?;
@@ -412,6 +442,7 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     if !valid_branch_prefix(&s.redmine_branch_prefix) {
         return Err(BRANCH_PREFIX_ERROR.into());
     }
+    s.ai_hidden_names = clean_hidden_names(&s.ai_hidden_names)?;
     // Pola Jiry na kafelku: poprawne identyfikatory, bez powtórek, bez pól
     // pokazywanych zawsze (tytuł i status).
     let mut fields: Vec<String> = Vec::new();
@@ -899,6 +930,39 @@ mod tests {
             other => panic!("nieznane pole {other}"),
         }
         next
+    }
+
+    /// `ai_hidden_names` (A0): domyślnie pusta, czyszczona jak lista statusów,
+    /// zapisywana i odczytywana z bazy.
+    #[test]
+    fn ai_hidden_names_default_clean_and_save() {
+        let mut db = db();
+        assert!(load(&db).ai_hidden_names.is_empty());
+        let saved = save(
+            &mut db,
+            &json!({"aiHiddenNames": [" Jan Kowalski ", "", "jan kowalski", "Marzec"]}),
+        )
+        .unwrap();
+        assert_eq!(saved.ai_hidden_names, vec!["Jan Kowalski", "Marzec"]);
+        assert_eq!(load(&db), saved);
+        for bad in [
+            json!({"aiHiddenNames": ["x".repeat(81)]}),
+            json!({"aiHiddenNames": ["a\nb"]}),
+            json!({"aiHiddenNames": "Jan"}),
+        ] {
+            assert!(save(&mut db, &bad).is_err(), "{bad}");
+        }
+        let many: Vec<String> = (0..201).map(|i| format!("Nazwa{i}")).collect();
+        assert_eq!(
+            save(&mut db, &json!({"aiHiddenNames": many}))
+                .err()
+                .unwrap(),
+            HIDDEN_NAMES_ERROR
+        );
+        assert!(save(&mut db, &json!({"aiHiddenNames": []}))
+            .unwrap()
+            .ai_hidden_names
+            .is_empty());
     }
 
     #[test]

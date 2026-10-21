@@ -93,6 +93,8 @@ export interface AppSettings {
   redmineNewStatuses: string[];
   /** Prefiks nazwy gałęzi w „Kopiuj nazwę gałęzi” dla zgłoszeń Redmine. */
   redmineBranchPrefix: string;
+  /** Nazwy ukrywane przed modelem AI (filtr danych osobowych, A0). */
+  aiHiddenNames: string[];
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -161,6 +163,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   redmineMoveStatus: "In Progress",
   redmineNewStatuses: ["New", "Nowy"],
   redmineBranchPrefix: "feature/",
+  aiHiddenNames: [],
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -256,6 +259,9 @@ export function altGrLetter(value: string): boolean {
   return !!parsed && /^Alt\+Control\+(Shift\+)?KEY[ACELNOSXZ]$/.test(parsed);
 }
 
+/** Komunikat dla niepoprawnej listy ukrywanych nazw (`HIDDEN_NAMES_ERROR` w Rust). */
+export const hiddenNamesError =
+  "Ukrywane nazwy: najwyżej 200 pozycji po 80 znaków, bez znaków sterujących.";
 /** Komunikat dla niepoprawnego prefiksu gałęzi (`BRANCH_PREFIX_ERROR` w Rust). */
 export const branchPrefixError =
   "Prefiks gałęzi może mieć najwyżej 40 znaków: litery łacińskie, cyfry, „/”, „-”, „_” i „.”.";
@@ -298,6 +304,7 @@ const fresh = (): AppSettings => ({
   waitingJiraStatuses: [...defaultSettings.waitingJiraStatuses],
   waitingRedmineStatuses: [...defaultSettings.waitingRedmineStatuses],
   redmineNewStatuses: [...defaultSettings.redmineNewStatuses],
+  aiHiddenNames: [],
   jiraCardFields: [...defaultSettings.jiraCardFields],
 });
 /** Komunikat dla niepoprawnej ścieżki do orca.cmd (`settings::ORCA_PATH_ERROR`). */
@@ -409,6 +416,18 @@ function applyFields(
   s.redmineBranchPrefix = s.redmineBranchPrefix.trim();
   if (!validBranchPrefix(s.redmineBranchPrefix))
     throw new Error(branchPrefixError);
+  // Jak w Rust: przycięte, bez pustych i bez powtórek (wielkość liter bez znaczenia).
+  const hidden: string[] = [];
+  for (const raw of Array.isArray(s.aiHiddenNames) ? s.aiHiddenNames : []) {
+    const name = typeof raw === "string" ? raw.trim() : "";
+    // eslint-disable-next-line no-control-regex
+    if ([...name].length > 80 || /[\u0000-\u001f\u007f-\u009f]/.test(name))
+      throw new Error(hiddenNamesError);
+    if (name && !hidden.some((v) => v.toLowerCase() === name.toLowerCase()))
+      hidden.push(name);
+  }
+  if (hidden.length > 200) throw new Error(hiddenNamesError);
+  s.aiHiddenNames = hidden;
   // Jak w Rust: poprawne identyfikatory, bez powtórek, bez summary i status.
   const fields: string[] = [];
   for (const raw of s.jiraCardFields) {

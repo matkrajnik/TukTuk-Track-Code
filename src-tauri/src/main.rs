@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agent_time;
 mod agents;
+mod ai_privacy;
 mod autostart;
 mod backup;
 mod browser;
