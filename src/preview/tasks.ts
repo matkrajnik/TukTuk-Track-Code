@@ -13,6 +13,7 @@ import {
   oneIssueError,
   pinnedTasks,
   resumeCandidate,
+  TRASH_IN_GAP,
   unblocked,
   validTime,
   widgetEvent,
@@ -252,15 +253,23 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
   saveSnapshot(data);
   return data;
 }
-/** Czy jakiś niepusty przedział spoza `skip` zachodzi na [`start`, `end`). */
-const overlaps = (data: Snapshot, skip: number[], start: number, end: number) =>
-  data.sessions.some(
+/** Niepuste przedziały spoza `skip` zachodzące na [`start`, `end`), także zadań
+ * w koszu (jak db::overlapping: wracają przy przywróceniu zadania). */
+const overlapping = (
+  data: Snapshot,
+  skip: number[],
+  start: number,
+  end: number,
+) =>
+  [...data.sessions, ...(data.trashSessions ?? [])].filter(
     (s) =>
       !skip.includes(s.id) &&
       s.startedAt < end &&
       (s.endedAt === null || s.endedAt > start) &&
       (s.endedAt === null || s.endedAt > s.startedAt),
   );
+const overlaps = (data: Snapshot, skip: number[], start: number, end: number) =>
+  overlapping(data, skip, start, end).length > 0;
 /** db::edit_active_start: początek trwającego pomiaru, koniec bez zmian. */
 async function editActiveStart(
   id: number,
@@ -305,8 +314,10 @@ export async function fillGap(
   const start = before.endedAt,
     end = after.startedAt;
   if (end <= start) throw new Error("Między tymi pomiarami nie ma luki.");
-  if (overlaps(data, [beforeId, afterId], start, end))
+  const blocking = overlapping(data, [beforeId, afterId], start, end);
+  if (blocking.some((s) => !trashed(s.id)))
     throw new Error("W tej luce leży inny pomiar. Odśwież widok.");
+  if (blocking.length) throw new Error(TRASH_IN_GAP);
   const meet =
     mode === "previous"
       ? end
@@ -342,15 +353,7 @@ export async function editSession(
   if (!session) throw new Error("Nie znaleziono przedziału.");
   if (session.endedAt === null)
     throw new Error("Zatrzymaj pomiar przed edycją przedziału.");
-  if (
-    data.sessions.some(
-      (s) =>
-        s.id !== id &&
-        s.startedAt < endedAt &&
-        (s.endedAt === null || s.endedAt > startedAt) &&
-        (s.endedAt === null || s.endedAt > s.startedAt),
-    )
-  )
+  if (overlaps(data, [id], startedAt, endedAt))
     throw new Error(
       "Ten przedział nakłada się na inny pomiar. Popraw godziny.",
     );
@@ -520,14 +523,7 @@ export async function addSession(
   const data = await read();
   if (!data.tasks.some((t) => t.id === taskId))
     throw new Error("Nie znaleziono zadania.");
-  if (
-    data.sessions.some(
-      (s) =>
-        s.startedAt < endedAt &&
-        (s.endedAt === null || s.endedAt > startedAt) &&
-        (s.endedAt === null || s.endedAt > s.startedAt),
-    )
-  )
+  if (overlaps(data, [], startedAt, endedAt))
     throw new Error(
       "Ten przedział nakłada się na inny pomiar. Popraw godziny.",
     );

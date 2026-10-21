@@ -119,6 +119,9 @@ export interface Session {
 export type GapMode = "previous" | "next" | "split";
 /** Luki krótsze niż sekunda (np. 14:58:39 → 14:58:39) nie są pokazywane. */
 export const MIN_GAP_MS = 1000;
+/** `db::TRASH_IN_GAP`: lukę blokuje tylko przedział zadania w koszu. */
+export const TRASH_IN_GAP =
+  "W tej luce leży pomiar zadania z kosza. Przywróć zadanie albo usuń je na stałe.";
 export interface Snapshot {
   tasks: Task[];
   sessions: Session[];

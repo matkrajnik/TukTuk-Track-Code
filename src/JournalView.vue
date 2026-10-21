@@ -24,6 +24,7 @@ import {
   fillGap,
   MIN_GAP_MS,
   saveDetails,
+  TRASH_IN_GAP,
   type GapMode,
   type Snapshot,
   type Task,
@@ -230,7 +231,12 @@ const timeline = computed(() => {
     /** Luka: pomiary przed nią (najpóźniej kończący się) i po niej. */
     before?: Session;
     after?: Session;
+    /** W luce leży przedział zadania w koszu: `fill_gap` jej nie zapełni. */
+    trashed?: boolean;
   }[] = [];
+  const trash = (props.data.trashSessions ?? []).filter(
+    (s) => s.endedAt === null || s.endedAt > s.startedAt,
+  );
   let previous = 0;
   let last: Session | undefined;
   for (const interval of intervals.value) {
@@ -242,6 +248,11 @@ const timeline = computed(() => {
         end: interval.start,
         before: last,
         after: interval.session,
+        trashed: trash.some(
+          (s) =>
+            s.startedAt < interval.start &&
+            (s.endedAt ?? props.now) > previous,
+        ),
       });
     result.push({ key: `session-${interval.session.id}`, ...interval });
     if (interval.end >= previous) last = interval.session;
@@ -565,7 +576,11 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
         }}</span
         ><strong class="mono">{{ duration(item.end - item.start) }}</strong
         ><span
-          v-if="item.before && item.after"
+          v-if="item.trashed"
+          class="timeline-actions report-note"
+          >{{ TRASH_IN_GAP }}</span
+        ><span
+          v-else-if="item.before && item.after"
           class="timeline-actions gap-actions"
           role="group"
           :aria-label="`Luka ${clock(item.start, true)} → ${clock(item.end, true)}`"

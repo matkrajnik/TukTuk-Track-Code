@@ -13,12 +13,12 @@ const tasks = [
 ];
 
 // Środa 14 października 2026, 12:00 czasu lokalnego.
-async function open(page: Page, sessions: object[]) {
+async function open(page: Page, sessions: object[], extra: object = {}) {
   await page.clock.setFixedTime(new Date("2026-10-14T12:00:00+02:00"));
   await page.goto("/");
   await page.evaluate(
     ([k, value]) => localStorage.setItem(k, value),
-    [key, JSON.stringify({ tasks, sessions })],
+    [key, JSON.stringify({ tasks, sessions, ...extra })],
   );
   await page.reload();
   await page
@@ -88,6 +88,34 @@ test("gap in the record can be joined to the previous or next measurement or spl
       at("11:00:00") + 400,
     ]);
   }
+});
+
+test("gap holding only an interval of a trashed task offers no actions", async ({
+  page,
+}) => {
+  // Przedział zadania w koszu nie jest na Osi dnia, ale wróci przy
+  // przywróceniu, więc blokuje lukę (jak db::fill_gap) — bez przycisków.
+  const card = await open(page, gapDay.slice(0, 2), {
+    trash: [{ id: 3, title: "Usunięte", done: false, createdAt: 0 }],
+    trashSessions: [
+      { id: 4, taskId: 3, startedAt: at("10:00:00"), endedAt: at("10:01:00") },
+    ],
+  });
+  const gap = card.locator(".timeline-row.gap");
+  await expect(gap).toHaveCount(1);
+  await expect(gap).toContainText("09:58:42 → 10:02:31");
+  await expect(gap).toContainText("pomiar zadania z kosza");
+  await expect(gap.getByRole("button")).toHaveCount(0);
+  // Podgląd odrzuca zapełnienie tak samo jak Rust.
+  const error = await page.evaluate(async () => {
+    const { fillGap } = await import("/src/store.ts");
+    return fillGap(1, 2, "previous").then(
+      () => "",
+      (e: Error) => e.message,
+    );
+  });
+  expect(error).toContain("pomiar zadania z kosza");
+  expect((await byId(page))[1].endedAt).toBe(at("09:58:42"));
 });
 
 test("zero-length gap after editing an interval is not listed", async ({

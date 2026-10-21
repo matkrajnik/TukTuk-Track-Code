@@ -324,19 +324,39 @@ pub fn edit_active_start(
 }
 
 /// Czy jakiś niepusty przedział spoza `skip` zachodzi na [`start`, `end`)
-/// (ta sama reguła co w `edit_session`).
+/// (ta sama reguła co w `edit_session`: liczą się też przedziały zadań w koszu,
+/// bo wracają przy przywróceniu zadania).
 fn overlaps(db: &Connection, skip: &[i64], start: i64, end: i64) -> Result<bool, String> {
+    Ok(overlapping(db, skip, start, end)?.0)
+}
+
+/// Komunikat, gdy lukę blokuje wyłącznie przedział zadania w koszu — Oś dnia
+/// go nie pokazuje, więc „Odśwież widok” nic by nie dało.
+pub const TRASH_IN_GAP: &str =
+    "W tej luce leży pomiar zadania z kosza. Przywróć zadanie albo usuń je na stałe.";
+
+/// Czy na [`start`, `end`) zachodzi jakiś niepusty przedział spoza `skip`
+/// (pierwsza wartość) i czy któryś z nich nie należy do zadania w koszu (druga).
+fn overlapping(
+    db: &Connection,
+    skip: &[i64],
+    start: i64,
+    end: i64,
+) -> Result<(bool, bool), String> {
     let mut stmt = db
         .prepare(
-            "SELECT id FROM sessions WHERE started_at<?2 AND (ended_at IS NULL OR ended_at>?1) AND (ended_at IS NULL OR ended_at>started_at)",
+            "SELECT s.id,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=s.task_id AND l.deleted_at IS NOT NULL) FROM sessions s WHERE s.started_at<?2 AND (s.ended_at IS NULL OR s.ended_at>?1) AND (s.ended_at IS NULL OR s.ended_at>s.started_at)",
         )
         .map_err(|e| e.to_string())?;
-    let ids = stmt
-        .query_map(params![start, end], |r| r.get::<_, i64>(0))
+    let rows = stmt
+        .query_map(params![start, end], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?))
+        })
         .map_err(|e| e.to_string())?
-        .collect::<rusqlite::Result<Vec<i64>>>()
+        .collect::<rusqlite::Result<Vec<(i64, bool)>>>()
         .map_err(|e| e.to_string())?;
-    Ok(ids.iter().any(|id| !skip.contains(id)))
+    let rows: Vec<_> = rows.iter().filter(|(id, _)| !skip.contains(id)).collect();
+    Ok((!rows.is_empty(), rows.iter().any(|(_, trashed)| !trashed)))
 }
 
 /// Jak zapełnić lukę między dwoma pomiarami (`fill_gap`).
@@ -381,8 +401,10 @@ pub fn fill_gap(
     if gap_end <= gap_start {
         return Err("Między tymi pomiarami nie ma luki.".into());
     }
-    if overlaps(&tx, &[before_id, after_id], gap_start, gap_end)? {
-        return Err("W tej luce leży inny pomiar. Odśwież widok.".into());
+    match overlapping(&tx, &[before_id, after_id], gap_start, gap_end)? {
+        (true, true) => return Err("W tej luce leży inny pomiar. Odśwież widok.".into()),
+        (true, false) => return Err(TRASH_IN_GAP.into()),
+        _ => {}
     }
     let meet = match mode {
         GapMode::Previous => gap_end,
@@ -726,6 +748,39 @@ mod tests {
         assert!(fill_gap(&mut db, 2, 1, GapMode::Split).is_err());
         assert!(fill_gap(&mut db, 1, 1, GapMode::Split).is_err());
         assert!(fill_gap(&mut db, 1, 99, GapMode::Split).is_err());
+
+        // W luce leży tylko przedział zadania w koszu: Oś dnia go nie pokazuje,
+        // ale blokuje lukę (wróci przy przywróceniu), z osobnym komunikatem.
+        let mut db = gap_fixture();
+        change(&mut db, "add", None, Some("C".into()), 0).unwrap();
+        db.execute(
+            "INSERT INTO sessions(task_id,started_at,ended_at) VALUES(3,3000,4000)",
+            [],
+        )
+        .unwrap();
+        change(&mut db, "delete", Some(3), None, 9500).unwrap();
+        assert!(snapshot(&db)
+            .unwrap()
+            .sessions
+            .iter()
+            .all(|x| x.task_id != 3));
+        for mode in [GapMode::Previous, GapMode::Next, GapMode::Split] {
+            assert_eq!(fill_gap(&mut db, 1, 2, mode).err().unwrap(), TRASH_IN_GAP);
+        }
+        assert_eq!(
+            rows(&snapshot(&db).unwrap()),
+            vec![(1, 1, 1000, Some(2000)), (2, 2, 5000, Some(9000))]
+        );
+        // Obok przedziału z kosza leży też zwykły pomiar: zwykły komunikat.
+        db.execute(
+            "INSERT INTO sessions(task_id,started_at,ended_at) VALUES(1,4000,4500)",
+            [],
+        )
+        .unwrap();
+        assert_eq!(
+            fill_gap(&mut db, 1, 2, GapMode::Split).err().unwrap(),
+            "W tej luce leży inny pomiar. Odśwież widok."
+        );
 
         // Pomiar zadania w koszu.
         let mut db = gap_fixture();
