@@ -1,5 +1,10 @@
 # Todo Track — stan po 1.9.0
 
+## Do zrobienia w A1/A2 (z A0, filtr osobowy)
+
+- `ai_privacy::Dictionary::from_db` bierze osoby tylko z `jira_issue_fields`, a tam są wyłącznie pola wybrane na kartę (`jira_card_fields`); osób z Redmine aplikacja nie zapisuje. A1 (wywołania i czat) i A2 (MCP) muszą podać w `extra_names` własne imię i nazwisko z konta Jiry i Redmine oraz osoby z pobranych danych — `ai_privacy::people_in(&json)` na odpowiedziach tablicy Jiry i listy zgłoszeń Redmine.
+- Tekst o ograniczeniach filtra (nazwisko spoza słownika przejdzie, „Marzec” podmieniany wszędzie) w Ustawieniach → Asystent AI przy polu „Ukrywaj te nazwy”; README już go ma („Asystent AI — ochrona danych osobowych”).
+
 ## Stan po 1.9.0 (20 października 2026, przygotowane, niewydane)
 
 Gałąź `release-1-9` (worktree `.claude/worktrees/release-1-9`), lokalnie, bez pusha i bez tagu. Wydanie 1.9.0 obejmuje wszystkie zadania z `PLAN_1.9.md` (Redmine obok Jiry):

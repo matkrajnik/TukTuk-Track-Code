@@ -339,6 +339,19 @@ Nie sprawdzono z prawdziwym Redmine: nic w trakcie prac nie łączyło się z ż
 
 Pełna lista: `NEXT_SESSION.md` („Stan po 1.9.0”) i `PLAN_1.9.md` („Do ręcznego sprawdzenia z prawdziwym Redmine”). Dokumentacja API: [Redmine REST API](https://www.redmine.org/projects/redmine/wiki/Rest_api).
 
+## Asystent AI — ochrona danych osobowych
+
+Każdy tekst i JSON, który trafia do modelu AI, przechodzi najpierw przez filtr `src-tauri/src/ai_privacy.rs`. Osoby zamieniane są na pseudonimy „Osoba 1”, „Osoba 2”… (ta sama osoba ma ten sam pseudonim w całym wywołaniu albo rozmowie czatu). Mapa pseudonimów jest tylko w pamięci i nie trafia do modelu; odpowiedź modelu wraca z prawdziwymi nazwiskami.
+
+- **Pola osobowe** w danych Jiry, Redmine, spotkań i commitów (przypisany, zgłaszający, autor, użytkownik wpisu czasu, obserwujący, uczestnicy, pola Jiry typu osoba, zmiany przypisania w historii) są podmieniane w całości; adresy e-mail, loginy i identyfikatory kont znikają.
+- **Zwykły tekst** (tytuły zadań, notatki, wiadomości czatu) jest filtrowany słownikiem: osoby z Jiry i Redmine, własne imię i nazwisko oraz lista „Ukrywaj te nazwy” (`ai_hidden_names`, jedna nazwa w wierszu). Dopasowanie nie rozróżnia wielkości liter ani polskich znaków i rozpoznaje typowe odmiany (Kowalski, Kowalskiego, Kowalską; Anna, Anny, Anią).
+
+Ograniczenia:
+- nazwisko spoza słownika wpisane ręcznie w tytuł albo notatkę **przejdzie** do modelu — dopisz je do „Ukrywaj te nazwy”;
+- nazwisko będące zwykłym słowem (np. „Marzec”) jest podmieniane wszędzie, także w „raport za marzec”;
+- nieregularne odmiany (np. „Marca” od nazwiska „Marzec”) nie są rozpoznawane;
+- formy odmiany, które są popularnymi słowami (np. „ale” od imienia „Ala”, „idę” od „Ida”), są pomijane, żeby nie ukrywać zwykłych słów; samo imię i pozostałe formy działają.
+
 ## Timesheet (Ideo TS)
 
 Od 1.8 Raport TS dnia można wysłać do Ideo Timesheet (domyślnie `https://api.ts.ideo.pl`). Konto łączy się w Ustawieniach → Timesheet (TS): login i hasło konta TS, „Połącz”. Hasło trafia do Menedżera poświadczeń Windows (usługa `pl.todotrack.desktop.timesheet`, użytkownik `<adres API>|<login>`), konfiguracja (adres API, login, identyfikator urządzenia, nazwa urządzenia „Todo Track”) do tabeli `settings` pod kluczem `timesheet`. Token, refresh token i ciasteczko sesji są tylko w pamięci procesu; nie trafiają do SQLite, localStorage, logów ani komunikatów błędów. Kopia SQLite obejmuje tabele `ts_project_map` i `ts_sent_days`, hasła nie.

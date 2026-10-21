@@ -16,10 +16,13 @@
 //!   słowa, z polską odmianą przez rdzeń i zamkniętą listę końcówek; imiona
 //!   krótsze niż 3 znaki są pomijane.
 //!
-//! Ograniczenia (opisane w README i w Ustawieniach): nazwisko spoza słownika
-//! wpisane ręcznie w tytuł albo notatkę przejdzie; nazwisko będące zwykłym
-//! słowem (np. „Marzec”) jest podmieniane wszędzie; nieregularne odmiany
-//! (np. „Marzec” → „Marca”) nie są rozpoznawane.
+//! Ograniczenia (opisane w README, sekcja „Asystent AI — ochrona danych
+//! osobowych”; tekst w Ustawieniach dojdzie z sekcją „Asystent AI” w A1):
+//! nazwisko spoza słownika wpisane ręcznie w tytuł albo notatkę przejdzie;
+//! nazwisko będące zwykłym słowem (np. „Marzec”) jest podmieniane wszędzie;
+//! nieregularne odmiany (np. „Marzec” → „Marca”) nie są rozpoznawane.
+//! Wygenerowane formy odmiany, które są popularnymi słowami (np. „ale” od
+//! „Ala”), są pomijane (lista [`COMMON_WORDS`]).
 //!
 //! Moduł nie ma interfejsu ani poleceń Tauri; korzystają z niego A1–A5.
 #![allow(dead_code)]
@@ -59,7 +62,27 @@ const PERSON_KEYS: &[&str] = &[
     "autor",
     "organizator",
     "uczestnicy",
+    // Redmine: `{"user": {"id", "name"}}` we wpisach czasu i dziennikach,
+    // `/users/current.json` z `firstname` / `lastname`, obserwujący.
+    "user",
+    "users",
+    "watchers",
+    "firstname",
+    "lastname",
+    // Jira: autor ostatniej zmiany komentarza i worklogu, lider projektu.
+    "updateauthor",
+    "lead",
+    "owner",
+    "members",
+    "imie",
+    "nazwisko",
+    "uzytkownik",
+    "wlasciciel",
+    "obserwujacy",
 ];
+/// Klucze wpisu zmiany (`changelog` Jiry: `{field, fromString, toString}`),
+/// których wartość jest osobą, gdy wpis dotyczy pola osobowego.
+const CHANGE_VALUE_KEYS: &[&str] = &["value", "fromstring", "tostring", "from", "to"];
 /// Klucze JSON z identyfikatorem osoby (adres, konto, login): wartość znika.
 const HIDDEN_KEYS: &[&str] = &[
     "emailaddress",
@@ -71,17 +94,10 @@ const HIDDEN_KEYS: &[&str] = &[
     "username",
 ];
 /// Klucze, pod którymi obiekt osoby trzyma nazwę, w kolejności preferencji.
-const NAME_KEYS: &[&str] = &[
-    "displayName",
-    "display_name",
-    "name",
-    "fullName",
-    "value",
-    "emailAddress",
-    "email",
-    "login",
-    "accountId",
-];
+const NAME_KEYS: &[&str] = &["displayName", "display_name", "name", "fullName", "value"];
+/// Identyfikatory osoby używane jako nazwa, gdy obiekt nie ma nazwy ani
+/// imienia i nazwiska.
+const ID_NAME_KEYS: &[&str] = &["emailAddress", "email", "mail", "login", "accountId"];
 /// Klucze obiektu pola (`{id, name, value}`), które wskazują identyfikator pola.
 const FIELD_ID_KEYS: &[&str] = &["id", "fieldId", "field_id", "field"];
 
@@ -102,6 +118,16 @@ const ADJ: &[&str] = &[
 ];
 /// Liczba mnoga nazwisk na -ski/-cki/-dzki po odjęciu „k”: Kowalscy.
 const ADJ_PLURAL: &[&str] = &["cy", "cich", "cim", "cimi"];
+/// Popularne słowa, których nie dodajemy jako wygenerowanej formy odmiany
+/// (sama nazwa ze słownika zostaje zawsze). Porównanie po `fold`; gdy forma
+/// ma końcówkę z „ę” albo „ą”, a słowo z listy jej nie ma („Alę” a „ale”),
+/// forma trafia do słownika z polskim znakiem i pasuje tylko do zapisu z nim.
+const COMMON_WORDS: &[&str] = &[
+    "ale", "ani", "nie", "idę", "ule", "pole", "mile", "mię", "tak", "jak", "ich", "jej", "ten",
+    "tej", "tym", "tego", "temu", "czy", "lub", "dla", "bez", "pod", "nad", "przy", "oraz", "gdy",
+    "już", "jest", "się", "nam", "nas", "was", "ile", "ona", "one", "oni", "ono", "też", "tam",
+    "mnie", "inne", "inny", "inna", "lata", "lato",
+];
 
 /// Małe litery bez polskich znaków diakrytycznych: tak porównujemy nazwy.
 fn fold(s: &str) -> String {
@@ -121,6 +147,26 @@ fn fold(s: &str) -> String {
         .collect()
 }
 
+/// Jak [`fold`], ale z zachowaniem „ą” i „ę” (forma odróżniona od
+/// popularnego słowa tylko nosówką, np. „alę” od „ale”).
+fn fold_keep_nasal(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| c.to_lowercase())
+        .map(|c| match c {
+            'ą' | 'ę' => c.to_string(),
+            other => fold(&other.to_string()),
+        })
+        .collect()
+}
+
+fn is_common_word(folded: &str) -> bool {
+    COMMON_WORDS.iter().any(|w| fold(w) == folded)
+}
+
+fn is_common_word_nasal(form: &str) -> bool {
+    COMMON_WORDS.iter().any(|w| fold_keep_nasal(w) == form)
+}
+
 /// Klucz pola JSON: małe litery i cyfry, bez separatorów.
 fn norm_key(key: &str) -> String {
     fold(key).chars().filter(|c| c.is_alphanumeric()).collect()
@@ -135,7 +181,17 @@ fn forms_of(name: &str) -> Vec<String> {
     let adjectival_a = ["ska", "cka", "dzka"].iter().any(|e| name.ends_with(e));
     let add = |out: &mut Vec<String>, stem: &str, suffixes: &[&str]| {
         for s in suffixes {
-            out.push(format!("{stem}{}", fold(s)));
+            let folded = format!("{stem}{}", fold(s));
+            if folded == name || !is_common_word(&folded) {
+                out.push(folded);
+                continue;
+            }
+            // Forma pokrywa się z popularnym słowem: zostaje tylko zapis
+            // z nosówką, gdy ją ma i nie jest on sam popularnym słowem.
+            let nasal = format!("{stem}{s}");
+            if nasal != folded && !is_common_word_nasal(&nasal) {
+                out.push(nasal);
+            }
         }
     };
     if adjectival_a || name.ends_with('i') || name.ends_with('y') {
@@ -288,6 +344,22 @@ impl Dictionary {
         self.insert(&name)
     }
 
+    /// Osoby, których formą jest słowo tekstu (po `fold` albo z nosówką).
+    fn candidates(&self, token: &Token) -> Option<Vec<usize>> {
+        let mut out: Vec<usize> = self.forms.get(&token.folded).cloned().unwrap_or_default();
+        if token.nasal != token.folded {
+            for p in self.forms.get(&token.nasal).into_iter().flatten() {
+                if !out.contains(p) {
+                    out.push(*p);
+                }
+            }
+        }
+        // Osoba, której część brzmi dokładnie jak słowo, ma pierwszeństwo przed
+        // osobą, dla której to tylko forma odmiany („Ali” to też „Ala” w dopełniaczu).
+        out.sort_by_key(|p| !self.people[*p].parts.contains(&token.folded));
+        (!out.is_empty()).then_some(out)
+    }
+
     /// Słowa tekstu z ich położeniem oraz połączone w osoby ciągi trafień.
     fn find_runs(&self, text: &str) -> (Vec<Token>, Vec<Run>) {
         let mut tokens: Vec<Token> = Vec::new();
@@ -308,17 +380,17 @@ impl Dictionary {
         let mut runs = Vec::new();
         let mut i = 0;
         while i < tokens.len() {
-            let Some(first) = self.forms.get(&tokens[i].folded) else {
+            let Some(first) = self.candidates(&tokens[i]) else {
                 i += 1;
                 continue;
             };
-            let mut common: Vec<usize> = first.clone();
+            let mut common: Vec<usize> = first;
             let mut j = i;
             // Kolejne słowa rozdzielone samymi spacjami łączą się w jedno
             // trafienie, gdy pasują do tej samej osoby („Jan Kowalskiego”);
             // ciąg nie jest dłuższy niż liczba części nazwy osoby.
             while j + 1 < tokens.len() && only_blanks(&text[tokens[j].end..tokens[j + 1].start]) {
-                let Some(next) = self.forms.get(&tokens[j + 1].folded) else {
+                let Some(next) = self.candidates(&tokens[j + 1]) else {
                     break;
                 };
                 let len = j + 2 - i;
@@ -361,10 +433,17 @@ impl Dictionary {
     }
 
     /// Słownik z bazy: `ai_hidden_names` z ustawień, `extra_names` od wywołującego
-    /// (np. własne imię i nazwisko z konta Jiry, osoby z Redmine) oraz osoby z pól
-    /// Jiry typu osoba (`jira_fields.kind`) zapisanych przy zgłoszeniach
-    /// (`jira_issue_fields`). Błąd bazy to błąd: filtr nie może po cichu
-    /// działać na pustym słowniku.
+    /// oraz osoby z pól Jiry typu osoba (`jira_fields.kind`) zapisanych przy
+    /// zgłoszeniach (`jira_issue_fields`). Błąd bazy to błąd: filtr nie może po
+    /// cichu działać na pustym słowniku.
+    ///
+    /// Uwaga: `jira_issue_fields` zawiera tylko pola wybrane na kartę
+    /// (`jira_card_fields`), więc przypisany i zgłaszający Jiry są w bazie tylko
+    /// wtedy, gdy użytkownik pokazuje je na karcie; osób z Redmine aplikacja nie
+    /// zapisuje wcale. Pełny słownik wymaga więc, żeby wywołujący (A1/A2) podał
+    /// w `extra_names` własne imię i nazwisko z konta Jiry i Redmine oraz osoby
+    /// z pobranych danych (tablica i zgłoszenia Jiry, zgłoszenia Redmine) —
+    /// najprościej przez [`people_in`] na odpowiedzi API.
     pub fn from_db(
         db: &Connection,
         settings: &AppSettings,
@@ -409,6 +488,26 @@ fn split_people(value: &str) -> impl Iterator<Item = &str> {
         .filter(|s| !s.is_empty())
 }
 
+/// Nazwy osób z pól osobowych JSON (np. odpowiedź Jiry albo Redmine), do
+/// przekazania w `extra_names` przy [`Dictionary::from_db`]. Bez powtórek,
+/// w kolejności wystąpienia; same identyfikatory (adres, konto) są pomijane.
+pub fn people_in(value: &Value) -> Vec<String> {
+    let mut dict = Dictionary::new();
+    for id in ["assignee", "reporter", "creator"] {
+        dict.add_person_field(id);
+    }
+    let mut ps = Pseudonyms::new();
+    walk(value, &mut dict, &mut ps);
+    ps.originals
+        .into_iter()
+        .filter(|n| {
+            !n.contains('@')
+                && !n.chars().any(|c| c.is_ascii_digit())
+                && n.chars().any(char::is_alphabetic)
+        })
+        .collect()
+}
+
 fn only_blanks(gap: &str) -> bool {
     !gap.is_empty()
         && gap
@@ -421,6 +520,7 @@ struct Token {
     start: usize,
     end: usize,
     folded: String,
+    nasal: String,
 }
 
 impl Token {
@@ -429,6 +529,7 @@ impl Token {
             start,
             end,
             folded: fold(&text[start..end]),
+            nasal: fold_keep_nasal(&text[start..end]),
         }
     }
 }
@@ -619,7 +720,7 @@ fn walk(value: &Value, dict: &mut Dictionary, ps: &mut Pseudonyms) -> Value {
                 let nk = norm_key(key);
                 let new_val = if PERSON_KEYS.contains(&nk.as_str())
                     || dict.is_person_field(key)
-                    || (field_is_person && key == "value")
+                    || (field_is_person && CHANGE_VALUE_KEYS.contains(&nk.as_str()))
                 {
                     person_value(val, dict, ps)
                 } else if HIDDEN_KEYS.contains(&nk.as_str()) && val.is_string() {
@@ -657,13 +758,35 @@ fn person_value(value: &Value, dict: &mut Dictionary, ps: &mut Pseudonyms) -> Va
             Value::Array(items.iter().map(|v| person_value(v, dict, ps)).collect())
         }
         Value::Object(map) => {
-            let name = NAME_KEYS.iter().find_map(|k| {
-                map.get(*k)
+            let text = |k: &str| {
+                map.get(k)
                     .and_then(Value::as_str)
-                    .filter(|s| !s.trim().is_empty())
-            });
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+            };
+            let full_name = || {
+                [["firstname", "lastname"], ["firstName", "lastName"]]
+                    .iter()
+                    .map(|[f, l]| {
+                        [text(f), text(l)]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .find(|n| !n.is_empty())
+            };
+            let name = NAME_KEYS
+                .iter()
+                .find_map(|k| text(k).map(str::to_string))
+                .or_else(full_name)
+                .or_else(|| {
+                    ID_NAME_KEYS
+                        .iter()
+                        .find_map(|k| text(k).map(str::to_string))
+                });
             match name {
-                Some(name) => Value::String(pseudonym_of(name, dict, ps)),
+                Some(name) => Value::String(pseudonym_of(&name, dict, ps)),
                 None => Value::String(HIDDEN.to_string()),
             }
         }
@@ -882,7 +1005,7 @@ mod tests {
     }
 
     /// Nazwisko będące zwykłym słowem jest podmieniane wszędzie: filtr działa
-    /// po słowniku, nie po sensie (opisane w README i w Ustawieniach).
+    /// po słowniku, nie po sensie (opisane w README; w Ustawieniach od A1).
     #[test]
     fn surname_that_is_a_common_word_is_replaced_everywhere() {
         let d = dict(&["Piotr Marzec"]);
@@ -1019,9 +1142,121 @@ mod tests {
         assert_eq!(out["day"], "2026-10-20");
         assert_eq!(out["tasks"][0]["jira"]["key"], "WMS-12");
         assert_eq!(out["tasks"][0]["jira"]["fields"][0]["value"], "backend");
-        // Własne nazwisko spoza słownika też nie wychodzi, gdy jest w słowniku
-        // (A1 dodaje je z konta Jiry); tu go nie ma, więc zostaje: test dokumentuje granicę.
-        assert_eq!(out["user"], "Mateusz Krajnik");
-        assert!(ps.len() >= 7);
+        // „user” jest polem osobowym (Redmine), więc nazwa znika mimo braku
+        // w słowniku; ta sama nazwa w zwykłym tekście też.
+        assert!(out["user"].as_str().unwrap().starts_with("Osoba "));
+        assert!(ps.len() >= 8);
+    }
+
+    #[test]
+    fn generated_forms_that_are_common_words_are_skipped() {
+        let d = dict(&["Ala Nowak", "Ida Lis", "Ula Kot", "Ali Kaya", "Pola Wrona"]);
+        for plain in [
+            "Dobrze, ale później",
+            "ALE nie teraz",
+            "idę do domu",
+            "ule w ogrodzie",
+            "pole formularza",
+        ] {
+            assert_eq!(text(&d, plain), plain);
+        }
+        // Same nazwy i formy z nosówką nadal są ukrywane.
+        assert_eq!(text(&d, "Ala i Ali"), "Osoba 1 i Osoba 2");
+        assert_eq!(text(&d, "Zapytaj Alę Nowak"), "Zapytaj Osoba 1");
+        assert_eq!(
+            text(&d, "Widziałem Ulę i Polę"),
+            "Widziałem Osoba 1 i Osoba 2"
+        );
+        assert_eq!(text(&d, "Ali, Ala"), "Osoba 1, Osoba 2");
+        // Zwykłe formy nadal działają, także bez polskich znaków.
+        assert_eq!(text(&d, "od Ali, dla Idy"), "od Osoba 1, dla Osoba 2");
+    }
+
+    #[test]
+    fn redmine_user_shapes_are_person_fields() {
+        let d = Dictionary::new();
+        let current = json!({"user": {"id": 3, "login": "jnowy", "firstname": "Jan", "lastname": "Nowy", "mail": "jan@x.pl"}});
+        let (out, ps) = redact(&current.to_string(), &d);
+        assert_eq!(out, r#"{"user":"Osoba 1"}"#);
+        assert_eq!(ps.original(1), Some("Jan Nowy"));
+        let entries = json!({"time_entries": [
+            {"id": 1, "hours": 1.5, "user": {"id": 3, "name": "Jan Nowy"}, "comments": "Rozmowa z Janem Nowym"},
+            {"id": 2, "hours": 2.0, "user": {"id": 4, "name": "Ewa Stara"}, "issue": {"id": 7}}
+        ], "watchers": [{"id": 4, "name": "Ewa Stara"}]});
+        let (out, ps) = redact(&entries.to_string(), &d);
+        let out: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(out["time_entries"][0]["user"], "Osoba 1");
+        assert_eq!(out["time_entries"][0]["comments"], "Rozmowa z Osoba 1");
+        assert_eq!(out["time_entries"][1]["user"], "Osoba 2");
+        assert_eq!(out["watchers"], json!(["Osoba 2"]));
+        assert_eq!(out["time_entries"][0]["hours"], 1.5);
+        assert_eq!(ps.len(), 2);
+        let flat = out.to_string();
+        for leaked in ["Nowy", "Nowym", "Stara", "jnowy", "jan@x.pl"] {
+            assert!(!flat.contains(leaked), "{leaked} w {flat}");
+        }
+    }
+
+    #[test]
+    fn jira_changelog_and_comment_authors_are_hidden() {
+        let d = Dictionary::new();
+        let input = json!({
+            "changelog": {"histories": [{"author": {"displayName": "Anna Nowak"}, "items": [
+                {"field": "assignee", "fieldtype": "jira", "from": "acc-1", "fromString": "Jan Kowalski", "to": "acc-2", "toString": "Ewa Lis"},
+                {"field": "status", "fromString": "Do zrobienia", "toString": "W toku"}
+            ]}]},
+            "comments": [{"body": "ok", "updateAuthor": {"displayName": "Marek Zieliński"}}],
+            "project": {"key": "WMS", "lead": {"displayName": "Piotr Wójcik"}}
+        });
+        let (out, _) = redact(&input.to_string(), &d);
+        let flat = out.clone();
+        for leaked in [
+            "Nowak",
+            "Kowalski",
+            "Lis",
+            "Zieliński",
+            "Wójcik",
+            "acc-1",
+            "acc-2",
+        ] {
+            assert!(!flat.contains(leaked), "{leaked} w {flat}");
+        }
+        let out: Value = serde_json::from_str(&out).unwrap();
+        let status = &out["changelog"]["histories"][0]["items"][1];
+        assert_eq!(status["fromString"], "Do zrobienia");
+        assert_eq!(status["toString"], "W toku");
+        assert_eq!(out["project"]["key"], "WMS");
+    }
+
+    /// Przypisany spoza pól karty (`jira_issue_fields` go nie ma) trafia do
+    /// słownika przez `extra_names` z danych pobranych przez wywołującego.
+    #[test]
+    fn people_from_fetched_json_fill_the_dictionary() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE jira_fields (site TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, custom INTEGER NOT NULL DEFAULT 0, kind TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, id));
+             CREATE TABLE jira_issue_fields (site TEXT NOT NULL, issue_key TEXT NOT NULL, field_id TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', PRIMARY KEY(site, issue_key, field_id));
+             INSERT INTO jira_issue_fields VALUES ('s','WMS-1','labels','Backend');",
+        )
+        .unwrap();
+        let board = json!({"issues": [
+            {"key": "WMS-1", "fields": {"summary": "Raport", "assignee": {"accountId": "a1", "displayName": "Anna Nowak", "emailAddress": "anna@x.pl"}, "reporter": {"displayName": "Jan Kowalski"}}},
+            {"key": "WMS-2", "fields": {"assignee": null, "reporter": {"displayName": "Anna Nowak"}}}
+        ]});
+        let redmine = json!({"issues": [{"id": 7, "assigned_to": {"id": 3, "name": "Ewa Lis"}, "author": {"id": 4, "name": "Jan Kowalski"}}]});
+        let mut extra = people_in(&board);
+        extra.extend(people_in(&redmine));
+        assert_eq!(
+            extra,
+            ["Anna Nowak", "Jan Kowalski", "Ewa Lis", "Jan Kowalski"]
+        );
+        let d = Dictionary::from_db(&db, &AppSettings::default(), &extra).unwrap();
+        assert_eq!(
+            text(&d, "Notatka: Anna i Kowalskiemu, potem Ewie"),
+            "Notatka: Osoba 1 i Osoba 2, potem Osoba 3"
+        );
+        // Bez danych z pobrania przypisany spoza pól karty przechodzi.
+        let bare = Dictionary::from_db(&db, &AppSettings::default(), &[]).unwrap();
+        assert_eq!(text(&bare, "Anna"), "Anna");
     }
 }
