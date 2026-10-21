@@ -28,6 +28,7 @@ import {
   type Token,
 } from "./quickadd";
 import QuickChips from "./components/QuickChips.vue";
+import DayDialogs from "./components/DayDialogs.vue";
 import { corrections } from "./estimates";
 import { setNavigator } from "./navigation";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
@@ -37,6 +38,11 @@ const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   busy = ref(false),
   index = ref(0);
 const input = ref<HTMLInputElement | null>(null);
+/**
+ * Osobne okno szybkiego przełączania w aplikacji ma własne pytanie
+ * „Wznowić dzień?” (B13); w podglądzie pyta główne okno.
+ */
+const ownWindow = desktop && getCurrentWindow().label === "quick";
 /** Poprawka szacunków z wczytanych danych (podpowiedź „zwykle ~…”). */
 const correctionOf = computed(() => corrections(data.value, Date.now()));
 let off: UnlistenFn | undefined;
@@ -239,4 +245,5 @@ onUnmounted(() => off?.());
       ↑ ↓ wybór · Enter uruchamia{{ creatable ? " · Shift+Enter tylko tworzy" : "" }} · Esc zamyka
     </p>
   </section>
+  <DayDialogs v-if="ownWindow" :data="data" />
 </template>

@@ -11,6 +11,8 @@ import {
   Play,
   SkipForward,
   Square,
+  Sunrise,
+  Sunset,
   Timer,
   X,
 } from "lucide-vue-next";
@@ -59,6 +61,7 @@ import { clock, dayBounds, dayKey, hm, inDay, plural } from "./time";
 import { dayGoal } from "./capacity";
 import { dayTarget, useSettings } from "./target";
 import { useMeetings } from "./composables/useMeetings";
+import { dayMarkOf, requestDayEnd, resumeDay } from "./days";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -240,6 +243,39 @@ const dayLine = computed(() => {
     (active.value ? inDay(active.value, today.value, now.value) : 0);
   return `${hm(total)}${todayGoal.value > 0 ? ` / ${hm(todayGoal.value)}` : ""}`;
 });
+/**
+ * Po „Zakończ dzień” (B13) widget pokazuje „Dzień zakończony 16:40 · 7:55”
+ * zamiast „Brak pomiaru” i „Wznów dzień” zamiast „Zakończ dzień”.
+ */
+const dayEndedAt = computed(
+  () => dayMarkOf(data.value, today.value)?.endedAt ?? null,
+);
+const dayEndedText = computed(() => {
+  if (dayEndedAt.value == null) return "";
+  const total =
+    closedToday.value +
+    (active.value ? inDay(active.value, today.value, now.value) : 0);
+  return `Dzień zakończony ${clock(dayEndedAt.value)} · ${hm(total)}`;
+});
+async function dayAction() {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    if (dayEndedAt.value != null) {
+      data.value = await resumeDay();
+      showFeedback("Dzień wznowiony");
+    } else {
+      // Dialog zatrzymania pomiaru i Zamknięcie dnia pokazuje główne okno.
+      await requestDayEnd();
+      await refresh();
+    }
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    busy.value = false;
+  }
+}
 /** Podpowiedź podlinii z sumą dnia: „Dziś: 5:10 z 8:00”. */
 const dayTitle = computed(() =>
   activeTask.value && subline.value.startsWith(dayLine.value)
@@ -403,7 +439,9 @@ onUnmounted(() => {
       :title="activeTask?.title ?? 'Pokaż główne okno'"
       @click="showMain"
     >
-      <strong>{{ activeTask?.title ?? "Brak pomiaru" }}</strong>
+      <strong>{{
+        activeTask?.title ?? (dayEndedText || "Brak pomiaru")
+      }}</strong>
       <small
         :class="{
           'widget-error': !!error,
@@ -510,6 +548,18 @@ onUnmounted(() => {
       @click="toggle"
     >
       <Play :size="16" />
+    </button>
+    <button
+      class="icon-button widget-day"
+      :aria-label="dayEndedAt != null ? 'Wznów dzień' : 'Zakończ dzień'"
+      :title="dayEndedAt != null ? 'Wznów dzień' : 'Zakończ dzień'"
+      :disabled="busy"
+      @click="dayAction"
+    >
+      <Sunrise v-if="dayEndedAt != null" :size="16" /><Sunset
+        v-else
+        :size="16"
+      />
     </button>
     <button
       class="icon-button"

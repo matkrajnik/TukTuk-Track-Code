@@ -11,7 +11,8 @@ import {
   type Snapshot,
   type Task,
 } from "./store";
-import { writeSettings } from "./settings";
+import DayControls from "./components/DayControls.vue";
+import { dayMarkOf, dayStateOf } from "./days";
 import { offerAfterDone } from "./jiramove";
 import { issueRef } from "./issue";
 import { clock, dayBounds, dayKey, dayText } from "./time";
@@ -46,7 +47,13 @@ const busy = ref(false),
 const today = computed(() => dayKey(props.now));
 const previous = computed(() => previousWorkDay(settings.value, today.value));
 const next = computed(() => nextWorkDay(settings.value, today.value));
-const reviewed = computed(() => settings.value.morningReviewDay === today.value);
+/** Stan dnia (B13): rozpoczęty po „Rozpocznij dzień” (albo przeglądzie sprzed 2.0). */
+const mark = computed(() => dayMarkOf(props.data, today.value));
+const reviewed = computed(
+  () =>
+    dayStateOf(mark.value, settings.value.morningReviewDay === today.value) ===
+    "started",
+);
 
 const unfinished = computed(() =>
   unfinishedTasks(props.data.tasks, today.value),
@@ -148,13 +155,6 @@ const allToday = () =>
       planTasks(planAll(props.data.tasks, unfinished.value, today.value)),
     "Przeniesiono niedokończone na dziś.",
   );
-const startDay = () =>
-  run(async () => {
-    await writeSettings({
-      morningReviewDay: today.value,
-      morningReviewAt: props.now,
-    });
-  }, "Dzień rozpoczęty. Miłej pracy!");
 
 const dueText = (task: Task) =>
   task.details!.dueDay === today.value
@@ -167,9 +167,12 @@ const planText = (task: Task) =>
       ? "Plan " + dayText(task.details.plannedDay)
       : "Do zaplanowania";
 const reviewedAt = computed(() =>
-  settings.value.morningReviewAt > 0
-    ? clock(settings.value.morningReviewAt)
-    : "",
+  mark.value?.startedAt != null
+    ? clock(mark.value.startedAt)
+    : settings.value.morningReviewAt > 0 &&
+        settings.value.morningReviewDay === today.value
+      ? clock(settings.value.morningReviewAt)
+      : "",
 );
 </script>
 
@@ -183,7 +186,8 @@ const reviewedAt = computed(() =>
     </div>
     <p class="hint">
       Przejrzyj niedokończone, terminy i nowe zgłoszenia, a potem kliknij
-      „Zaczynam dzień”. Nic nie zmienia się samo, a timer działa tylko po Twoim
+      „Rozpocznij dzień”. Wieczorem „Zakończ dzień” wycisza przypomnienia do
+      północy. Nic nie zmienia się samo, a timer działa tylko po Twoim
       kliknięciu Start.
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -381,9 +385,12 @@ const reviewedAt = computed(() =>
     </section>
 
     <div class="modal-actions morning-actions">
-      <button class="primary-button" :disabled="busy" @click="startDay">
-        Zaczynam dzień
-      </button>
+      <DayControls
+        :data="data"
+        :now="now"
+        start
+        @updated="emit('updated', $event)"
+      />
     </div>
   </section>
 </template>

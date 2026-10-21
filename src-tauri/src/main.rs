@@ -6,6 +6,7 @@ mod backup;
 mod browser;
 mod calendar;
 mod capacity;
+mod days;
 mod db;
 mod export;
 mod focus;
@@ -577,6 +578,10 @@ fn main() {
             autostart::autostart_get,
             autostart::autostart_set,
             close_day,
+            days::day_start,
+            days::day_end,
+            days::day_resume,
+            days::day_end_request,
             set_priority,
             reorder_tasks,
             plan_task,

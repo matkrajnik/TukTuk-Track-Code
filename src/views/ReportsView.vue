@@ -27,6 +27,7 @@ import { useTsSend } from "../composables/useTsSend";
 import { useTsProjectMap } from "../composables/useTsProjectMap";
 import { tsEntries } from "../timesheet";
 import { openView } from "../navigation";
+import { dayHoursLine, dayMarkOf } from "../days";
 
 const props = defineProps<{
   data: Snapshot;
@@ -63,6 +64,10 @@ const reportOvertime = computed(() =>
   overtimeOf(reportTotal.value, day.value, settings.value),
 );
 const reportNorm = computed(() => dayTarget(settings.value, day.value));
+/** Godziny dnia z „Rozpocznij / Zakończ dzień” (B13); nie wpływają na nadgodziny. */
+const reportDayLine = computed(() =>
+  dayHoursLine(dayMarkOf(props.data, day.value)),
+);
 /** Zmierzony czas zadań raportu (wszystkie dni) do planu i procentu na liście. */
 const taskTimes = computed(() => {
   const ids = new Set(report.value.map((row) => row.task.id));
@@ -227,6 +232,7 @@ function toggle(id: number) {
         >
           Nadgodziny: <span class="mono">{{ hm(reportOvertime) }}</span>
         </p>
+        <p v-if="reportDayLine" class="day-hours">{{ reportDayLine }}</p>
       </div>
       <strong class="mono report-total">{{ duration(reportTotal) }}</strong>
     </section>

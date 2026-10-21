@@ -190,11 +190,24 @@ export async function read(): Promise<Snapshot> {
   if (desktop) return invoke("get_snapshot");
   return snapshotSim.read();
 }
+/**
+ * Pytanie przed startem pomiaru (B13): po „Zakończ dzień” Start na zadaniu pyta
+ * „Wznowić dzień?”. Rejestruje je okno z dialogiem (`DayDialogs.vue`); `false`
+ * = Anuluj, wtedy pomiar nie startuje, a funkcja startu zwraca bieżące dane.
+ */
+let startGuard: (() => Promise<boolean>) | null = null;
+export function setStartGuard(guard: (() => Promise<boolean>) | null) {
+  startGuard = guard;
+}
+async function startAllowed(): Promise<boolean> {
+  return startGuard ? startGuard() : true;
+}
 export async function change(
   action: string,
   id: number | null = null,
   title: string | null = null,
 ): Promise<Snapshot> {
+  if (action === "start" && !(await startAllowed())) return read();
   if (desktop) return invoke("mutate", { action, id, title });
   return tasksSim.change(action, id, title);
 }
@@ -206,6 +219,8 @@ export async function change(
  * `#1234` pochodzi z symulowanego Redmine (`previewRedmineIssues`).
  */
 export async function quickAdd(task: NewTask): Promise<Snapshot> {
+  // Anulowane „Wznowić dzień?” tworzy zadanie bez startu pomiaru.
+  if (task.start && !(await startAllowed())) task = { ...task, start: false };
   if (desktop) return invoke("quick_add", { task });
   return tasksSim.quickAdd(task);
 }
@@ -730,6 +745,7 @@ export async function jiraIssues(
 }
 /** `jira_start`: zadanie zgłoszenia (nowe albo z kosza/archiwum) i jeden pomiar. */
 export async function jiraStart(issueKey: string): Promise<Snapshot> {
+  if (!(await startAllowed())) return read();
   if (desktop) return invoke("jira_start", { key: issueKey });
   return jiraSim.jiraStart(issueKey);
 }
@@ -1088,6 +1104,7 @@ export async function redmineStatuses(
  * do „do zrobienia”) i jeden pomiar, jak `redmine::start_issue`.
  */
 export async function redmineStart(id: number): Promise<Snapshot> {
+  if (!(await startAllowed())) return read();
   if (desktop) return invoke("redmine_start", { id });
   return redmineSim.redmineStart(id);
 }

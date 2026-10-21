@@ -427,13 +427,33 @@ main:focus {
   border-radius: 0 var(--radius) var(--radius) 0;
   color: var(--accent);
 }
+/* B13: „Zakończ dzień” / „Wznów dzień” obok Stop i stan zakończonego dnia. */
+.topbar-timer-stop:not(:last-child) {
+  border-radius: 0;
+}
+.topbar-day-ended {
+  border-color: var(--line);
+  background: var(--raised);
+}
+.topbar-day-ended .topbar-timer-day {
+  border-left-color: var(--line);
+}
+.topbar-day-text {
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 @media (max-width: 900px) {
   .topbar-timer-task::before {
     max-width: 90px;
   }
 }
 @media (max-width: 600px) {
-  .topbar-timer-task::before {
+  .topbar-timer-task::before,
+  .topbar-day-text {
     display: none;
   }
 }

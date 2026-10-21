@@ -68,11 +68,11 @@ test("start z zapisanym przeglądem dnia zostaje na liście zadań", async ({
   expect(await shown(page)).toBeNull();
 });
 
-test("„Zaczynam dzień” po automatycznym Rano: kolejne uruchomienie na liście", async ({
+test("„Rozpocznij dzień” po automatycznym Rano: kolejne uruchomienie na liście", async ({
   page,
 }) => {
   await openPreview(page);
-  await review(page).getByRole("button", { name: "Zaczynam dzień" }).click();
+  await review(page).getByRole("button", { name: "Rozpocznij dzień" }).click();
   await expect(review(page).getByText("Dzień rozpoczęty o 12:00")).toBeVisible();
   // Nawet bez zapamiętanego „pokazano dziś” zapisany przegląd wystarcza.
   await page.evaluate((k) => localStorage.removeItem(k), MORNING_SHOWN_KEY);

@@ -554,8 +554,9 @@ impl NotifyClock {
 
         // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem, bez świąt).
         // Cel pomniejszają spotkania niepokryte pomiarem; urlop całodniowy = brak celu.
+        // Po „Zakończ dzień” (B13) powiadomienie o celu milczy do północy.
         let target = crate::capacity::goal_ms_in(db, tz, &s, today, now)?;
-        if s.notify_target && target > 0 {
+        if s.notify_target && target > 0 && crate::days::ended_at(db, tz, now).is_none() {
             let total = stats::day_total_ms_in(db, tz, today, now)?;
             let key = format!("target:{today}");
             if total >= target && claim(db, &key, now)? {
@@ -661,7 +662,9 @@ pub fn morning_review<Tz: TimeZone>(
         return Ok(None);
     };
     let today = local.date_naive();
+    // Dzień zakończony bez przeglądu (B13): przegląd dnia już niepotrzebny.
     if !morning_review_due(s, today, local.time(), false)
+        || crate::days::ended_at(db, tz, now).is_some()
         || crate::capacity::off_day_in(db, tz, today)
     {
         return Ok(None);
@@ -1419,6 +1422,58 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(!AppSettings::default().notify_target);
+    }
+
+    /// B13: po „Zakończ dzień” powiadomienie o celu milczy do północy; po
+    /// „Wznów dzień” przychodzi jak dotąd. Klucz nie jest zużywany w ciszy.
+    #[test]
+    fn target_is_silent_after_day_end_and_returns_after_resume() {
+        let mut db = setup();
+        let s = AppSettings {
+            target_day_minutes: 120,
+            ..only("target")
+        };
+        let today = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
+        let mut clock = NotifyClock::default();
+        session(&db, 1, at("2026-10-14 08:00"), Some(at("2026-10-14 10:30")));
+        crate::days::end(
+            &mut db,
+            &Warsaw,
+            "2026-10-14",
+            today,
+            at("2026-10-14 10:30"),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 11:00"))
+            .unwrap()
+            .is_empty());
+        assert!(!sent(&db).contains(&"target:2026-10-14".to_owned()));
+        crate::days::resume(&db, "2026-10-14", today).unwrap();
+        let m = clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 11:01"))
+            .unwrap();
+        assert_eq!(keys(&m), ["target:2026-10-14"]);
+    }
+
+    #[test]
+    fn morning_review_is_skipped_after_day_end() {
+        let mut db = setup();
+        let s = AppSettings::default();
+        let today = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+        crate::days::end(
+            &mut db,
+            &Warsaw,
+            "2026-10-15",
+            today,
+            at("2026-10-15 07:00"),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(morning(&db, &s, "2026-10-15 08:00").is_none());
     }
 
     #[test]

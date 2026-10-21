@@ -417,6 +417,39 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Kopia niesie historię dni (`day_marks`, B13).
+    #[test]
+    fn backup_carries_day_marks() {
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-day-marks-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        let source = Connection::open(&path).unwrap();
+        db::init(&source).unwrap();
+        source
+            .execute(
+                "INSERT INTO day_marks(day,started_at,ended_at,resumed) VALUES('2026-10-15',10,20,1)",
+                [],
+            )
+            .unwrap();
+        drop(source);
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        let staged = stage(&path).unwrap();
+        copy(&staged, &mut current).unwrap();
+        let mark = crate::days::get(&current, "2026-10-15").unwrap().unwrap();
+        assert_eq!(
+            (mark.started_at, mark.ended_at, mark.resumed),
+            (Some(10), Some(20), 1)
+        );
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// Kopia niesie ręczne spotkania z zadaniem (`manual_meetings`, B12).
     #[test]
     fn backup_carries_manual_meetings() {

@@ -88,7 +88,7 @@ export function dueTasks(
 }
 
 /**
- * Od kiedy zadanie z Jiry jest „nowe”: chwila ostatniego „Zaczynam dzień”, a bez
+ * Od kiedy zadanie z Jiry jest „nowe”: chwila ostatniego „Rozpocznij dzień”, a bez
  * przeglądu początek poprzedniego dnia roboczego.
  */
 export function reviewSince(

@@ -133,8 +133,20 @@ export interface Snapshot {
   trash?: Task[];
   trashSessions?: Session[];
   closedDays?: string[];
+  /** Rozpoczęcie, zakończenie i wznowienia dni (`days::DayMark`, B13). */
+  dayMarks?: DayMark[];
   recurrenceState?: Record<string, string>;
 }
+/** Wiersz `day_marks`: „Rozpocznij / Zakończ / Wznów dzień” (B13). */
+export interface DayMark {
+  day: string;
+  startedAt: number | null;
+  endedAt: number | null;
+  resumed: number;
+}
+/** `days::MEASURING`: „Zakończ dzień” przy pomiarze bez potwierdzenia. */
+export const DAY_MEASURING =
+  "Trwa pomiar. Potwierdź zatrzymanie pomiaru, żeby zakończyć dzień.";
 /** Ładunek `quick_add` (`quickadd::NewTask` w Rust). */
 export interface NewTask {
   title: string;

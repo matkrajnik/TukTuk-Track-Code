@@ -47,6 +47,8 @@ pub struct Snapshot {
     pub trash: Vec<Task>,
     pub trash_sessions: Vec<Session>,
     pub closed_days: Vec<String>,
+    /// Rozpoczęcie, zakończenie i wznowienia dni (`day_marks`, B13).
+    pub day_marks: Vec<crate::days::DayMark>,
 }
 pub fn now() -> i64 {
     SystemTime::now()
@@ -93,7 +95,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS redmine_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_id INTEGER NOT NULL, UNIQUE(site, issue_id));
         CREATE TABLE IF NOT EXISTS redmine_issues (site TEXT NOT NULL, issue_id INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', status_id INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '', tracker TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, issue_id));
         CREATE TABLE IF NOT EXISTS redmine_statuses (site TEXT NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, is_closed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, id));
-        CREATE TABLE IF NOT EXISTS task_done (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, done_at INTEGER NOT NULL);")
+        CREATE TABLE IF NOT EXISTS task_done (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, done_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS day_marks (day TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, resumed INTEGER NOT NULL DEFAULT 0);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
@@ -154,6 +157,7 @@ pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
         trash,
         trash_sessions,
         closed_days,
+        day_marks: crate::days::all(db)?,
     })
 }
 pub fn stop(db: &Connection, at: i64) -> rusqlite::Result<()> {

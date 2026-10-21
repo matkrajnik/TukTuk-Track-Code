@@ -66,7 +66,7 @@ pub struct AppSettings {
     pub notify_morning_review: bool,
     /// Dzień ostatniego porannego przeglądu (`RRRR-MM-DD`, pusty = nigdy).
     pub morning_review_day: String,
-    /// Chwila ostatniego „Zaczynam dzień” (Unix ms, 0 = nigdy): od niej liczą się
+    /// Chwila ostatniego „Rozpocznij dzień” (Unix ms, 0 = nigdy): od niej liczą się
     /// „Nowe z Jiry” w następnym przeglądzie.
     pub morning_review_at: i64,
     /// Powiadomienie „Czekasz na…” po tylu dniach roboczych blokady (0 wyłącza, P3).

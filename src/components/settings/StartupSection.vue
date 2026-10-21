@@ -95,7 +95,7 @@ onUnmounted(() => {
     />Otwieraj plan dnia przy pierwszym uruchomieniu</label
   >
   <p class="hint">
-    W dzień roboczy, dopóki nie klikniesz „Zaczynam dzień”, pierwsze
+    W dzień roboczy, dopóki nie klikniesz „Rozpocznij dzień”, pierwsze
     uruchomienie albo pokazanie okna otwiera Plan i historia → Rano. Raz
     dziennie; nie w święto ani w całodniowy urlop z kalendarza.
   </p>

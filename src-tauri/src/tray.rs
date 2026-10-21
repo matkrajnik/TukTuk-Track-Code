@@ -30,6 +30,8 @@ pub struct Status {
     pub today_ms: i64,
     /// Cel na dziś w minutach; 0 dla dnia wolnego.
     pub target_minutes: u32,
+    /// Godzina „Zakończ dzień” (HH:MM), gdy dzisiejszy dzień jest zakończony (B13).
+    pub day_ended: Option<String>,
 }
 
 /// „5:10” — godziny bez zera wiodącego, minuty w dół.
@@ -85,10 +87,16 @@ pub fn tooltip(status: &Status) -> String {
         today.push_str(&format!(" / {}", hm(status.target_minutes as i64 * 60_000)));
     }
     match &status.active {
-        None => truncate(
-            &format!("Todo Track · brak pomiaru · {today}"),
-            TOOLTIP_LIMIT,
-        ),
+        None => match &status.day_ended {
+            Some(at) => truncate(
+                &format!("Todo Track · {}", day_ended_label(at, status.today_ms)),
+                TOOLTIP_LIMIT,
+            ),
+            None => truncate(
+                &format!("Todo Track · brak pomiaru · {today}"),
+                TOOLTIP_LIMIT,
+            ),
+        },
         Some((title, elapsed)) => {
             let rest = format!(" · {} · {today}", hms(*elapsed));
             let room = TOOLTIP_LIMIT.saturating_sub(utf16_len(&rest));
@@ -100,6 +108,20 @@ pub fn tooltip(status: &Status) -> String {
             };
             truncate(&format!("{}{rest}", truncate(&title, room)), TOOLTIP_LIMIT)
         }
+    }
+}
+
+/// „Dzień zakończony 16:40 · 7:55” (B13): godzina zakończenia i suma dnia.
+pub fn day_ended_label(at: &str, today_ms: i64) -> String {
+    format!("Dzień zakończony {at} · {}", hm(today_ms))
+}
+
+/// Pozycja menu dnia: „Zakończ dzień” albo, po zakończeniu, „Wznów dzień”.
+pub fn day_item_label(status: &Status) -> &'static str {
+    if status.day_ended.is_some() {
+        "Wznów dzień"
+    } else {
+        "Zakończ dzień"
     }
 }
 
@@ -194,8 +216,13 @@ pub fn read_status_with(
         )
         .optional()?
         .map(|(title, started)| (title, (now - started).max(0)));
+    let day_ended = crate::days::get(db, &today.format("%Y-%m-%d").to_string())?
+        .and_then(|m| m.ended_at)
+        .and_then(|at| chrono::TimeZone::timestamp_millis_opt(&chrono::Local, at).single())
+        .map(|at| at.format("%H:%M").to_string());
     Ok(Status {
         active,
+        day_ended,
         today_ms: stats::day_total_ms(db, today, now)?,
         // Cel dnia minus spotkania niepokryte pomiarem (`capacity::goal_ms_in`).
         target_minutes: (crate::capacity::goal_ms_in(db, &chrono::Local, s, today, now)? / 60_000)
@@ -208,6 +235,8 @@ const PINS_AT: usize = 2;
 
 struct TrayState {
     current: MenuItem<Wry>,
+    /// „Zakończ dzień” / „Wznów dzień” (B13).
+    day: MenuItem<Wry>,
     menu: Menu<Wry>,
     /// Liczba pozycji wstawionych dla przypiętych (z separatorem za nimi).
     pin_items: Mutex<usize>,
@@ -333,6 +362,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let open = MenuItem::with_id(app, "open", "Otwórz Todo Track", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "Szybkie przełączanie", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Zatrzymaj pomiar", true, None::<&str>)?;
+    let day = MenuItem::with_id(app, "day", "Zakończ dzień", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Zakończ aplikację", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
@@ -342,6 +372,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
             &open,
             &quick,
             &stop,
+            &day,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
@@ -372,6 +403,21 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
                 }
             }
             "stop" => stop_measurement(app, false),
+            // „Zakończ dzień” pyta w głównym oknie o zatrzymanie pomiaru (B13);
+            // „Wznów dzień” nie zmienia pomiaru, więc działa od razu.
+            "day" => {
+                let ended = app
+                    .state::<Database>()
+                    .0
+                    .lock()
+                    .map(|db| crate::days::ended_now(&db))
+                    .unwrap_or(false);
+                if ended {
+                    crate::days::resume_now(app);
+                } else {
+                    crate::days::request_end(app);
+                }
+            }
             "quit" => stop_measurement(app, true),
             id => {
                 if let Some(task_id) = id.strip_prefix("pin:").and_then(|t| t.parse().ok()) {
@@ -387,6 +433,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let (wake, signal) = mpsc::channel();
     app.manage(TrayState {
         current,
+        day,
         menu,
         pin_items: Mutex::new(0),
         idle_icon,
@@ -452,7 +499,11 @@ fn refresh(
     let text = held.map_or_else(|| tooltip(&status), |(text, _)| text);
     let _ = tray.set_tooltip(Some(text));
     let active = status.active.is_some();
-    let label = menu_label(status.active.as_ref().map(|(t, _)| t.as_str()));
+    let label = match (&status.active, &status.day_ended) {
+        (None, Some(at)) => day_ended_label(at, status.today_ms),
+        (active, _) => menu_label(active.as_ref().map(|(t, _)| t.as_str())),
+    };
+    let _ = state.day.set_text(day_item_label(&status));
     if last.as_ref().map(|(a, _)| *a) != Some(active) {
         let icon = if active {
             Some(active_icon())
@@ -481,6 +532,7 @@ mod tests {
             active: title.map(|t| (t.to_string(), elapsed)),
             today_ms: today,
             target_minutes: target,
+            ..Status::default()
         }
     }
     const MIN: i64 = 60_000;
@@ -512,6 +564,27 @@ mod tests {
             tooltip(&status(Some("   "), 0, 0, 0)),
             "Bez nazwy · 00:00:00 · dziś 0:00"
         );
+    }
+
+    /// B13: po „Zakończ dzień” dymek i menu mówią „Dzień zakończony 16:40 · 7:55”,
+    /// a pozycja dnia zmienia się na „Wznów dzień”; trwający pomiar ma pierwszeństwo.
+    #[test]
+    fn ended_day_shows_end_time_and_resume_item() {
+        let ended = Status {
+            day_ended: Some("16:40".into()),
+            ..status(None, 0, (7 * 60 + 55) * MIN, 480)
+        };
+        assert_eq!(
+            tooltip(&ended),
+            "Todo Track · Dzień zakończony 16:40 · 7:55"
+        );
+        assert_eq!(day_item_label(&ended), "Wznów dzień");
+        assert_eq!(day_item_label(&status(None, 0, 0, 480)), "Zakończ dzień");
+        let measuring = Status {
+            day_ended: Some("16:40".into()),
+            ..status(Some("A"), 5_000, 61 * MIN, 0)
+        };
+        assert_eq!(tooltip(&measuring), "A · 00:00:05 · dziś 1:01");
     }
 
     #[test]
@@ -633,6 +706,25 @@ mod tests {
         let s = read_status(&db, wednesday, at(wednesday, 12)).unwrap();
         assert_eq!(s, status(Some("Import"), 2 * 60 * MIN, 3 * 60 * MIN, 480));
         assert_eq!(tooltip(&s), "Import · 02:00:00 · dziś 3:00 / 8:00");
+        // Zakończony dzień: godzina zakończenia w lokalnym czasie (B13).
+        db::stop(&db, at(wednesday, 16)).unwrap();
+        crate::days::end(
+            &mut db,
+            &Local,
+            "2026-10-14",
+            wednesday,
+            at(wednesday, 16),
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            read_status(&db, wednesday, at(wednesday, 17))
+                .unwrap()
+                .day_ended
+                .as_deref(),
+            Some("16:00")
+        );
         settings::save(&mut db, &serde_json::json!({"targetDayMinutes": 360})).unwrap();
         assert_eq!(
             read_status(&db, saturday, at(saturday, 12))

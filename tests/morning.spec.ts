@@ -221,7 +221,7 @@ test("przegląd dnia: „Do zaplanowania” i „Ukończ”", async ({ page }) =
   expect(data.tasks.find((t: { id: number }) => t.id === ids.labels).done).toBe(true);
 });
 
-test("„Zaczynam dzień” zapisuje dzień przeglądu i zeruje „Nowe z Jiry”", async ({
+test("„Rozpocznij dzień” zapisuje dzień przeglądu i zeruje „Nowe z Jiry”", async ({
   page,
 }) => {
   await openPreview(page, { data: morningData() });
@@ -231,7 +231,7 @@ test("„Zaczynam dzień” zapisuje dzień przeglądu i zeruje „Nowe z Jiry�
   await expect(review.getByRole("region", { name: "Nowe z Jiry" })).toContainText(
     "WMS-40",
   );
-  await review.getByRole("button", { name: "Zaczynam dzień" }).click();
+  await review.getByRole("button", { name: "Rozpocznij dzień" }).click();
   await expect(review.getByText("Dzień rozpoczęty o 12:00")).toBeVisible();
   await expect(review.getByRole("region", { name: "Nowe z Jiry" })).toContainText(
     "Brak nowych zgłoszeń",

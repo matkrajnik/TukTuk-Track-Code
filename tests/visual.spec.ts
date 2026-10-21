@@ -145,6 +145,23 @@ const views: {
       expect(page.locator(".week-card-title").first()).toBeVisible(),
   },
   {
+    // B13: Rano z „Rozpocznij dzień” i paskiem z „Zakończ dzień” obok Stop.
+    name: "rano",
+    calendar: true,
+    open: async (page) => {
+      await nav(page, "Plan i historia");
+      await nav(page, "Rano");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("region", { name: "Przegląd dnia" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: "Rozpocznij dzień" }),
+      ).toBeVisible();
+    },
+  },
+  {
     name: "zamkniecie-dnia",
     calendar: true,
     open: async (page) => {
@@ -313,6 +330,39 @@ for (const theme of themes)
     await settle(page);
     await expect(page).toHaveScreenshot(`widget-${theme}.png`);
   });
+
+// B13: pasek po „Zakończ dzień” — „Dzień zakończony 16:40 · 3:30” z „Wznów dzień”.
+for (const theme of themes)
+  for (const width of widths)
+    test(`pasek dzień zakończony ${theme} ${width}px`, { tag: "@visual" }, async ({
+      page,
+    }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await useTheme(page, theme);
+      await openPreview(page, {
+        now: "2026-10-15T16:45:00+02:00",
+        data: {
+          ...seed(),
+          dayMarks: [
+            {
+              day: "2026-10-15",
+              startedAt: Date.parse("2026-10-15T08:00:00+02:00"),
+              endedAt: Date.parse("2026-10-15T16:40:00+02:00"),
+              resumed: 0,
+            },
+          ],
+        },
+      });
+      await nav(page, "Dashboard");
+      const bar = page.locator("header.topbar");
+      await expect(
+        bar.getByRole("group", { name: "Dzień zakończony w pasku" }),
+      ).toBeVisible();
+      await settle(page);
+      await expect(bar).toHaveScreenshot(
+        `pasek-zakonczony-${theme}-${width}.png`,
+      );
+    });
 
 // B2: Dashboard w średnim oknie (1000 px): karta „Zagrożone teraz” z tytułem
 // w jednej linii i liczbami pod nim, gdy brakuje miejsca.

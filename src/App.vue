@@ -10,6 +10,14 @@ import AgentSuggestions from "./components/AgentSuggestions.vue";
 import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
+import DayDialogs from "./components/DayDialogs.vue";
+import {
+  confirmStart,
+  dayMarkOf,
+  dayStateOf,
+  requestDayEnd,
+  resumeDay,
+} from "./days";
 import { startAutoChecks } from "./updater";
 import { refreshFocus } from "./focus";
 import TasksView from "./views/TasksView.vue";
@@ -52,7 +60,7 @@ import {
   type Session,
   duration,
 } from "./store";
-import { dayBounds, dayKey } from "./time";
+import { clock, dayBounds, dayKey, hm, inDay } from "./time";
 import { wideLayout } from "./layout";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
@@ -99,6 +107,41 @@ const running = computed(() => {
   };
 });
 const todayKey = computed(() => dayKey(now.value));
+/**
+ * Pasek po „Zakończ dzień” (B13): „Dzień zakończony 16:40 · 7:55” z „Wznów
+ * dzień”; po północy (nowy dzień bez wpisu) znika.
+ */
+const todayMark = computed(() => dayMarkOf(data.value, todayKey.value));
+const closedToday = computed(() =>
+  data.value.sessions.reduce(
+    (sum, s) => (s.endedAt === null ? sum : sum + inDay(s, todayKey.value, 0)),
+    0,
+  ),
+);
+const dayEnded = computed(() => {
+  const ended = todayMark.value?.endedAt;
+  if (ended == null) return null;
+  const active = data.value.sessions.find((s) => s.endedAt === null);
+  const total =
+    closedToday.value + (active ? inDay(active, todayKey.value, now.value) : 0);
+  return `Dzień zakończony ${clock(ended)} · ${hm(total)}`;
+});
+async function endDay() {
+  error.value = "";
+  try {
+    await requestDayEnd();
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  }
+}
+async function resumeToday() {
+  error.value = "";
+  try {
+    updated(await resumeDay());
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  }
+}
 // Stop albo zmiana zadania kończy blok skupienia: stan sprawdzamy po każdej zmianie danych.
 watch(data, () => void refreshFocus());
 watch(todayKey, (day, previous) => {
@@ -302,6 +345,12 @@ async function toggleShortcut() {
   busy.value = true;
   error.value = "";
   try {
+    // Start po zakończeniu dnia pyta „Wznowić dzień?” (B13).
+    if (
+      !data.value.sessions.some((s) => s.endedAt === null) &&
+      !(await confirmStart(data.value))
+    )
+      return;
     const result = await toggleMeasurement();
     if (result.action === "quick") void openQuick();
   } catch (e) {
@@ -409,6 +458,8 @@ async function openMorningIfDue() {
         ? await calendarEvents(from, to).catch(() => [])
         : [];
     if (!morningStartDue(settings, day, events)) return;
+    // Zakończony dziś dzień (B13): Rano już się nie otwiera.
+    if (dayStateOf(dayMarkOf(data.value, day)) === "ended") return;
     // Dzień mógł się zmienić w trakcie odczytu, a okno pokazać Rano gdzie indziej.
     if (dayKey(Date.now()) !== day || morningShown(day)) return;
     markMorningShown(day);
@@ -518,8 +569,11 @@ onUnmounted(() => {
     <AppNav
       v-model:view="view"
       :running="running"
+      :day-ended="dayEnded"
       @quick="openQuick"
       @stop="act('stop')"
+      @end-day="endDay"
+      @resume-day="resumeToday"
       @error="error = $event"
     />
     <main id="main" tabindex="-1" :class="{ wide: wideLayout }">
@@ -690,5 +744,6 @@ onUnmounted(() => {
     <div v-if="quickPreview" class="modal-overlay">
       <QuickSwitch @close="quickPreview = false" @updated="data = $event" />
     </div>
+    <DayDialogs main :data="data" @updated="updated" @error="error = $event" />
   </div>
 </template>

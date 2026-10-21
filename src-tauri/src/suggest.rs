@@ -207,6 +207,28 @@ impl Memory {
         any
     }
 
+    /// Lista propozycji i nowe do powiadomienia. Po „Zakończ dzień” (B13, do
+    /// północy) obie są puste dla wszystkich źródeł (agenci, okna, przeglądarka),
+    /// a pary nie są oznaczane jako zgłoszone, więc po „Wznów dzień” wracają.
+    pub fn proposals(
+        &mut self,
+        agents: &[Agent],
+        active: Option<i64>,
+        s: &AppSettings,
+        now: i64,
+        day_ended: bool,
+    ) -> (Vec<Suggestion>, Vec<Suggestion>) {
+        if day_ended {
+            self.touch(agents, now);
+            return (Vec::new(), Vec::new());
+        }
+        let list = self.pending(agents, active, s, now);
+        // Propozycje widoczne w banerze też liczą się jako zgłoszone, więc schowanie
+        // okna później nie wysyła o nich powiadomienia.
+        let fresh = self.unnotified(&list, now);
+        (list, fresh)
+    }
+
     /// Propozycje z agentami, o których nie było jeszcze powiadomienia; zaznacza je.
     pub fn unnotified(&mut self, list: &[Suggestion], now: i64) -> Vec<Suggestion> {
         list.iter()
@@ -370,9 +392,13 @@ pub fn refresh(app: &tauri::AppHandle, now: i64) {
             )
             .optional()
             .ok()?;
-        Some((active, crate::settings::load(&db)))
+        Some((
+            active,
+            crate::settings::load(&db),
+            crate::days::ended_now(&db),
+        ))
     });
-    let Some((active, settings)) = read else {
+    let Some((active, settings, day_ended)) = read else {
         return;
     };
     let hidden = main_hidden(app);
@@ -380,10 +406,7 @@ pub fn refresh(app: &tauri::AppHandle, now: i64) {
     // trafia do kolejki bloku (`notify::show`); po bloku baner wraca sam.
     let focus = crate::focus::holding(app);
     let Some((changed, list, fresh)) = state.0.lock().ok().map(|mut g| {
-        let mut list = g.0.pending(&agents, active, &settings, now);
-        // Propozycje widoczne w banerze też liczą się jako zgłoszone, więc schowanie
-        // okna później nie wysyła o nich powiadomienia.
-        let fresh = g.0.unnotified(&list, now);
+        let (mut list, fresh) = g.0.proposals(&agents, active, &settings, now, day_ended);
         if focus {
             list.clear();
         }
@@ -647,6 +670,24 @@ mod tests {
         assert_eq!(msg.title, "Agenci AI: 2 zadania do przełączenia");
         assert_eq!(msg.body, "• Zadanie 1\n• Zadanie 2");
         assert!(message(&[]).is_none());
+    }
+
+    /// B13: po zakończeniu dnia propozycje (agenci i sygnał okna) milczą i nie
+    /// zużywają powiadomienia; po wznowieniu wracają z powiadomieniem.
+    #[test]
+    fn ended_day_silences_proposals_and_resume_brings_them_back() {
+        let s = AppSettings {
+            window_suggest: true,
+            ..AppSettings::default()
+        };
+        let mut m = Memory::default();
+        let a = agent("claude", "C:\\wms", NOW - 5 * MIN, Some(1), None);
+        let w = agent("window", "", NOW - 5 * MIN, Some(2), None);
+        let (list, fresh) = m.proposals(&[a.clone(), w.clone()], None, &s, NOW, true);
+        assert!(list.is_empty() && fresh.is_empty());
+        let (list, fresh) = m.proposals(&[a, w], None, &s, NOW + MIN, false);
+        assert_eq!(targets(&list), ["t:1", "t:2"]);
+        assert_eq!(fresh.len(), 2);
     }
 
     #[test]

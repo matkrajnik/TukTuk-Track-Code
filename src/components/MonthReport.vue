@@ -11,6 +11,7 @@ import {
   overtimeOf,
 } from "../report";
 import { holidays } from "../holidays";
+import { dayHours, dayMarkOf } from "../days";
 import TargetBar from "./TargetBar.vue";
 import ExportButtons from "./ExportButtons.vue";
 import { sessionsSignature, useAgentTime } from "../composables/useAgentTime";
@@ -87,6 +88,9 @@ const rows = computed(() =>
     target: dayTarget(settings.value, day),
     holiday: targetHoliday(settings.value, day),
     weekend: isoWeekday(day) > 5,
+    /** Początek i koniec dnia z „Rozpocznij / Zakończ dzień” (B13). */
+    hours: dayHours(dayMarkOf(props.data, day)),
+    resumed: (dayMarkOf(props.data, day)?.resumed ?? 0) > 0,
   })),
 );
 const total = computed(() => rows.value.reduce((sum, d) => sum + d.total, 0));
@@ -402,7 +406,8 @@ const running = computed(
         Wybierz dzień, aby otworzyć jego raport.
       </p>
       <div class="monthly-grid monthly-day-head" aria-hidden="true">
-        <span>Dzień</span><span></span><span>Czas</span><span>Nadgodziny</span>
+        <span>Dzień</span><span></span><span>Godziny dnia</span><span>Czas</span
+        ><span>Nadgodziny</span>
       </div>
       <button
         v-for="d in rows"
@@ -432,6 +437,11 @@ const running = computed(
             class="target-line"
             :style="{ left: `${(d.target / maxDay) * 100}%` }"
         /></span
+        ><span
+          class="mono monthly-hours"
+          :class="{ 'dashboard-zero': !d.hours }"
+          :title="d.resumed ? 'Dzień wznawiany' : undefined"
+          >{{ d.hours || "–" }}</span
         ><span class="mono" :class="{ 'dashboard-zero': !d.total }">{{
           hhmm(d.total)
         }}</span
@@ -442,7 +452,7 @@ const running = computed(
         >
       </button>
       <div class="monthly-grid monthly-day-foot">
-        <span>Razem</span><span></span
+        <span>Razem</span><span></span><span></span
         ><span class="mono">{{ hhmm(total) }}</span
         ><span
           class="mono monthly-overtime"

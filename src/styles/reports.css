@@ -276,7 +276,7 @@
 .monthly-day,
 .monthly-grid {
   display: grid;
-  grid-template-columns: 170px minmax(20px, 1fr) 60px 84px;
+  grid-template-columns: 170px minmax(20px, 1fr) 96px 60px 84px;
   gap: 12px;
   align-items: center;
   width: 100%;
@@ -329,7 +329,7 @@
   }
   .monthly-day,
   .monthly-grid {
-    grid-template-columns: 110px minmax(20px, 1fr) 52px 72px;
+    grid-template-columns: 110px minmax(20px, 1fr) 88px 52px 72px;
   }
 }
 /* Eksport CSV/XLSX (zakładka Miesiąc i Wybrane dni). */

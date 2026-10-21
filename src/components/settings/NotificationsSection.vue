@@ -91,11 +91,13 @@ const { busy, error, save } = useSettingsSection(settings);
   <p class="hint">
     Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz
     na przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd
-    dnia w dzień roboczy po początku dnia, dopóki nie klikniesz „Zaczynam
+    dnia w dzień roboczy po początku dnia, dopóki nie klikniesz „Rozpocznij
     dzień”, przegląd tygodnia raz w ostatni dzień roboczy tygodnia o
     wybranej godzinie, „Czekam na” raz na blokadę po wybranej liczbie dni
     roboczych (z „Odblokuj” i „Przypomnij jutro”). Każde pojawia się
     najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
-    Start/Stop pokazuje się, gdy widget jest schowany.
+    Start/Stop pokazuje się, gdy widget jest schowany. Po „Zakończ dzień”
+    przypomnienie o braku pomiaru, cel dnia i propozycje przełączenia milczą
+    do północy albo do „Wznów dzień”.
   </p>
 </template>

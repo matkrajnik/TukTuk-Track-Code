@@ -1953,6 +1953,25 @@ html.widget-root body {
 .morning-actions {
   margin-top: 18px;
 }
+/* B13: przyciski stanu dnia (Rano, Zamknięcie dnia) i godziny dnia w raportach. */
+.day-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.close-day-controls {
+  margin-top: 12px;
+}
+.day-controls > p {
+  flex-basis: 100%;
+  margin: 0;
+}
+.day-hours {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
 .dashboard-heading-actions {
   margin-top: 0;
 }

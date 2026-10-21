@@ -28,6 +28,8 @@ import { copyReport } from "./clipboard";
 import { dayGoal } from "./capacity";
 import { useMeetings } from "./composables/useMeetings";
 import ManualTime from "./ManualTime.vue";
+import DayControls from "./components/DayControls.vue";
+import { dayHoursLine, dayMarkOf } from "./days";
 import TsSendDialog from "./components/TsSendDialog.vue";
 import { useTsSend } from "./composables/useTsSend";
 import { useTsProjectMap } from "./composables/useTsProjectMap";
@@ -70,6 +72,8 @@ const rows = computed(() =>
   dayRows(props.data, props.day, props.now).filter((r) => r.total > 0),
 );
 const total = computed(() => rowsTotal(rows.value));
+/** Godziny dnia z „Rozpocznij / Zakończ dzień” (B13); nadgodziny liczą się z pomiarów. */
+const dayLine = computed(() => dayHoursLine(dayMarkOf(props.data, props.day)));
 const settings = useSettings();
 /** Spotkania dnia: sekcja „Spotkania” i cel dnia pomniejszony o spotkania. */
 const calendar = useMeetings(() => dayBounds(props.day));
@@ -223,6 +227,7 @@ async function move() {
       <h2>Zamknięcie dnia · {{ dayText(day) }}</h2>
       <strong>{{ duration(total) }} · {{ decimal(total) }} h</strong>
     </div>
+    <p v-if="dayLine" class="day-hours">{{ dayLine }}</p>
     <p v-if="data.closedDays?.includes(day)" role="status">
       Dzień oznaczony jako sprawdzony. Historię nadal możesz edytować.
     </p>
@@ -386,6 +391,15 @@ async function move() {
         }}
       </button>
     </div>
+    <!-- B13: „Zakończ dzień” / „Wznów dzień” pod „Oznacz dzień jako sprawdzony”,
+         który oznacza zgodność historii, a nie koniec pracy. -->
+    <DayControls
+      v-if="day === dayKey(now)"
+      class="close-day-controls"
+      :data="data"
+      :now="now"
+      @updated="emit('updated', $event)"
+    />
     <p v-if="tsEnabled && tsAccount && !tsConnected" class="hint">
       <button
         type="button"

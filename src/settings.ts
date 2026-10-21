@@ -54,7 +54,7 @@ export interface AppSettings {
   notifyMorningReview: boolean;
   /** Dzień ostatniego porannego przeglądu (RRRR-MM-DD, pusty = nigdy). */
   morningReviewDay: string;
-  /** Chwila ostatniego „Zaczynam dzień” (ms, 0 = nigdy). */
+  /** Chwila ostatniego „Rozpocznij dzień” (ms, 0 = nigdy). */
   morningReviewAt: number;
   /** Przypomnienie o blokadzie „Czekam na” po tylu dniach roboczych (0 wyłącza). */
   waitingNotifyDays: number;

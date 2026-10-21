@@ -27,6 +27,8 @@ import {
   Settings,
   Square,
   Sun,
+  Sunrise,
+  Sunset,
   Ticket,
 } from "lucide-vue-next";
 import BrandIcon from "./BrandIcon.vue";
@@ -42,10 +44,20 @@ import { onSettingsChanged, writeSettings } from "../settings";
 
 const view = defineModel<View>("view", { required: true });
 /** Trwający pomiar: pokazywany w pasku na każdym widoku poza Zadaniami. */
-defineProps<{ running?: { title: string; elapsed: string } | null }>();
+/**
+ * B13: `dayEnded` = „Dzień zakończony 16:40 · 7:55” po „Zakończ dzień” (pasek
+ * pokazuje wtedy „Wznów dzień” na każdym widoku); przy pomiarze przycisk dnia
+ * stoi obok Stop.
+ */
+defineProps<{
+  running?: { title: string; elapsed: string } | null;
+  dayEnded?: string | null;
+}>();
 const emit = defineEmits<{
   quick: [];
   stop: [];
+  endDay: [];
+  resumeDay: [];
   error: [message: string];
 }>();
 
@@ -340,7 +352,39 @@ async function hide() {
           title="Stop"
           @click="emit('stop')"
         >
-          <Square :size="14" />
+          <Square :size="14" /></button
+        ><button
+          v-if="dayEnded"
+          class="topbar-timer-stop topbar-timer-day"
+          aria-label="Wznów dzień"
+          title="Wznów dzień"
+          @click="emit('resumeDay')"
+        >
+          <Sunrise :size="14" /></button
+        ><button
+          v-else
+          class="topbar-timer-stop topbar-timer-day"
+          aria-label="Zakończ dzień"
+          title="Zakończ dzień"
+          @click="emit('endDay')"
+        >
+          <Sunset :size="14" />
+        </button>
+      </div>
+      <div
+        v-else-if="dayEnded && !running"
+        class="topbar-timer topbar-day-ended"
+        role="group"
+        aria-label="Dzień zakończony w pasku"
+      >
+        <span class="topbar-day-text" role="status">{{ dayEnded }}</span
+        ><button
+          class="topbar-timer-stop topbar-timer-day"
+          aria-label="Wznów dzień"
+          title="Wznów dzień"
+          @click="emit('resumeDay')"
+        >
+          <Sunrise :size="14" />
         </button>
       </div>
       <span
