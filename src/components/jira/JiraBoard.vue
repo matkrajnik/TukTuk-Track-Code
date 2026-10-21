@@ -15,13 +15,11 @@ import {
   initials,
   jiraBoardMove,
   jiraOpen,
-  read,
   type JiraBoardIssue,
   type JiraBoardView,
   type JiraMoveOption,
   type JiraPerson,
   type JiraScope,
-  type Snapshot,
 } from "../../store";
 
 /** Czas i plan lokalnego zadania zgłoszenia (klucz → wartości na karcie). */
@@ -42,12 +40,17 @@ const props = defineProps<{
   updatedAt: string;
   activeUrl?: string | null;
   local: Map<string, LocalIssue>;
+  /**
+   * Udane przesunięcie: komunikat i odczyt danych w `JiraView`. Wywołanie
+   * zwrotne zamiast zdarzenia, bo odświeżenie tablicy może odmontować ten
+   * komponent w trakcie przesuwania, a zdarzenia odmontowanego Vue pomija.
+   */
+  moved: (notice: string) => Promise<void>;
 }>();
 const emit = defineEmits<{
   open: [url: string];
   start: [key: string];
   stop: [];
-  updated: [data: Snapshot];
   notice: [text: string];
 }>();
 
@@ -149,8 +152,7 @@ async function moveCard(
         category: out.category,
         column: out.column,
       });
-      emit("notice", `${card.key} → ${out.status}.`);
-      emit("updated", await read());
+      await props.moved(`${card.key} → ${out.status}.`);
     } else if (out.result === "choose") {
       choice.value = { card, column, from, options: out.options };
     } else {

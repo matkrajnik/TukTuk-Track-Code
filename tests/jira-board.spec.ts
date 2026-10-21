@@ -374,3 +374,53 @@ test("lista zgłoszeń w podglądzie działa na symulowanej Jirze", async ({ pag
   await page.getByRole("button", { name: "Rozpocznij: WMS-31", exact: true }).click();
   await expect(page.getByRole("button", { name: "Zatrzymaj: WMS-31", exact: true })).toBeVisible();
 });
+
+/** Wstrzymane wywołania symulowanej Jiry (`previewJiraHoldKey`). */
+const HOLD_KEY = "todo-track-preview-jira-hold-v1";
+const hold = (page: Page, names: string[]) =>
+  page.evaluate(
+    ([k, v]) => localStorage.setItem(k, JSON.stringify(v)),
+    [HOLD_KEY, names] as const,
+  );
+
+test("zapis nowego zgłoszenia w trakcie odświeżania nie przepada", async ({ page }) => {
+  await openBoard(page);
+  await page.getByRole("button", { name: "Nowe zgłoszenie", exact: true }).click();
+  const form = page.getByRole("form", { name: "Nowe zgłoszenie" });
+  await form.getByLabel("Typ zgłoszenia").selectOption({ label: "Zadanie" });
+  await form.getByLabel("Tytuł zgłoszenia").fill("Raport wydań");
+  await form.getByLabel("Dzień planu zadania").fill("2026-10-16");
+  await hold(page, ["create", "read"]);
+  await form.getByRole("button", { name: "Utwórz zgłoszenie" }).click();
+  await page.getByRole("button", { name: "Odśwież", exact: true }).click();
+  await expect(page.getByText("Proszę czekać…")).toBeVisible();
+  // Jira tworzy zgłoszenie, gdy odświeżanie jeszcze trwa: wynik od razu.
+  await hold(page, ["read"]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "Utworzono WMS-100 i zadanie w Todo Track." }),
+  ).toBeVisible();
+  await expect(form).toHaveCount(0);
+  await hold(page, []);
+  // Odświeżenie po utworzeniu wykonuje się po bieżącym: karta na tablicy
+  // z planem nowego zadania (dane przekazane do App).
+  await expect(card(page, "WMS-100")).toContainText("Raport wydań");
+  await expect(card(page, "WMS-100")).toContainText("zaplanowane na");
+  expect(
+    (await stored(page)).tasks.filter((t: { jiraKey?: string }) => t.jiraKey === "WMS-100"),
+  ).toHaveLength(1);
+});
+
+test("odświeżenie tablicy w trakcie przesuwania nie gubi wyniku", async ({ page }) => {
+  await openBoard(page);
+  await hold(page, ["move", "read"]);
+  await card(page, "WMS-12").dragTo(column(page, "Code review"));
+  await expect(card(page, "WMS-12")).toHaveClass(/isPending/);
+  await page.getByRole("button", { name: "Odśwież", exact: true }).click();
+  await expect(page.getByText("Proszę czekać…")).toBeVisible();
+  await hold(page, ["read"]);
+  await expect(
+    page.getByRole("status").filter({ hasText: "WMS-12 → Code review." }),
+  ).toBeVisible();
+  await hold(page, []);
+  await expect.poll(() => keys(page, "Code review")).toEqual(["WMS-12"]);
+});

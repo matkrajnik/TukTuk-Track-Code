@@ -334,9 +334,27 @@ export async function jiraSelectBoards(boards: JiraBoardRef[]): Promise<void> {
   state.boards = boards.map((b) => ({ id: b.id, name: b.name }));
   savePreviewBoard(state);
 }
+/**
+ * Tylko testy: wywołanie symulowanej Jiry czeka, dopóki jego nazwa
+ * („read”, „create”, „move”) jest na liście pod tym kluczem. Pozwala
+ * sprawdzić wyścigi (np. zapis formularza w trakcie odświeżania).
+ */
+export const previewJiraHoldKey = "todo-track-preview-jira-hold-v1";
+async function previewHold(name: "read" | "create" | "move") {
+  const held = () => {
+    try {
+      const list = JSON.parse(localStorage.getItem(previewJiraHoldKey) ?? "[]");
+      return Array.isArray(list) && list.includes(name);
+    } catch {
+      return false;
+    }
+  };
+  while (held()) await new Promise((resolve) => setTimeout(resolve, 20));
+}
 export async function jiraIssues(
   openOnly: boolean,
 ): Promise<{ issues: JiraListIssue[]; warnings: string[] }> {
+  await previewHold("read");
   const { state, issues } = await previewBoardState();
   savePreviewBoard(state);
   const boards = previewSelectedBoards(state);
@@ -449,6 +467,7 @@ export async function jiraBoard(
   openOnly: boolean,
   refresh: boolean,
 ): Promise<JiraBoardView> {
+  await previewHold("read");
   const { state, issues } = await previewBoardState();
   savePreviewBoard(state);
   if (!previewSelectedBoards(state).some((b) => b.id === boardId))
@@ -514,6 +533,7 @@ export async function jiraBoardMove(
   column: number,
   transitionId: string | null,
 ): Promise<JiraMoveOutcome> {
+  await previewHold("move");
   if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
   checkKey(issueKey);
   const { issues } = await previewBoardState();
@@ -650,6 +670,7 @@ export async function jiraIssueTypeFields(
   };
 }
 export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
+  await previewHold("create");
   if (!previewJiraSettings().write) throw new Error(jiraWriteDisabled);
   const summary = validateNewIssue(issue);
   const type = previewTypes.find((t) => t.id === issue.issueTypeId);

@@ -16,6 +16,7 @@ import {
   jiraIssues,
   jiraOpen,
   jiraStart,
+  read,
   type JiraAccount,
   type JiraBoardRef,
   type JiraBoardView,
@@ -152,17 +153,32 @@ const local = computed(() => {
   return out;
 });
 
-async function run(fn: () => Promise<void>) {
+/** Odświeżenie zamówione w trakcie innej operacji widoku (wykona się po niej). */
+let refreshQueued = false;
+async function run(fn: () => Promise<void>, keepError = false) {
   if (busy.value) return;
   busy.value = true;
-  error.value = "";
+  if (!keepError) error.value = "";
   try {
     await fn();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
   } finally {
     busy.value = false;
+    if (refreshQueued) {
+      refreshQueued = false;
+      void run(() => refresh(), true);
+    }
   }
+}
+/**
+ * Odświeżenie po wyniku formularza-dziecka. Wynik jest już zastosowany; gdy
+ * widok jest zajęty (np. trwa „Odśwież”), odświeżenie czeka na koniec
+ * bieżącej operacji zamiast przepaść. Nie kasuje błędu z ostrzeżeniem.
+ */
+function refreshLater() {
+  if (busy.value) refreshQueued = true;
+  else void run(() => refresh(), true);
 }
 const stamp = () => clock(Date.now());
 async function fetchIssues() {
@@ -210,14 +226,13 @@ function chooseBoards() {
   pickingBoards.value = true;
 }
 function connected(account: JiraAccount) {
-  void run(async () => {
-    settings.value = account;
-    editingConnection.value = false;
-    if (!settings.value.config.boards.length) chooseBoards();
-    else await refresh();
-  });
+  settings.value = account;
+  editingConnection.value = false;
+  if (!settings.value.config.boards.length) chooseBoards();
+  else refreshLater();
 }
 function disconnected(account: JiraAccount) {
+  refreshQueued = false;
   settings.value = account;
   issues.value = [];
   board.value = null;
@@ -228,11 +243,9 @@ function disconnected(account: JiraAccount) {
   pickingBoards.value = false;
 }
 function boardsSaved(boards: JiraBoardRef[]) {
-  void run(async () => {
-    settings.value.config.boards = boards;
-    pickingBoards.value = false;
-    await refresh();
-  });
+  settings.value.config.boards = boards;
+  pickingBoards.value = false;
+  refreshLater();
 }
 async function start(key: string) {
   await run(async () => emit("updated", await jiraStart(key)));
@@ -250,16 +263,24 @@ function toggleCreate() {
   creating.value = !creating.value;
 }
 function created(result: JiraCreated) {
-  void run(async () => {
-    creating.value = false;
-    notice.value = `Utworzono ${result.key}${
-      result.snapshot ? " i zadanie w Todo Track" : ""
-    }.`;
-    if (result.warning)
-      error.value = `Utworzono ${result.key}. ${result.warning}`;
-    if (result.snapshot) emit("updated", result.snapshot);
-    await refresh();
-  });
+  creating.value = false;
+  notice.value = `Utworzono ${result.key}${
+    result.snapshot ? " i zadanie w Todo Track" : ""
+  }.`;
+  error.value = result.warning
+    ? `Utworzono ${result.key}. ${result.warning}`
+    : "";
+  if (result.snapshot) emit("updated", result.snapshot);
+  refreshLater();
+}
+/**
+ * Wynik przesunięcia karty z `JiraBoard`. Wywołanie zwrotne, nie zdarzenie:
+ * odświeżenie tablicy odmontowuje `JiraBoard`, a zdarzenia odmontowanego
+ * komponentu Vue pomija, więc komunikat i dane trafiają tu niezależnie od niego.
+ */
+async function moved(text: string) {
+  notice.value = text;
+  emit("updated", await read());
 }
 
 onMounted(async () => {
@@ -463,10 +484,10 @@ onMounted(async () => {
         :updated-at="updatedAt"
         :active-url="activeUrl"
         :local="local"
+        :moved="moved"
         @open="open"
         @start="start"
         @stop="emit('stop')"
-        @updated="emit('updated', $event)"
         @notice="notice = $event"
       />
       <p v-else-if="mode === 'board' && busy" class="hint" role="status">
