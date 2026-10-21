@@ -68,10 +68,29 @@ fn edit_session(
     app: tauri::AppHandle,
     id: i64,
     started_at: i64,
-    ended_at: i64,
+    // Bez końca: poprawka początku trwającego pomiaru (B3).
+    ended_at: Option<i64>,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
-    let result = db::edit_session(&mut connection, id, started_at, ended_at, db::now())?;
+    let result = match ended_at {
+        Some(end) => db::edit_session(&mut connection, id, started_at, end, db::now())?,
+        None => db::edit_active_start(&mut connection, id, started_at, db::now())?,
+    };
+    let _ = app.emit("data-changed", ());
+    Ok(result)
+}
+/// Akcje przy „Luce w zapisie” (B3): dołącz do poprzedniego, do następnego
+/// albo podziel po pół.
+#[tauri::command]
+fn fill_gap(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    before_id: i64,
+    after_id: i64,
+    mode: db::GapMode,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = db::fill_gap(&mut connection, before_id, after_id, mode)?;
     let _ = app.emit("data-changed", ());
     Ok(result)
 }
@@ -457,6 +476,7 @@ fn main() {
             mutate,
             edit_session,
             split_session,
+            fill_gap,
             save_details,
             set_pinned,
             set_waiting,

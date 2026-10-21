@@ -239,11 +239,96 @@ pub fn assign_break(
         db::split_session(conn, notice.session_id, notice.away_since, Some(task), now)
     }
 }
+/// „Zatrzymaj na początku przerwy”: koniec pomiaru na `idle_at` (nie wcześniej
+/// niż jego start). Pomiar zakończony przed przerwą zostaje bez zmian.
+fn trim_break(conn: &rusqlite::Connection, notice: &Notice) -> Result<(), String> {
+    conn.execute(
+        "UPDATE sessions SET ended_at=MAX(started_at,?1) WHERE id=?2 AND (ended_at IS NULL OR ended_at>?1)",
+        rusqlite::params![notice.idle_at, notice.session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+/// „Przytnij i wznów”: z pomiaru wypada tylko przerwa `idle_at`–`returned_at`.
+/// Pierwsza część kończy się na `idle_at`, druga zaczyna na `returned_at` przy
+/// tym samym zadaniu i kończy tam, gdzie pomiar (trwa dalej, jeśli trwał).
+/// Gdy pomiar zatrzymano przed powrotem, to samo co `trim_break`; gdy przerwa
+/// zaczęła się razem z pomiarem, przesuwa się tylko jego początek. Timer nie
+/// przełącza się na inne zadanie.
+fn trim_and_resume(conn: &mut rusqlite::Connection, notice: &Notice) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (task, started_at, ended_at, deleted): (i64, i64, Option<i64>, bool) = tx
+        .query_row(
+            "SELECT s.task_id,s.started_at,s.ended_at,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=s.task_id AND l.deleted_at IS NOT NULL) FROM sessions s WHERE s.id=?1",
+            [notice.session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if deleted {
+        return Err("Przedział należy do zadania w koszu.".into());
+    }
+    if ended_at.is_some_and(|end| end <= notice.returned_at) {
+        trim_break(&tx, notice)?;
+    } else if notice.idle_at <= started_at {
+        tx.execute(
+            "UPDATE sessions SET started_at=?1 WHERE id=?2",
+            rusqlite::params![notice.returned_at, notice.session_id],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        // Najpierw zamknięcie, potem wstawienie (indeks one_active_session).
+        tx.execute(
+            "UPDATE sessions SET ended_at=?1 WHERE id=?2",
+            rusqlite::params![notice.idle_at, notice.session_id],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO sessions(task_id,started_at,ended_at) VALUES(?1,?2,?3)",
+            rusqlite::params![task, notice.returned_at, ended_at],
+        )
+        .map_err(|e| e.to_string())?;
+        if ended_at.is_none() {
+            // Jak w db::split_session: bez drugiego powiadomienia o długim pomiarze.
+            let new_id = tx.last_insert_rowid();
+            tx.execute(
+                "INSERT OR IGNORE INTO notifications_sent(key,at)
+                 SELECT ?1, at FROM notifications_sent WHERE key=?2",
+                rusqlite::params![
+                    format!("long:{new_id}"),
+                    format!("long:{}", notice.session_id)
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+/// Odpowiedź z banera: `assign` („Przypisz przerwę do X”) ma pierwszeństwo,
+/// potem `trim` z `resume` („Przytnij i wznów”), sam `trim` („Zatrzymaj na
+/// początku przerwy”); bez nich „Zachowaj cały czas”.
+pub fn resolve(
+    conn: &mut rusqlite::Connection,
+    notice: &Notice,
+    trim: bool,
+    assign: Option<i64>,
+    resume: bool,
+    now: i64,
+) -> Result<db::Snapshot, String> {
+    if let Some(task) = assign {
+        assign_break(conn, notice, task, now)?;
+    } else if trim && resume {
+        trim_and_resume(conn, notice)?;
+    } else if trim {
+        trim_break(conn, notice)?;
+    }
+    db::snapshot(conn).map_err(|e| e.to_string())
+}
 #[tauri::command]
 pub fn idle_resolve(
     app: tauri::AppHandle,
     trim: bool,
     assign: Option<i64>,
+    resume: Option<bool>,
 ) -> Result<db::Snapshot, String> {
     let state = app.state::<State>();
     let mut clock = state.0.lock().map_err(|e| e.to_string())?;
@@ -253,16 +338,12 @@ pub fn idle_resolve(
         .ok_or("Brak zgłoszonej bezczynności.")?;
     let database = app.state::<Database>();
     let mut conn = database.0.lock().map_err(|e| e.to_string())?;
-    if let Some(task) = assign {
-        assign_break(&mut conn, &notice, task, db::now())?;
-    } else if trim {
-        conn.execute("UPDATE sessions SET ended_at=MAX(started_at,?1) WHERE id=?2 AND (ended_at IS NULL OR ended_at>?1)",rusqlite::params![notice.idle_at,notice.session_id]).map_err(|e|e.to_string())?;
-    }
+    let resume = resume.unwrap_or(false);
+    let result = resolve(&mut conn, &notice, trim, assign, resume, db::now())?;
     clock.pending = None;
-    let result = db::snapshot(&conn).map_err(|e| e.to_string())?;
     drop(conn);
     drop(clock);
-    if assign.is_some() {
+    if assign.is_some() || (trim && resume) {
         crate::reminder::reset(&app);
     }
     let _ = app.emit("data-changed", ());
@@ -442,6 +523,111 @@ mod tests {
             .map(|s| (s.task_id, s.started_at, s.ended_at))
             .collect();
         assert_eq!(rows, vec![(2, 100_000, None)]);
+    }
+    /// Baza z zadaniem 1 i pomiarem od `start` (trwającym albo do `end`).
+    fn measured(start: i64, end: Option<i64>) -> (rusqlite::Connection, Notice) {
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO tasks(title,created_at) VALUES('Mierzone',0)",
+            [],
+        )
+        .unwrap();
+        db::change(&mut conn, "start", Some(1), None, start).unwrap();
+        if let Some(end) = end {
+            db::change(&mut conn, "stop", None, None, end).unwrap();
+        }
+        let session: i64 = conn
+            .query_row("SELECT id FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        let notice = Notice {
+            session_id: session,
+            task_id: 1,
+            idle_at: 30_000,
+            away_since: 30_000,
+            returned_at: 60_000,
+            agent_tasks: vec![],
+        };
+        (conn, notice)
+    }
+    fn rows(snap: &db::Snapshot) -> Vec<(i64, i64, Option<i64>)> {
+        let mut rows: Vec<_> = snap
+            .sessions
+            .iter()
+            .map(|s| (s.task_id, s.started_at, s.ended_at))
+            .collect();
+        rows.sort();
+        rows
+    }
+    #[test]
+    fn trim_ends_measurement_at_start_of_break() {
+        // Trwający pomiar: koniec na idle_at.
+        let (mut conn, notice) = measured(10_000, None);
+        let snap = resolve(&mut conn, &notice, true, None, false, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 10_000, Some(30_000))]);
+        // Pomiar zatrzymany po powrocie: też przycięty do idle_at.
+        let (mut conn, notice) = measured(10_000, Some(65_000));
+        let snap = resolve(&mut conn, &notice, true, None, false, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 10_000, Some(30_000))]);
+        // Zakończony przed przerwą: bez zmian.
+        let (mut conn, notice) = measured(10_000, Some(20_000));
+        let snap = resolve(&mut conn, &notice, true, None, false, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 10_000, Some(20_000))]);
+        // Przerwa od startu: pusty przedział (koniec = start), nigdy przed startem.
+        let (mut conn, notice) = measured(40_000, None);
+        let snap = resolve(&mut conn, &notice, true, None, false, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 40_000, Some(40_000))]);
+        // „Zachowaj cały czas”: bez zmian.
+        let (mut conn, notice) = measured(10_000, None);
+        let snap = resolve(&mut conn, &notice, false, None, false, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 10_000, None)]);
+    }
+    #[test]
+    fn trim_and_resume_cuts_out_only_the_break() {
+        // Trwający pomiar: przycięty do idle_at, nowy od returned_at trwa dalej.
+        let (mut conn, notice) = measured(10_000, None);
+        conn.execute(
+            "INSERT INTO notifications_sent(key,at) VALUES(?1,5)",
+            [format!("long:{}", notice.session_id)],
+        )
+        .unwrap();
+        let snap = resolve(&mut conn, &notice, true, None, true, 70_000).unwrap();
+        assert_eq!(
+            rows(&snap),
+            vec![(1, 10_000, Some(30_000)), (1, 60_000, None)]
+        );
+        let resumed = snap.sessions.iter().find(|s| s.ended_at.is_none()).unwrap();
+        let moved: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM notifications_sent WHERE key=?1",
+                [format!("long:{}", resumed.id)],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(moved, 1);
+        // Pomiar zatrzymany (albo przełączony) po powrocie: druga część do tego końca.
+        let (mut conn, notice) = measured(10_000, Some(65_000));
+        let snap = resolve(&mut conn, &notice, true, None, true, 70_000).unwrap();
+        assert_eq!(
+            rows(&snap),
+            vec![(1, 10_000, Some(30_000)), (1, 60_000, Some(65_000))]
+        );
+        // Zatrzymany przed powrotem: tylko przycięcie, bez wznowienia.
+        let (mut conn, notice) = measured(10_000, Some(50_000));
+        let snap = resolve(&mut conn, &notice, true, None, true, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 10_000, Some(30_000))]);
+        // Przerwa od startu pomiaru: przesuwa się tylko początek.
+        let (mut conn, notice) = measured(40_000, None);
+        let snap = resolve(&mut conn, &notice, true, None, true, 70_000).unwrap();
+        assert_eq!(rows(&snap), vec![(1, 60_000, None)]);
+        // Zadanie w koszu: błąd, bez zmian.
+        let (mut conn, notice) = measured(10_000, None);
+        db::change(&mut conn, "delete", Some(1), None, 65_000).unwrap();
+        assert!(resolve(&mut conn, &notice, true, None, true, 70_000).is_err());
+        let ended: Option<i64> = conn
+            .query_row("SELECT ended_at FROM sessions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ended, Some(65_000));
     }
     #[test]
     fn done_agent_tasks_are_not_offered_for_the_break() {

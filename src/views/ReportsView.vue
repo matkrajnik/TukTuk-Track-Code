@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Pencil,
 } from "lucide-vue-next";
 import ManualTime from "../ManualTime.vue";
@@ -328,7 +329,16 @@ function toggle(id: number) {
               "
               @click="emit('session', session)"
             >
-              <Pencil :size="14" />
+              <Pencil :size="14" /></button
+            ><button
+              v-if="session.endedAt === null"
+              class="icon-button"
+              :aria-label="'Popraw start przedziału ' + session.id"
+              title="Popraw godzinę startu trwającego pomiaru"
+              :disabled="busy"
+              @click="emit('session', session)"
+            >
+              <Clock3 :size="14" />
             </button>
           </div>
         </div>

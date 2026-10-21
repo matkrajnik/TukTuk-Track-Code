@@ -20,6 +20,7 @@ import {
   type BrowserStatus,
   type ExportFormat,
   type ExportResult,
+  type GapMode,
   type NewTask,
   type PlanEntry,
   type Session,
@@ -251,11 +252,81 @@ export async function quickAdd(task: NewTask): Promise<Snapshot> {
   saveSnapshot(data);
   return data;
 }
+/** Czy jakiś niepusty przedział spoza `skip` zachodzi na [`start`, `end`). */
+const overlaps = (data: Snapshot, skip: number[], start: number, end: number) =>
+  data.sessions.some(
+    (s) =>
+      !skip.includes(s.id) &&
+      s.startedAt < end &&
+      (s.endedAt === null || s.endedAt > start) &&
+      (s.endedAt === null || s.endedAt > s.startedAt),
+  );
+/** db::edit_active_start: początek trwającego pomiaru, koniec bez zmian. */
+async function editActiveStart(
+  id: number,
+  startedAt: number,
+): Promise<Snapshot> {
+  const now = Date.now();
+  if (!Number.isSafeInteger(startedAt) || startedAt < 0 || startedAt >= now)
+    throw new Error(
+      "Początek trwającego pomiaru musi być wcześniejszy niż teraz.",
+    );
+  const data = await read();
+  const session = data.sessions.find((s) => s.id === id);
+  if (!session) throw new Error("Nie znaleziono przedziału.");
+  if (session.endedAt !== null)
+    throw new Error(
+      "Pomiar został już zatrzymany. Popraw oba końce przedziału.",
+    );
+  if (overlaps(data, [id], startedAt, now))
+    throw new Error(
+      "Ten przedział nakłada się na inny pomiar. Popraw godziny.",
+    );
+  session.startedAt = startedAt;
+  saveSnapshot(data);
+  return data;
+}
+/** db::fill_gap: przypisanie luki między pomiarami. */
+export async function fillGap(
+  beforeId: number,
+  afterId: number,
+  mode: GapMode,
+): Promise<Snapshot> {
+  const data = await read();
+  const trashed = (id: number) =>
+    data.trashSessions?.some((s) => s.id === id);
+  if (trashed(beforeId) || trashed(afterId))
+    throw new Error("Przedział należy do zadania w koszu.");
+  const before = data.sessions.find((s) => s.id === beforeId);
+  const after = data.sessions.find((s) => s.id === afterId);
+  if (!before || !after) throw new Error("Nie znaleziono przedziału.");
+  if (before.endedAt === null || beforeId === afterId)
+    throw new Error("Lukę można przypisać tylko po zakończonym pomiarze.");
+  const start = before.endedAt,
+    end = after.startedAt;
+  if (end <= start) throw new Error("Między tymi pomiarami nie ma luki.");
+  if (overlaps(data, [beforeId, afterId], start, end))
+    throw new Error("W tej luce leży inny pomiar. Odśwież widok.");
+  const meet =
+    mode === "previous"
+      ? end
+      : mode === "next"
+        ? start
+        : mode === "split"
+          ? start + Math.floor((end - start) / 2)
+          : NaN;
+  if (Number.isNaN(meet)) throw new Error("Nieznany sposób przypisania luki.");
+  before.endedAt = meet;
+  after.startedAt = meet;
+  saveSnapshot(data);
+  return data;
+}
 export async function editSession(
   id: number,
   startedAt: number,
-  endedAt: number,
+  endedAt: number | null,
 ): Promise<Snapshot> {
+  if (endedAt === null) return editActiveStart(id, startedAt);
   if (
     !Number.isSafeInteger(startedAt) ||
     !Number.isSafeInteger(endedAt) ||

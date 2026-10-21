@@ -193,6 +193,12 @@
   justify-content: flex-end;
   gap: 6px;
 }
+/* Akcje luki (B3): trzy przyciski pod opisem, bez rozpychania kolumn. */
+.timeline-actions.gap-actions {
+  grid-column: 2 / -1;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
 .daily-note {
   margin-top: 20px;
   font-size: var(--fs-base);

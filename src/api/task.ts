@@ -112,6 +112,13 @@ export interface Session {
   startedAt: number;
   endedAt: number | null;
 }
+/**
+ * Akcje przy „Luce w zapisie” (`db::GapMode`): dołącz do poprzedniego pomiaru,
+ * do następnego albo podziel po pół.
+ */
+export type GapMode = "previous" | "next" | "split";
+/** Luki krótsze niż sekunda (np. 14:58:39 → 14:58:39) nie są pokazywane. */
+export const MIN_GAP_MS = 1000;
 export interface Snapshot {
   tasks: Task[];
   sessions: Session[];

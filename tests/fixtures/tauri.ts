@@ -15,7 +15,8 @@ import {
  *
  * Logika z Rust, od której zależą testy, jest tu przeniesiona jeden do jednego
  * i opisana odwołaniem do funkcji źródłowej:
- * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`),
+ * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`, z
+ *   „Przytnij i wznów” jak `idle::trim_and_resume`, B3),
  * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
  * - `redmine::sync_assigned` tak samo, osobno od Jiry (`redmineCheck`, R3),
  * - odczyty Redmine i `redmine::start_issue` na danych `redmineFixture()`
@@ -786,6 +787,26 @@ function install(init: {
                 endedAt: s.endedAt,
               });
               s.endedAt = split;
+            }
+          } else if (args.trim && args.resume) {
+            // idle::trim_and_resume: z pomiaru wypada tylko przerwa.
+            const s = snapshot.sessions.find(
+              (x: any) => x.id === notice.sessionId,
+            );
+            if (!s) throw "Nie znaleziono przedziału.";
+            if (s.endedAt !== null && s.endedAt <= notice.returnedAt) {
+              if (s.endedAt > notice.idleAt)
+                s.endedAt = Math.max(s.startedAt, notice.idleAt);
+            } else if (notice.idleAt <= s.startedAt)
+              s.startedAt = notice.returnedAt;
+            else {
+              snapshot.sessions.unshift({
+                id: nextSessionId(),
+                taskId: s.taskId,
+                startedAt: notice.returnedAt,
+                endedAt: s.endedAt,
+              });
+              s.endedAt = notice.idleAt;
             }
           } else if (args.trim) {
             const s = snapshot.sessions.find(

@@ -14,6 +14,7 @@ import {
   closeDay,
   detailsOf,
   duration,
+  MIN_GAP_MS,
   saveDetails,
   meetingOccupies,
   meetingTitle,
@@ -134,7 +135,7 @@ const gaps = computed(() => {
   let cursor = 0;
   const result: number[][] = [];
   for (const [a, b] of spans) {
-    if (cursor && a > cursor) result.push([cursor, a]);
+    if (cursor && a - cursor >= MIN_GAP_MS) result.push([cursor, a]);
     cursor = Math.max(cursor, b);
   }
   return result;

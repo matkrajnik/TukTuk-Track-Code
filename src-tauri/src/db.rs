@@ -290,6 +290,119 @@ pub fn edit_session(
     snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Poprawia początek trwającego pomiaru („zacząłem o 9:00, Start o 9:20”).
+/// Koniec zostaje pusty; kontrola nakładania jak w `edit_session`, z trwającym
+/// pomiarem sięgającym do `at`.
+pub fn edit_active_start(
+    db: &mut Connection,
+    id: i64,
+    started_at: i64,
+    at: i64,
+) -> Result<Snapshot, String> {
+    if started_at < 0 || started_at >= at {
+        return Err("Początek trwającego pomiaru musi być wcześniejszy niż teraz.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let ended_at: Option<i64> = tx
+        .query_row("SELECT ended_at FROM sessions WHERE id=?1", [id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if ended_at.is_some() {
+        return Err("Pomiar został już zatrzymany. Popraw oba końce przedziału.".into());
+    }
+    if overlaps(&tx, &[id], started_at, at)? {
+        return Err("Ten przedział nakłada się na inny pomiar. Popraw godziny.".into());
+    }
+    tx.execute(
+        "UPDATE sessions SET started_at=?1 WHERE id=?2",
+        params![started_at, id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    snapshot(db).map_err(|e| e.to_string())
+}
+
+/// Czy jakiś niepusty przedział spoza `skip` zachodzi na [`start`, `end`)
+/// (ta sama reguła co w `edit_session`).
+fn overlaps(db: &Connection, skip: &[i64], start: i64, end: i64) -> Result<bool, String> {
+    let mut stmt = db
+        .prepare(
+            "SELECT id FROM sessions WHERE started_at<?2 AND (ended_at IS NULL OR ended_at>?1) AND (ended_at IS NULL OR ended_at>started_at)",
+        )
+        .map_err(|e| e.to_string())?;
+    let ids = stmt
+        .query_map(params![start, end], |r| r.get::<_, i64>(0))
+        .map_err(|e| e.to_string())?
+        .collect::<rusqlite::Result<Vec<i64>>>()
+        .map_err(|e| e.to_string())?;
+    Ok(ids.iter().any(|id| !skip.contains(id)))
+}
+
+/// Jak zapełnić lukę między dwoma pomiarami (`fill_gap`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GapMode {
+    /// „Dołącz do poprzedniego”: koniec pomiaru przed luką przesuwa się na jej koniec.
+    Previous,
+    /// „Dołącz do następnego”: początek pomiaru po luce cofa się na jej początek.
+    Next,
+    /// „Podziel po pół”: oba pomiary spotykają się w środku luki.
+    Split,
+}
+
+/// Przypisuje lukę w zapisie między zakończonym pomiarem `before_id` a pomiarem
+/// `after_id` (może trwać). W luce nie może leżeć żaden inny pomiar (kontrola
+/// nakładania jak przy edycji przedziału), a żaden z pomiarów nie może należeć
+/// do zadania w koszu.
+pub fn fill_gap(
+    db: &mut Connection,
+    before_id: i64,
+    after_id: i64,
+    mode: GapMode,
+) -> Result<Snapshot, String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let read = |id: i64| -> Result<(i64, Option<i64>, bool), String> {
+        tx.query_row(
+            "SELECT s.started_at,s.ended_at,EXISTS(SELECT 1 FROM task_lifecycle l WHERE l.task_id=s.task_id AND l.deleted_at IS NOT NULL) FROM sessions s WHERE s.id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())
+    };
+    let (_, before_end, before_deleted) = read(before_id)?;
+    let (gap_end, _, after_deleted) = read(after_id)?;
+    if before_deleted || after_deleted {
+        return Err("Przedział należy do zadania w koszu.".into());
+    }
+    let Some(gap_start) = before_end.filter(|_| before_id != after_id) else {
+        return Err("Lukę można przypisać tylko po zakończonym pomiarze.".into());
+    };
+    if gap_end <= gap_start {
+        return Err("Między tymi pomiarami nie ma luki.".into());
+    }
+    if overlaps(&tx, &[before_id, after_id], gap_start, gap_end)? {
+        return Err("W tej luce leży inny pomiar. Odśwież widok.".into());
+    }
+    let meet = match mode {
+        GapMode::Previous => gap_end,
+        GapMode::Next => gap_start,
+        GapMode::Split => gap_start + (gap_end - gap_start) / 2,
+    };
+    tx.execute(
+        "UPDATE sessions SET ended_at=?1 WHERE id=?2",
+        params![meet, before_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
+        "UPDATE sessions SET started_at=?1 WHERE id=?2",
+        params![meet, after_id],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    snapshot(db).map_err(|e| e.to_string())
+}
+
 /// Dzieli przedział w chwili `at`. Pierwsza część zostaje przy dotychczasowym
 /// zadaniu i kończy się na `at`, druga należy do `target_task` (domyślnie to
 /// samo zadanie). Przedział aktywny pozostaje aktywny w drugiej części, więc
@@ -524,6 +637,133 @@ mod tests {
         assert!(edit_session(&mut db, 2, 3000, 6000, 5000).is_err());
         assert!(edit_session(&mut db, 2, 2000, 4000, 5000).is_err());
         edit_session(&mut db, 2, 3000, 4500, 5000).unwrap();
+    }
+    fn rows(s: &Snapshot) -> Vec<(i64, i64, i64, Option<i64>)> {
+        let mut rows: Vec<_> = s
+            .sessions
+            .iter()
+            .map(|x| (x.id, x.task_id, x.started_at, x.ended_at))
+            .collect();
+        rows.sort();
+        rows
+    }
+    /// A: 1000–2000, B: 5000–9000 (zakończony), luka 2000–5000.
+    fn gap_fixture() -> Connection {
+        let mut db = split_fixture();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        change(&mut db, "start", Some(2), None, 2000).unwrap();
+        change(&mut db, "stop", None, None, 2000).unwrap();
+        db.execute("UPDATE sessions SET started_at=5000 WHERE id=2", [])
+            .unwrap();
+        change(&mut db, "stop", None, None, 9000).unwrap();
+        db.execute("UPDATE sessions SET ended_at=9000 WHERE id=2", [])
+            .unwrap();
+        db
+    }
+    #[test]
+    fn fill_gap_three_modes() {
+        let mut db = gap_fixture();
+        assert_eq!(
+            rows(&snapshot(&db).unwrap()),
+            vec![(1, 1, 1000, Some(2000)), (2, 2, 5000, Some(9000))]
+        );
+        let s = fill_gap(&mut db, 1, 2, GapMode::Previous).unwrap();
+        assert_eq!(
+            rows(&s),
+            vec![(1, 1, 1000, Some(5000)), (2, 2, 5000, Some(9000))]
+        );
+
+        let mut db = gap_fixture();
+        let s = fill_gap(&mut db, 1, 2, GapMode::Next).unwrap();
+        assert_eq!(
+            rows(&s),
+            vec![(1, 1, 1000, Some(2000)), (2, 2, 2000, Some(9000))]
+        );
+
+        let mut db = gap_fixture();
+        let s = fill_gap(&mut db, 1, 2, GapMode::Split).unwrap();
+        assert_eq!(
+            rows(&s),
+            vec![(1, 1, 1000, Some(3500)), (2, 2, 3500, Some(9000))]
+        );
+        // Po zapełnieniu luki zerowej długości nie ma czego przypisać.
+        assert!(fill_gap(&mut db, 1, 2, GapMode::Previous).is_err());
+        assert_eq!(rows(&snapshot(&db).unwrap())[0].3, Some(3500));
+    }
+    #[test]
+    fn fill_gap_moves_start_of_running_measurement() {
+        let mut db = split_fixture();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        change(&mut db, "stop", None, None, 2000).unwrap();
+        change(&mut db, "start", Some(2), None, 4000).unwrap();
+        let s = fill_gap(&mut db, 1, 2, GapMode::Next).unwrap();
+        assert_eq!(rows(&s), vec![(1, 1, 1000, Some(2000)), (2, 2, 2000, None)]);
+        // Przed trwającym pomiarem nie ma „poprzedniej” luki po nim.
+        assert!(fill_gap(&mut db, 2, 1, GapMode::Previous).is_err());
+    }
+    #[test]
+    fn fill_gap_rejects_overlaps_zero_gaps_and_trash() {
+        // Inny pomiar w luce (np. dopisany w innym oknie): bez zmian.
+        let mut db = gap_fixture();
+        db.execute(
+            "INSERT INTO sessions(task_id,started_at,ended_at) VALUES(1,3000,4000)",
+            [],
+        )
+        .unwrap();
+        for mode in [GapMode::Previous, GapMode::Next, GapMode::Split] {
+            assert!(fill_gap(&mut db, 1, 2, mode).is_err());
+        }
+        // Pusty przedział (start = koniec) nie blokuje luki.
+        db.execute("UPDATE sessions SET ended_at=3000 WHERE id=3", [])
+            .unwrap();
+        fill_gap(&mut db, 1, 2, GapMode::Previous).unwrap();
+
+        // Luka zerowa i odwrócona kolejność.
+        let mut db = gap_fixture();
+        db.execute("UPDATE sessions SET ended_at=5000 WHERE id=1", [])
+            .unwrap();
+        assert!(fill_gap(&mut db, 1, 2, GapMode::Split).is_err());
+        assert!(fill_gap(&mut db, 2, 1, GapMode::Split).is_err());
+        assert!(fill_gap(&mut db, 1, 1, GapMode::Split).is_err());
+        assert!(fill_gap(&mut db, 1, 99, GapMode::Split).is_err());
+
+        // Pomiar zadania w koszu.
+        let mut db = gap_fixture();
+        change(&mut db, "delete", Some(2), None, 9500).unwrap();
+        assert!(fill_gap(&mut db, 1, 2, GapMode::Previous).is_err());
+        assert_eq!(snapshot(&db).unwrap().sessions[0].ended_at, Some(2000));
+    }
+    #[test]
+    fn gap_mode_reads_command_names() {
+        let modes: Vec<GapMode> = serde_json::from_str(r#"["previous","next","split"]"#).unwrap();
+        assert_eq!(
+            modes,
+            vec![GapMode::Previous, GapMode::Next, GapMode::Split]
+        );
+        assert!(serde_json::from_str::<GapMode>(r#""half""#).is_err());
+    }
+    #[test]
+    fn running_measurement_start_can_be_corrected() {
+        let mut db = split_fixture();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        change(&mut db, "stop", None, None, 3000).unwrap();
+        change(&mut db, "start", Some(2), None, 5000).unwrap();
+        // Wcześniej: „zacząłem o 4000, Start o 5000”; koniec dalej pusty.
+        let s = edit_active_start(&mut db, 2, 4000, 8000).unwrap();
+        assert_eq!(rows(&s), vec![(1, 1, 1000, Some(3000)), (2, 2, 4000, None)]);
+        // Później też wolno, byle przed teraz.
+        edit_active_start(&mut db, 2, 6000, 8000).unwrap();
+        // Nakładanie na poprzedni pomiar, przyszłość, ujemny czas, brak przedziału.
+        assert!(edit_active_start(&mut db, 2, 2500, 8000).is_err());
+        assert!(edit_active_start(&mut db, 2, 8000, 8000).is_err());
+        assert!(edit_active_start(&mut db, 2, -1, 8000).is_err());
+        assert!(edit_active_start(&mut db, 99, 4000, 8000).is_err());
+        // Styk z końcem poprzedniego nie jest nakładaniem.
+        edit_active_start(&mut db, 2, 3000, 8000).unwrap();
+        // Zakończonego przedziału ta ścieżka nie zmienia.
+        assert!(edit_active_start(&mut db, 1, 500, 8000).is_err());
+        let s = snapshot(&db).unwrap();
+        assert_eq!(rows(&s), vec![(1, 1, 1000, Some(3000)), (2, 2, 3000, None)]);
     }
     #[test]
     fn init_is_idempotent_and_creates_indexes_and_notifications_table() {

@@ -101,6 +101,13 @@ async function save() {
       editStart.value === localInput(s.startedAt)
         ? s.startedAt
         : new Date(editStart.value).getTime();
+    if (s.endedAt === null) {
+      // Trwający pomiar: tylko początek, koniec dalej pusty (B3).
+      if (!Number.isFinite(start))
+        throw new Error("Wprowadź poprawną datę i godzinę.");
+      emit("updated", await editSession(s.id, start, null));
+      return;
+    }
     const end =
       editEnd.value === localInput(s.endedAt!)
         ? s.endedAt!
@@ -173,15 +180,27 @@ async function split() {
       role="tabpanel"
       aria-labelledby="session-tab-hours"
     >
-      <template v-if="running">
+      <form v-if="running" @submit.prevent="save">
+        <label for="session-start">Początek</label
+        ><input
+          id="session-start"
+          v-model="editStart"
+          type="datetime-local"
+          step="1"
+          required
+          :disabled="busy"
+        />
         <p class="hint">
-          Pomiar nadal trwa. Zatrzymaj go, aby zmienić godziny, albo podziel
-          przedział w zakładce Podziel.
+          Pomiar nadal trwa: możesz poprawić godzinę startu, koniec ustawisz po
+          zatrzymaniu. Czas lokalny.
         </p>
         <div class="modal-actions">
-          <button type="button" :disabled="busy" @click="close">Zamknij</button>
+          <button type="button" :disabled="busy" @click="close">Anuluj</button
+          ><button class="primary-button" :disabled="busy">
+            Zapisz początek
+          </button>
         </div>
-      </template>
+      </form>
       <form v-else @submit.prevent="save">
         <label for="session-start">Początek</label
         ><input

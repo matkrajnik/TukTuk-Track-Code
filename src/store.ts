@@ -24,6 +24,7 @@ import {
   type BrowserStatus,
   type ExportFormat,
   type ExportResult,
+  type GapMode,
   type NewTask,
   type PlanEntry,
   type Snapshot,
@@ -265,10 +266,20 @@ export async function onTemplatesChanged(): Promise<() => void> {
 export async function editSession(
   id: number,
   startedAt: number,
-  endedAt: number,
+  /** `null`: poprawka początku trwającego pomiaru (koniec bez zmian). */
+  endedAt: number | null,
 ): Promise<Snapshot> {
   if (desktop) return invoke("edit_session", { id, startedAt, endedAt });
   return tasksSim.editSession(id, startedAt, endedAt);
+}
+/** Przypisuje lukę między pomiarami (`db::fill_gap`). */
+export async function fillGap(
+  beforeId: number,
+  afterId: number,
+  mode: GapMode,
+): Promise<Snapshot> {
+  if (desktop) return invoke("fill_gap", { beforeId, afterId, mode });
+  return tasksSim.fillGap(beforeId, afterId, mode);
 }
 /** Odpowiednik db::split_session dla trybu podglądu. */
 export async function splitSession(

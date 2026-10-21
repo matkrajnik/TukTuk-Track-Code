@@ -34,6 +34,18 @@ async function resolveIdle(trim: boolean) {
     emit("error", String(e));
   }
 }
+/**
+ * „Przytnij i wznów”: przerwa wypada z pomiaru, a ten sam pomiar biegnie dalej
+ * od chwili powrotu (`idle::trim_and_resume`).
+ */
+async function trimAndResume() {
+  try {
+    emit("updated", await invoke("idle_resolve", { trim: true, resume: true }));
+    idleNotice.value = null;
+  } catch (e) {
+    emit("error", String(e));
+  }
+}
 /** „Przypisz przerwę do X”: podział pomiaru w chwili początku przerwy. */
 async function assignBreak(task: AgentTask) {
   try {
@@ -77,6 +89,12 @@ onUnmounted(() => unlisten?.());
         Zachowaj cały czas</button
       ><button class="secondary-button" @click="resolveIdle(true)">
         Zatrzymaj na początku przerwy</button
+      ><button
+        class="secondary-button"
+        :title="`Przerwa ${clock(idleNotice.idleAt, true)}–${clock(idleNotice.returnedAt, true)} wypadnie z pomiaru, który biegnie dalej od powrotu`"
+        @click="trimAndResume"
+      >
+        Przytnij i wznów</button
       ><button
         v-for="task in idleNotice.agentTasks ?? []"
         :key="task.taskId ?? ''"

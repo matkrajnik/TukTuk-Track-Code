@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import {
+  ArrowDownToLine,
+  ArrowUpToLine,
   CalendarArrowUp,
   CalendarPlus,
   CalendarX,
   ChevronLeft,
   ChevronRight,
   FileText,
+  FoldVertical,
   Pencil,
   Play,
   Plus,
@@ -18,7 +21,10 @@ import {
   change,
   detailsOf,
   duration,
+  fillGap,
+  MIN_GAP_MS,
   saveDetails,
+  type GapMode,
   type Snapshot,
   type Task,
   type Session,
@@ -169,6 +175,10 @@ async function plan(task: Task, target: string) {
   );
   selectedTask.value = 0;
 }
+/** Akcje przy „Luce w zapisie” (`fill_gap`). */
+function fill(before: Session, after: Session, mode: GapMode) {
+  return run(() => fillGap(before.id, after.id, mode));
+}
 async function run(action: () => Promise<Snapshot>) {
   if (busy.value) return;
   busy.value = true;
@@ -217,16 +227,24 @@ const timeline = computed(() => {
     start: number;
     end: number;
     session?: Session;
+    /** Luka: pomiary przed nią (najpóźniej kończący się) i po niej. */
+    before?: Session;
+    after?: Session;
   }[] = [];
   let previous = 0;
+  let last: Session | undefined;
   for (const interval of intervals.value) {
-    if (previous && interval.start > previous)
+    // Luki krótsze niż sekunda (np. po edycji 14:58:39 → 14:58:39) pomijamy.
+    if (previous && interval.start - previous >= MIN_GAP_MS)
       result.push({
         key: `gap-${interval.session.id}`,
         start: previous,
         end: interval.start,
+        before: last,
+        after: interval.session,
       });
     result.push({ key: `session-${interval.session.id}`, ...interval });
+    if (interval.end >= previous) last = interval.session;
     previous = Math.max(previous, interval.end);
   }
   return result;
@@ -546,14 +564,40 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             : "Luka w zapisie"
         }}</span
         ><strong class="mono">{{ duration(item.end - item.start) }}</strong
-        ><span class="timeline-actions"
+        ><span
+          v-if="item.before && item.after"
+          class="timeline-actions gap-actions"
+          role="group"
+          :aria-label="`Luka ${clock(item.start, true)} → ${clock(item.end, true)}`"
+          ><button
+            class="today-button"
+            :disabled="busy"
+            title="Wydłuża koniec pomiaru wyżej do końca luki"
+            @click="fill(item.before, item.after, 'previous')"
+          >
+            <ArrowUpToLine :size="14" />Dołącz do poprzedniego</button
+          ><button
+            class="today-button"
+            :disabled="busy"
+            title="Cofa początek pomiaru niżej do początku luki"
+            @click="fill(item.before, item.after, 'next')"
+          >
+            <ArrowDownToLine :size="14" />Dołącz do następnego</button
+          ><button
+            class="today-button"
+            :disabled="busy"
+            title="Oba pomiary spotykają się w środku luki"
+            @click="fill(item.before, item.after, 'split')"
+          >
+            <FoldVertical :size="14" />Podziel po pół
+          </button></span
+        ><span v-else class="timeline-actions"
           ><button
             v-if="item.session"
             class="today-button"
-            :disabled="item.session.endedAt === null"
             :title="
               item.session.endedAt === null
-                ? 'Zatrzymaj pomiar przed edycją'
+                ? 'Popraw godzinę startu trwającego pomiaru'
                 : undefined
             "
             @click="emit('edit', item.session)"

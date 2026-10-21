@@ -3,7 +3,7 @@
  * „Przedziały pracy” w rozwiniętym kafelku: lista z czasem i edycją. Godziny
  * bez sekund, data po prawej tylko przy przedziale przez północ (B1).
  */
-import { Pencil } from "lucide-vue-next";
+import { Clock3, Pencil } from "lucide-vue-next";
 import { duration, type Session } from "../../store";
 import { intervalText } from "../../time";
 
@@ -50,11 +50,22 @@ const text = (s: Session) => intervalText(s.startedAt, s.endedAt);
     >
       <Pencil :size="14" />
     </button>
+    <button
+      v-if="session.endedAt === null"
+      class="icon-button"
+      :aria-label="'Popraw start przedziału ' + session.id"
+      title="Popraw godzinę startu trwającego pomiaru"
+      :disabled="busy"
+      @click="emit('session', session)"
+    >
+      <Clock3 :size="14" />
+    </button>
   </div>
   <p v-if="!sessions.length" class="empty-detail">
     Brak przedziałów. Kliknij Start, aby rozpocząć pomiar.
   </p>
   <p v-if="running" class="hint">
-    Zatrzymaj bieżący pomiar, aby edytować jego godziny.
+    Koniec bieżącego pomiaru edytujesz po zatrzymaniu; godzinę startu możesz
+    poprawić od razu.
   </p>
 </template>
