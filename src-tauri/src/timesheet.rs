@@ -1047,7 +1047,10 @@ async fn day_page(app: &tauri::AppHandle, api: &Api, date: &str) -> Result<Strin
 pub async fn ts_tasks(app: tauri::AppHandle, date: String) -> Result<Vec<Project>, String> {
     check_date(&date)?;
     let api = api(&app)?;
-    parse_tasks(&day_page(&app, &api, &date).await?)
+    let projects = parse_tasks(&day_page(&app, &api, &date).await?)?;
+    // Serwer MCP (A2): `ts_tasks` zwraca ostatnio pobraną listę z pamięci.
+    crate::mcp::remember_ts_tasks(&app, &projects);
+    Ok(projects)
 }
 #[tauri::command]
 pub async fn ts_filled(app: tauri::AppHandle, date: String) -> Result<Vec<Filled>, String> {

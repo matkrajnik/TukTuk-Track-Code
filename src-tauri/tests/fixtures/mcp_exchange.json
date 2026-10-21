@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0-test",
+  "steps": [
+    {
+      "in": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude-code", "version": "2.1.304"}}},
+      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "method": "notifications/initialized"},
+      "out": null
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+      "toolNames": ["tasks_list", "task_get", "day_summary", "week_summary", "current_measurement", "ts_tasks", "propose_task_create", "propose_note_append", "propose_link_folder", "propose_switch", "propose_plan"]
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "tasks_list", "arguments": {"filter": "today"}}},
+      "forward": {"tool": "tasks_list", "arguments": {"filter": "today"}, "reply": {"ok": true, "text": "{\"filter\":\"today\",\"total\":0,\"tasks\":[]}"}},
+      "out": {"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": "{\"filter\":\"today\",\"total\":0,\"tasks\":[]}"}], "isError": false}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": "abc", "method": "tools/call", "params": {"name": "current_measurement"}},
+      "forward": {"tool": "current_measurement", "arguments": {}, "reply": {"ok": true, "text": "{\"running\":false}"}},
+      "out": {"jsonrpc": "2.0", "id": "abc", "result": {"content": [{"type": "text", "text": "{\"running\":false}"}], "isError": false}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "propose_switch", "arguments": {"task": "WMS-12"}}},
+      "forward": {"tool": "propose_switch", "arguments": {"task": "WMS-12"}, "reply": {"ok": true, "text": "Propozycja czeka na akceptację użytkownika w Todo Track."}},
+      "out": {"jsonrpc": "2.0", "id": 4, "result": {"content": [{"type": "text", "text": "Propozycja czeka na akceptację użytkownika w Todo Track."}], "isError": false}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "task_get", "arguments": {"id": 999}}},
+      "forward": {"tool": "task_get", "arguments": {"id": 999}, "reply": {"ok": false, "error": "Task not found: \"999\"."}},
+      "out": {"jsonrpc": "2.0", "id": 5, "result": {"content": [{"type": "text", "text": "Task not found: \"999\"."}], "isError": true}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 6, "method": "ping"},
+      "out": {"jsonrpc": "2.0", "id": 6, "result": {}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": 3}},
+      "out": null
+    }
+  ]
+}

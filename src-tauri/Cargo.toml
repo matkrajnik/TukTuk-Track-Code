@@ -20,6 +20,11 @@ path = "src/bin/bridge.rs"
 name = "todo-track-hook"
 path = "src/bin/hook.rs"
 
+# Serwer MCP dla agentów (PLAN_BACKLOG.md, A2); instalator dołącza go obok aplikacji.
+[[bin]]
+name = "todo-track-mcp"
+path = "src/bin/mcp.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

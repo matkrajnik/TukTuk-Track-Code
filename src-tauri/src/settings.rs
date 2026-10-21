@@ -726,7 +726,8 @@ pub fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, String> {
-    let hooks_before = current(&app).agent_hooks;
+    let before = current(&app);
+    let hooks_before = before.agent_hooks;
     let result = {
         let state = app.state::<Database>();
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
@@ -744,6 +745,10 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     // tylko przy jego zmianie (pozostałe przypadki ponawia pętla agentów co minutę).
     if result.agent_hooks != hooks_before {
         crate::hooks::sync(&app);
+    }
+    // Serwer MCP (A2): rejestracja w Claude Code i Codexie zgodna z `ai_mcp` i silnikiem.
+    if result.ai_mcp != before.ai_mcp || result.ai_engine != before.ai_engine {
+        crate::mcp::sync(&app);
     }
     Ok(result)
 }

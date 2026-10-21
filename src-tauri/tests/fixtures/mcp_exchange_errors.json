@@ -1,0 +1,45 @@
+{
+  "version": "2.0.0-test",
+  "steps": [
+    {
+      "in": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}},
+      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": "2030-01-01"}},
+      "out": {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 3, "method": "resources/list"},
+      "out": {"jsonrpc": "2.0", "id": 3, "error": {"code": -32601, "message": "Method not found"}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "ts_send", "arguments": {}}},
+      "out": {"jsonrpc": "2.0", "id": 4, "error": {"code": -32602, "message": "Unknown tool"}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "jira_comment", "arguments": {}}},
+      "out": {"jsonrpc": "2.0", "id": 5, "error": {"code": -32602, "message": "Unknown tool"}}
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {"name": "tasks_list", "arguments": "all"}},
+      "out": {"jsonrpc": "2.0", "id": 6, "error": {"code": -32602, "message": "Arguments must be an object"}}
+    },
+    {
+      "in": "{ to nie jest JSON",
+      "out": {"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "Parse error"}}
+    },
+    {
+      "in": "42",
+      "out": {"jsonrpc": "2.0", "id": null, "error": {"code": -32600, "message": "Invalid Request"}}
+    },
+    {
+      "in": "",
+      "out": null
+    },
+    {
+      "in": {"jsonrpc": "2.0", "id": 7, "result": {}},
+      "out": null
+    }
+  ]
+}

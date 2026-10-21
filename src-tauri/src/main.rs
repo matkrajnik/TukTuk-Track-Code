@@ -23,6 +23,9 @@ mod jira_board;
 mod jira_fields;
 mod jira_move;
 mod maintenance;
+mod mcp;
+mod mcp_register;
+mod mcp_wire;
 mod meetings;
 mod native_msg;
 mod notify;
@@ -486,6 +489,7 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             ai::setup(app.handle());
+            mcp::setup(app.handle());
             hooks::setup(app.handle());
             suggest::setup(app.handle());
             foreground::setup(app.handle());
@@ -514,6 +518,10 @@ fn main() {
             // zgodne z ustawieniem (ścieżka exe po aktualizacji).
             browser::start(app.handle());
             browser::sync(app.handle(), &settings::current(app.handle()));
+            // Serwer MCP dla agentów (A2): potok z wywołaniami narzędzi i rejestracja
+            // w Claude Code i Codexie zgodna z ustawieniem `ai_mcp` (ścieżka exe po aktualizacji).
+            mcp::start(app.handle());
+            mcp::sync(app.handle());
             jira::start(app.handle());
             // Obserwacja przypisań w Redmine (R3): osobny wątek, niezależny od Jiry.
             redmine::start(app.handle());
@@ -617,6 +625,10 @@ fn main() {
             ai::ai_calls,
             ai::ai_redact_preview,
             ai::ai_test,
+            mcp::mcp_proposals,
+            mcp::mcp_proposal_resolve,
+            mcp::mcp_status,
+            mcp::mcp_sync,
             agents::agent_bind,
             agents::agent_unbind,
             agent_time::agent_time,

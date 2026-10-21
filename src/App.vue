@@ -7,6 +7,7 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import SessionEditor, { type SessionTab } from "./components/SessionEditor.vue";
 import IdleBanner from "./components/IdleBanner.vue";
 import AgentSuggestions from "./components/AgentSuggestions.vue";
+import AiProposals from "./components/AiProposals.vue";
 import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
@@ -607,6 +608,11 @@ onUnmounted(() => {
       <AgentSuggestions
         :tasks="data.tasks"
         :active-task-id="activeTask?.id ?? null"
+        @updated="updated"
+        @error="error = $event"
+      />
+      <AiProposals
+        :tasks="data.tasks"
         @updated="updated"
         @error="error = $event"
       />

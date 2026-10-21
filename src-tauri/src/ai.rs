@@ -1162,7 +1162,7 @@ pub fn detect_now(app: &tauri::AppHandle) -> Detected {
 }
 
 /// Wykryte CLI z pamięci; pierwsze zapytanie wykrywa (lazy, poza wątkiem UI).
-fn detected_cached(app: &tauri::AppHandle) -> Detected {
+pub(crate) fn detected_cached(app: &tauri::AppHandle) -> Detected {
     app.try_state::<State>()
         .and_then(|s| s.detected())
         .unwrap_or_else(|| detect_now(app))

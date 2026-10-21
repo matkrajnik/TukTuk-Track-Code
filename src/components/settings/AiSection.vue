@@ -20,6 +20,7 @@ import {
   type AiCli,
   type AiStatus,
 } from "../../store";
+import { mcpEntryLine, mcpStatus, mcpSync, type McpStatus } from "../../mcpapi";
 import type { AppSettings } from "../../settings";
 import { clock } from "../../time";
 import { checked, message, text, useSettingsSection } from "./section";
@@ -32,6 +33,10 @@ const calls = ref<AiCall[]>([]);
 const loadError = ref("");
 const checking = ref(false);
 const testing = ref(false);
+/** Rejestracja serwera MCP w Claude Code i Codexie (A2). */
+const mcp = ref<McpStatus | null>(null);
+const mcpBusy = ref(false);
+const mcpError = ref("");
 /** Wynik „Przetestuj silnik”: komunikat albo błąd po polsku. */
 const testResult = ref<{ ok: boolean; text: string } | null>(null);
 
@@ -52,11 +57,41 @@ async function load(recheck = false) {
     checking.value = false;
   }
 }
-onMounted(() => void load());
+async function loadMcp() {
+  try {
+    mcp.value = await mcpStatus();
+    mcpError.value = "";
+  } catch (e) {
+    mcpError.value = message(e);
+  }
+}
+async function registerAgain() {
+  mcpBusy.value = true;
+  try {
+    mcp.value = await mcpSync();
+    mcpError.value = "";
+  } catch (e) {
+    mcpError.value = message(e);
+  } finally {
+    mcpBusy.value = false;
+  }
+}
+onMounted(() => {
+  void load();
+  void loadMcp();
+});
 // Zmiana silnika zmienia „aktywny”; ścieżki wymagają ponownego wykrycia.
 watch(
   () => settings.value.aiEngine,
   () => void load(),
+);
+// Rejestracja MCP działa w tle po zmianie silnika albo przełącznika; stan odświeża się po chwili.
+watch(
+  () => [settings.value.aiEngine, settings.value.aiMcp],
+  () => {
+    void loadMcp();
+    setTimeout(() => void loadMcp(), 3000);
+  },
 );
 
 const found = computed(
@@ -256,6 +291,37 @@ async function runTest() {
       @change="save({ aiMcp: checked($event) })"
     />Serwer MCP dla agentów</label
   >
+  <div
+    role="status"
+    aria-label="Stan serwera MCP"
+    class="agent-hooks-status"
+  >
+    <template v-if="mcp">
+      <p v-if="!mcp.enabled" class="hint">
+        Serwer MCP zarejestruje się po wybraniu silnika i włączeniu
+        przełącznika.
+      </p>
+      <p v-if="mcp.enabled && !mcp.exeFound" class="error">
+        Brak programu todo-track-mcp.exe obok aplikacji. Zainstaluj aplikację
+        ponownie.
+      </p>
+      <p v-for="e in mcp.entries" :key="e.engine" :class="{ error: e.state === 'error' }">
+        {{ mcpEntryLine(e) }}
+      </p>
+    </template>
+    <p v-if="mcpError" class="error" role="alert">{{ mcpError }}</p>
+  </div>
+  <p>
+    <button :disabled="mcpBusy" @click="registerAgain">
+      Zarejestruj ponownie
+    </button>
+  </p>
+  <p class="hint">
+    Agenci widzą narzędzia aplikacji (zadania, dzień, tydzień) tylko po
+    wybraniu silnika; zapisy są propozycjami, które zatwierdzasz w banerze
+    „Zastosuj” / „Odrzuć”. Wyniki narzędzi przechodzą przez ten sam filtr
+    danych osobowych co wywołania asystenta.
+  </p>
   <label class="inline-check"
     ><input
       :checked="settings.aiChat"

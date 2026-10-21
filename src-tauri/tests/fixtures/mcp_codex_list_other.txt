@@ -1,0 +1,2 @@
+Name          Command             Args  Env  Cwd  Status   Auth
+todo-track-x  C:\Tools\other.exe  -     -    -    enabled  Unsupported
