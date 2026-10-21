@@ -45,6 +45,8 @@ let timer = 0;
 let alive = true;
 onMounted(async () => {
   await load();
+  // Odmontowany w trakcie pierwszego odczytu: bez interwału i nasłuchu.
+  if (!alive) return;
   // Obserwacja sprawdza co 5 min; odczyt co minutę łapie też podgląd.
   timer = window.setInterval(load, 60_000);
   const off = await onJiraWatch((next) => {
