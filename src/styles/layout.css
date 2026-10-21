@@ -204,6 +204,11 @@ main {
   margin: 0 auto;
   padding: 32px;
 }
+/* Widoki tablicowe (Jira → Tablica, Plan → Tydzień → Tablica) zajmują całą
+   szerokość okna; listy i formularze zostają w 1120 px (`layout.ts`). */
+main.wide {
+  max-width: none;
+}
 .page-heading {
   display: flex;
   align-items: center;

@@ -25,6 +25,9 @@ pub struct Task {
     pub redmine_status: Option<String>,
     pub redmine_tracker: Option<String>,
     pub redmine_due: Option<String>,
+    /// Chwila ukończenia (`task_done`), tylko dla ukończonych zadań; brak dla
+    /// zadań ukończonych przed 2.0 (lista „Ukończone” liczy wtedy dzień z pracy).
+    pub done_at: Option<i64>,
     pub details: crate::planner::Details,
     pub archived: bool,
 }
@@ -89,12 +92,13 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS ts_project_map (project TEXT PRIMARY KEY COLLATE NOCASE, ts_task_id TEXT NOT NULL, ts_task_name TEXT NOT NULL DEFAULT '');
         CREATE TABLE IF NOT EXISTS redmine_tasks (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, site TEXT NOT NULL, issue_id INTEGER NOT NULL, UNIQUE(site, issue_id));
         CREATE TABLE IF NOT EXISTS redmine_issues (site TEXT NOT NULL, issue_id INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', status_id INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '', tracker TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, issue_id));
-        CREATE TABLE IF NOT EXISTS redmine_statuses (site TEXT NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, is_closed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, id));")
+        CREATE TABLE IF NOT EXISTS redmine_statuses (site TEXT NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, is_closed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, id));
+        CREATE TABLE IF NOT EXISTS task_done (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, done_at INTEGER NOT NULL);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
     let tasks = db
-        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,''),r.issue_id,r.site || '/issues/' || r.issue_id,NULLIF(ri.status,''),NULLIF(ri.tracker,''),NULLIF(ri.due_date,'') FROM tasks t LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN redmine_tasks r ON r.task_id=t.id LEFT JOIN redmine_issues ri ON ri.site=r.site AND ri.issue_id=r.issue_id LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
+        .prepare("SELECT t.id,t.title,t.done,t.created_at,j.issue_key,j.site || '/browse/' || j.issue_key,COALESCE(d.json,'{}'),COALESCE(l.archived,0),l.deleted_at IS NOT NULL,NULLIF(ji.status,''),r.issue_id,r.site || '/issues/' || r.issue_id,NULLIF(ri.status,''),NULLIF(ri.tracker,''),NULLIF(ri.due_date,''),CASE WHEN t.done THEN dn.done_at END FROM tasks t LEFT JOIN task_done dn ON dn.task_id=t.id LEFT JOIN jira_tasks j ON j.task_id=t.id LEFT JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key LEFT JOIN redmine_tasks r ON r.task_id=t.id LEFT JOIN redmine_issues ri ON ri.site=r.site AND ri.issue_id=r.issue_id LEFT JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id ORDER BY t.id DESC")?
         .query_map([], |r| {
             Ok((Task {
                 id: r.get(0)?,
@@ -110,6 +114,7 @@ pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
                 redmine_status: r.get(12)?,
                 redmine_tracker: r.get(13)?,
                 redmine_due: r.get(14)?,
+                done_at: r.get(15)?,
                 details: serde_json::from_str(&r.get::<_, String>(6)?).map_err(|e| rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e)))?,
                 archived: r.get(7)?,
             },r.get::<_,bool>(8)?))
@@ -230,6 +235,14 @@ pub fn change(
                 tx.execute("UPDATE sessions SET ended_at=MAX(started_at,?1) WHERE task_id=?2 AND ended_at IS NULL", params![at,id]).map_err(|e|e.to_string())?;
                 tx.execute("UPDATE tasks SET done=NOT done WHERE id=?1", [id])
                     .map_err(|e| e.to_string())?;
+                // Chwila ukończenia do listy „Ukończone” (ostatnie 30 dni, grupy po dniu).
+                tx.execute("DELETE FROM task_done WHERE task_id=?1", [id])
+                    .map_err(|e| e.to_string())?;
+                tx.execute(
+                    "INSERT INTO task_done(task_id,done_at) SELECT id,?2 FROM tasks WHERE id=?1 AND done",
+                    params![id, at],
+                )
+                .map_err(|e| e.to_string())?;
             }
             "delete" => {
                 tx.execute("UPDATE sessions SET ended_at=MAX(started_at,?1) WHERE task_id=?2 AND ended_at IS NULL",params![at,id]).map_err(|e|e.to_string())?;
@@ -556,6 +569,26 @@ mod tests {
         change(&mut db, "add", None, Some("A".into()), 0).unwrap();
         change(&mut db, "add", None, Some("B".into()), 0).unwrap();
         db
+    }
+    #[test]
+    fn toggle_records_done_at_and_clears_it_on_restore() {
+        let mut db = split_fixture();
+        let done_at = |s: &Snapshot| s.tasks.iter().find(|t| t.id == 2).unwrap().done_at;
+        let s = change(&mut db, "toggle", Some(2), None, 6000).unwrap();
+        assert_eq!(done_at(&s), Some(6000));
+        let s = change(&mut db, "toggle", Some(2), None, 7000).unwrap();
+        assert_eq!(done_at(&s), None);
+        let s = change(&mut db, "toggle", Some(2), None, 9000).unwrap();
+        assert_eq!(done_at(&s), Some(9000));
+        // Zadanie ukończone przed 2.0 (bez wiersza `task_done`) nie ma chwili ukończenia.
+        db.execute("UPDATE tasks SET done=1 WHERE id=1", [])
+            .unwrap();
+        let s = snapshot(&db).unwrap();
+        assert_eq!(s.tasks.iter().find(|t| t.id == 1).unwrap().done_at, None);
+        // Przywrócenie poza `toggle` (np. zgłoszenie z Jiry) ukrywa starą chwilę.
+        db.execute("UPDATE tasks SET done=0 WHERE id=2", [])
+            .unwrap();
+        assert_eq!(done_at(&snapshot(&db).unwrap()), None);
     }
     #[test]
     fn split_finished_session_keeps_total_range() {

@@ -10,7 +10,7 @@ import {
   type Task,
 } from "../store";
 import { dayBounds, dayKey, dayText, inDay } from "../time";
-import { issueRef } from "../issue";
+import { taskMatches } from "../issue";
 import { compareTasks } from "../order";
 import { plannedTasks } from "../dayplan";
 import { dayTarget, hhmm, hm, targetHoliday, useSettings } from "../target";
@@ -150,15 +150,7 @@ const menuDays = computed(() =>
   days.value.map((d) => ({ key: d.key, long: d.long })),
 );
 
-function matches(task: Task) {
-  const query = search.value.trim().toLocaleLowerCase("pl");
-  return (
-    !query ||
-    [task.title, task.details?.project ?? "", issueRef(task)?.key ?? ""].some(
-      (text) => text.toLocaleLowerCase("pl").includes(query),
-    )
-  );
-}
+const matches = (task: Task) => taskMatches(task, search.value);
 const isOpen = (t: Task) => !t.archived && !t.done;
 /** Wszystkie zadania bez planu (bez filtra wyszukiwania), do liczenia kolejności. */
 const backlogAll = computed(() =>

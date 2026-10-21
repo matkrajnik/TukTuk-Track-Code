@@ -44,6 +44,7 @@ import JiraIssueList from "./components/jira/JiraIssueList.vue";
 import JiraBoard from "./components/jira/JiraBoard.vue";
 import JiraWatchLine from "./components/jira/JiraWatchLine.vue";
 import { issueTasks } from "./issueTask";
+import { useWideLayout } from "./layout";
 
 const props = defineProps<{
   activeUrl?: string | null;
@@ -130,6 +131,13 @@ watch([mode, boardId, scope], () => {
 });
 
 const board = ref<JiraBoardView | null>(null);
+/** Tablica zajmuje całą szerokość okna (`main.wide`), lista zostaje w 1120 px. */
+useWideLayout(
+  () =>
+    settings.value.connected &&
+    mode.value === "board" &&
+    settings.value.config.boards.length > 0,
+);
 const notice = ref("");
 
 /** Lokalne zadania zgłoszeń: czas, pomiar teraz i dzień planu. */

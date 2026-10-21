@@ -313,3 +313,20 @@ for (const theme of themes)
     await settle(page);
     await expect(page).toHaveScreenshot(`widget-${theme}.png`);
   });
+
+// B2: Dashboard w średnim oknie (1000 px): karta „Zagrożone teraz” z tytułem
+// w jednej linii i liczbami pod nim, gdy brakuje miejsca.
+for (const theme of themes)
+  test(`dashboard 1000px ${theme}`, { tag: "@visual" }, async ({ page }) => {
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await useTheme(page, theme);
+    await openPreview(page, { active: { task: ids.analysis, from: "11:00" } });
+    await nav(page, "Dashboard");
+    await expect(
+      page.getByRole("region", { name: "Zagrożone teraz" }),
+    ).toContainText("Analiza importu");
+    await settle(page);
+    await expect(page).toHaveScreenshot(`dashboard-${theme}-1000.png`, {
+      fullPage: true,
+    });
+  });

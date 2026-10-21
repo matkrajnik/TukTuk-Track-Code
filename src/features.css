@@ -66,6 +66,19 @@
   overflow-wrap: anywhere;
   min-width: 0;
 }
+/* Wąska kolumna boczna Dashboardu (okno ok. 900–1150 px): tytuł nie łamie się
+   po literze, tylko liczby schodzą pod niego (karta „Zagrożone teraz”). */
+.dashboard-side .dashboard-count {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.dashboard-side .dashboard-count > span {
+  flex: 1 1 12ch;
+}
+.dashboard-side .dashboard-count > strong {
+  margin-left: auto;
+  white-space: nowrap;
+}
 .dashboard-top {
   margin-top: 20px;
 }

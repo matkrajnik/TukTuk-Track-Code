@@ -32,6 +32,7 @@ import {
 } from "./store";
 import { clock, dayKey, dayBounds, dayText, inDay } from "./time";
 import { plannedTasks } from "./dayplan";
+import { nextWorkDay } from "./review";
 import { corrections } from "./estimates";
 import {
   dayTarget,
@@ -50,6 +51,7 @@ import DayTimeline from "./components/DayTimeline.vue";
 import WeekBoard from "./components/WeekBoard.vue";
 import WeekReview from "./components/WeekReview.vue";
 import { useReorder } from "./composables/useReorder";
+import { useWideLayout } from "./layout";
 const props = defineProps<{
   data: Snapshot;
   now: number;
@@ -70,6 +72,11 @@ const emit = defineEmits<{
   weekReviewShown: [];
 }>();
 const day = ref(dayKey(props.now));
+/** Po północy wybrany „dziś” przechodzi na nowy dzień, wybrany ręcznie dzień zostaje. */
+const todayKey = computed(() => dayKey(props.now));
+watch(todayKey, (today, previous) => {
+  if (day.value === previous) day.value = today;
+});
 /** Poprawka szacunków (podpowiedź w rozwiniętym planie); przeliczana co minutę. */
 const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
 const correctionOf = computed(() => corrections(props.data, minute.value));
@@ -83,6 +90,11 @@ const expanded = ref(0);
 /** Zakładka Tydzień: tablica (domyślnie), podsumowanie albo przegląd tygodnia. */
 const weekView = ref<"board" | "summary" | "review">("board");
 const settings = useSettings();
+/** Tablica tygodnia zajmuje całą szerokość okna (`main.wide`). */
+useWideLayout(
+  () =>
+    weekly.value && !closing.value && !morning.value && weekView.value === "board",
+);
 watch(
   () => props.dayClose,
   (open) => {
@@ -206,11 +218,8 @@ function shift(amount: number) {
   d.setDate(d.getDate() + amount);
   day.value = dayKey(+d);
 }
-function nextDay() {
-  const d = new Date(dayBounds(day.value)[0]);
-  d.setDate(d.getDate() + 1);
-  return dayKey(+d);
-}
+/** „Przełóż na …”: następny dzień roboczy (jak Rano i Zamknięcie dnia). */
+const nextDay = computed(() => nextWorkDay(settings.value, day.value));
 const intervals = computed(() => {
   const [start, end] = dayBounds(day.value);
   return props.data.sessions
@@ -483,10 +492,10 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
             v-if="!task.done"
             class="today-button"
             :disabled="busy"
-            @click="plan(task, nextDay())"
+            @click="plan(task, nextDay)"
           >
             <CalendarArrowUp :size="14" />Przełóż na
-            {{ dayText(nextDay()) }}</button
+            {{ dayText(nextDay) }}</button
           ><button
             class="today-button"
             :disabled="busy"

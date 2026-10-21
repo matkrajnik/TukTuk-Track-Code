@@ -18,7 +18,7 @@ import {
   type Snapshot,
 } from "./store";
 import { compareTasks } from "./order";
-import { redmineKey } from "./issue";
+import { redmineKey, taskMatches } from "./issue";
 import { dayKey } from "./time";
 import {
   blockingError,
@@ -46,9 +46,7 @@ const matches = computed(() =>
       (t) =>
         !t.done &&
         !t.archived &&
-        `${t.title} ${t.details?.project ?? ""}`
-          .toLocaleLowerCase("pl")
-          .includes(query.value.toLocaleLowerCase("pl")),
+        taskMatches(t, query.value),
     )
     .sort(compareTasks())
     .slice(0, 30),

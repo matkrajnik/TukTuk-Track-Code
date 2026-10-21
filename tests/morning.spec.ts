@@ -173,8 +173,10 @@ test("przegląd dnia: kroki, przeniesienie niedokończonych i „Wszystkie na dz
   );
   await expect(today).toContainText("Cel 8:00 · spotkania 1:15 · zostaje 6:45");
 
-  // „Jutro”: następny dzień roboczy (piątek), tylko plan zadania.
-  await review.getByRole("button", { name: "Jutro: Wdrożenie etykiet" }).click();
+  // „Na pt., 16 paź”: następny dzień roboczy (piątek), tylko plan zadania.
+  await review
+    .getByRole("button", { name: "Na pt., 16 paź: Wdrożenie etykiet" })
+    .click();
   await expect(unfinished.locator(".morning-row")).toHaveCount(1);
   let data = await stored(page);
   expect(task(data, ids.labels).plannedDay).toBe("2026-10-16");

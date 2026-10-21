@@ -82,3 +82,25 @@ export function dueChip(due: string | null | undefined): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(due?.trim() ?? "");
   return match ? `${match[3]}.${match[2]}` : "";
 }
+
+/** Pola zadania przeszukiwane przez `taskMatches`. */
+export interface SearchableTask extends IssueFields {
+  title: string;
+  details?: { project?: string } | null;
+}
+
+/**
+ * Wspólne dopasowanie wyszukiwania zadań (Zadania, Ctrl+K, tablica tygodnia):
+ * tytuł, projekt i klucz zgłoszenia (`WMS-12`, `#1234`). Każde słowo zapytania
+ * musi wystąpić w którymś z tych pól, bez rozróżniania wielkości liter, więc
+ * „wms import” znajdzie zadanie „Import” z projektu WMS. Puste zapytanie
+ * pasuje do wszystkiego.
+ */
+export function taskMatches(task: SearchableTask, query: string): boolean {
+  const words = query.toLocaleLowerCase("pl").split(/\s+/).filter(Boolean);
+  if (!words.length) return true;
+  const text = [task.title, task.details?.project ?? "", issueRef(task)?.key ?? ""]
+    .join("\n")
+    .toLocaleLowerCase("pl");
+  return words.every((word) => text.includes(word));
+}

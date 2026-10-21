@@ -36,7 +36,14 @@ import {
   type Snapshot,
   type Task,
 } from "../store";
-import { clock, dayBounds, dayKey, inDay } from "../time";
+import { clock, dayBounds, dayKey, dayText, inDay } from "../time";
+import { taskMatches } from "../issue";
+import {
+  doneMoments,
+  groupByDoneDay,
+  recentDoneFrom,
+  RECENT_DONE_DAYS,
+} from "../done";
 import { dayGoal } from "../capacity";
 import { corrections } from "../estimates";
 import { useMeetings } from "../composables/useMeetings";
@@ -151,7 +158,11 @@ const upcomingMeetings = computed(() => {
 });
 /** Ręczne spotkanie (B12): `null` = nowe, spotkanie = edycja; `false` = zamknięte. */
 const meetingEditor = ref<CalendarEvent | null | false>(false);
-const visible = computed(() =>
+/**
+ * Zadania po filtrach i wyszukiwaniu (tytuł, projekt, klucz zgłoszenia), także
+ * ukończone dawniej niż 30 dni; `visible` ukrywa te ostatnie bez „Pokaż starsze”.
+ */
+const matching = computed(() =>
   props.data.tasks.filter(
     (t) =>
       !t.archived &&
@@ -171,10 +182,28 @@ const visible = computed(() =>
         props.data.sessions.some(
           (s) => s.taskId === t.id && inDay(s, todayKey.value, props.now) > 0,
         )) &&
-      t.title
-        .toLocaleLowerCase("pl")
-        .includes(query.value.toLocaleLowerCase("pl")),
+      taskMatches(t, query.value),
   ),
+);
+/** „Pokaż starsze”: ukończone zadania sprzed ostatnich 30 dni. */
+const showOlder = ref(false);
+/** Chwile ukończenia; trwający pomiar ukończonego zadania nie istnieje, więc wystarczy minuta. */
+const doneAt = computed(() =>
+  doneMoments(
+    props.data.tasks,
+    props.data.sessions,
+    Math.floor(props.now / 60_000) * 60_000,
+  ),
+);
+const recentFrom = computed(() => recentDoneFrom(todayKey.value));
+const recentDone = (t: Task) =>
+  dayKey(doneAt.value.get(t.id) ?? t.createdAt) >= recentFrom.value;
+const visible = computed(() =>
+  matching.value.filter((t) => !t.done || showOlder.value || recentDone(t)),
+);
+/** Ukończone zadania ukryte przez limit 30 dni (po filtrach i wyszukiwaniu). */
+const olderDone = computed(
+  () => matching.value.filter((t) => t.done && !recentDone(t)).length,
 );
 const elapsed = (s: Session) =>
   Math.max(0, (s.endedAt ?? props.now) - s.startedAt);
@@ -201,10 +230,16 @@ const taskGroups = computed(() =>
     { name: "Ukończone", tasks: visible.value.filter((t) => t.done) },
   ]
     .filter((group) => group.tasks.length)
-    .map((group) => ({
-      ...group,
-      tasks: sortTasks(group.tasks, active.value?.taskId),
-    })),
+    .map((group) => {
+      const tasks = sortTasks(group.tasks, active.value?.taskId);
+      // Ukończone: podgrupy po dniu ukończenia (najnowszy dzień pierwszy);
+      // ręczna kolejność działa w obrębie jednego dnia.
+      const parts =
+        group.name === "Ukończone"
+          ? groupByDoneDay(tasks, doneAt.value)
+          : [{ day: "", tasks }];
+      return { ...group, tasks, parts };
+    }),
 );
 
 const reorder = useReorder({
@@ -226,6 +261,7 @@ watch(
   async (request) => {
     if (!request) return;
     filter.value = "active";
+    showOlder.value = false;
     query.value = "";
     projectFilter.value = "";
     todayOnly.value = request.filter === "today" || request.filter === "due";
@@ -570,8 +606,12 @@ async function priority(task: Task, e: Event) {
       <h2 class="task-group-heading">
         {{ group.name }} <span>{{ group.tasks.length }}</span>
       </h2>
+      <template v-for="part in group.parts" :key="part.day">
+      <h3 v-if="part.day" class="done-day-heading">
+        {{ dayText(part.day) }}
+      </h3>
       <TaskCard
-        v-for="task in group.tasks"
+        v-for="task in part.tasks"
         :key="task.id"
         :task="task"
         :sessions="taskSessions(data, task.id)"
@@ -583,9 +623,9 @@ async function priority(task: Task, e: Event) {
         :today-key="todayKey"
         :projects="projects"
         :correction="correctionOf"
-        v-bind="reorder.dropProps(group.tasks, task, group.name)"
-        @move="!busy && reorder.move(group.tasks, task.id, $event)"
-        @dragstart="reorder.start($event, task.id, group.name)"
+        v-bind="reorder.dropProps(part.tasks, task, group.name + part.day)"
+        @move="!busy && reorder.move(part.tasks, task.id, $event)"
+        @dragstart="reorder.start($event, task.id, group.name + part.day)"
         @dragend="reorder.end()"
         @toggle="toggle(task.id)"
         @act="act($event, task.id)"
@@ -596,10 +636,39 @@ async function priority(task: Task, e: Event) {
         @updated="emit('updated', $event)"
         @error="emit('error', $event)"
       />
+      </template>
     </section>
+    <p
+      v-if="!loading && filter !== 'active' && (olderDone || showOlder)"
+      class="done-older"
+    >
+      <span class="hint">{{
+        showOlder
+          ? "Wszystkie ukończone zadania."
+          : `Ukończone z ostatnich ${RECENT_DONE_DAYS} dni.`
+      }}</span
+      ><button
+        type="button"
+        class="secondary-button"
+        :aria-pressed="showOlder"
+        @click="showOlder = !showOlder"
+      >
+        {{
+          showOlder
+            ? `Tylko ostatnie ${RECENT_DONE_DAYS} dni`
+            : `Pokaż starsze (${olderDone})`
+        }}
+      </button>
+    </p>
     <p v-if="loading" class="empty-state">Wczytywanie…</p>
     <p v-else-if="!visible.length" class="empty-state">
-      {{ query ? "Brak pasujących zadań." : "Brak zadań w tym widoku." }}
+      {{
+        query
+          ? "Brak pasujących zadań."
+          : olderDone
+            ? `Brak zadań ukończonych w ostatnich ${RECENT_DONE_DAYS} dniach.`
+            : "Brak zadań w tym widoku."
+      }}
     </p>
   </div>
 </template>

@@ -29,6 +29,11 @@ export interface Task {
   redmineDue?: string | null;
   details?: TaskDetails;
   archived?: boolean;
+  /**
+   * Chwila ukończenia (ms), tylko dla ukończonych zadań. Brak dla zadań
+   * ukończonych przed 2.0: dzień ukończenia liczy wtedy `doneMoments` (`done.ts`).
+   */
+  doneAt?: number | null;
 }
 export interface TaskDetails {
   priority: number;

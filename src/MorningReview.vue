@@ -232,11 +232,11 @@ const reviewedAt = computed(() =>
         ><button
           class="today-button"
           :disabled="busy"
-          :aria-label="'Jutro: ' + task.title"
-          :title="'Przenieś na ' + dayText(next)"
+          :aria-label="'Na ' + dayText(next) + ': ' + task.title"
+          title="Przenieś na następny dzień roboczy"
           @click="toDay(task, next)"
         >
-          Jutro</button
+          Na {{ dayText(next) }}</button
         ><button
           class="today-button"
           :disabled="busy"

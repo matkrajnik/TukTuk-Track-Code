@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { duration, type Snapshot, type Task } from "../store";
 import { issueRef } from "../issue";
@@ -34,6 +34,11 @@ const settings = useSettings();
 
 const monthOf = (day: string) => day.slice(0, 7);
 const month = ref(monthOf(dayKey(props.now)));
+/** Po północy (i nowym miesiącu) bieżący miesiąc przechodzi dalej; wybrany ręcznie zostaje. */
+const todayKey = computed(() => dayKey(props.now));
+watch(todayKey, (today, previous) => {
+  if (month.value === monthOf(previous)) month.value = monthOf(today);
+});
 const days = computed(() => monthDays(month.value));
 const label = computed(() => {
   const [y, m] = month.value.split("-").map(Number);

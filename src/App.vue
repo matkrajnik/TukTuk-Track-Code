@@ -43,6 +43,7 @@ import {
   duration,
 } from "./store";
 import { dayKey } from "./time";
+import { wideLayout } from "./layout";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -93,6 +94,30 @@ watch(data, () => void refreshFocus());
 watch(todayKey, (day, previous) => {
   if (selectedDay.value === previous) selectedDay.value = day;
 });
+
+/**
+ * Przełączenie widoku zaczyna nowy widok od góry strony (B2). Widoki
+ * zachowane w `KeepAlive` (Zadania, Raporty) wracają w miejsce, w którym je
+ * zostawiono. Pozycję zapisujemy przed zmianą DOM, przewijamy po niej.
+ */
+const keptViews: View[] = ["tasks", "reports"];
+const scrollPositions = new Map<View, number>();
+watch(
+  view,
+  (_next, previous) => {
+    if (keptViews.includes(previous))
+      scrollPositions.set(previous, window.scrollY);
+  },
+  { flush: "pre" },
+);
+watch(
+  view,
+  (next) => {
+    const top = keptViews.includes(next) ? (scrollPositions.get(next) ?? 0) : 0;
+    window.scrollTo({ top, left: 0, behavior: "instant" });
+  },
+  { flush: "post" },
+);
 
 function updated(next: Snapshot) {
   data.value = next;
@@ -301,7 +326,7 @@ onUnmounted(() => {
       @stop="act('stop')"
       @error="error = $event"
     />
-    <main id="main" tabindex="-1">
+    <main id="main" tabindex="-1" :class="{ wide: wideLayout }">
       <IdleBanner
         :tasks="data.tasks"
         @updated="updated"

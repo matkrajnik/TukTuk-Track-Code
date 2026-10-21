@@ -167,7 +167,7 @@ test("day closing saves multiple notes, reports decimal time and moves unfinishe
   );
   await page
     .getByRole("button", {
-      name: "Przenieś niedokończone na jutro",
+      name: "Przenieś niedokończone na czw., 15 paź",
       exact: true,
     })
     .click();

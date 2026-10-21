@@ -100,6 +100,8 @@ export async function change(
         s.endedAt = Math.max(now, s.startedAt);
     });
     task.done = !task.done;
+    // Jak `task_done` w Rust: chwila ukończenia tylko dla ukończonego zadania.
+    task.doneAt = task.done ? now : null;
   } else if (action === "delete") {
     if (task) {
       data.sessions.forEach((s) => {

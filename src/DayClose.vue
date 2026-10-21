@@ -22,6 +22,7 @@ import {
   type Snapshot,
 } from "./store";
 import { clock, dayBounds, dayKey, dayText, inDay } from "./time";
+import { nextWorkDay } from "./review";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 import { copyReport } from "./clipboard";
 import { dayGoal } from "./capacity";
@@ -121,6 +122,8 @@ function addMeeting(m: (typeof meetings.value)[number]) {
 const activeTasks = computed(() => props.data.tasks.filter((t) => !t.archived));
 /** Informacja o celu dnia; nie blokuje zamknięcia. */
 const targetText = computed(() => targetMessage(total.value, target.value));
+/** Niedokończony plan idzie na następny dzień roboczy (piątek → poniedziałek). */
+const nextDay = computed(() => nextWorkDay(settings.value, props.day));
 const unfinished = computed(() =>
   props.data.tasks.filter(
     (t) => !t.done && !t.archived && t.details?.plannedDay === props.day,
@@ -201,13 +204,12 @@ async function saveNotes() {
 }
 async function move() {
   await run(async () => {
-    const date = new Date(dayBounds(props.day)[0]);
-    date.setDate(date.getDate() + 1);
+    const target = nextDay.value;
     let next = props.data;
     for (const task of unfinished.value)
       next = await saveDetails(task.id, {
         ...detailsOf(task),
-        plannedDay: dayKey(+date),
+        plannedDay: target,
       });
     emit("updated", next);
   });
@@ -320,13 +322,17 @@ async function move() {
       />
     </template>
     <h3>Niedokończony plan</h3>
-    <p>{{ unfinished.length }} zadań do przeniesienia na następny dzień.</p>
+    <p>
+      {{ unfinished.length }} zadań do przeniesienia na następny dzień roboczy
+      ({{ dayText(nextDay) }}).
+    </p>
     <button
       class="secondary-button close-step-action"
       :disabled="busy || !unfinished.length"
       @click="move"
     >
-      <CalendarArrowUp :size="14" />Przenieś niedokończone na jutro
+      <CalendarArrowUp :size="14" />Przenieś niedokończone na
+      {{ dayText(nextDay) }}
     </button>
     <h3>Raport TS</h3>
     <textarea
