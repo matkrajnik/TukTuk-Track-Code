@@ -8,6 +8,7 @@ import { onMounted, onUnmounted, ref } from "vue";
 import WorkSection from "./settings/WorkSection.vue";
 import FocusSection from "./settings/FocusSection.vue";
 import WindowsSection from "./settings/WindowsSection.vue";
+import AgentsSection from "./settings/AgentsSection.vue";
 import JiraSection from "./settings/JiraSection.vue";
 import RedmineSection from "./settings/RedmineSection.vue";
 import TimesheetSection from "./settings/TimesheetSection.vue";
@@ -72,6 +73,7 @@ onUnmounted(() => {
     <WorkSection v-if="section === 'work'" v-model:settings="settings" />
     <FocusSection v-if="section === 'focus'" v-model:settings="settings" />
     <WindowsSection v-if="section === 'windows'" v-model:settings="settings" />
+    <AgentsSection v-if="section === 'agents'" v-model:settings="settings" />
     <JiraSection v-if="section === 'jira'" v-model:settings="settings" />
     <RedmineSection v-if="section === 'redmine'" v-model:settings="settings" />
     <TimesheetSection

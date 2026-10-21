@@ -844,6 +844,12 @@ Section Uninstall
     Delete "$INSTDIR\\{{this.[1]}}"
   {{/each}}
 
+  ; Todo Track: wpisy hooków agentów w plikach Claude Code i Codexa (B8) znikają
+  ; przy odinstalowaniu, ale nie przy aktualizacji (aplikacja dopisuje je sama).
+  ${If} $UpdateMode <> 1
+    ExecWait '"$INSTDIR\todo-track-hook.exe" --uninstall'
+  ${EndIf}
+
   ; Delete external binaries
   {{#each binaries}}
     Delete "$INSTDIR\\{{this}}"

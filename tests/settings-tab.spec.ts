@@ -19,6 +19,7 @@ const sections = [
   "Okna",
   "Skróty",
   "Uruchamianie",
+  "Agenci",
 ];
 const navButton = (page: Page, name: string) =>
   page

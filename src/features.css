@@ -2911,3 +2911,25 @@ html.widget-root body {
   font-family: inherit;
   font-size: var(--fs-xs);
 }
+/* Ustawienia → Agenci (B8). */
+.agent-hooks-status {
+  margin: 4px 0 8px;
+  font-size: var(--fs-sm);
+  display: grid;
+  gap: 2px;
+}
+.agent-hooks-trust.untrusted,
+.agent-hooks-trust.partial {
+  color: var(--warning);
+}
+.agent-hooks-trust.trusted {
+  color: var(--accent);
+}
+.agent-hooks-events {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  font-size: var(--fs-sm);
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}

@@ -18,6 +18,7 @@ import {
   type Snapshot,
 } from "./store";
 import { dayKey } from "./time";
+import { previewHookAgents } from "./preview/hooks";
 
 /** Odpowiednik `Match` z src-tauri/src/agents.rs: zadanie, nad którym pracuje agent. */
 export interface AgentTask {
@@ -122,6 +123,8 @@ async function previewAgents(): Promise<Agent[]> {
   } catch {
     list = [];
   }
+  // Zdarzenia hooków z fixture przechodzą przez tę samą maszynę stanów co w Rust.
+  list = [...list, ...previewHookAgents(Date.now())];
   const data = await read();
   const bindings = previewBindings();
   return list.map(({ session, ...agent }) => {

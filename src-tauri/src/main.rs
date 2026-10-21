@@ -12,6 +12,9 @@ mod export;
 mod focus;
 mod foreground;
 mod holidays;
+mod hook_wire;
+mod hooks;
+mod hooks_config;
 mod idle;
 mod jira;
 mod jira_board;
@@ -479,6 +482,7 @@ fn main() {
             reminder::setup(app.handle());
             idle::setup(app.handle());
             agents::setup(app.handle());
+            hooks::setup(app.handle());
             suggest::setup(app.handle());
             foreground::setup(app.handle());
             browser::setup(app.handle());
@@ -497,6 +501,9 @@ fn main() {
             reminder::start(app.handle());
             idle::start(app.handle());
             agents::start(app.handle());
+            // Hooki agentów (B8): potok ze zdarzeniami i wpisy w plikach Claude Code i Codexa.
+            hooks::start(app.handle());
+            hooks::sync(app.handle(), &settings::current(app.handle()));
             notify::start(app.handle());
             focus::start(app.handle());
             // Rozszerzenie przeglądarki (W4): potok dla hosta i wpisy w rejestrze
@@ -592,6 +599,7 @@ fn main() {
             idle::idle_notice,
             idle::idle_resolve,
             agents::agents_status,
+            hooks::agent_hooks_status,
             browser::browser_status,
             browser::browser_open_folder,
             agents::agent_bindings,
@@ -723,6 +731,7 @@ mod tests {
             "reminder::start(",
             "idle::start(",
             "agents::start(",
+            "hooks::start(",
             "notify::start(",
             "jira::start(",
         ] {
@@ -735,6 +744,7 @@ mod tests {
             "reminder::setup(",
             "idle::setup(",
             "agents::setup(",
+            "hooks::setup(",
             "notify::setup(",
         ] {
             let at = setup.find(call).unwrap_or_else(|| panic!("brak {call}"));

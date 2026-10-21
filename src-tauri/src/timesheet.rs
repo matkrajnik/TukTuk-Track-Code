@@ -1506,11 +1506,13 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        let keys: Vec<String> = serde_json::from_str::<serde_json::Map<String, Value>>(&raw)
+        let mut keys: Vec<String> = serde_json::from_str::<serde_json::Map<String, Value>>(&raw)
             .unwrap()
             .keys()
             .cloned()
             .collect();
+        // Mapa serde_json zachowuje kolejność zapisu (preserve_order): porównujemy zbiór kluczy.
+        keys.sort();
         assert_eq!(keys, ["apiUrl", "deviceId", "deviceName", "login"]);
     }
 

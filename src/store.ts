@@ -21,6 +21,7 @@ import {
   templateEvent,
   widgetEvent,
   type AgentBinding,
+  type AgentHooksStatus,
   type Autostart,
   type BrowserStatus,
   type ExportFormat,
@@ -89,6 +90,7 @@ import { snapshotKey } from "./preview/snapshot";
 import * as tasksSim from "./preview/tasks";
 import * as templatesSim from "./preview/templates";
 import * as agentsSim from "./preview/agents";
+import * as hooksSim from "./preview/hooks";
 import * as calendarSim from "./preview/calendar";
 import * as jiraSim from "./preview/jira";
 import { previewJiraKey } from "./preview/jira-state";
@@ -113,6 +115,7 @@ export {
   previewBindings,
   agentSessionsKey,
 } from "./preview/agents";
+export { agentHooksKey } from "./preview/hooks";
 export { calendarKey, previewCalendarEmail } from "./preview/calendar";
 export {
   previewJiraKey,
@@ -612,6 +615,11 @@ export async function weekNote(week: string): Promise<string> {
 export async function saveWeekNote(week: string, text: string): Promise<string> {
   if (desktop) return invoke("week_note_save", { week, text });
   return tasksSim.saveWeekNote(week, text);
+}
+/** `agent_hooks_status`: rejestracja hooków agentów, zaufanie Codexa i ostatnie zdarzenia. */
+export async function agentHooksStatus(): Promise<AgentHooksStatus> {
+  if (desktop) return invoke("agent_hooks_status");
+  return hooksSim.agentHooksStatus();
 }
 /** `browser_status`: stan wyłącznika, rejestracji i ostatniego sygnału. */
 export async function browserStatus(): Promise<BrowserStatus> {

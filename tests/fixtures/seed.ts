@@ -35,6 +35,8 @@ export const REDMINE_KEY = "todo-track-preview-redmine-v1";
 export const PREVIEW_KEY = "todo-track-preview-v1";
 export const SETTINGS_KEY = "todo-track-preview-settings-v1";
 export const AGENTS_KEY = "todo-track-preview-agents-v1";
+/** Zdarzenia hooków agentów w podglądzie (B8): `{ events, codexTrust?, claude?, codex? }`. */
+export const AGENT_HOOKS_KEY = "todo-track-preview-agent-hooks-v1";
 
 /** Chwila w czasie polskim (CEST) jako znacznik ms, np. `at("2026-10-15", "11:00")`. */
 export const at = (day: string, time: string) =>
@@ -564,6 +566,8 @@ export interface PreviewOptions extends SeedOptions {
   settings?: Record<string, unknown>;
   /** Pracujący agenci AI w podglądzie. */
   agents?: unknown[];
+  /** Zdarzenia hooków agentów (B8), np. `{ events: [...] }`; zasilają kafelek Agenci AI. */
+  agentHooks?: Record<string, unknown>;
   /** Kalendarz Microsoft w podglądzie, np. `calendarFixture()`. */
   calendar?: unknown;
   /** Ręczne spotkania w podglądzie (B12), np. `manualMeetings()`. */
@@ -595,7 +599,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY, AGENT_HOOKS_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
@@ -605,6 +609,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
         options.ts ? JSON.stringify(options.ts) : null,
         options.redmine ? JSON.stringify(options.redmine) : null,
         options.meetings ? JSON.stringify(options.meetings) : null,
+        options.agentHooks ? JSON.stringify(options.agentHooks) : null,
       ],
     ] as const,
   );

@@ -272,6 +272,20 @@ export const settingsSections = [
       "plan dnia",
     ],
   },
+  {
+    id: "agents",
+    name: "Agenci",
+    labels: [
+      "hooki",
+      "Claude Code",
+      "Codex",
+      "agenci AI",
+      "zatwierdzenie hooków",
+      "/hooks",
+      "ostatnie zdarzenia",
+      "Hooki agentów (Claude Code, Codex)",
+    ],
+  },
 ] as const;
 
 export type SettingsSection = (typeof settingsSections)[number]["id"];

@@ -616,7 +616,7 @@ pub fn start(app: &tauri::AppHandle) {
 }
 
 #[cfg(windows)]
-mod pipe {
+pub(crate) mod pipe {
     use crate::native_msg::{write_frame, MAX};
     use serde_json::Value;
     use std::ffi::c_void;
@@ -829,7 +829,7 @@ mod pipe {
 }
 
 #[cfg(not(windows))]
-mod pipe {
+pub(crate) mod pipe {
     use serde_json::Value;
     pub fn serve(_name: &str, _handle: impl Fn(&[u8]) -> Value) -> Result<(), String> {
         Err("tylko Windows".into())

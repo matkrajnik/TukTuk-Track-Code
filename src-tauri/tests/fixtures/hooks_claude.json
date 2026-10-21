@@ -1,0 +1,12 @@
+[
+  {"at":0,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","transcript_path":"C:\\Users\\jan\\.claude\\projects\\app\\c1111111-aaaa.jsonl","hook_event_name":"SessionStart","source":"startup"}},
+  {"at":1000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","transcript_path":"C:\\Users\\jan\\.claude\\projects\\app\\c1111111-aaaa.jsonl","hook_event_name":"UserPromptSubmit","prompt":"Napraw eksport do Excela w zadaniu WMS-12 i dopisz test"}},
+  {"at":2000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"cargo test","description":"Uruchom testy"},"tool_use_id":"toolu_01"}},
+  {"at":3000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"SubagentStart","agent_id":"agent-7","agent_type":"Explore"}},
+  {"at":4000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"PreToolUse","agent_id":"agent-7","agent_type":"Explore","tool_name":"Grep","tool_input":{"pattern":"export"}}},
+  {"at":5000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"Notification","notification_type":"permission_prompt","message":"Claude needs your permission to use Bash"}},
+  {"at":20000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"cargo test"},"tool_response":{"stdout":"ok"}}},
+  {"at":30000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"SubagentStop","agent_id":"agent-7","agent_type":"Explore"}},
+  {"at":40000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","permission_mode":"default","hook_event_name":"Stop","stop_hook_active":false}},
+  {"at":50000,"payload":{"session_id":"c1111111-aaaa","cwd":"C:\\Projekty\\app","hook_event_name":"SessionEnd","reason":"prompt_input_exit"}}
+]

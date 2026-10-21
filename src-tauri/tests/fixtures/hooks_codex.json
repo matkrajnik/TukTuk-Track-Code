@@ -1,0 +1,8 @@
+[
+  {"at":0,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","transcript_path":"C:\\Users\\jan\\.codex\\sessions\\2026\\10\\21\\rollout-1.jsonl","hook_event_name":"SessionStart","model":"gpt-5","source":"startup"}},
+  {"at":1000,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","hook_event_name":"UserPromptSubmit","model":"gpt-5","prompt":"Dodaj endpoint /health"}},
+  {"at":2000,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","hook_event_name":"PreToolUse","tool_name":"shell","tool_input":{"command":["ls"]}}},
+  {"at":3000,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","hook_event_name":"PermissionRequest","tool_name":"shell","tool_input":{"command":["rm","-rf","target"]}}},
+  {"at":9000,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","hook_event_name":"PostToolUse","tool_name":"shell","tool_response":{"output":""}}},
+  {"at":12000,"payload":{"session_id":"019aaaaa-0000","turn_id":"turn-1","cwd":"C:\\Projekty\\api","hook_event_name":"Interrupt"}}
+]

@@ -14,6 +14,8 @@ export interface AppSettings {
   windowSuggest: boolean;
   /** Rozszerzenie przeglądarki Chrome i Edge (wpisy hosta w rejestrze, W4). */
   browserExtension: boolean;
+  /** Hooki agentów (Claude Code, Codex): wpisy w ich plikach ustawień (B8). */
+  agentHooks: boolean;
   targetDayMinutes: number;
   workDays: number[];
   /** Święta ustawowe nie są dniami roboczymi w celu. */
@@ -104,6 +106,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   agentMutedFolders: [],
   windowSuggest: false,
   browserExtension: false,
+  agentHooks: true,
   targetDayMinutes: 480,
   workDays: [1, 2, 3, 4, 5],
   holidaysInTarget: true,

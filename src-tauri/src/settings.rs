@@ -22,6 +22,9 @@ pub struct AppSettings {
     /// Rozszerzenie przeglądarki Chrome i Edge (W4): rejestracja hosta native
     /// messaging w HKCU i propozycje ze źródłem „Przeglądarka”.
     pub browser_extension: bool,
+    /// Hooki agentów (B8): wpisy w `~/.claude/settings.json` i `~/.codex/hooks.json`,
+    /// z których aplikacja wie, że agent pracuje albo czeka na zgodę.
+    pub agent_hooks: bool,
     pub target_day_minutes: u32,
     pub work_days: Vec<u8>,
     /// Polskie święta ustawowe nie są dniami roboczymi w celu dnia, tygodnia i miesiąca.
@@ -150,6 +153,7 @@ impl Default for AppSettings {
             agent_muted_folders: Vec::new(),
             window_suggest: false,
             browser_extension: false,
+            agent_hooks: true,
             target_day_minutes: 480,
             work_days: vec![1, 2, 3, 4, 5],
             holidays_in_target: true,
@@ -608,6 +612,8 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     crate::suggest::refresh(&app, crate::db::now());
     // Rozszerzenie przeglądarki: wpisy hosta w rejestrze przy zmianie wyłącznika.
     crate::browser::sync(&app, &result);
+    // Hooki agentów: wpisy w plikach Claude Code i Codexa zgodne z wyłącznikiem.
+    crate::hooks::sync(&app, &result);
     Ok(result)
 }
 

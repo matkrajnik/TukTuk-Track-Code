@@ -243,6 +243,38 @@ export function templateFromTask(task: Task): TemplateBody {
     priority: d.priority,
   };
 }
+/** Ostatnie zdarzenie hooka agenta do diagnostyki (`hooks::Recent`, B8). */
+export interface HookEventRow {
+  at: number;
+  agent: string;
+  event: string;
+  /** Początek identyfikatora sesji. */
+  session: string;
+  cwd: string;
+  /** Subagent, typ powiadomienia albo faza po zdarzeniu. */
+  detail: string;
+}
+/** Rejestracja hooków w pliku jednego agenta (`hooks::AgentStatus`). */
+export interface AgentHooksFile {
+  /** Folder konfiguracji agenta istnieje (agent jest zainstalowany). */
+  found: boolean;
+  file: string;
+  /** `missing`, `stale` albo `current`. */
+  registration: string;
+  error: string;
+}
+/** Stan hooków agentów (`hooks::Status`, B8). */
+export interface AgentHooksStatus {
+  enabled: boolean;
+  /** Program todo-track-hook.exe leży obok aplikacji. */
+  exeFound: boolean;
+  error: string;
+  claude: AgentHooksFile;
+  codex: AgentHooksFile;
+  /** Zatwierdzenie hooków w Codexie (`/hooks`): `none`, `untrusted`, `partial`, `trusted`. */
+  codexTrust: string;
+  events: HookEventRow[];
+}
 /** Folder przypisany do zadania (`agents::Binding`, tabela `agent_bindings`). */
 export interface AgentBinding {
   folder: string;
