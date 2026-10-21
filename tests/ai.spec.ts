@@ -61,7 +61,7 @@ test("jedno wykryte CLI: dialog z Claude Code i Nie używaj, bez Codexa", async 
   await expect(dialog(page)).toContainText("subskrypcji");
   await expect(dialog(page)).toContainText("ukrywane");
   await expect(dialog(page)).toContainText("bez Twojego kliknięcia");
-  await expect(dialog(page).getByRole("button")).toHaveText(["Claude Code", "Nie używaj"]);
+  await expect(dialog(page).getByRole("button")).toHaveText(["Claude Code", "Nie używaj", "Później"]);
 });
 
 test("dwa wykryte CLI: wybór Codexa zapisany po przeładowaniu, dialog nie wraca", async ({ page }) => {
@@ -70,6 +70,7 @@ test("dwa wykryte CLI: wybór Codexa zapisany po przeładowaniu, dialog nie wrac
     "Claude Code",
     "Codex",
     "Nie używaj",
+    "Później",
   ]);
   await dialog(page).getByRole("button", { name: "Codex", exact: true }).click();
   await expect(dialog(page)).toHaveCount(0);
@@ -98,6 +99,13 @@ test("zamknięcie dialogu niczego nie zapisuje i aplikacja pyta przy następnym 
   // (znacznik obsługi i zdarzenia jest ten sam), więc zegar rusza o sekundę.
   await page.clock.setFixedTime(Date.parse(NOW) + 1000);
   await page.keyboard.press("Escape");
+  await expect(dialog(page)).toHaveCount(0);
+  expect((await stored(page, SETTINGS_KEY)).aiEngine ?? "").toBe("");
+  await page.reload();
+  await expect(dialog(page)).toBeVisible();
+  // „Później” też zamyka bez zapisu.
+  await page.clock.setFixedTime(Date.parse(NOW) + 2000);
+  await dialog(page).getByRole("button", { name: "Później" }).click();
   await expect(dialog(page)).toHaveCount(0);
   expect((await stored(page, SETTINGS_KEY)).aiEngine ?? "").toBe("");
   await page.reload();

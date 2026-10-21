@@ -76,6 +76,7 @@ fn loc() -> Locations {
 fn p(s: &str) -> PathBuf {
     PathBuf::from(s)
 }
+const AI_DIR: &str = r"C:\dane\ai";
 
 // ---------------------------------------------------------------------------
 // Wykrywanie
@@ -158,6 +159,12 @@ fn detect_uses_first_working_cli_and_reads_version() {
     let exists = |path: &Path| existing.iter().any(|e| path == Path::new(e));
     let runner = Fake::new(|spec| {
         assert_eq!(spec.args, vec!["--version".to_string()]);
+        // Także `--version` działa w katalogu AI i ze znacznikiem dla hooka.
+        assert_eq!(spec.cwd, Some(p(AI_DIR)));
+        assert_eq!(
+            spec.env,
+            vec![("TODO_TRACK_AI".to_string(), "1".to_string())]
+        );
         let program = spec.program.to_string_lossy().to_lowercase();
         if program.ends_with(r"tools\codex.exe") {
             // Pierwszy kandydat istnieje, ale nie działa: bierzemy następny.
@@ -168,7 +175,13 @@ fn detect_uses_first_working_cli_and_reads_version() {
             Ok(out(true, "codex-cli 0.162.1\n"))
         }
     });
-    let found = detect(&loc(), &AppSettings::default(), &exists, &runner);
+    let found = detect(
+        &loc(),
+        &AppSettings::default(),
+        &exists,
+        &runner,
+        &p(AI_DIR),
+    );
     let claude = found.claude.unwrap();
     assert_eq!(claude.path, r"C:\Users\ala\.local\bin\claude.exe");
     assert_eq!(claude.version, "2.1.304");
@@ -187,17 +200,17 @@ fn detect_uses_configured_path_last_and_reports_none() {
         ai_claude_path: r"D:\moje\claude.exe".into(),
         ..AppSettings::default()
     };
-    let found = detect(&loc(), &settings, &exists, &runner);
+    let found = detect(&loc(), &settings, &exists, &runner, &p(AI_DIR));
     assert_eq!(found.claude.unwrap().path, r"D:\moje\claude.exe");
     assert!(found.codex.is_none());
     // Brak plików: nic nie jest uruchamiane i nic nie wykryto.
     let none = Fake::fixed(Err(RunError::Timeout));
-    let found = detect(&loc(), &settings, &|_| false, &none);
+    let found = detect(&loc(), &settings, &|_| false, &none, &p(AI_DIR));
     assert_eq!(found, Detected::default());
     assert_eq!(none.count(), 0);
     // Błąd uruchomienia = kolejny kandydat, a na końcu brak.
     let broken = Fake::fixed(Err(RunError::Spawn("zablokowany".into())));
-    let found = detect(&loc(), &settings, &|_| true, &broken);
+    let found = detect(&loc(), &settings, &|_| true, &broken, &p(AI_DIR));
     assert!(!found.any());
 }
 
@@ -310,6 +323,10 @@ fn codex_command_line_matches_plan() {
             "read-only",
             "-C",
             r"C:\ai",
+            "-c",
+            "mcp_servers={}",
+            "-c",
+            "notify=[]",
             "-m",
             "gpt-5",
             "-o",
@@ -319,6 +336,17 @@ fn codex_command_line_matches_plan() {
     // Bez modelu nie ma `-m`.
     let args = codex_args(Path::new("s"), Path::new("o"), Path::new("d"), "");
     assert!(!args.contains(&"-m".to_string()));
+    // Serwery MCP z ~/.codex/config.toml są wyłączone także bez modelu.
+    assert!(args.windows(2).any(|w| w == ["-c", "mcp_servers={}"]));
+}
+
+#[test]
+fn timeout_kills_the_whole_process_tree() {
+    let (program, args) = kill_tree_spec(4321, Some(Path::new(r"C:\Windows")));
+    assert_eq!(program, p(r"C:\Windows\System32\taskkill.exe"));
+    assert_eq!(args, vec!["/T", "/F", "/PID", "4321"]);
+    let (program, _) = kill_tree_spec(1, None);
+    assert_eq!(program, p("taskkill.exe"));
 }
 
 #[test]
@@ -602,6 +630,46 @@ fn claude_run_redacts_input_restores_output_and_caches() {
     )
     .unwrap();
     assert_eq!(runner.count(), 3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cache_hit_restores_names_of_the_current_call() {
+    let dir = temp("cache-names");
+    let state = State::default();
+    let runner = Fake::fixed(Ok(out(true, CLAUDE_OK)));
+    let c = cfg("claude", &dir);
+    let mut d = Dictionary::new();
+    d.add_name("Jan Kowalski");
+    d.add_name("Anna Nowak");
+    let first = run(
+        &state,
+        &runner,
+        &c,
+        "assign",
+        "Spotkanie z Jan Kowalski",
+        &schema(),
+        &d,
+        1000,
+    )
+    .unwrap();
+    assert_eq!(first["note"], "Zadanie od Jan Kowalski");
+    // Ten sam tekst po filtrze („Osoba 1”), więc ten sam klucz pamięci, ale
+    // odpowiedź wraca z osobą z bieżącego promptu.
+    let second = run(
+        &state,
+        &runner,
+        &c,
+        "assign",
+        "Spotkanie z Anna Nowak",
+        &schema(),
+        &d,
+        2000,
+    )
+    .unwrap();
+    assert_eq!(runner.count(), 1);
+    assert!(state.calls()[0].cached);
+    assert_eq!(second["note"], "Zadanie od Anna Nowak");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -2,8 +2,8 @@
 /**
  * Dialog pierwszego uruchomienia asystenta AI (A1): wybór agenta (Claude Code,
  * Codex tylko gdy wykryty, „Nie używaj”). Wybór trafia do ustawienia `aiEngine`
- * i dialog nie wraca. Zamknięcie (Esc, kliknięcie poza oknem) nic nie zapisuje
- * i aplikacja zapyta przy następnym starcie.
+ * i dialog nie wraca. „Później” (także Esc, kliknięcie poza oknem) nic nie
+ * zapisuje i aplikacja zapyta przy następnym starcie.
  */
 import { ref } from "vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
@@ -67,6 +67,7 @@ async function choose(engine: "claude" | "codex" | "off") {
         Codex
       </button>
       <button :disabled="busy" @click="choose('off')">Nie używaj</button>
+      <button :disabled="busy" @click="emit('close')">Później</button>
     </div>
   </ConfirmDialog>
 </template>

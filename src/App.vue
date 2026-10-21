@@ -76,6 +76,8 @@ const aiAsk = ref<AiDetected | null>(null);
 /** Pyta o agenta tylko, gdy jeszcze nie wybrano i wykryto Claude Code albo Codex. */
 async function askAboutAi() {
   try {
+    // Wybór już zapisany (także „Nie używaj”): bez wykrywania i bez uruchamiania CLI.
+    if ((await readSettings()).aiEngine) return;
     const status = await aiStatus();
     if (status.ask) aiAsk.value = status.detected;
   } catch {

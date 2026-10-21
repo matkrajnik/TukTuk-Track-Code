@@ -223,19 +223,21 @@ pub fn parse_version(output: &str) -> String {
         .unwrap_or_else(|| line.chars().take(60).collect())
 }
 
-/// Pierwsze istniejące CLI z listy, które odpowiada na `--version`.
+/// Pierwsze istniejące CLI z listy, które odpowiada na `--version`. Także
+/// wykrywanie działa w katalogu AI i ze znacznikiem dla hooka.
 fn first_working(
     candidates: &[PathBuf],
     exists: &dyn Fn(&Path) -> bool,
     runner: &dyn Runner,
+    dir: &Path,
 ) -> Option<Cli> {
     candidates.iter().filter(|p| exists(p)).find_map(|path| {
         let spec = Spec {
             program: path.clone(),
             args: vec!["--version".into()],
             stdin: String::new(),
-            cwd: None,
-            env: Vec::new(),
+            cwd: Some(dir.to_path_buf()),
+            env: call_env(),
         };
         let output = runner.run(&spec, VERSION_TIMEOUT).ok()?;
         let version = parse_version(&output.stdout);
@@ -246,23 +248,27 @@ fn first_working(
     })
 }
 
-/// Wykrywa oba CLI. `exists` i `runner` są wstrzykiwane (testy).
+/// Wykrywa oba CLI. `exists` i `runner` są wstrzykiwane (testy); `dir` to
+/// katalog AI (roboczy katalog `--version`).
 pub fn detect(
     loc: &Locations,
     settings: &AppSettings,
     exists: &dyn Fn(&Path) -> bool,
     runner: &dyn Runner,
+    dir: &Path,
 ) -> Detected {
     Detected {
         claude: first_working(
             &claude_candidates(loc, &settings.ai_claude_path),
             exists,
             runner,
+            dir,
         ),
         codex: first_working(
             &codex_candidates(loc, &settings.ai_codex_path),
             exists,
             runner,
+            dir,
         ),
     }
 }
@@ -288,7 +294,8 @@ pub struct Spec {
     pub args: Vec<String>,
     /// Treść na stdin (prompt).
     pub stdin: String,
-    /// Katalog roboczy (`None` = bieżący katalog aplikacji; tylko `--version`).
+    /// Katalog roboczy (`None` = bieżący katalog aplikacji); aplikacja zawsze
+    /// podaje katalog AI.
     pub cwd: Option<PathBuf>,
     /// Dodatkowe zmienne środowiska procesu.
     pub env: Vec<(String, String)>,
@@ -316,6 +323,40 @@ pub trait Runner: Send + Sync {
 
 /// Prawdziwy proces, bez okna konsoli.
 pub struct Process;
+
+/// `taskkill /T /F /PID <pid>`: kończy proces razem z potomkami. Nakładka `.cmd`
+/// (np. `%APPDATA%\npm\codex.cmd`) to `cmd.exe`, a model działa w procesie
+/// potomnym, którego samo `kill` nie zatrzyma.
+pub fn kill_tree_spec(pid: u32, system_root: Option<&Path>) -> (PathBuf, Vec<String>) {
+    let program = system_root
+        .map(|root| root.join("System32").join("taskkill.exe"))
+        .unwrap_or_else(|| PathBuf::from("taskkill.exe"));
+    let args = ["/T", "/F", "/PID", &pid.to_string()]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    (program, args)
+}
+
+/// Zabija drzewo procesów po przekroczeniu czasu (tylko [`Process`]).
+fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+        let root = std::env::var_os("SystemRoot").map(PathBuf::from);
+        let (program, args) = kill_tree_spec(pid, root.as_deref());
+        let _ = Command::new(program)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+    #[cfg(not(windows))]
+    let _ = pid;
+}
 
 impl Runner for Process {
     fn run(&self, spec: &Spec, timeout: Duration) -> Result<Output, RunError> {
@@ -367,6 +408,7 @@ impl Runner for Process {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() > timeout => {
+                    kill_tree(child.id());
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(RunError::Timeout);
@@ -443,7 +485,8 @@ pub fn claude_args(schema: &Value, model: &str) -> Vec<String> {
 }
 
 /// `codex exec --json --output-schema <plik> --ephemeral --skip-git-repo-check
-/// -s read-only -C <katalog AI> [-m <model>] -o <plik>`; prompt idzie na stdin.
+/// -s read-only -C <katalog AI> -c mcp_servers={} -c notify=[] [-m <model>] -o <plik>`;
+/// prompt idzie na stdin.
 pub fn codex_args(schema_file: &Path, out_file: &Path, dir: &Path, model: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "exec".into(),
@@ -456,6 +499,12 @@ pub fn codex_args(schema_file: &Path, out_file: &Path, dir: &Path, model: &str) 
         "read-only".into(),
         "-C".into(),
         dir.to_string_lossy().into_owned(),
+        // Bez serwerów MCP i powiadomień z ~/.codex/config.toml: sandbox
+        // ogranicza tylko polecenia powłoki, nie narzędzia MCP (np. zapis w Jirze).
+        "-c".into(),
+        "mcp_servers={}".into(),
+        "-c".into(),
+        "notify=[]".into(),
     ];
     if !model.is_empty() {
         args.push("-m".into());
@@ -985,9 +1034,12 @@ fn run_inner(
     let (text, pseudonyms) = ai_privacy::redact(prompt, dict);
     call.length = text.chars().count();
     let key = cache_key(kind, engine, &cfg.model, schema, &text);
+    // Pamięć trzyma odpowiedź z pseudonimami; ten sam tekst po filtrze to ta
+    // sama numeracja „Osoba N”, więc przywracają ją pseudonimy tego wywołania
+    // (prompty różniące się tylko osobą dają ten sam klucz).
     if let Some(hit) = state.cached(&key) {
         call.cached = true;
-        return Ok(hit);
+        return Ok(pseudonyms.restore_value(&hit));
     }
     let Some(_guard) = state.acquire(kind) else {
         return Err(fail(call, "busy", BUSY.to_string()));
@@ -1048,7 +1100,7 @@ fn run_inner(
     }
     // Odpowiedź wraca do prawdziwych nazw dopiero tu, już po walidacji.
     let restored = pseudonyms.restore_value(&value);
-    state.store(key, restored.clone());
+    state.store(key, value);
     Ok(restored)
 }
 
@@ -1092,11 +1144,16 @@ pub fn dictionary(app: &tauri::AppHandle, settings: &AppSettings) -> Dictionary 
 /// Wykrywa CLI w prawdziwym systemie i zapamiętuje wynik.
 pub fn detect_now(app: &tauri::AppHandle) -> Detected {
     let settings = crate::settings::current(app);
+    // Bez katalogu AI `--version` nie rusza (żaden proces poza tym katalogiem).
+    let Some(ai_dir) = dir(app).filter(|d| std::fs::create_dir_all(d).is_ok()) else {
+        return Detected::default();
+    };
     let detected = detect(
         &Locations::from_env(),
         &settings,
         &|p| p.is_file(),
         &Process,
+        &ai_dir,
     );
     if let Some(state) = app.try_state::<State>() {
         state.set_detected(detected.clone());
