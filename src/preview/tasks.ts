@@ -21,6 +21,7 @@ import {
   type BrowserStatus,
   type ExportFormat,
   type ExportResult,
+  type DayNote,
   type GapMode,
   type NewTask,
   type PlanEntry,
@@ -619,6 +620,32 @@ export async function planTasks(entries: PlanEntry[]): Promise<Snapshot> {
   entries.forEach((e, i) => {
     const task = tasks[i]!;
     task.details = { ...detailsOf(task), plannedDay: e.day, order: e.order };
+  });
+  saveSnapshot(data);
+  return data;
+}
+/** Odpowiednik `planner::save_day_notes`: tylko `notes[day]`, wszystko albo nic. */
+export async function saveDayNotes(
+  day: string,
+  entries: DayNote[],
+): Promise<Snapshot> {
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(day) ||
+    dayKey(+new Date(day + "T12:00:00")) !== day ||
+    entries.length > 10000 ||
+    entries.some((e) => [...e.note].length > 4000)
+  )
+    throw new Error("Niepoprawne daty lub zbyt długa treść planu/notatki.");
+  const data = await read();
+  const tasks = entries.map((e) => data.tasks.find((t) => t.id === e.id));
+  if (tasks.some((t) => !t)) throw new Error("Nie znaleziono zadania.");
+  entries.forEach((e, i) => {
+    const task = tasks[i]!;
+    const details = detailsOf(task);
+    const notes = { ...details.notes };
+    if (e.note.trim()) notes[day] = e.note;
+    else delete notes[day];
+    task.details = { ...details, notes };
   });
   saveSnapshot(data);
   return data;

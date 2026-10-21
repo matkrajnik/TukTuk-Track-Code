@@ -1043,7 +1043,7 @@ pub fn start(app: &tauri::AppHandle) {
             }
             let messages = match app.state::<Database>().0.lock() {
                 Ok(db) => {
-                    let s = crate::settings::load(&db);
+                    let s = crate::settings::cached(&app, &db);
                     let now = crate::db::now();
                     let mut messages = clock.tick(&db, &s, &chrono::Local, now).unwrap_or_default();
                     if let Ok(Some(m)) = morning_review(&db, &s, &chrono::Local, now) {

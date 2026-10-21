@@ -82,8 +82,18 @@ const message = (e: unknown) => String(e instanceof Error ? e.message : e);
 
 const elapsed = (s: Session) =>
   Math.max(0, (s.endedAt ?? props.now) - s.startedAt);
-const taskTime = computed(() =>
-  props.sessions.reduce((sum, s) => sum + elapsed(s), 0),
+/** Zamknięte przedziały liczone raz na zmianę danych (B6); co sekundę tylko trwający. */
+const closedTime = computed(() =>
+  props.sessions.reduce(
+    (sum, s) => (s.endedAt === null ? sum : sum + elapsed(s)),
+    0,
+  ),
+);
+const openSession = computed(() =>
+  props.sessions.find((s) => s.endedAt === null),
+);
+const taskTime = computed(
+  () => closedTime.value + (openSession.value ? elapsed(openSession.value) : 0),
 );
 /** „Zapisz jako szablon”: formularz pod paskiem akcji. */
 const templateOpen = ref(false);

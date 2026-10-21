@@ -682,7 +682,7 @@ fn with<R>(
         .try_state::<State>()
         .ok_or("Brak stanu trybu skupienia.")?;
     let mut focus = state.0.lock().map_err(|e| e.to_string())?;
-    let settings = crate::settings::load(&db);
+    let settings = crate::settings::cached(app, &db);
     f(&mut db, &mut focus, &settings)
 }
 

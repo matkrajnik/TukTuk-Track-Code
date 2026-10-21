@@ -35,6 +35,7 @@ import {
   previewDataEvent,
   read,
   desktop,
+  onDataChanged,
   onNavigate,
   type NavigateRequest,
   type Snapshot,
@@ -288,7 +289,7 @@ onMounted(async () => {
             ?.focus();
         }),
       );
-      unsubscribers.push(await listen("data-changed", refresh));
+      unsubscribers.push(await onDataChanged(refresh));
       unsubscribers.push(
         await listen<string>("storage-error", (e) => {
           error.value = e.payload;

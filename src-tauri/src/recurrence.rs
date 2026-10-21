@@ -90,8 +90,15 @@ fn log_broken(id: i64, from: &str) -> bool {
 
 /// Tworzy zaległe i dzisiejsze wystąpienia wzorców. Wzorzec z nieparsowalnym
 /// początkiem cyklu jest pomijany (raz zalogowany), reszta działa dalej.
-pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
-    let settings = crate::settings::load(db);
+///
+/// Zwraca `true`, gdy coś zapisano (B6): nowe wystąpienie albo przesunięty
+/// `last_day`. Wzorzec sprawdzony już dziś (`last_day` równy `today` albo
+/// późniejszy) nie jest przeliczany ani zapisywany, więc wywołanie co minutę bez
+/// zmiany dnia nie zapisuje nic, a wywołujący emituje `data-changed` tylko przy zmianie.
+pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<bool, String> {
+    // Ustawienia (dni wolne) czytane tylko, gdy któryś wzorzec trzeba przeliczyć.
+    let mut settings: Option<AppSettings> = None;
+    let mut changed = false;
     let sources=db.prepare("SELECT t.id,t.title,d.json FROM tasks t JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id WHERE l.deleted_at IS NULL AND COALESCE(l.archived,0)=0").map_err(|e|e.to_string())?.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     let tx = db.transaction().map_err(|e| e.to_string())?;
     for (id, title, json) in sources {
@@ -112,8 +119,12 @@ pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
             )
             .optional()
             .map_err(|e| e.to_string())?;
+        let last = last.and_then(|v| NaiveDate::parse_from_str(&v, "%Y-%m-%d").ok());
+        if last.is_some_and(|day| day >= today) {
+            continue;
+        }
+        let settings = &*settings.get_or_insert_with(|| crate::settings::load(&tx));
         let mut date = last
-            .and_then(|v| NaiveDate::parse_from_str(&v, "%Y-%m-%d").ok())
             .and_then(|d| d.succ_opt())
             .unwrap_or(from)
             .max(from)
@@ -121,7 +132,8 @@ pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
         while date <= today {
             let key = date.to_string();
             let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM recurrence_occurrences WHERE source_id=?1 AND day=?2)",params![id,key],|r|r.get(0)).map_err(|e|e.to_string())?;
-            if occurs(&details, from, date, &settings) && !exists {
+            if occurs(&details, from, date, settings) && !exists {
+                changed = true;
                 let instance = if details.planned_day == key {
                     id
                 } else {
@@ -167,9 +179,13 @@ pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
         }
         if from <= today {
             tx.execute("INSERT INTO recurrence_state(task_id,last_day) VALUES(?1,?2) ON CONFLICT(task_id) DO UPDATE SET last_day=excluded.last_day",params![id,today.to_string()]).map_err(|e|e.to_string())?;
+            changed = true;
         }
     }
-    tx.commit().map_err(|e| e.to_string())
+    if changed {
+        tx.commit().map_err(|e| e.to_string())?;
+    }
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -201,6 +217,58 @@ mod tests {
         db::change(&mut conn, "archive", Some(1), None, 0).unwrap();
         generate(&mut conn, today + Duration::days(7)).unwrap();
         assert_eq!(db::snapshot(&conn).unwrap().tasks.len(), 3);
+    }
+
+    /// B6: `generate` zgłasza zmianę tylko wtedy, gdy coś zapisał. Drugie
+    /// wywołanie tego samego dnia nie zapisuje nic (ani wystąpień, ani
+    /// `last_day`), następny dzień przesuwa `last_day` i daje `true`, a cofnięty
+    /// zegar nie cofa `last_day`.
+    #[test]
+    fn generate_reports_changes_and_writes_nothing_without_them() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        db::change(&mut conn, "add", None, Some("Daily".into()), 0).unwrap();
+        db::change(&mut conn, "add", None, Some("Zwykłe".into()), 0).unwrap();
+        // Bez wzorców nie ma czego zapisywać.
+        assert!(!generate(&mut conn, d("2026-10-12")).unwrap());
+        crate::planner::save(
+            &mut conn,
+            1,
+            Details {
+                repeat_days: vec![1, 2, 3, 4, 5],
+                repeat_from: "2026-10-12".into(),
+                planned_day: "2026-10-12".into(),
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        let last_day = |conn: &Connection| -> String {
+            conn.query_row(
+                "SELECT last_day FROM recurrence_state WHERE task_id=1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert!(generate(&mut conn, d("2026-10-13")).unwrap());
+        assert_eq!(last_day(&conn), "2026-10-13");
+        let before = conn.total_changes();
+        assert!(!generate(&mut conn, d("2026-10-13")).unwrap());
+        assert!(!generate(&mut conn, d("2026-10-13")).unwrap());
+        assert_eq!(conn.total_changes(), before, "bez zmian nie ma zapisu");
+        // Sobota: zaległe wystąpienia środa–piątek i nowy `last_day`.
+        assert!(generate(&mut conn, d("2026-10-17")).unwrap());
+        assert_eq!(last_day(&conn), "2026-10-17");
+        let tasks = db::snapshot(&conn).unwrap().tasks.len();
+        // Zegar cofnięty o dzień: nic się nie zmienia.
+        let before = conn.total_changes();
+        assert!(!generate(&mut conn, d("2026-10-16")).unwrap());
+        assert_eq!(conn.total_changes(), before);
+        assert_eq!(last_day(&conn), "2026-10-17");
+        assert_eq!(db::snapshot(&conn).unwrap().tasks.len(), tasks);
+        // Poniedziałek: nowe wystąpienie.
+        assert!(generate(&mut conn, d("2026-10-19")).unwrap());
+        assert_eq!(db::snapshot(&conn).unwrap().tasks.len(), tasks + 1);
     }
 
     fn d(s: &str) -> NaiveDate {

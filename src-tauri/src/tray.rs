@@ -169,8 +169,19 @@ pub fn read_pins(db: &Connection) -> rusqlite::Result<Vec<Pin>> {
 }
 
 /// Czyta stan traya z bazy: aktywny pomiar, suma dnia (SQL, bez snapshotu) i cel.
+#[cfg(test)]
 pub fn read_status(
     db: &Connection,
+    today: chrono::NaiveDate,
+    now: i64,
+) -> rusqlite::Result<Status> {
+    read_status_with(db, &settings::load(db), today, now)
+}
+
+/// `read_status` z podanymi ustawieniami (w aplikacji z cache, B6).
+pub fn read_status_with(
+    db: &Connection,
+    s: &settings::AppSettings,
     today: chrono::NaiveDate,
     now: i64,
 ) -> rusqlite::Result<Status> {
@@ -183,12 +194,11 @@ pub fn read_status(
         )
         .optional()?
         .map(|(title, started)| (title, (now - started).max(0)));
-    let s = settings::load(db);
     Ok(Status {
         active,
         today_ms: stats::day_total_ms(db, today, now)?,
         // Cel dnia minus spotkania niepokryte pomiarem (`capacity::goal_ms_in`).
-        target_minutes: (crate::capacity::goal_ms_in(db, &chrono::Local, &s, today, now)? / 60_000)
+        target_minutes: (crate::capacity::goal_ms_in(db, &chrono::Local, s, today, now)? / 60_000)
             as u32,
     })
 }
@@ -424,7 +434,8 @@ fn refresh(
         let Ok(db) = database.0.lock() else {
             return;
         };
-        match read_status(&db, chrono::Local::now().date_naive(), db::now()) {
+        let s = settings::cached(app, &db);
+        match read_status_with(&db, &s, chrono::Local::now().date_naive(), db::now()) {
             Ok(status) => (status, read_pins(&db).ok()),
             Err(_) => return,
         }

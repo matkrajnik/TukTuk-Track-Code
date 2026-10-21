@@ -12,17 +12,17 @@ import {
 import {
   change,
   closeDay,
-  detailsOf,
   duration,
   MIN_GAP_MS,
-  saveDetails,
+  planTasks,
+  saveDayNotes,
   isManualMeeting,
   meetingOccupies,
   meetingTitle,
   type Snapshot,
 } from "./store";
 import { clock, dayBounds, dayKey, dayText, inDay } from "./time";
-import { nextWorkDay } from "./review";
+import { nextWorkDay, planAll } from "./review";
 import { dayRows, decimalHours as decimal, rowsTotal, tsText } from "./report";
 import { copyReport } from "./clipboard";
 import { dayGoal } from "./capacity";
@@ -188,30 +188,32 @@ async function run(fn: () => Promise<void>) {
     busy.value = false;
   }
 }
+/** Zmienione notatki dnia jednym wywołaniem `save_day_notes` (B6). */
 async function saveNotes() {
   await run(async () => {
-    let next = props.data;
-    for (const r of rows.value) {
-      const detail = detailsOf(r.task);
-      if ((detail.notes[props.day] ?? "") !== notes.value[r.task.id]) {
-        detail.notes[props.day] = notes.value[r.task.id] ?? "";
-        next = await saveDetails(r.task.id, detail);
-      }
-    }
-    emit("updated", next);
+    const entries = rows.value
+      .filter(
+        (r) =>
+          (r.task.details?.notes?.[props.day] ?? "") !==
+          (notes.value[r.task.id] ?? ""),
+      )
+      .map((r) => ({ id: r.task.id, note: notes.value[r.task.id] ?? "" }));
+    if (entries.length) emit("updated", await saveDayNotes(props.day, entries));
     message.value = "Zapisano notatki.";
   });
 }
+/**
+ * „Przenieś niedokończone” jak „Wszystkie na dziś” w Rano (B6): `planTasks`
+ * zmienia tylko dzień planu i kolejność (na końcu planu dnia docelowego),
+ * więc nie cofa równoległej zmiany innych pól zadania.
+ */
 async function move() {
   await run(async () => {
-    const target = nextDay.value;
-    let next = props.data;
-    for (const task of unfinished.value)
-      next = await saveDetails(task.id, {
-        ...detailsOf(task),
-        plannedDay: target,
-      });
-    emit("updated", next);
+    if (!unfinished.value.length) return;
+    emit(
+      "updated",
+      await planTasks(planAll(props.data.tasks, unfinished.value, nextDay.value)),
+    );
   });
 }
 </script>

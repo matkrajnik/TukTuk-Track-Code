@@ -258,6 +258,12 @@ export interface PlanEntry {
   day: string;
   order: number;
 }
+/** Wpis `save_day_notes` (`planner::DayNote`): notatka zadania na jeden dzień. */
+export interface DayNote {
+  id: number;
+  /** Pusta (albo z samych spacji) usuwa notatkę dnia. */
+  note: string;
+}
 /** Wynik Start/Stop, odpowiednik `shortcuts::Toggle` w Rust. */
 export type ToggleResult =
   | { action: "stopped"; taskId: number; title: string; elapsedMs: number }

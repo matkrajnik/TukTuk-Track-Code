@@ -11,6 +11,7 @@ import { useFocus, useFocusBlocks } from "./focus";
 import {
   averageDistraction,
   dayDistraction,
+  dayTaskTotals,
   oneDecimal,
   overtimeOf,
 } from "./report";
@@ -34,8 +35,43 @@ const settings = useSettings();
 /** Ukończone bloki skupienia dziś i w tym tygodniu. */
 const focus = useFocus();
 const today = computed(() => dayKey(props.now));
+/**
+ * Część zamknięta (B6): czas zamkniętych przedziałów według dnia i zadania,
+ * liczony raz na zmianę danych. Co sekundę dochodzi tylko trwający pomiar.
+ */
+const active = computed(() =>
+  props.data.sessions.find((s) => s.endedAt === null),
+);
+const closedByDay = computed(() =>
+  dayTaskTotals(
+    props.data.sessions.filter((s) => s.endedAt !== null),
+    0,
+  ),
+);
+const closedDayTotals = computed(
+  () =>
+    new Map(
+      [...closedByDay.value].map(([day, tasks]) => [
+        day,
+        [...tasks.values()].reduce((sum, ms) => sum + ms, 0),
+      ]),
+    ),
+);
+const activeIn = (key: string) =>
+  active.value ? inDay(active.value, key, props.now) : 0;
 const dayTotal = (key: string) =>
-  props.data.sessions.reduce((sum, s) => sum + inDay(s, key, props.now), 0);
+  (closedDayTotals.value.get(key) ?? 0) + activeIn(key);
+/**
+ * Chwila dla statystyk zmieniających się wolno (rozproszenie, zagrożone
+ * zadania): pełna minuta, nie wcześniej niż start trwającego pomiaru, więc
+ * zależne wyliczenia liczą się raz na minutę albo przy zmianie danych (B6).
+ */
+const minuteNow = computed(() =>
+  Math.max(
+    Math.floor(props.now / 60_000) * 60_000,
+    active.value?.startedAt ?? 0,
+  ),
+);
 /** Spotkania dziś pomniejszają cel dnia (bez tych już zapisanych jako czas). */
 const calendar = useMeetings(() => dayBounds(today.value));
 const todayTarget = computed(() =>
@@ -84,24 +120,34 @@ const weekOvertime = computed(() =>
 const workedDays = computed(
   () => days.value.filter((day) => day.total >= 60_000).length,
 );
-const risky = computed(() => atRisk(props.data, props.now));
+const risky = computed(() => atRisk(props.data, minuteNow.value));
 const maxDay = computed(() =>
   Math.max(1, ...days.value.map((day) => Math.max(day.total, day.target))),
 );
-const monthTotal = computed(() => {
-  const date = new Date(props.now);
-  const start = +new Date(date.getFullYear(), date.getMonth(), 1);
-  return props.data.sessions.reduce(
-    (sum, s) =>
-      sum +
-      Math.max(
-        0,
-        Math.min(s.endedAt ?? props.now, props.now) -
-          Math.max(s.startedAt, start),
-      ),
-    0,
-  );
+/** Początek bieżącego miesiąca (zmienia się z dniem, nie co sekundę). */
+const monthStart = computed(() => {
+  const [year, month] = today.value.split("-").map(Number);
+  return +new Date(year, month - 1, 1);
 });
+const closedMonth = computed(() =>
+  props.data.sessions.reduce(
+    (sum, s) =>
+      s.endedAt === null
+        ? sum
+        : sum + Math.max(0, s.endedAt - Math.max(s.startedAt, monthStart.value)),
+    0,
+  ),
+);
+const monthTotal = computed(
+  () =>
+    closedMonth.value +
+    (active.value
+      ? Math.max(
+          0,
+          props.now - Math.max(active.value.startedAt, monthStart.value),
+        )
+      : 0),
+);
 const counts = computed(() => {
   const started = new Set(props.data.sessions.map((s) => s.taskId));
   return [
@@ -140,28 +186,34 @@ const { blocks: focusBlocks } = useFocusBlocks(() => [
   dayBounds(today.value)[1],
 ]);
 const distractionToday = computed(() =>
-  dayDistraction(props.data.sessions, today.value, props.now, focusBlocks.value),
+  dayDistraction(
+    props.data.sessions,
+    today.value,
+    minuteNow.value,
+    focusBlocks.value,
+  ),
 );
 const distractionAverage = computed(() =>
   averageDistraction(
     props.data.sessions,
     distractionDays.value,
-    props.now,
+    minuteNow.value,
     focusBlocks.value,
   ),
 );
-const topTasks = computed(() =>
-  props.data.tasks
-    .map((task) => ({
-      task,
-      total: props.data.sessions
-        .filter((s) => s.taskId === task.id)
-        .reduce((sum, s) => sum + inDay(s, today.value, props.now), 0),
-    }))
+const topTasks = computed(() => {
+  const totals = new Map(closedByDay.value.get(today.value));
+  if (active.value)
+    totals.set(
+      active.value.taskId,
+      (totals.get(active.value.taskId) ?? 0) + activeIn(today.value),
+    );
+  return props.data.tasks
+    .map((task) => ({ task, total: totals.get(task.id) ?? 0 }))
     .filter((row) => row.total > 0)
     .sort((a, b) => b.total - a.total || compareTasks()(a.task, b.task))
-    .slice(0, 5),
-);
+    .slice(0, 5);
+});
 </script>
 
 <template>

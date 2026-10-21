@@ -398,6 +398,85 @@ pub fn plan_tasks(db: &mut Connection, entries: &[PlanEntry]) -> Result<Snapshot
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Wpis `save_day_notes`: notatka zadania na jeden dzień (pusta usuwa notatkę).
+#[derive(Clone, Debug, Deserialize)]
+pub struct DayNote {
+    pub id: i64,
+    pub note: String,
+}
+
+/// „Zapisz notatki dnia” z Zamknięcia dnia (B6): notatki wielu zadań w jednej
+/// transakcji. Zmienia wyłącznie `notes[day]` podanych zadań, więc równoległa
+/// zmiana kolejności, przypięcia czy planu zostaje. Notatka z samych spacji jest
+/// usuwana jak w `validate`; zbyt długa notatka, zły dzień albo brak zadania
+/// odrzuca cały zapis.
+pub fn save_day_notes(
+    db: &mut Connection,
+    day: &str,
+    entries: &[DayNote],
+) -> Result<Snapshot, String> {
+    if !date_valid(day)
+        || entries.len() > 10_000
+        || entries.iter().any(|e| e.note.chars().count() > 4000)
+    {
+        return Err("Niepoprawne daty lub zbyt długa treść planu/notatki.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    for entry in entries {
+        let exists: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND id NOT IN (SELECT task_id FROM task_lifecycle WHERE deleted_at IS NOT NULL))",
+                [entry.id],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err("Nie znaleziono zadania.".into());
+        }
+        let raw: Option<String> = {
+            use rusqlite::OptionalExtension;
+            tx.query_row(
+                "SELECT json FROM task_details WHERE task_id=?1",
+                [entry.id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+        };
+        let mut json: serde_json::Value = match raw {
+            Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string())?,
+            None => serde_json::json!({}),
+        };
+        let object = json
+            .as_object_mut()
+            .ok_or("Niepoprawne szczegóły zadania.")?;
+        let notes = object
+            .entry("notes")
+            .or_insert_with(|| serde_json::json!({}));
+        if !notes.is_object() {
+            *notes = serde_json::json!({});
+        }
+        let notes = notes
+            .as_object_mut()
+            .ok_or("Niepoprawne notatki zadania.")?;
+        if entry.note.trim().is_empty() {
+            notes.remove(day);
+        } else {
+            notes.insert(
+                day.to_owned(),
+                serde_json::Value::String(entry.note.clone()),
+            );
+        }
+        tx.execute(
+            "INSERT INTO task_details(task_id,json) VALUES(?1,?2) ON CONFLICT(task_id) DO UPDATE SET json=excluded.json",
+            params![entry.id, json.to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 /// Ostatni znany status zgłoszenia Jiry powiązanego z zadaniem `?1`.
 const JIRA_STATUS: &str = "SELECT ji.status FROM jira_tasks j JOIN jira_issues ji ON ji.site=j.site AND ji.issue_key=j.issue_key WHERE j.task_id=?1";
 /// Ostatni znany status zgłoszenia Redmine powiązanego z zadaniem `?1` (R2).
@@ -895,6 +974,85 @@ mod tests {
             )
             .unwrap();
         assert_eq!(day, "2026-10-15");
+    }
+
+    #[test]
+    fn save_day_notes_changes_only_notes_of_that_day_in_one_batch() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        for title in ["A", "B", "C"] {
+            db::change(&mut db, "add", None, Some(title.into()), 0).unwrap();
+        }
+        save(
+            &mut db,
+            1,
+            Details {
+                project: "WMS".into(),
+                order: 7,
+                pinned_at: 55,
+                notes: BTreeMap::from([
+                    ("2026-10-13".into(), "wczoraj".into()),
+                    ("2026-10-14".into(), "stara".into()),
+                ]),
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        // Równoległa zmiana kolejności po wczytaniu formularza zostaje.
+        reorder(
+            &mut db,
+            &[ReorderEntry {
+                id: 1,
+                order: 9,
+                priority: 1,
+            }],
+        )
+        .unwrap();
+        let note = |id: i64, note: &str| DayNote {
+            id,
+            note: note.into(),
+        };
+        let snap = save_day_notes(
+            &mut db,
+            "2026-10-14",
+            &[note(1, "Import CSV"), note(2, "Spotkanie"), note(3, "   ")],
+        )
+        .unwrap();
+        let get = |snap: &Snapshot, id: i64| {
+            snap.tasks
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .details
+                .clone()
+        };
+        let one = get(&snap, 1);
+        assert_eq!(one.notes["2026-10-14"], "Import CSV");
+        assert_eq!(one.notes["2026-10-13"], "wczoraj");
+        assert_eq!((one.order, one.priority, one.pinned_at), (9, 1, 55));
+        assert_eq!(one.project, "WMS");
+        assert_eq!(get(&snap, 2).notes["2026-10-14"], "Spotkanie");
+        assert!(get(&snap, 3).notes.is_empty());
+        // Pusta notatka usuwa wpis dnia.
+        let snap = save_day_notes(&mut db, "2026-10-14", &[note(1, "")]).unwrap();
+        assert!(!get(&snap, 1).notes.contains_key("2026-10-14"));
+        assert_eq!(get(&snap, 1).notes["2026-10-13"], "wczoraj");
+        // Błąd jednego wpisu (brak zadania, kosz, zła data, za długa notatka)
+        // nie zapisuje niczego.
+        db::change(&mut db, "delete", Some(3), None, 0).unwrap();
+        for (day, entries) in [
+            ("2026-10-14", vec![note(2, "Zmiana"), note(99, "x")]),
+            ("2026-10-14", vec![note(2, "Zmiana"), note(3, "x")]),
+            ("2026-13-01", vec![note(2, "Zmiana")]),
+            (
+                "2026-10-14",
+                vec![note(2, "Zmiana"), note(1, &"x".repeat(4001))],
+            ),
+        ] {
+            assert!(save_day_notes(&mut db, day, &entries).is_err());
+        }
+        let snap = db::snapshot(&db).unwrap();
+        assert_eq!(get(&snap, 2).notes["2026-10-14"], "Spotkanie");
     }
 
     #[test]

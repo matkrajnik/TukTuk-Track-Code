@@ -305,7 +305,7 @@ fn tick(app: &tauri::AppHandle) {
             Some((_, task)) => linked(&db, task).ok().flatten(),
             None => None,
         };
-        Some((current, info, crate::settings::load(&db)))
+        Some((current, info, crate::settings::cached(app, &db)))
     });
     let Some((current, info, settings)) = read else {
         return;

@@ -19,6 +19,47 @@ export const taskSessions = (data: Snapshot, taskId: number) =>
     .sort((a, b) => b.startedAt - a.startedAt || b.id - a.id);
 
 /**
+ * Czas według dnia i zadania w jednym przejściu po przedziałach (B6): każdy
+ * przedział dzielony przez lokalną północ jak w `inDay`; trwający liczony do
+ * `now`. Wynik: dzień → zadanie → ms (tylko dodatnie części).
+ */
+export function dayTaskTotals(
+  sessions: readonly Session[],
+  now: number,
+): Map<string, Map<number, number>> {
+  const days = new Map<string, Map<number, number>>();
+  for (const s of sessions) {
+    const end = s.endedAt ?? now;
+    let at = s.startedAt;
+    for (let n = 0; at < end && n < 36600; n++) {
+      const key = dayKey(at);
+      const next = dayBounds(key)[1];
+      const part = Math.min(end, next) - at;
+      let tasks = days.get(key);
+      if (!tasks) days.set(key, (tasks = new Map()));
+      tasks.set(s.taskId, (tasks.get(s.taskId) ?? 0) + part);
+      at = next;
+    }
+  }
+  return days;
+}
+
+/** Przedziały wszystkich zadań w jednym przejściu, w kolejności `taskSessions` (B6). */
+export function sessionsByTask(
+  sessions: readonly Session[],
+): Map<number, Session[]> {
+  const map = new Map<number, Session[]>();
+  for (const s of sessions) {
+    const list = map.get(s.taskId);
+    if (list) list.push(s);
+    else map.set(s.taskId, [s]);
+  }
+  for (const list of map.values())
+    list.sort((a, b) => b.startedAt - a.startedAt || b.id - a.id);
+  return map;
+}
+
+/**
  * Zadania z pracą w danym dniu, w kolejności snapshotu. Trwający pomiar
  * rozpoczęty tego dnia jest uwzględniony nawet przy zerowym czasie.
  */

@@ -2,7 +2,8 @@
 import { computed, ref } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { change, desktop, duration, type Snapshot } from "./store";
-import { dayKey, dayText, inDay } from "./time";
+import { dayText } from "./time";
+import { dayTaskTotals } from "./report";
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{
   updated: [data: Snapshot];
@@ -23,43 +24,45 @@ const preview = ref<{
     trash: number;
   } | null>(null),
   confirmed = ref(false);
-const days = computed(() => {
-  const result = new Set<string>();
-  for (const s of props.data.sessions) {
-    const date = new Date(s.startedAt),
-      end = Math.min(s.endedAt ?? props.now, props.now);
-    date.setHours(0, 0, 0, 0);
-    for (let n = 0; +date <= end && n < 36600; n++) {
-      result.add(dayKey(+date));
-      date.setDate(date.getDate() + 1);
-    }
-  }
+/**
+ * Wiersze historii (dzień, zadanie) z czasem albo notatką, od najnowszego dnia,
+ * w kolejności zadań ze snapshotu. Jedno przejście po przedziałach zgrupowane
+ * po dniu i zadaniu (B6), liczone tylko przy zmianie danych: trwający pomiar
+ * do chwili odczytu danych, bez odliczania co sekundę.
+ */
+const history = computed(() => {
+  const totals = dayTaskTotals(props.data.sessions, Date.now());
+  const days = new Set(totals.keys());
   for (const t of props.data.tasks)
-    for (const d of Object.keys(t.details?.notes ?? {})) result.add(d);
-  return [...result]
+    for (const d of Object.keys(t.details?.notes ?? {})) days.add(d);
+  return [...days]
     .sort()
     .reverse()
-    .filter(
-      (d) => (!from.value || d >= from.value) && (!to.value || d <= to.value),
-    )
     .flatMap((day) =>
       props.data.tasks
-        .map((task) => ({
-          day,
-          task,
-          total: props.data.sessions
-            .filter((s) => s.taskId === task.id)
-            .reduce((sum, s) => sum + inDay(s, day, props.now), 0),
-          note: task.details?.notes?.[day] ?? "",
-        }))
-        .filter(
-          (r) =>
-            (r.total > 0 || r.note) &&
-            `${r.task.title} ${r.task.details?.project ?? ""} ${r.note} ${day}`
-              .toLocaleLowerCase("pl")
-              .includes(query.value.toLocaleLowerCase("pl")),
-        ),
+        .map((task) => {
+          const note = task.details?.notes?.[day] ?? "";
+          return {
+            day,
+            task,
+            total: totals.get(day)?.get(task.id) ?? 0,
+            note,
+            text: `${task.title} ${task.details?.project ?? ""} ${note} ${day}`.toLocaleLowerCase(
+              "pl",
+            ),
+          };
+        })
+        .filter((r) => r.total > 0 || r.note),
     );
+});
+const days = computed(() => {
+  const needle = query.value.toLocaleLowerCase("pl");
+  return history.value.filter(
+    (r) =>
+      (!from.value || r.day >= from.value) &&
+      (!to.value || r.day <= to.value) &&
+      r.text.includes(needle),
+  );
 });
 async function run(action: () => Promise<void>) {
   busy.value = true;

@@ -3,6 +3,8 @@ use crate::Database;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+use std::collections::HashMap;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -436,18 +438,28 @@ pub fn apply(current: &AppSettings, patch: &Value) -> Result<AppSettings, String
     validate(next)
 }
 
+/// Wszystkie wiersze tabeli `settings` jednym zapytaniem (B6); błąd odczytu
+/// daje pustą mapę, czyli wartości domyślne.
+fn stored(db: &Connection) -> HashMap<String, String> {
+    db.prepare("SELECT key, value FROM settings")
+        .and_then(|mut statement| {
+            statement
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Odczyt z bazy. Najpierw zbiera wszystkie zapisane wartości (brakujące lub uszkodzone
 /// pole dostaje wartość domyślną), potem raz sprawdza reguły łączące pola. Gdy skróty
-/// kolidują, oba wracają do domyślnych.
+/// kolidują, oba wracają do domyślnych. Jeden `SELECT` na całą tabelę (B6);
+/// w aplikacji odczyt idzie przez cache (`current`, `cached`).
 pub fn load(db: &Connection) -> AppSettings {
     let defaults = AppSettings::default();
     let mut merged = fields();
+    let mut stored = stored(db);
     for (field, default) in fields() {
-        let Ok(raw) = db.query_row(
-            "SELECT value FROM settings WHERE key=?1",
-            [db_key(&field)],
-            |r| r.get::<_, String>(0),
-        ) else {
+        let Some(raw) = stored.remove(&db_key(&field)) else {
             continue;
         };
         let value = if default.is_string() {
@@ -502,19 +514,78 @@ pub fn save(db: &mut Connection, patch: &Value) -> Result<AppSettings, String> {
     Ok(next)
 }
 
+/// Cache ustawień w `AppHandle` (B6): `load` waliduje każde pole osobno, a
+/// ustawienia czytają wątki co 2 s (bezczynność), co 5 s (tray), co 30 s
+/// (powiadomienia) i komendy. Cache unieważniają zapis ustawień (`set_settings`,
+/// `autostart_set`, przez `save_cached`) i przywrócenie kopii (`backup::replace`).
+///
+/// Kolejność blokad: najpierw baza (`Database`), potem cache. Wypełnienie i
+/// zapis cache odbywają się przy zablokowanej bazie, więc nieaktualna wartość
+/// odczytana przed zapisem nie może nadpisać nowszej.
+#[derive(Default)]
+pub struct Cache(Mutex<Option<AppSettings>>);
+
+impl Cache {
+    fn slot(&self) -> std::sync::MutexGuard<'_, Option<AppSettings>> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Ustawienia z cache bez dotykania bazy (`None`, gdy cache jest pusty).
+    pub fn peek(&self) -> Option<AppSettings> {
+        self.slot().clone()
+    }
+    /// Ustawienia z cache albo z `db` (wtedy zapamiętane). Wołać przy
+    /// zablokowanej bazie.
+    pub fn get(&self, db: &Connection) -> AppSettings {
+        self.slot().get_or_insert_with(|| load(db)).clone()
+    }
+    /// Zapis jak `save`; po sukcesie cache ma nowe ustawienia, po błędzie jest pusty.
+    pub fn save(&self, db: &mut Connection, patch: &Value) -> Result<AppSettings, String> {
+        let result = save(db, patch);
+        *self.slot() = result.as_ref().ok().cloned();
+        result
+    }
+    /// Następny odczyt pójdzie do bazy (np. po przywróceniu kopii).
+    pub fn invalidate(&self) {
+        *self.slot() = None;
+    }
+}
+
+/// Ustawienia przy już zablokowanej bazie: z cache aplikacji albo z `db`.
+pub fn cached(app: &tauri::AppHandle, db: &Connection) -> AppSettings {
+    match app.try_state::<Cache>() {
+        Some(cache) => cache.get(db),
+        None => load(db),
+    }
+}
+
+/// Bieżące ustawienia: z cache bez blokady bazy, a przy pustym cache z bazy.
+/// Nie wołać przy zablokowanej bazie (`cached`).
 pub fn current(app: &tauri::AppHandle) -> AppSettings {
+    if let Some(settings) = app.try_state::<Cache>().and_then(|c| c.peek()) {
+        return settings;
+    }
     app.state::<Database>()
         .0
         .lock()
-        .map(|db| load(&db))
+        .map(|db| cached(app, &db))
         .unwrap_or_default()
+}
+
+/// `save` z aktualizacją cache; wołać przy zablokowanej bazie.
+pub fn save_cached(
+    app: &tauri::AppHandle,
+    db: &mut Connection,
+    patch: &Value,
+) -> Result<AppSettings, String> {
+    match app.try_state::<Cache>() {
+        Some(cache) => cache.save(db, patch),
+        None => save(db, patch),
+    }
 }
 
 #[tauri::command]
 pub fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
-    let state = app.state::<Database>();
-    let db = state.0.lock().map_err(|e| e.to_string())?;
-    Ok(load(&db))
+    Ok(current(&app))
 }
 
 #[tauri::command]
@@ -522,7 +593,7 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     let result = {
         let state = app.state::<Database>();
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
-        save(&mut db, &patch)?
+        save_cached(&app, &mut db, &patch)?
     };
     if !result.idle_enabled {
         crate::idle::clear(&app);
@@ -544,6 +615,32 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         crate::db::init(&db).unwrap();
         db
+    }
+
+    #[test]
+    fn cache_reads_once_and_follows_saves_until_invalidated() {
+        let mut db = db();
+        let cache = Cache::default();
+        assert!(cache.peek().is_none());
+        assert_eq!(cache.get(&db), AppSettings::default());
+        // Zapis poza cache (np. kopia albo ręczna zmiana bazy) nie jest widoczny,
+        // dopóki cache nie zostanie unieważniony: odczyt nie dotyka bazy.
+        save(&mut db, &json!({"targetDayMinutes": 360})).unwrap();
+        assert_eq!(cache.get(&db).target_day_minutes, 480);
+        cache.invalidate();
+        assert_eq!(cache.get(&db).target_day_minutes, 360);
+        // `set_settings` zapisuje przez cache: nowa wartość od razu, bez odczytu.
+        let saved = cache
+            .save(&mut db, &json!({"targetDayMinutes": 300}))
+            .unwrap();
+        assert_eq!(cache.peek(), Some(saved));
+        assert_eq!(cache.get(&db).target_day_minutes, 300);
+        assert_eq!(load(&db).target_day_minutes, 300);
+        // Odrzucona zmiana nie zostawia w cache niczego niezapisanego.
+        assert!(cache
+            .save(&mut db, &json!({"targetDayMinutes": -5}))
+            .is_err());
+        assert_eq!(cache.get(&db).target_day_minutes, 300);
     }
 
     #[test]

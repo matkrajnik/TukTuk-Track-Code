@@ -43,6 +43,7 @@ import {
   change,
   duration,
   moveTargetName,
+  onDataChanged,
   onMovePromptsChanged,
   type JiraMovePrompt,
   openMainWindow,
@@ -309,7 +310,7 @@ onMounted(async () => {
   tick = setInterval(() => (now.value = Date.now()), 1000);
   if (desktop) {
     try {
-      unsubscribers.push(await listen("data-changed", refresh));
+      unsubscribers.push(await onDataChanged(refresh));
       unsubscribers.push(
         await listen<string>("toggle-feedback", (e) => showFeedback(e.payload)),
       );

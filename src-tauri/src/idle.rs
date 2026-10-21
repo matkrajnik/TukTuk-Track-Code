@@ -150,7 +150,7 @@ pub fn start(app: &tauri::AppHandle) {
             .0
             .lock()
             .ok()
-            .map(|db| crate::settings::load(&db))
+            .map(|db| crate::settings::cached(&app, &db))
         else {
             continue;
         };

@@ -66,6 +66,19 @@ fn carry_connections(current: &Connection, staged: &Connection) -> rusqlite::Res
     }
     Ok(())
 }
+/// Zastępuje bieżącą bazę przygotowaną kopią (z kluczami połączeń z bieżącej)
+/// i unieważnia cache ustawień (B6): tabela `settings` przychodzi z kopii.
+fn replace(
+    current: &mut Connection,
+    staged: &Connection,
+    cache: &crate::settings::Cache,
+) -> Result<(), String> {
+    carry_connections(current, staged).map_err(|e| e.to_string())?;
+    let result = copy(staged, current);
+    // Także po nieudanej kopii: część stron mogła się już zmienić.
+    cache.invalidate();
+    result
+}
 pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
     let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|_| "Nie można otworzyć kopii SQLite.")?;
@@ -198,8 +211,7 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
         let safety = dir.join(format!("before-restore-{}.sqlite", crate::db::now()));
         db.execute("VACUUM INTO ?1", [safety.to_string_lossy().as_ref()])
             .map_err(|e| e.to_string())?;
-        carry_connections(&db, &staged).map_err(|e| e.to_string())?;
-        copy(&staged, &mut db)?;
+        replace(&mut db, &staged, &app.state::<crate::settings::Cache>())?;
         let result = db::snapshot(&db).map_err(|e| e.to_string())?;
         drop(db);
         *app.state::<Pending>().0.lock().map_err(|e| e.to_string())? = None;
@@ -219,6 +231,37 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// B6: przywrócenie kopii unieważnia cache ustawień, więc następny odczyt
+    /// widzi preferencje z kopii, a nie zapamiętane z bieżącej bazy.
+    #[test]
+    fn restore_invalidates_settings_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-restore-cache-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        {
+            let mut old = Connection::open(&path).unwrap();
+            db::init(&old).unwrap();
+            crate::settings::save(&mut old, &serde_json::json!({"targetDayMinutes": 300})).unwrap();
+        }
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        let cache = crate::settings::Cache::default();
+        cache
+            .save(&mut current, &serde_json::json!({"targetDayMinutes": 420}))
+            .unwrap();
+        assert_eq!(cache.get(&current).target_day_minutes, 420);
+        let staged = stage(&path).unwrap();
+        replace(&mut current, &staged, &cache).unwrap();
+        assert!(cache.peek().is_none());
+        assert_eq!(cache.get(&current).target_day_minutes, 300);
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn backup_roundtrip_keeps_trash_and_stops_exported_timer() {
         let root = std::env::temp_dir().join(format!(

@@ -38,16 +38,44 @@ mod window_state;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 struct Database(Mutex<rusqlite::Connection>);
+/// Treść zdarzenia `data-changed` (B6). `source`: etykieta okna, które wywołało
+/// komendę i samo przyjmuje migawkę z jej wyniku, więc nie odświeża się drugi
+/// raz; `null` (wątek cykli, tray, powiadomienia, Jira) odświeża wszystkie okna.
+#[derive(Clone, serde::Serialize)]
+struct DataChanged<'a> {
+    source: Option<&'a str>,
+}
+/// `data-changed` po komendzie wywołanej z okna `window` (zwraca ono migawkę).
+fn data_changed(app: &tauri::AppHandle, window: &tauri::Window) {
+    let _ = app.emit(
+        "data-changed",
+        DataChanged {
+            source: Some(window.label()),
+        },
+    );
+}
+/// Cykle po zmianie, która mogła dodać wzorzec (B6: `get_snapshot` już ich nie
+/// generuje): przy nowych wystąpieniach świeża migawka, inaczej `result` bez
+/// zmian. Zmiana zadania jest już zapisana, więc błąd cykli jej nie odrzuca;
+/// zgłosi go wątek cykli (`storage-error`).
+fn with_recurrence(connection: &mut rusqlite::Connection, result: db::Snapshot) -> db::Snapshot {
+    match recurrence::generate(connection, chrono::Local::now().date_naive()) {
+        Ok(true) => db::snapshot(connection).unwrap_or(result),
+        Ok(false) | Err(_) => result,
+    }
+}
+/// Sama migawka: wystąpienia cykli tworzy wątek co minutę (i start aplikacji),
+/// nie każdy odczyt (B6).
 #[tauri::command]
 fn get_snapshot(state: tauri::State<Database>) -> Result<db::Snapshot, String> {
-    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
-    recurrence::generate(&mut connection, chrono::Local::now().date_naive())?;
+    let connection = state.0.lock().map_err(|e| e.to_string())?;
     db::snapshot(&connection).map_err(|e| e.to_string())
 }
 #[tauri::command]
 fn mutate(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     action: String,
     id: Option<i64>,
     title: Option<String>,
@@ -60,13 +88,14 @@ fn mutate(
     ) {
         reminder::reset(&app);
     }
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn edit_session(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     started_at: i64,
     // Bez końca: poprawka początku trwającego pomiaru (B3).
@@ -77,7 +106,7 @@ fn edit_session(
         Some(end) => db::edit_session(&mut connection, id, started_at, end, db::now())?,
         None => db::edit_active_start(&mut connection, id, started_at, db::now())?,
     };
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 /// Akcje przy „Luce w zapisie” (B3): dołącz do poprzedniego, do następnego
@@ -86,19 +115,21 @@ fn edit_session(
 fn fill_gap(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     before_id: i64,
     after_id: i64,
     mode: db::GapMode,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = db::fill_gap(&mut connection, before_id, after_id, mode)?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn split_session(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     at: i64,
     target_task: Option<i64>,
@@ -106,7 +137,7 @@ fn split_session(
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = db::split_session(&mut connection, id, at, target_task, db::now())?;
     reminder::reset(&app);
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 /// Okna z `tauri.conf.json` mają `"create": false` i powstają dopiero tutaj, po
@@ -161,7 +192,12 @@ fn app_info(app: tauri::AppHandle) -> serde_json::Value {
     serde_json::json!({"version":app.config().version,"shortcutErrors":shortcuts::errors(&app)})
 }
 #[tauri::command]
-fn close_day(app: tauri::AppHandle, day: String, closed: bool) -> Result<db::Snapshot, String> {
+fn close_day(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    day: String,
+    closed: bool,
+) -> Result<db::Snapshot, String> {
     if !planner::date_valid(&day) {
         return Err("Niepoprawny dzień.".into());
     }
@@ -175,63 +211,88 @@ fn close_day(app: tauri::AppHandle, day: String, closed: bool) -> Result<db::Sna
             .map_err(|e| e.to_string())?;
     }
     let snapshot = db::snapshot(&db).map_err(|e| e.to_string())?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(snapshot)
 }
 #[tauri::command]
-fn set_priority(app: tauri::AppHandle, id: i64, priority: i32) -> Result<db::Snapshot, String> {
+fn set_priority(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    id: i64,
+    priority: i32,
+) -> Result<db::Snapshot, String> {
     let state = app.state::<Database>();
     let mut db = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::set_priority(&mut db, id, priority)?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn reorder_tasks(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     entries: Vec<planner::ReorderEntry>,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::reorder(&mut connection, &entries)?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn plan_task(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     day: String,
     order: i64,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::plan_task(&mut connection, id, &day, order)?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn plan_tasks(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     entries: Vec<planner::PlanEntry>,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::plan_tasks(&mut connection, &entries)?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
+    Ok(result)
+}
+/// „Zapisz notatki dnia” z Zamknięcia dnia (B6): notatki wielu zadań jednym
+/// wywołaniem; zmienia tylko `notes[day]` podanych zadań.
+#[tauri::command]
+fn save_day_notes(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    day: String,
+    entries: Vec<planner::DayNote>,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = planner::save_day_notes(&mut connection, &day, &entries)?;
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn save_details(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     details: planner::Details,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::save(&mut connection, id, details)?;
+    let result = with_recurrence(&mut connection, result);
     reminder::reset(&app);
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 /// Blokada „Czekam na” z kafelka: zablokuj, odblokuj, odrzuć propozycję z Jiry.
@@ -239,6 +300,7 @@ fn save_details(
 fn set_waiting(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     change: planner::WaitingChange,
 ) -> Result<db::Snapshot, String> {
@@ -247,7 +309,7 @@ fn set_waiting(
         planner::set_waiting(&mut connection, id, &change, db::now())?
     };
     reminder::reset(&app);
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     // Blokada mogła zatrzymać pomiar w czasie bloku skupienia.
     focus::sync(&app);
     Ok(result)
@@ -257,6 +319,7 @@ fn set_waiting(
 fn set_pinned(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     id: i64,
     pinned: bool,
 ) -> Result<db::Snapshot, String> {
@@ -264,7 +327,7 @@ fn set_pinned(
         let mut connection = state.0.lock().map_err(|e| e.to_string())?;
         planner::set_pinned(&mut connection, id, pinned, db::now())?
     };
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 /// Szybkie dodawanie ze składnią (pole „Nowe zadanie” i szybkie przełączanie).
@@ -272,6 +335,7 @@ fn set_pinned(
 fn quick_add(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     task: quickadd::NewTask,
 ) -> Result<db::Snapshot, String> {
     let config = jira::config(&app)?;
@@ -291,23 +355,25 @@ fn quick_add(
         task,
         db::now(),
     )?;
+    let result = with_recurrence(&mut connection, result);
     if start {
         reminder::reset(&app);
     }
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 #[tauri::command]
 fn add_session(
     state: tauri::State<Database>,
     app: tauri::AppHandle,
+    window: tauri::Window,
     task_id: i64,
     started_at: i64,
     ended_at: i64,
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = planner::add_session(&mut connection, task_id, started_at, ended_at, db::now())?;
-    let _ = app.emit("data-changed", ());
+    data_changed(&app, &window);
     Ok(result)
 }
 fn main() {
@@ -356,7 +422,7 @@ fn main() {
             std::fs::create_dir_all(&dir)?;
             let path = dir.join("todo-track.sqlite");
             let existing = path.exists();
-            let connection = rusqlite::Connection::open(path)?;
+            let mut connection = rusqlite::Connection::open(path)?;
             maintenance::backup_before_upgrade(
                 &connection,
                 &dir,
@@ -381,7 +447,14 @@ fn main() {
                 app.handle().exit(0);
                 return Ok(());
             }
+            // Wystąpienia cykli przed pierwszą migawką; dalej wątek co minutę (B6).
+            // Błąd zgłosi ten wątek (`storage-error`), start aplikacji trwa dalej.
+            if let Err(e) = recurrence::generate(&mut connection, chrono::Local::now().date_naive())
+            {
+                eprintln!("Cykle przy starcie: {e}");
+            }
             app.manage(Database(Mutex::new(connection)));
+            app.manage(settings::Cache::default());
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
             jira::setup(app.handle())?;
@@ -437,10 +510,12 @@ fn main() {
                     break;
                 }
                 if let Ok(mut db) = handle.state::<Database>().0.lock() {
+                    // Zdarzenie tylko przy zmianie (B6): nowy dzień albo zaległe wystąpienia.
                     match recurrence::generate(&mut db, chrono::Local::now().date_naive()) {
-                        Ok(()) => {
+                        Ok(true) => {
                             let _ = handle.emit("data-changed", ());
                         }
+                        Ok(false) => {}
                         Err(e) => {
                             let _ = handle.emit("storage-error", e);
                         }
@@ -496,6 +571,7 @@ fn main() {
             reorder_tasks,
             plan_task,
             plan_tasks,
+            save_day_notes,
             idle::idle_notice,
             idle::idle_resolve,
             agents::agents_status,

@@ -153,6 +153,11 @@ function install(init: {
     for (const l of listeners.filter((x) => x.event === event))
       callbacks.get(l.handler)?.({ event, id: l.id, payload });
   }
+  /**
+   * `data-changed` po komendzie z `main.rs` zwracającej migawkę (B6): etykieta
+   * okna, które ją wywołało (`DataChanged::source`); zmiany z backendu mają `null`.
+   */
+  const ownChange = { source: init.window };
 
   const nextSessionId = () =>
     Math.max(
@@ -848,6 +853,7 @@ function install(init: {
               });
             }
           } else throw "Nieobsługiwana akcja w teście: " + args.action;
+          emit("data-changed", ownChange);
           return clone(snapshot);
         }
         case "set_waiting": {
@@ -881,7 +887,7 @@ function install(init: {
           else if (args.change.action === "dismiss")
             d.waitingDismissed = status;
           else throw "Nieobsługiwana zmiana blokady w teście.";
-          emit("data-changed");
+          emit("data-changed", ownChange);
           return clone(snapshot);
         }
         case "templates_list":
@@ -961,7 +967,7 @@ function install(init: {
                 endedAt: null,
               });
             }
-            emit("data-changed");
+            emit("data-changed", ownChange);
             return clone(snapshot);
           }
           const summary = (k: string) =>
@@ -1038,7 +1044,7 @@ function install(init: {
               endedAt: null,
             });
           }
-          emit("data-changed");
+          emit("data-changed", ownChange);
           return clone(snapshot);
         }
         // Plugin updater: `check()` zwraca metadane z identyfikatorem zasobu

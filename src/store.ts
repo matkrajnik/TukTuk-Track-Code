@@ -13,6 +13,7 @@
  */
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ref } from "vue";
 import type { AgentTime } from "./agenttime";
 import { dayKey } from "./time";
@@ -25,6 +26,7 @@ import {
   type ExportFormat,
   type ExportResult,
   type GapMode,
+  type DayNote,
   type NewTask,
   type PlanEntry,
   type Snapshot,
@@ -170,6 +172,19 @@ export async function refreshRedmineConnected(): Promise<void> {
   } catch {
     redmineConnected.value = false;
   }
+}
+/**
+ * Nasłuch zdarzenia `data-changed` w aplikacji (B6). Komenda wywołana z tego
+ * okna oznacza zdarzenie etykietą okna (`source`), a okno przyjmuje migawkę
+ * z jej wyniku, więc takie zdarzenie pomija; zmiany z innych okien i z
+ * backendu (`source` = null) wołają `handler`.
+ */
+export async function onDataChanged(handler: () => void): Promise<() => void> {
+  const own = getCurrentWindow().label;
+  return listen<{ source?: string | null } | null>("data-changed", (e) => {
+    if (e.payload?.source === own) return;
+    handler();
+  });
 }
 export async function read(): Promise<Snapshot> {
   if (desktop) return invoke("get_snapshot");
@@ -356,6 +371,17 @@ export async function planTask(
 export async function planTasks(entries: PlanEntry[]): Promise<Snapshot> {
   if (desktop) return invoke("plan_tasks", { entries });
   return tasksSim.planTasks(entries);
+}
+/**
+ * Odpowiednik `save_day_notes` (`planner::save_day_notes`, B6): notatki dnia
+ * wielu zadań jednym wywołaniem; zmienia tylko `notes[day]` (pusta usuwa).
+ */
+export async function saveDayNotes(
+  day: string,
+  entries: DayNote[],
+): Promise<Snapshot> {
+  if (desktop) return invoke("save_day_notes", { day, entries });
+  return tasksSim.saveDayNotes(day, entries);
 }
 export async function closeDay(
   day: string,

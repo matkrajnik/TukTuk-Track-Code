@@ -110,12 +110,18 @@ pub fn autostart_set(
     let saved = {
         let state = tauri::Manager::state::<crate::Database>(&app);
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
-        let previous = settings::load(&db).autostart_hidden;
-        let saved = settings::save(&mut db, &serde_json::json!({ "autostartHidden": hidden }))?;
+        let previous = settings::cached(&app, &db).autostart_hidden;
+        let saved = settings::save_cached(
+            &app,
+            &mut db,
+            &serde_json::json!({ "autostartHidden": hidden }),
+        )?;
         if let Err(e) = apply_run_entry(&app, enabled, hidden) {
-            if let Err(rollback) =
-                settings::save(&mut db, &serde_json::json!({ "autostartHidden": previous }))
-            {
+            if let Err(rollback) = settings::save_cached(
+                &app,
+                &mut db,
+                &serde_json::json!({ "autostartHidden": previous }),
+            ) {
                 return Err(format!(
                     "{e} (nie udało się też przywrócić ustawienia: {rollback})"
                 ));

@@ -47,7 +47,7 @@ import {
 import { dayGoal } from "../capacity";
 import { corrections } from "../estimates";
 import { useMeetings } from "../composables/useMeetings";
-import { taskSessions } from "../report";
+import { sessionsByTask } from "../report";
 import { sortTasks } from "../order";
 import TargetBar from "../components/TargetBar.vue";
 import { dayTarget, hhmm, useSettings } from "../target";
@@ -122,11 +122,18 @@ const startedTaskIds = computed(
   () => new Set(props.data.sessions.map((session) => session.taskId)),
 );
 const todayKey = computed(() => dayKey(props.now));
-const today = computed(() =>
+/** Zamknięte przedziały dnia zależą tylko od danych i dnia (B6). */
+const todayClosed = computed(() =>
   props.data.sessions.reduce(
-    (sum, s) => sum + inDay(s, todayKey.value, props.now),
+    (sum, s) =>
+      s.endedAt === null ? sum : sum + inDay(s, todayKey.value, 0),
     0,
   ),
+);
+const today = computed(
+  () =>
+    todayClosed.value +
+    (active.value ? inDay(active.value, todayKey.value, props.now) : 0),
 );
 const settings = useSettings();
 /** Spotkania dziś: lista nadchodzących i cel dnia pomniejszony o spotkania. */
@@ -159,6 +166,25 @@ const upcomingMeetings = computed(() => {
 /** Ręczne spotkanie (B12): `null` = nowe, spotkanie = edycja; `false` = zamknięte. */
 const meetingEditor = ref<CalendarEvent | null | false>(false);
 /**
+ * Przedziały pogrupowane po zadaniu (od najnowszego), liczone raz na zmianę
+ * danych zamiast filtrowania wszystkich przedziałów dla każdej karty co sekundę
+ * (B6). Ta sama tablica dla zadania między odświeżeniami danych.
+ */
+const taskSessionMap = computed(() => sessionsByTask(props.data.sessions));
+const noSessions: Session[] = [];
+/**
+ * Zadania z czasem dziś (filtr „Dziś”): zależy od danych i dnia, nie od
+ * sekundnika. Trwający pomiar liczy się, gdy zaczął się przed końcem dnia.
+ */
+const todayTaskIds = computed(() => {
+  const end = dayBounds(todayKey.value)[1];
+  return new Set(
+    props.data.sessions
+      .filter((s) => inDay(s, todayKey.value, end) > 0)
+      .map((s) => s.taskId),
+  );
+});
+/**
  * Zadania po filtrach i wyszukiwaniu (tytuł, projekt, klucz zgłoszenia), także
  * ukończone dawniej niż 30 dni; `visible` ukrywa te ostatnie bez „Pokaż starsze”.
  */
@@ -179,9 +205,7 @@ const matching = computed(() =>
           !t.done &&
           !!t.details?.dueDay &&
           t.details.dueDay <= todayKey.value) ||
-        props.data.sessions.some(
-          (s) => s.taskId === t.id && inDay(s, todayKey.value, props.now) > 0,
-        )) &&
+        todayTaskIds.value.has(t.id)) &&
       taskMatches(t, query.value),
   ),
 );
@@ -611,7 +635,7 @@ async function priority(task: Task, e: Event) {
         v-for="task in part.tasks"
         :key="task.id"
         :task="task"
-        :sessions="taskSessions(data, task.id)"
+        :sessions="taskSessionMap.get(task.id) ?? noSessions"
         :running="active?.taskId === task.id"
         :started="startedTaskIds.has(task.id)"
         :expanded="expanded.has(task.id)"
