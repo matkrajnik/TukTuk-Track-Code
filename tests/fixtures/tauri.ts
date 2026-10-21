@@ -597,6 +597,15 @@ function install(init: {
           };
         case "agents_status":
           return [];
+        // Asystent AI (A1): logika w `ai.rs`, e2e na podglądzie; tu bez wykrytych CLI.
+        case "ai_status":
+          return {
+            detected: { claude: null, codex: null },
+            engine: settings.aiEngine,
+            ask: false,
+            active: false,
+            dir: "",
+          };
         // Pytania o przesunięcie w Jirze (J1) pokrywa podgląd ze store.ts.
         case "jira_move_prompts":
           return [];

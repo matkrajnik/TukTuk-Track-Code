@@ -85,6 +85,7 @@ import {
   type RedmineProject,
   type RedmineStatus,
 } from "./api/redmine";
+import type { AiCall, AiStatus } from "./api/ai";
 import type {
   OrcaCreated,
   OrcaCreateRequest,
@@ -99,6 +100,7 @@ import * as templatesSim from "./preview/templates";
 import * as agentsSim from "./preview/agents";
 import * as hooksSim from "./preview/hooks";
 import * as orcaSim from "./preview/orca";
+import * as aiSim from "./preview/ai";
 import * as calendarSim from "./preview/calendar";
 import * as jiraSim from "./preview/jira";
 import { previewJiraKey } from "./preview/jira-state";
@@ -113,6 +115,7 @@ export * from "./api/jira";
 export * from "./api/timesheet";
 export * from "./api/redmine";
 export * from "./api/orca";
+export * from "./api/ai";
 export { previewDataEvent } from "./preview/storage";
 export {
   previewWidgetSettingsChanged,
@@ -126,6 +129,7 @@ export {
 } from "./preview/agents";
 export { agentHooksKey } from "./preview/hooks";
 export { orcaKey } from "./preview/orca";
+export { aiKey } from "./preview/ai";
 export { calendarKey, previewCalendarEmail } from "./preview/calendar";
 export {
   previewJiraKey,
@@ -630,6 +634,31 @@ export async function saveWeekNote(week: string, text: string): Promise<string> 
 export async function agentHooksStatus(): Promise<AgentHooksStatus> {
   if (desktop) return invoke("agent_hooks_status");
   return hooksSim.agentHooksStatus();
+}
+/** `ai_status`: wykryte CLI, wybrany silnik i czy pokazać dialog pierwszego uruchomienia (A1). */
+export async function aiStatus(): Promise<AiStatus> {
+  if (desktop) return invoke("ai_status");
+  return aiSim.aiStatus();
+}
+/** `ai_detect`: „Sprawdź ponownie”, wykrywa CLI od nowa. */
+export async function aiDetect(): Promise<AiStatus> {
+  if (desktop) return invoke("ai_detect");
+  return aiSim.aiDetect();
+}
+/** `ai_calls`: ostatnie wywołania asystenta bez treści, od najnowszego. */
+export async function aiCalls(): Promise<AiCall[]> {
+  if (desktop) return invoke("ai_calls");
+  return aiSim.aiCalls();
+}
+/** `ai_redact_preview`: tekst po filtrze danych osobowych („Pokaż, co zostanie wysłane”); nic nie wysyła. */
+export async function aiRedactPreview(text: string): Promise<string> {
+  if (desktop) return invoke("ai_redact_preview", { text });
+  return aiSim.aiRedactPreview(text);
+}
+/** `ai_test`: jedno próbne wywołanie silnika po kliknięciu „Przetestuj”. */
+export async function aiTest(): Promise<string> {
+  if (desktop) return invoke("ai_test");
+  return aiSim.aiTest();
 }
 /** `orca_status`: orca.cmd, ścieżka i czy Orca działa (B9). */
 export async function orcaStatus(): Promise<OrcaStatus> {

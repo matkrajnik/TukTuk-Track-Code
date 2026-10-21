@@ -219,6 +219,53 @@ const views: {
     },
   },
   {
+    // A1: Ustawienia → Asystent AI z wykrytymi Claude Code i Codexem, wybranym
+    // Claude Code i jedną próbą w „Ostatnich wywołaniach”.
+    name: "ustawienia-asystent-ai",
+    open: async (page) => {
+      await page.evaluate(() => {
+        localStorage.setItem(
+          "todo-track-preview-ai-v1",
+          JSON.stringify({
+            claude: {
+              path: "C:\\Users\\jan\\.local\\bin\\claude.exe",
+              version: "2.1.304",
+            },
+            codex: {
+              path: "C:\\Users\\jan\\AppData\\Roaming\\npm\\codex.cmd",
+              version: "0.162.1",
+            },
+            calls: [
+              {
+                kind: "test",
+                at: 1792058400000,
+                length: 96,
+                ok: true,
+                error: "",
+                cached: false,
+              },
+            ],
+          }),
+        );
+        localStorage.setItem(
+          "todo-track-preview-settings-v1",
+          JSON.stringify({ aiEngine: "claude", aiHiddenNames: ["Jan Kowalski"] }),
+        );
+        localStorage.setItem("todo-track-settings-section", "ai");
+      });
+      await page.reload();
+      await nav(page, "Ustawienia");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("heading", { name: "Asystent AI", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByText("Claude Code: wersja 2.1.304")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Przetestuj silnik" })).toBeEnabled();
+      await expect(page.getByText("test · 96 znaków · ok")).toBeVisible();
+    },
+  },
+  {
     name: "ustawienia-timesheet",
     // Połączone konto symulowanego TS z jednym domyślnym zadaniem projektu.
     open: async (page) => {

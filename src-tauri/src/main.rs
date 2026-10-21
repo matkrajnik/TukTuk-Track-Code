@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agent_time;
 mod agents;
+mod ai;
 mod ai_privacy;
 mod autostart;
 mod backup;
@@ -484,6 +485,7 @@ fn main() {
             reminder::setup(app.handle());
             idle::setup(app.handle());
             agents::setup(app.handle());
+            ai::setup(app.handle());
             hooks::setup(app.handle());
             suggest::setup(app.handle());
             foreground::setup(app.handle());
@@ -610,6 +612,11 @@ fn main() {
             orca::orca_repos,
             orca::orca_find,
             orca::orca_create,
+            ai::ai_status,
+            ai::ai_detect,
+            ai::ai_calls,
+            ai::ai_redact_preview,
+            ai::ai_test,
             agents::agent_bind,
             agents::agent_unbind,
             agent_time::agent_time,

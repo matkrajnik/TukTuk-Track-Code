@@ -95,6 +95,25 @@ export interface AppSettings {
   redmineBranchPrefix: string;
   /** Nazwy ukrywane przed modelem AI (filtr danych osobowych, A0). */
   aiHiddenNames: string[];
+  /** Silnik asystenta AI (A1): "" = jeszcze nie pytano, "claude", "codex", "off". */
+  aiEngine: string;
+  /** Ręczna ścieżka do claude (ostatnie miejsce wykrywania). */
+  aiClaudePath: string;
+  /** Ręczna ścieżka do codex (ostatnie miejsce wykrywania). */
+  aiCodexPath: string;
+  /** Model „szybki”; pusty = domyślny model CLI. */
+  aiModelFast: string;
+  /** Model „główny”; pusty = domyślny model CLI. */
+  aiModelMain: string;
+  /** Tytuły spotkań mogą wychodzić do modelu (po filtrze). */
+  aiSendMeetingTitles: boolean;
+  /** Tytuły okien mogą wychodzić do modelu (po filtrze). */
+  aiSendWindowTitles: boolean;
+  /** Przełączniki funkcji AI (działają tylko przy wybranym silniku). */
+  aiMcp: boolean;
+  aiChat: boolean;
+  aiAssignSuggest: boolean;
+  aiDayClose: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -164,6 +183,17 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   redmineNewStatuses: ["New", "Nowy"],
   redmineBranchPrefix: "feature/",
   aiHiddenNames: [],
+  aiEngine: "",
+  aiClaudePath: "",
+  aiCodexPath: "",
+  aiModelFast: "",
+  aiModelMain: "",
+  aiSendMeetingTitles: false,
+  aiSendWindowTitles: false,
+  aiMcp: true,
+  aiChat: true,
+  aiAssignSuggest: true,
+  aiDayClose: true,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";
@@ -262,6 +292,21 @@ export function altGrLetter(value: string): boolean {
 /** Komunikat dla niepoprawnej listy ukrywanych nazw (`HIDDEN_NAMES_ERROR` w Rust). */
 export const hiddenNamesError =
   "Ukrywane nazwy: najwyżej 200 pozycji po 80 znaków, bez znaków sterujących.";
+/** Komunikaty walidacji ustawień AI (`settings::AI_*_ERROR`). */
+export const aiEngineError = "Silnik asystenta AI: claude, codex albo off.";
+export const aiPathError =
+  "Ścieżka do claude i codex musi wskazywać plik .exe, .cmd albo .bat (do 1024 znaków, bez cudzysłowów).";
+export const aiModelError =
+  "Nazwa modelu AI: do 80 znaków (litery łacińskie, cyfry oraz . _ : / [ ] -).";
+/** Pusta (brak) albo plik .exe / .cmd / .bat bez cudzysłowów, % i znaków sterujących. */
+const validAiPath = (path: string) =>
+  path === "" ||
+  ([...path].length <= 1024 &&
+    /\.(exe|cmd|bat)$/i.test(path) &&
+    // eslint-disable-next-line no-control-regex
+    !/[\u0000-\u001f\u007f-\u009f"%]/.test(path));
+const validAiModel = (model: string) =>
+  [...model].length <= 80 && /^[A-Za-z0-9._:/[\]-]*$/.test(model);
 /** Komunikat dla niepoprawnego prefiksu gałęzi (`BRANCH_PREFIX_ERROR` w Rust). */
 export const branchPrefixError =
   "Prefiks gałęzi może mieć najwyżej 40 znaków: litery łacińskie, cyfry, „/”, „-”, „_” i „.”.";
@@ -428,6 +473,16 @@ function applyFields(
   }
   if (hidden.length > 200) throw new Error(hiddenNamesError);
   s.aiHiddenNames = hidden;
+  if (!["", "claude", "codex", "off"].includes(s.aiEngine))
+    throw new Error(aiEngineError);
+  s.aiClaudePath = s.aiClaudePath.trim();
+  s.aiCodexPath = s.aiCodexPath.trim();
+  if (!validAiPath(s.aiClaudePath) || !validAiPath(s.aiCodexPath))
+    throw new Error(aiPathError);
+  s.aiModelFast = s.aiModelFast.trim();
+  s.aiModelMain = s.aiModelMain.trim();
+  if (!validAiModel(s.aiModelFast) || !validAiModel(s.aiModelMain))
+    throw new Error(aiModelError);
   // Jak w Rust: poprawne identyfikatory, bez powtórek, bez summary i status.
   const fields: string[] = [];
   for (const raw of s.jiraCardFields) {

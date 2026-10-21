@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"duration_ms":2310,"duration_api_ms":2104,"num_turns":1,"result":"","session_id":"00000000-0000-4000-8000-000000000001","total_cost_usd":0.0123,"usage":{"input_tokens":12,"output_tokens":40},"structured_output":{"task":"Analiza importu","confidence":0.8,"note":"Zadanie od Osoba 1"}}

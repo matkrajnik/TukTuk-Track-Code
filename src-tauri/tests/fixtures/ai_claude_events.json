@@ -1,0 +1,1 @@
+[{"type":"system","subtype":"init","session_id":"x"},{"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}},{"type":"result","subtype":"success","is_error":false,"result":"{\"task\":\"Analiza importu\",\"confidence\":0.9}","session_id":"x"}]

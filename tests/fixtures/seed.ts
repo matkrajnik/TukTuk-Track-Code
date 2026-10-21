@@ -38,6 +38,12 @@ export const AGENTS_KEY = "todo-track-preview-agents-v1";
 /** Zdarzenia hooków agentów w podglądzie (B8): `{ events, codexTrust?, claude?, codex? }`. */
 export const AGENT_HOOKS_KEY = "todo-track-preview-agent-hooks-v1";
 export const ORCA_KEY = "todo-track-preview-orca-v1";
+/**
+ * Symulowany silnik AI w podglądzie (A1): `{ claude?, codex?, script?, calls? }`.
+ * Domyślnie żadne CLI nie jest wykryte, więc dialog pierwszego uruchomienia
+ * nie zasłania widoków w testach, które o nim nie wiedzą.
+ */
+export const AI_KEY = "todo-track-preview-ai-v1";
 
 /** Chwila w czasie polskim (CEST) jako znacznik ms, np. `at("2026-10-15", "11:00")`. */
 export const at = (day: string, time: string) =>
@@ -571,6 +577,8 @@ export interface PreviewOptions extends SeedOptions {
   agentHooks?: Record<string, unknown>;
   /** Symulowana Orka (B9), np. `{ running: false }`; domyślnie działa, z dwoma repozytoriami. */
   orca?: Record<string, unknown>;
+  /** Symulowany silnik AI (A1), np. `{ claude: { path, version } }`; domyślnie brak wykrytych CLI. */
+  ai?: Record<string, unknown>;
   /** Kalendarz Microsoft w podglądzie, np. `calendarFixture()`. */
   calendar?: unknown;
   /** Ręczne spotkania w podglądzie (B12), np. `manualMeetings()`. */
@@ -602,7 +610,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY, AGENT_HOOKS_KEY, ORCA_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY, AGENT_HOOKS_KEY, ORCA_KEY, AI_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
@@ -614,6 +622,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
         options.meetings ? JSON.stringify(options.meetings) : null,
         options.agentHooks ? JSON.stringify(options.agentHooks) : null,
         options.orca ? JSON.stringify(options.orca) : null,
+        options.ai ? JSON.stringify(options.ai) : null,
       ],
     ] as const,
   );

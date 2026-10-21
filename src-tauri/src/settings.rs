@@ -119,6 +119,29 @@ pub struct AppSettings {
     /// (`ai_privacy`, A0) zawsze ukrywa przed modelem; pole w Ustawieniach →
     /// Asystent AI dochodzi w A1.
     pub ai_hidden_names: Vec<String>,
+    /// Wybrany silnik asystenta AI (A1): `""` = jeszcze nie pytano, `claude`,
+    /// `codex` albo `off`.
+    pub ai_engine: String,
+    /// Ręczna ścieżka do `claude` (ostatnie miejsce wykrywania); pusta = brak.
+    pub ai_claude_path: String,
+    /// Ręczna ścieżka do `codex` (ostatnie miejsce wykrywania); pusta = brak.
+    pub ai_codex_path: String,
+    /// Model „szybki” (dopasowania, pytania o dane); pusty = domyślny model CLI.
+    pub ai_model_fast: String,
+    /// Model „główny” (Zamknięcie dnia, dłuższe rozmowy); pusty = domyślny model CLI.
+    pub ai_model_main: String,
+    /// Tytuły spotkań mogą wychodzić do modelu (po filtrze); domyślnie nie.
+    pub ai_send_meeting_titles: bool,
+    /// Tytuły okien mogą wychodzić do modelu (po filtrze); domyślnie nie.
+    pub ai_send_window_titles: bool,
+    /// Serwer MCP dla agentów (A2); działa tylko przy wybranym silniku.
+    pub ai_mcp: bool,
+    /// Czat w aplikacji (A3); działa tylko przy wybranym silniku.
+    pub ai_chat: bool,
+    /// Podpowiedzi przypisań (A4); działa tylko przy wybranym silniku.
+    pub ai_assign_suggest: bool,
+    /// Asystent w Zamknięciu dnia (A5); działa tylko przy wybranym silniku.
+    pub ai_day_close: bool,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -207,6 +230,17 @@ impl Default for AppSettings {
             redmine_new_statuses: default_redmine_new_statuses(),
             redmine_branch_prefix: "feature/".into(),
             ai_hidden_names: Vec::new(),
+            ai_engine: String::new(),
+            ai_claude_path: String::new(),
+            ai_codex_path: String::new(),
+            ai_model_fast: String::new(),
+            ai_model_main: String::new(),
+            ai_send_meeting_titles: false,
+            ai_send_window_titles: false,
+            ai_mcp: true,
+            ai_chat: true,
+            ai_assign_suggest: true,
+            ai_day_close: true,
         }
     }
 }
@@ -354,6 +388,31 @@ fn clean_hidden_names(list: &[String]) -> Result<Vec<String>, String> {
     Ok(names)
 }
 
+/// Komunikat dla niepoprawnego silnika AI.
+pub const AI_ENGINE_ERROR: &str = "Silnik asystenta AI: claude, codex albo off.";
+/// Komunikat dla niepoprawnej ścieżki do claude albo codex.
+pub const AI_PATH_ERROR: &str = "Ścieżka do claude i codex musi wskazywać plik .exe, .cmd albo .bat (do 1024 znaków, bez cudzysłowów).";
+/// Komunikat dla niepoprawnej nazwy modelu AI.
+pub const AI_MODEL_ERROR: &str =
+    "Nazwa modelu AI: do 80 znaków (litery łacińskie, cyfry oraz . _ : / [ ] -).";
+/// Pusta ścieżka (brak) albo plik `.exe` / `.cmd` / `.bat` bez cudzysłowów, `%` i znaków sterujących.
+fn valid_ai_path(path: &str) -> bool {
+    if path.is_empty() {
+        return true;
+    }
+    let lower = path.to_lowercase();
+    path.chars().count() <= 1024
+        && (lower.ends_with(".exe") || lower.ends_with(".cmd") || lower.ends_with(".bat"))
+        && !path.chars().any(|c| c.is_control() || c == '"' || c == '%')
+}
+/// Pusta nazwa (domyślny model CLI) albo krótka nazwa bez spacji i znaków powłoki.
+fn valid_ai_model(model: &str) -> bool {
+    model.chars().count() <= 80
+        && model.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '[' | ']' | '-')
+        })
+}
+
 /// Pełna walidacja: pola osobno i reguły łączące pola.
 pub fn validate(s: AppSettings) -> Result<AppSettings, String> {
     let s = validate_fields(s)?;
@@ -443,6 +502,19 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
         return Err(BRANCH_PREFIX_ERROR.into());
     }
     s.ai_hidden_names = clean_hidden_names(&s.ai_hidden_names)?;
+    if !matches!(s.ai_engine.as_str(), "" | "claude" | "codex" | "off") {
+        return Err(AI_ENGINE_ERROR.into());
+    }
+    s.ai_claude_path = s.ai_claude_path.trim().to_string();
+    s.ai_codex_path = s.ai_codex_path.trim().to_string();
+    if !valid_ai_path(&s.ai_claude_path) || !valid_ai_path(&s.ai_codex_path) {
+        return Err(AI_PATH_ERROR.into());
+    }
+    s.ai_model_fast = s.ai_model_fast.trim().to_string();
+    s.ai_model_main = s.ai_model_main.trim().to_string();
+    if !valid_ai_model(&s.ai_model_fast) || !valid_ai_model(&s.ai_model_main) {
+        return Err(AI_MODEL_ERROR.into());
+    }
     // Pola Jiry na kafelku: poprawne identyfikatory, bez powtórek, bez pól
     // pokazywanych zawsze (tytuł i status).
     let mut fields: Vec<String> = Vec::new();
@@ -963,6 +1035,56 @@ mod tests {
             .unwrap()
             .ai_hidden_names
             .is_empty());
+    }
+
+    /// Ustawienia silnika AI (A1): domyślnie `ai_engine` pusty, walidacja
+    /// silnika, ścieżek i modeli, zapis i odczyt z bazy.
+    #[test]
+    fn ai_engine_settings_default_validate_and_save() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert_eq!(base.ai_engine, "");
+        assert!(!base.ai_send_meeting_titles && !base.ai_send_window_titles);
+        assert!(base.ai_mcp && base.ai_chat && base.ai_assign_suggest && base.ai_day_close);
+        for bad in [
+            json!({"aiEngine": "gpt"}),
+            json!({"aiEngine": "Claude"}),
+            json!({"aiClaudePath": "claude"}),
+            json!({"aiCodexPath": "C:\\\"x\".exe"}),
+            json!({"aiClaudePath": "C:\\%X%\\claude.exe"}),
+            json!({"aiModelFast": "a b"}),
+            json!({"aiModelMain": "x".repeat(81)}),
+            json!({"aiModelMain": "m;rm"}),
+            json!({"aiEngine": 5}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad}");
+        }
+        let saved = save(
+            &mut db,
+            &json!({
+                "aiEngine": "codex",
+                "aiClaudePath": "  D:/bin/claude.exe ",
+                "aiCodexPath": "D:/bin/codex.cmd",
+                "aiModelFast": " haiku ",
+                "aiModelMain": "claude-opus-4-5",
+                "aiSendMeetingTitles": true,
+                "aiMcp": false,
+            }),
+        )
+        .unwrap();
+        assert_eq!(saved.ai_engine, "codex");
+        assert_eq!(saved.ai_claude_path, "D:/bin/claude.exe");
+        assert_eq!(saved.ai_model_fast, "haiku");
+        assert_eq!(load(&db), saved);
+        assert!(load(&db).ai_send_meeting_titles && !load(&db).ai_mcp);
+        for engine in ["claude", "off", ""] {
+            assert_eq!(
+                save(&mut db, &json!({ "aiEngine": engine }))
+                    .unwrap()
+                    .ai_engine,
+                engine
+            );
+        }
     }
 
     #[test]

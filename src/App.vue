@@ -11,6 +11,7 @@ import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import DayDialogs from "./components/DayDialogs.vue";
+import AiFirstRun from "./components/AiFirstRun.vue";
 import {
   confirmStart,
   dayMarkOf,
@@ -54,6 +55,8 @@ import {
   desktop,
   onDataChanged,
   onNavigate,
+  aiStatus,
+  type AiDetected,
   type NavigateRequest,
   type Snapshot,
   type Task,
@@ -68,6 +71,17 @@ const now = ref(Date.now());
 const busy = ref(false);
 const loading = ref(true);
 const error = ref("");
+/** Dialog pierwszego uruchomienia asystenta AI (A1): wykryte CLI, gdy trzeba zapytać. */
+const aiAsk = ref<AiDetected | null>(null);
+/** Pyta o agenta tylko, gdy jeszcze nie wybrano i wykryto Claude Code albo Codex. */
+async function askAboutAi() {
+  try {
+    const status = await aiStatus();
+    if (status.ask) aiAsk.value = status.detected;
+  } catch {
+    // Bez wykrywania aplikacja działa bez dialogu (Ustawienia → Asystent AI).
+  }
+}
 const view = ref<View>("tasks");
 /** Zakładka „Historia i kopie”. */
 const libraryTab = ref("history");
@@ -549,6 +563,7 @@ onMounted(async () => {
   await refresh();
   document.addEventListener("visibilitychange", onVisibility);
   void openMorningIfDue();
+  void askAboutAi();
 });
 onUnmounted(() => {
   clearInterval(tick);
@@ -745,5 +760,11 @@ onUnmounted(() => {
       <QuickSwitch @close="quickPreview = false" @updated="data = $event" />
     </div>
     <DayDialogs main :data="data" @updated="updated" @error="error = $event" />
+    <AiFirstRun
+      v-if="aiAsk"
+      :detected="aiAsk"
+      @close="aiAsk = null"
+      @chosen="aiAsk = null"
+    />
   </div>
 </template>

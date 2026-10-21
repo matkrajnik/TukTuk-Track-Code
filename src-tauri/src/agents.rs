@@ -493,6 +493,12 @@ impl State {
     }
 }
 
+/// Usuwa agentów uruchomionych w katalogu asystenta AI (`ai::dir`): hook
+/// odrzuca je znacznikiem `TODO_TRACK_AI`, a to druga zapora (A1).
+pub(crate) fn without_ai_dir(agents: &mut Vec<Agent>, ai_dir: &Path) {
+    agents.retain(|a| !crate::ai::is_ai_dir(&a.cwd, ai_dir));
+}
+
 /// Folder roboczy: ostatni człon ścieżki.
 pub(crate) fn folder(cwd: &str) -> String {
     cwd.trim_end_matches(['\\', '/'])
@@ -527,6 +533,8 @@ pub fn start(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         // Cache gałęzi należy tylko do tego wątku.
         let mut branches = Branches::default();
+        // Wywołania asystenta AI (A1) działają w tym katalogu: nie są agentami.
+        let ai_dir = crate::ai::dir(&app);
         loop {
             if app.get_webview_window("main").is_none() {
                 break;
@@ -537,6 +545,9 @@ pub fn start(app: &tauri::AppHandle) {
                 w.sessions.working()
             });
             if let Some(mut found) = found {
+                if let Some(ai_dir) = &ai_dir {
+                    without_ai_dir(&mut found, ai_dir);
+                }
                 // `.git` (także z dysku sieciowego) czytany poza blokadą stanu, żeby
                 // `agents_status` w wątku głównym na niego nie czekał.
                 branches.recognize(&mut found, now, git_branch);
@@ -1039,5 +1050,27 @@ mod tests {
         db.execute("DELETE FROM settings WHERE key='redmine'", [])
             .unwrap();
         assert_eq!(resolve(&db, "C:\\inne", Some("#1234")).unwrap(), None);
+    }
+
+    /// A1: agent uruchomiony w katalogu asystenta AI (wywołania `ai::ask`) nie
+    /// trafia na listę agentów, nawet gdy hook go przepuścił.
+    #[test]
+    fn agents_in_ai_directory_are_ignored() {
+        let ai = Path::new(r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai");
+        let agent = |cwd: &str| Agent {
+            kind: "claude".into(),
+            cwd: cwd.into(),
+            ..Agent::default()
+        };
+        let notes = r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai-notes";
+        let mut list = vec![
+            agent(r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai"),
+            agent("c:/users/ala/appdata/roaming/pl.todotrack.desktop/AI/"),
+            agent(r"C:\repo"),
+            agent(notes),
+        ];
+        without_ai_dir(&mut list, ai);
+        let left: Vec<&str> = list.iter().map(|a| a.cwd.as_str()).collect();
+        assert_eq!(left, [r"C:\repo", notes]);
     }
 }
