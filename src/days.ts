@@ -19,6 +19,7 @@ import {
 } from "./store";
 import { readSettings, writeSettings } from "./settings";
 import * as daysSim from "./preview/days";
+import { previewSuggestionsChanged } from "./agents";
 import { clock, dayKey } from "./time";
 
 export type DayState = "none" | "started" | "ended";
@@ -67,6 +68,7 @@ export async function dayStart(day: string): Promise<Snapshot> {
   const { data, first } = await daysSim.dayStart(day);
   if (first)
     await writeSettings({ morningReviewDay: day, morningReviewAt: Date.now() });
+  previewSuggestionsChanged();
   return data;
 }
 
@@ -81,13 +83,17 @@ export async function dayEnd(
     s.morningReviewDay === day && s.morningReviewAt > 0
       ? s.morningReviewAt
       : null;
-  return daysSim.dayEnd(day, stopMeasurement, reviewAt);
+  const data = await daysSim.dayEnd(day, stopMeasurement, reviewAt);
+  previewSuggestionsChanged();
+  return data;
 }
 
 /** `day_resume`: tylko zakończony dzisiejszy dzień. */
 export async function dayResume(day: string): Promise<Snapshot> {
   if (desktop) return invoke("day_resume", { day });
-  return daysSim.dayResume(day);
+  const data = await daysSim.dayResume(day);
+  previewSuggestionsChanged();
+  return data;
 }
 
 /** „Wznów dzień”, a z `taskId` też „Wznów pomiar »X«” (osobne kliknięcie). */
@@ -127,6 +133,7 @@ export function answerDay(ok: boolean) {
  */
 export async function confirmStart(
   current: Snapshot | null = null,
+  resumed: (data: Snapshot) => void = () => {},
 ): Promise<boolean> {
   if (resuming) return true;
   const today = dayKey(Date.now());
@@ -134,8 +141,32 @@ export async function confirmStart(
   const data = current ?? (await read());
   if (dayStateOf(dayMarkOf(data, today)) !== "ended") return true;
   if (!(await askDay({ kind: "start" }))) return false;
-  await dayResume(today);
+  // Okno dostaje wznowiony dzień od razu: gdy sam start się nie uda (zadanie
+  // zrobione, w koszu, błąd Jiry), nie zostaje ze stanem „Dzień zakończony”.
+  resumed(await dayResume(today));
   return true;
+}
+
+/**
+ * Start spoza okna z dialogiem (widget w aplikacji) po zakończeniu dnia:
+ * `day_start_request` pokazuje główne okno, które pyta „Wznowić dzień?”
+ * i dopiero po „Wznów i start” wznawia dzień i startuje (`day_start_answer`).
+ * `focus` = akcja trybu skupienia (`start`, `next`, `resume`).
+ */
+export async function requestDayStart(
+  taskId: number | null,
+  focus: string | null = null,
+): Promise<void> {
+  await invoke("day_start_request", { taskId, focus });
+}
+
+/**
+ * Główne okno: odpowiedź na start z traya, skrótu, widgetu, trybu skupienia
+ * albo powiadomienia (`day-start-request`). Start wykonuje backend.
+ */
+export async function answerStartRequest(id: number): Promise<Snapshot> {
+  const ok = await askDay({ kind: "start" });
+  return invoke("day_start_answer", { id, resume: ok });
 }
 
 /**

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { onMounted, onUnmounted } from "vue";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import { desktop, read, setStartGuard, type Snapshot } from "../store";
 import {
   answerDay,
+  answerStartRequest,
   askDay,
   confirmStart,
   dayEnd,
@@ -20,8 +21,15 @@ import { dayKey } from "../time";
  * (`main`) też „Zakończ dzień” z pytaniem o zatrzymanie trwającego pomiaru,
  * przejściem do Zamknięcia dnia i obsługą prośby z traya i widgetu.
  */
-const props = defineProps<{ main?: boolean; data?: Snapshot }>();
+const props = defineProps<{
+  main?: boolean;
+  data?: Snapshot;
+  /** Strażnika startu rejestruje rodzic (widget w podglądzie), tu tylko dialogi. */
+  dialogsOnly?: boolean;
+}>();
 const emit = defineEmits<{ updated: [data: Snapshot]; error: [message: string] }>();
+const fail = (e: unknown) =>
+  emit("error", String(e instanceof Error ? e.message : e));
 
 async function endDay() {
   const data = props.data ?? (await read());
@@ -36,27 +44,39 @@ async function endDay() {
   openView({ view: "journal", dayClose: true });
 }
 
-const unlisten = ref<UnlistenFn | null>(null);
+const unlisten: UnlistenFn[] = [];
 onMounted(async () => {
-  setStartGuard(() => confirmStart(props.data ?? null));
+  if (!props.dialogsOnly)
+    setStartGuard(() =>
+      confirmStart(props.data ?? null, (data) => emit("updated", data)),
+    );
   if (!props.main) return;
   setDayEndHandler(endDay);
   if (desktop) {
     try {
-      unlisten.value = await listen("day-end-request", () => {
-        endDay().catch((e) =>
-          emit("error", String(e instanceof Error ? e.message : e)),
-        );
-      });
+      unlisten.push(
+        await listen("day-end-request", () => {
+          endDay().catch(fail);
+        }),
+      );
+      // Start z traya, skrótu, widgetu, trybu skupienia albo powiadomienia
+      // po zakończeniu dnia: pytanie tutaj, start w backendzie.
+      unlisten.push(
+        await listen<number>("day-start-request", (e) => {
+          answerStartRequest(e.payload)
+            .then((data) => emit("updated", data))
+            .catch(fail);
+        }),
+      );
     } catch (e) {
       emit("error", String(e));
     }
   }
 });
 onUnmounted(() => {
-  setStartGuard(null);
+  if (!props.dialogsOnly) setStartGuard(null);
   if (props.main) setDayEndHandler(null);
-  unlisten.value?.();
+  unlisten.forEach((fn) => fn());
   answerDay(false);
 });
 </script>

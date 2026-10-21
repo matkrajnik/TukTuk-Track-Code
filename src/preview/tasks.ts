@@ -695,6 +695,10 @@ export async function toggleMeasurement(): Promise<ToggleResult> {
   }
   const task = resumeCandidate(data);
   if (!task) return { action: "quick" };
+  // Po zakończeniu dnia Start nie rusza (jak `shortcuts::toggle`, B13).
+  const today = dayKey(Date.now());
+  if (data.dayMarks?.some((m) => m.day === today && m.endedAt != null))
+    return { action: "dayEnded", taskId: task.id, title: task.title };
   await change("start", task.id);
   return { action: "started", taskId: task.id, title: task.title };
 }

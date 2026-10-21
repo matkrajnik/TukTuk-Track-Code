@@ -626,6 +626,12 @@ function install(init: {
           return clone(snapshot);
         }
         // Czas agentów (W1): bez okresów; e2e toru i kolumn działa na podglądzie.
+        // B13: start po zakończeniu dnia (`days::day_start_request` /
+        // `day_start_answer`); testy sprawdzają wywołania, start wykonuje Rust.
+        case "day_start_request":
+          return null;
+        case "day_start_answer":
+          return clone(snapshot);
         case "agent_time":
           return { periods: [], totals: [], unmatchedMs: 0 };
         // Tryb skupienia: bez bloku (logika w `focus.rs`, e2e na podglądzie).

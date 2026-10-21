@@ -347,6 +347,129 @@ pub fn day_end_request(app: tauri::AppHandle) {
     request_end(&app);
 }
 
+/// Start pomiaru spoza okna z dialogiem (przypięte w trayu, globalny skrót,
+/// widget, tryb skupienia, powiadomienia) po zakończeniu dnia: czeka na
+/// odpowiedź na „Wznowić dzień?” w głównym oknie.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Pending {
+    /// Start zadania (jak przypięte w trayu).
+    Task(i64),
+    /// Akcja trybu skupienia startująca pomiar (`focus_action`).
+    Focus {
+        action: String,
+        task_id: Option<i64>,
+    },
+    /// Przycisk powiadomienia startujący pomiar (`notify::activate`).
+    Notify(crate::notify::Command),
+}
+
+/// Ostatni start czekający na odpowiedź, z numerem pytania (nowszy zastępuje
+/// starszy, a odpowiedź na stare pytanie nie rusza nowego).
+static PENDING: std::sync::Mutex<Option<(u64, Pending)>> = std::sync::Mutex::new(None);
+static NEXT_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// Zapamiętuje start i zwraca numer pytania.
+fn remember(pending: Pending) -> u64 {
+    let id = NEXT_REQUEST.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if let Ok(mut slot) = PENDING.lock() {
+        *slot = Some((id, pending));
+    }
+    id
+}
+
+/// Start do wykonania po odpowiedzi na pytanie `id` (każde pytanie raz).
+fn take(id: u64) -> Option<Pending> {
+    let mut slot = PENDING.lock().ok()?;
+    match slot.as_ref() {
+        Some((current, _)) if *current == id => slot.take().map(|(_, p)| p),
+        _ => None,
+    }
+}
+
+/// Zdarzenie do głównego okna: start po zakończeniu dnia czeka na „Wznowić dzień?”.
+pub const START_REQUEST: &str = "day-start-request";
+
+/// Start po zakończeniu dnia (w strefie `tz` w chwili `now`) wymaga pytania
+/// „Wznowić dzień?”; po północy i po „Wznów dzień” już nie.
+pub fn start_blocked<Tz: TimeZone>(db: &Connection, tz: &Tz, now: i64) -> bool {
+    ended_at(db, tz, now).is_some()
+}
+
+/// `start_blocked` teraz, w lokalnej strefie (ścieżki startu w Rust).
+pub fn start_blocked_now(app: &tauri::AppHandle) -> bool {
+    app.state::<Database>()
+        .0
+        .lock()
+        .map(|db| ended_now(&db))
+        .unwrap_or(false)
+}
+
+/// Akcje trybu skupienia, które startują pomiar.
+pub fn focus_starts(action: &str) -> bool {
+    matches!(action, "start" | "next" | "resume")
+}
+
+/// Zamiast startu: zapamiętuje go, pokazuje główne okno i prosi je o pytanie
+/// „Wznowić dzień?”. Start wykona `day_start_answer` po „Wznów i start”.
+pub fn ask_resume(app: &tauri::AppHandle, pending: Pending) {
+    let id = remember(pending);
+    crate::show(app);
+    let _ = app.emit_to("main", START_REQUEST, id);
+}
+
+/// Start z widgetu po zakończeniu dnia: zadanie (`task_id`) albo akcja trybu
+/// skupienia (`focus`); pytanie zadaje główne okno.
+#[tauri::command]
+pub fn day_start_request(
+    app: tauri::AppHandle,
+    task_id: Option<i64>,
+    focus: Option<String>,
+) -> Result<(), String> {
+    let pending = match (focus, task_id) {
+        (Some(action), task_id) if focus_starts(&action) => Pending::Focus { action, task_id },
+        (Some(_), _) => return Err("Nieznana akcja trybu skupienia.".into()),
+        (None, Some(id)) => Pending::Task(id),
+        (None, None) => return Err("Brak zadania do rozpoczęcia.".into()),
+    };
+    ask_resume(&app, pending);
+    Ok(())
+}
+
+/// Odpowiedź głównego okna na „Wznowić dzień?”: `resume` = „Wznów i start”
+/// wznawia dzień i wykonuje zapamiętany start, „Anuluj” tylko go zapomina.
+/// `id` z `day-start-request`: odpowiedź na pytanie zastąpione nowszym nic nie robi.
+#[tauri::command]
+pub fn day_start_answer(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    id: u64,
+    resume: bool,
+) -> Result<db::Snapshot, String> {
+    if let (true, Some(pending)) = (resume, take(id)) {
+        {
+            let state = app.state::<Database>();
+            let connection = state.0.lock().map_err(|e| e.to_string())?;
+            // Dzień mógł zostać wznowiony w międzyczasie albo minęła północ:
+            // start i tak się wykona.
+            if ended_now(&connection) {
+                let day = today().format("%Y-%m-%d").to_string();
+                self::resume(&connection, &day, today())?;
+            }
+        }
+        changed(&app, Some(&window));
+        match pending {
+            Pending::Task(id) => crate::tray::start_task(&app, id),
+            Pending::Focus { action, task_id } => {
+                crate::focus::focus_action(app.clone(), action, task_id)?;
+            }
+            Pending::Notify(command) => crate::notify::activate(&app, command),
+        }
+    }
+    let state = app.state::<Database>();
+    let connection = state.0.lock().map_err(|e| e.to_string())?;
+    db::snapshot(&connection).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -509,6 +632,58 @@ mod tests {
             assert_eq!(start(&db, bad, today, 0).unwrap_err(), "Niepoprawny dzień.");
         }
         assert!(db::snapshot(&db).unwrap().day_marks.is_empty());
+    }
+
+    /// Start z traya, skrótu, widgetu, trybu skupienia i powiadomień po
+    /// zakończeniu dnia czeka na „Wznowić dzień?”; po wznowieniu i po północy nie.
+    #[test]
+    fn start_is_blocked_after_day_end_until_resume_or_midnight() {
+        let mut db = setup();
+        let today = date(DAY);
+        assert!(!start_blocked(&db, &Warsaw, at("2026-10-15 09:00")));
+        start(&db, DAY, today, at("2026-10-15 08:00")).unwrap();
+        assert!(!start_blocked(&db, &Warsaw, at("2026-10-15 09:00")));
+        end(
+            &mut db,
+            &Warsaw,
+            DAY,
+            today,
+            at("2026-10-15 16:40"),
+            None,
+            false,
+        )
+        .unwrap();
+        assert!(start_blocked(&db, &Warsaw, at("2026-10-15 17:00")));
+        assert!(!start_blocked(&db, &Warsaw, at("2026-10-16 00:01")));
+        resume(&db, DAY, today).unwrap();
+        assert!(!start_blocked(&db, &Warsaw, at("2026-10-15 17:05")));
+        // Akcje trybu skupienia startujące pomiar.
+        for action in ["start", "next", "resume"] {
+            assert!(focus_starts(action), "{action}");
+        }
+        for action in ["stop", "break", "end-break", "dismiss", ""] {
+            assert!(!focus_starts(action), "{action}");
+        }
+    }
+
+    /// Czekający start: nowszy zastępuje starszy, odpowiedź na stare pytanie
+    /// go nie rusza, a każde pytanie wykonuje start najwyżej raz.
+    #[test]
+    fn pending_start_answers_only_the_latest_question_once() {
+        let first = remember(Pending::Task(1));
+        let second = remember(Pending::Focus {
+            action: "start".into(),
+            task_id: Some(2),
+        });
+        assert_eq!(take(first), None);
+        assert_eq!(
+            take(second),
+            Some(Pending::Focus {
+                action: "start".into(),
+                task_id: Some(2)
+            })
+        );
+        assert_eq!(take(second), None);
     }
 
     /// „Wznów dzień” tylko dla dzisiaj: po północy wczorajszy zakończony dzień

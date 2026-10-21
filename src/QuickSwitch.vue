@@ -245,5 +245,5 @@ onUnmounted(() => off?.());
       ↑ ↓ wybór · Enter uruchamia{{ creatable ? " · Shift+Enter tylko tworzy" : "" }} · Esc zamyka
     </p>
   </section>
-  <DayDialogs v-if="ownWindow" :data="data" />
+  <DayDialogs v-if="ownWindow" :data="data" @updated="data = $event" />
 </template>

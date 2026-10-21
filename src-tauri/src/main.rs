@@ -582,6 +582,8 @@ fn main() {
             days::day_end,
             days::day_resume,
             days::day_end_request,
+            days::day_start_request,
+            days::day_start_answer,
             set_priority,
             reorder_tasks,
             plan_task,

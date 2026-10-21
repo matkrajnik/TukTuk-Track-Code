@@ -14,8 +14,10 @@ import {
   previewAgentsEvent,
   previewBindings,
   read,
+  startAllowed,
   type Snapshot,
 } from "./store";
+import { dayKey } from "./time";
 
 /** Odpowiednik `Match` z src-tauri/src/agents.rs: zadanie, nad którym pracuje agent. */
 export interface AgentTask {
@@ -197,6 +199,10 @@ export interface Suggestion {
 /** Tyle musi trwać praca agenta, zanim pojawi się propozycja (`suggest::MIN_WORK`). */
 export const MIN_WORK = 2 * 60_000;
 const suggestEvent = "agent-suggestions";
+/** Podgląd: propozycje do przeliczenia (jak `suggest::refresh` po zmianie stanu dnia). */
+export function previewSuggestionsChanged() {
+  window.dispatchEvent(new Event(suggestEvent));
+}
 /** Odrzucone pary („Nie teraz”) w podglądzie. */
 const dismissedKey = "todo-track-preview-agent-dismissed-v1";
 
@@ -292,6 +298,10 @@ export async function readSuggestions(): Promise<Suggestion[]> {
     read(),
     readSettings(),
   ]);
+  // Po „Zakończ dzień” propozycje milczą do północy (`Memory::proposals`, B13).
+  const today = dayKey(Date.now());
+  if (data.dayMarks?.some((m) => m.day === today && m.endedAt != null))
+    return [];
   const active = data.sessions.find((s) => s.endedAt === null);
   return pendingSuggestions(
     agents,
@@ -304,8 +314,11 @@ export async function readSuggestions(): Promise<Suggestion[]> {
 
 /** „Przełącz” (`agent_switch`): start X, poprzedni pomiar staje. */
 export async function switchToSuggestion(task: AgentTask): Promise<Snapshot> {
-  if (desktop)
+  if (desktop) {
+    // Po „Zakończ dzień” najpierw „Wznowić dzień?” (B13); podgląd pyta w `change`.
+    if (!(await startAllowed(task.taskId))) return read();
     return invoke("agent_switch", { taskId: task.taskId, key: task.key });
+  }
   if (task.taskId == null)
     throw new Error("W podglądzie nie ma listy zgłoszeń z Jiry.");
   const data = await change("start", task.taskId);

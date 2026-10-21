@@ -900,11 +900,29 @@ pub fn setup(app: &tauri::AppHandle) {
     });
 }
 
+/// Polecenia powiadomień, które startują pomiar (po zakończeniu dnia pytają
+/// „Wznowić dzień?”, B13).
+pub fn starts_measurement(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::JiraStart(_)
+            | Command::RedmineStart(_)
+            | Command::AgentSwitch(_)
+            | Command::FocusNext(_)
+            | Command::FocusResume(_)
+    )
+}
+
 /// Wykonuje polecenie z powiadomienia na `AppHandle`: zmiana danych → `data-changed`,
 /// widok → główne okno na wierzchu i `navigate`, błąd → okno z komunikatem.
-fn activate(app: &tauri::AppHandle, command: Command) {
+pub fn activate(app: &tauri::AppHandle, command: Command) {
     if let Command::JiraMove(task) = command {
         crate::jira_move::activate(app, task);
+        return;
+    }
+    // Po zakończeniu dnia (B13) start pomiaru czeka na „Wznowić dzień?” w głównym oknie.
+    if starts_measurement(&command) && crate::days::start_blocked_now(app) {
+        crate::days::ask_resume(app, crate::days::Pending::Notify(command));
         return;
     }
     let result = if matches!(command, Command::FocusBreak(_) | Command::FocusNext(_)) {
@@ -1456,6 +1474,33 @@ mod tests {
             .tick(&db, &s, &Warsaw, at("2026-10-14 11:01"))
             .unwrap();
         assert_eq!(keys(&m), ["target:2026-10-14"]);
+    }
+
+    /// B13: przyciski powiadomień startujące pomiar pytają po zakończeniu dnia
+    /// „Wznowić dzień?”; pozostałe działają od razu.
+    #[test]
+    fn measurement_starting_commands_are_recognized() {
+        for c in [
+            Command::JiraStart(1),
+            Command::RedmineStart(1),
+            Command::AgentSwitch(1),
+            Command::FocusNext(1),
+            Command::FocusResume(1),
+        ] {
+            assert!(starts_measurement(&c), "{c:?}");
+        }
+        for c in [
+            Command::Stop(1),
+            Command::Split(1),
+            Command::PlanToday(vec![1]),
+            Command::FocusBreak(1),
+            Command::WaitingUnblock(1),
+            Command::WaitingRemind(1),
+            Command::JiraMove(1),
+            Command::Open(View::tasks()),
+        ] {
+            assert!(!starts_measurement(&c), "{c:?}");
+        }
     }
 
     #[test]

@@ -293,7 +293,17 @@ fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
 }
 
 /// Klik w przypięte zadanie: poprzedni pomiar staje, startuje wybrane (jak `mutate`).
+/// Po zakończeniu dnia (B13) najpierw pytanie „Wznowić dzień?” w głównym oknie.
 fn start_pinned(app: &tauri::AppHandle, task_id: i64) {
+    if crate::days::start_blocked_now(app) {
+        crate::days::ask_resume(app, crate::days::Pending::Task(task_id));
+        return;
+    }
+    start_task(app, task_id);
+}
+
+/// Start zadania z dymkiem „Start: X” (przypięte w trayu, start po „Wznów i start”).
+pub fn start_task(app: &tauri::AppHandle, task_id: i64) {
     let state = app.state::<Database>();
     let result = state
         .0

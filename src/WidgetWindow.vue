@@ -52,6 +52,7 @@ import {
   pinnedTasks,
   read,
   resumeCandidate,
+  setStartGuard,
   toggleMeasurement,
   type Snapshot,
   type Task,
@@ -61,7 +62,14 @@ import { clock, dayBounds, dayKey, hm, inDay, plural } from "./time";
 import { dayGoal } from "./capacity";
 import { dayTarget, useSettings } from "./target";
 import { useMeetings } from "./composables/useMeetings";
-import { dayMarkOf, requestDayEnd, resumeDay } from "./days";
+import {
+  confirmStart,
+  dayMarkOf,
+  requestDayEnd,
+  requestDayStart,
+  resumeDay,
+} from "./days";
+import DayDialogs from "./components/DayDialogs.vue";
 
 const data = ref<Snapshot>({ tasks: [], sessions: [] });
 const now = ref(Date.now());
@@ -91,7 +99,8 @@ async function switchToPin(id: number, title: string) {
   error.value = "";
   try {
     data.value = await change("start", id);
-    showFeedback(`Start: ${title}`);
+    // „Wznowić dzień?” w głównym oknie albo Anuluj: pomiar nie ruszył.
+    if (active.value?.taskId === id) showFeedback(`Start: ${title}`);
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
   } finally {
@@ -144,7 +153,8 @@ async function useProposal() {
   error.value = "";
   try {
     data.value = await switchToSuggestion(only.task);
-    showFeedback(`Start: ${proposalName(only)}`);
+    if (active.value?.taskId === only.task.taskId)
+      showFeedback(`Start: ${proposalName(only)}`);
     await loadSuggestions();
   } catch (e) {
     error.value = String(e instanceof Error ? e.message : e);
@@ -204,6 +214,7 @@ async function runFocus(action: FocusAction, taskId: number | null = null) {
   busy.value = true;
   error.value = "";
   try {
+    if (focusStarts(action) && !(await allowStart(taskId, action))) return;
     await focusAction(action, taskId);
     await refresh();
   } catch (e) {
@@ -276,6 +287,29 @@ async function dayAction() {
     busy.value = false;
   }
 }
+/**
+ * Start po „Zakończ dzień” (B13): w aplikacji pytanie „Wznowić dzień?” zadaje
+ * główne okno (320-px widget nie mieści dialogu) i ono startuje pomiar po
+ * „Wznów i start”; w podglądzie dialog jest na stronie widgetu.
+ */
+const askedInMain = "Wznowić dzień? Odpowiedz w głównym oknie";
+const focusStarts = (action: FocusAction) =>
+  action === "start" || action === "next" || action === "resume";
+async function allowStart(
+  taskId: number | null,
+  focusStart: FocusAction | null = null,
+): Promise<boolean> {
+  if (dayEndedAt.value == null) return true;
+  if (!desktop)
+    return confirmStart(data.value, (next) => (data.value = next));
+  if (taskId == null && focusStart == null) {
+    await showMain();
+    return false;
+  }
+  await requestDayStart(taskId, focusStart);
+  showFeedback(askedInMain);
+  return false;
+}
 /** Podpowiedź podlinii z sumą dnia: „Dziś: 5:10 z 8:00”. */
 const dayTitle = computed(() =>
   activeTask.value && subline.value.startsWith(dayLine.value)
@@ -346,8 +380,11 @@ async function toggle() {
   busy.value = true;
   error.value = "";
   try {
+    if (!active.value && resume.value && !(await allowStart(resume.value.id)))
+      return;
     const result = await toggleMeasurement();
     if (result.action === "quick") await openQuick();
+    else if (result.action === "dayEnded") showFeedback(askedInMain);
     else if (result.action === "stopped")
       showFeedback(`Stop: ${result.title} · ${duration(result.elapsedMs)}`);
     else showFeedback(`Start: ${result.title}`);
@@ -383,6 +420,8 @@ async function restore() {
 const unsubscribers: UnlistenFn[] = [];
 let tick: ReturnType<typeof setInterval>;
 onMounted(async () => {
+  // Start z przypiętych, propozycji i szybkiego przełączania (`store.change`).
+  setStartGuard((taskId) => allowStart(taskId));
   document.documentElement.classList.add("widget-root");
   window.addEventListener("storage", updateTheme);
   tick = setInterval(() => (now.value = Date.now()), 1000);
@@ -414,6 +453,7 @@ onMounted(async () => {
   await loadSuggestions();
 });
 onUnmounted(() => {
+  setStartGuard(null);
   clearInterval(tick);
   clearTimeout(feedbackTimer);
   window.removeEventListener("storage", updateTheme);
@@ -606,6 +646,7 @@ onUnmounted(() => {
     Mini-widget schowany do końca sesji.
     <button class="text-link" @click="restore">Pokaż widget</button>
   </p>
+  <DayDialogs v-if="!desktop" dialogs-only />
   <div v-if="quickPreview" class="modal-overlay">
     <QuickSwitch
       @close="quickPreview = false"

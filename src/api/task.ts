@@ -280,6 +280,8 @@ export interface DayNote {
 export type ToggleResult =
   | { action: "stopped"; taskId: number; title: string; elapsedMs: number }
   | { action: "started"; taskId: number; title: string }
+  /** Dzień zakończony (B13): pomiar nie ruszył, główne okno pyta „Wznowić dzień?”. */
+  | { action: "dayEnded"; taskId: number; title: string }
   | { action: "quick" };
 
 /** Najwięcej przypiętych otwartych zadań (`planner::MAX_PINNED`). */

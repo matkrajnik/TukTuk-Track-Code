@@ -192,22 +192,27 @@ export async function read(): Promise<Snapshot> {
 }
 /**
  * Pytanie przed startem pomiaru (B13): po „Zakończ dzień” Start na zadaniu pyta
- * „Wznowić dzień?”. Rejestruje je okno z dialogiem (`DayDialogs.vue`); `false`
- * = Anuluj, wtedy pomiar nie startuje, a funkcja startu zwraca bieżące dane.
+ * „Wznowić dzień?”. Rejestruje je okno z dialogiem (`DayDialogs.vue`) albo widget
+ * (pytanie w głównym oknie); `false` = Anuluj (albo pytanie w innym oknie), wtedy
+ * pomiar nie startuje, a funkcja startu zwraca bieżące dane. `taskId` = zadanie
+ * do startu, gdy jest znane.
  */
-let startGuard: (() => Promise<boolean>) | null = null;
-export function setStartGuard(guard: (() => Promise<boolean>) | null) {
+export type StartGuard = (taskId: number | null) => Promise<boolean>;
+let startGuard: StartGuard | null = null;
+export function setStartGuard(guard: StartGuard | null) {
   startGuard = guard;
 }
-async function startAllowed(): Promise<boolean> {
-  return startGuard ? startGuard() : true;
+export async function startAllowed(
+  taskId: number | null = null,
+): Promise<boolean> {
+  return startGuard ? startGuard(taskId) : true;
 }
 export async function change(
   action: string,
   id: number | null = null,
   title: string | null = null,
 ): Promise<Snapshot> {
-  if (action === "start" && !(await startAllowed())) return read();
+  if (action === "start" && !(await startAllowed(id))) return read();
   if (desktop) return invoke("mutate", { action, id, title });
   return tasksSim.change(action, id, title);
 }

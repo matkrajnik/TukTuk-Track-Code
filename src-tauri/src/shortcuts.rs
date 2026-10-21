@@ -39,6 +39,10 @@ pub enum Toggle {
     /// Wznowiono ostatnio mierzone zadanie.
     #[serde(rename_all = "camelCase")]
     Started { task_id: i64, title: String },
+    /// Dzień zakończony (B13): zamiast startu pytanie „Wznowić dzień?” w głównym
+    /// oknie (`days::ask_resume`); pomiar nie startuje.
+    #[serde(rename_all = "camelCase")]
+    DayEnded { task_id: i64, title: String },
     /// Nie ma czego wznowić: trzeba wybrać zadanie w szybkim przełączaniu.
     Quick,
 }
@@ -61,6 +65,7 @@ pub fn resume_candidate(db: &Connection) -> rusqlite::Result<Option<(i64, String
 
 /// Start/Stop: trwający pomiar → Stop; brak pomiaru → Start ostatniego zadania;
 /// brak zadania do wznowienia → szybkie przełączanie (bez zmian w bazie).
+/// Po zakończeniu dnia Start nie rusza: `Toggle::DayEnded` (B13).
 pub fn toggle(db: &mut Connection, now: i64) -> Result<Toggle, String> {
     let active = db
         .query_row(
@@ -86,6 +91,9 @@ pub fn toggle(db: &mut Connection, now: i64) -> Result<Toggle, String> {
         });
     }
     match resume_candidate(db).map_err(|e| e.to_string())? {
+        Some((task_id, title)) if crate::days::start_blocked(db, &chrono::Local, now) => {
+            Ok(Toggle::DayEnded { task_id, title })
+        }
         Some((task_id, title)) => {
             db::change(db, "start", Some(task_id), None, now)?;
             Ok(Toggle::Started { task_id, title })
@@ -101,7 +109,7 @@ pub fn feedback(result: &Toggle) -> Option<String> {
             title, elapsed_ms, ..
         } => Some(format!("Stop: {title} · {}", crate::tray::hms(*elapsed_ms))),
         Toggle::Started { title, .. } => Some(format!("Start: {title}")),
-        Toggle::Quick => None,
+        Toggle::DayEnded { .. } | Toggle::Quick => None,
     }
 }
 
@@ -122,7 +130,8 @@ fn parse(value: &str) -> Result<Shortcut, String> {
 
 /// Wykonuje Start/Stop i powiadamia resztę aplikacji: `data-changed`, potwierdzenie
 /// w dymku traya i zdarzenie `toggle-feedback` (tekst „Stop: X · 01:23:45” / „Start: X”)
-/// dla widgetu (B) i powiadomień (J). Przy `Toggle::Quick` niczego nie otwiera:
+/// dla widgetu (B) i powiadomień (J). Przy `Toggle::DayEnded` główne okno pyta
+/// „Wznowić dzień?”. Przy `Toggle::Quick` niczego nie otwiera:
 /// szybkie przełączanie otwiera wywołujący (skrót w `handle`, frontend po komendzie).
 pub fn run_toggle(app: &tauri::AppHandle) -> Result<Toggle, String> {
     let result = {
@@ -130,6 +139,9 @@ pub fn run_toggle(app: &tauri::AppHandle) -> Result<Toggle, String> {
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
         toggle(&mut db, db::now())?
     };
+    if let Toggle::DayEnded { task_id, .. } = result {
+        crate::days::ask_resume(app, crate::days::Pending::Task(task_id));
+    }
     if let Some(text) = feedback(&result) {
         crate::tray::show_feedback(app, &text);
         crate::notify::toggle_feedback(app, &text);
@@ -371,6 +383,54 @@ mod tests {
             serde_json::to_value(Toggle::Quick).unwrap(),
             serde_json::json!({"action":"quick"})
         );
+    }
+
+    /// B13: po „Zakończ dzień” Start (skrót, widget) nie rusza pomiaru, tylko
+    /// zgłasza `DayEnded`; Stop działa dalej, a po „Wznów dzień” Start wraca.
+    #[test]
+    fn toggle_after_day_end_asks_instead_of_starting() {
+        let mut db = db();
+        let now = chrono::Local::now().timestamp_millis();
+        let day = chrono::Local::now().format("%Y-%m-%d").to_string();
+        session(&db, 1, now - 3_600_000, Some(now - 1_800_000));
+        db.execute(
+            "INSERT INTO day_marks(day,started_at,ended_at,resumed) VALUES(?1,?2,?3,0)",
+            rusqlite::params![day, now - 3_600_000, now - 60_000],
+        )
+        .unwrap();
+        let result = toggle(&mut db, now).unwrap();
+        assert_eq!(
+            result,
+            Toggle::DayEnded {
+                task_id: 1,
+                title: "A".into()
+            }
+        );
+        assert_eq!(feedback(&result), None);
+        assert_eq!(
+            serde_json::to_value(&result).unwrap(),
+            serde_json::json!({"action":"dayEnded","taskId":1,"title":"A"})
+        );
+        let active: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, 0);
+        // Trwający pomiar (np. sprzed zakończenia) Stop zatrzymuje bez pytania.
+        session(&db, 2, now - 1_000, None);
+        assert!(matches!(
+            toggle(&mut db, now).unwrap(),
+            Toggle::Stopped { task_id: 2, .. }
+        ));
+        // Po „Wznów dzień” Start działa jak dawniej.
+        crate::days::resume(&db, &day, chrono::Local::now().date_naive()).unwrap();
+        assert!(matches!(
+            toggle(&mut db, now + 1).unwrap(),
+            Toggle::Started { task_id: 2, .. }
+        ));
     }
 
     #[test]

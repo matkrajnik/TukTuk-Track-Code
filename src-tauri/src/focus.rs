@@ -774,6 +774,11 @@ pub fn focus_action(
     action: String,
     task_id: Option<i64>,
 ) -> Result<Status, String> {
+    // Po zakończeniu dnia (B13) start pomiaru czeka na „Wznowić dzień?” w głównym oknie.
+    if crate::days::focus_starts(&action) && crate::days::start_blocked_now(&app) {
+        crate::days::ask_resume(&app, crate::days::Pending::Focus { action, task_id });
+        return status(&app);
+    }
     let now = db::now();
     let (data, messages) = with(&app, |db, focus, s| match action.as_str() {
         "start" => focus.start(db, task_id, s, now).map(|_| (true, Vec::new())),

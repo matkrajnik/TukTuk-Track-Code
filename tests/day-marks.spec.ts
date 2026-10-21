@@ -9,6 +9,7 @@ import {
   seed,
   stored,
 } from "./fixtures/seed";
+import { backend, openDesktop } from "./fixtures/tauri";
 
 /**
  * B13: Rozpocznij, zakończ i wznów dzień. Dane z `fixtures/seed.ts`: dziś
@@ -315,4 +316,219 @@ test("widget: „Dzień zakończony” i Wznów dzień", async ({ page }) => {
   // główne okno z dialogiem i Zamknięciem dnia).
   await widget.getByRole("button", { name: "Zakończ dzień" }).click();
   await expect(widget.getByRole("button", { name: "Wznów dzień" })).toBeVisible();
+});
+
+test("Zamknięcie dnia: Zakończ dzień z trwającym pomiarem pyta, potem Wznów", async ({
+  page,
+}) => {
+  await openPreview(page, { active: { task: ids.analysis, from: "11:00" } });
+  await nav(page, "Plan i historia");
+  await nav(page, "Zamknięcie dnia");
+  await controls(page).getByRole("button", { name: "Zakończ dzień" }).click();
+  const dialog = page.getByRole("dialog", { name: "Zakończyć dzień?" });
+  await expect(dialog).toContainText(
+    "Zakończyć dzień i zatrzymać pomiar »Analiza importu«?",
+  );
+  await dialog.getByRole("button", { name: "Anuluj" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await activeSessions(page)).toHaveLength(1);
+  expect(await marks(page)).toEqual([]);
+
+  await controls(page).getByRole("button", { name: "Zakończ dzień" }).click();
+  await dialog
+    .getByRole("button", { name: "Zakończ dzień i zatrzymaj pomiar" })
+    .click();
+  await expect(dialog).toHaveCount(0);
+  await expect(closeHeading(page)).toBeVisible();
+  expect(await activeSessions(page)).toHaveLength(0);
+  expect((await marks(page))[0].endedAt).toBe(Date.parse(NOW));
+
+  await controls(page).getByRole("button", { name: "Wznów dzień" }).click();
+  await expect(
+    controls(page).getByRole("button", { name: "Zakończ dzień" }),
+  ).toBeVisible();
+  expect((await marks(page))[0]).toMatchObject({ endedAt: null, resumed: 1 });
+  // Wznowienie dnia nie wznawia pomiaru.
+  expect(await activeSessions(page)).toHaveLength(0);
+});
+
+test("propozycje przełączenia milczą po Zakończ dzień i wracają po Wznów", async ({
+  page,
+}) => {
+  const now = Date.parse(NOW);
+  await openPreview(page, {
+    agents: [
+      {
+        kind: "claude",
+        name: "Import",
+        cwd: "C:\Projekty\wms",
+        since: now - 5 * 60_000,
+        branch: "feature/WMS-12-import",
+      },
+    ],
+    active: { task: ids.review, from: "11:00" },
+  });
+  const banner = page.getByRole("region", { name: "Propozycja przełączenia" });
+  await expect(banner).toBeVisible();
+  await nav(page, "Plan i historia");
+  await nav(page, "Zamknięcie dnia");
+  await controls(page).getByRole("button", { name: "Zakończ dzień" }).click();
+  await page
+    .getByRole("dialog", { name: "Zakończyć dzień?" })
+    .getByRole("button", { name: "Zakończ dzień i zatrzymaj pomiar" })
+    .click();
+  await expect(closeHeading(page)).toBeVisible();
+  await expect(banner).toHaveCount(0);
+  // Po odświeżeniu też (stan z danych, nie z pamięci okna).
+  await page.reload();
+  await nav(page, "Plan i historia");
+  await nav(page, "Zamknięcie dnia");
+  await expect(banner).toHaveCount(0);
+  await controls(page).getByRole("button", { name: "Wznów dzień" }).click();
+  await expect(banner).toBeVisible();
+});
+
+test("nieudany start po „Wznów i start” zostawia okno ze wznowionym dniem", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await nav(page, "Plan i historia");
+  await nav(page, "Zamknięcie dnia");
+  await controls(page).getByRole("button", { name: "Zakończ dzień" }).click();
+  await expect(
+    controls(page).getByRole("button", { name: "Wznów dzień" }),
+  ).toBeVisible();
+  // Start zrobionego zadania: dzień się wznawia, a start zwraca błąd.
+  const result = page.evaluate(async (id) => {
+    const m = await import("/src/store.ts");
+    return m.change("start", id).then(
+      () => "",
+      (e: Error) => e.message,
+    );
+  }, ids.docs);
+  await page
+    .getByRole("dialog", { name: "Wznowić dzień?" })
+    .getByRole("button", { name: "Wznów i start" })
+    .click();
+  expect(await result).toBe("Najpierw przywróć zadanie do zrobienia.");
+  expect((await marks(page))[0]).toMatchObject({ endedAt: null, resumed: 1 });
+  await expect(
+    controls(page).getByRole("button", { name: "Zakończ dzień" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("group", { name: "Dzień zakończony w pasku" }),
+  ).toHaveCount(0);
+});
+
+test("widget: Start po zakończeniu dnia pyta „Wznowić dzień?”", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: {
+      ...seed(),
+      dayMarks: [
+        {
+          day: TODAY,
+          startedAt: at(TODAY, "08:00"),
+          endedAt: at(TODAY, "11:30"),
+          resumed: 0,
+        },
+      ],
+    },
+  });
+  await page.goto("/#widget");
+  await page.reload();
+  const widget = page.locator("#widget");
+  const start = widget.getByRole("button", { name: "Wznów ostatnie zadanie" });
+  const dialog = page.getByRole("dialog", { name: "Wznowić dzień?" });
+  await start.click();
+  await dialog.getByRole("button", { name: "Anuluj" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(await activeSessions(page)).toHaveLength(0);
+  expect((await marks(page))[0].endedAt).not.toBeNull();
+  await expect(widget.locator("strong")).toHaveText(/^Dzień zakończony 11:30/);
+
+  await start.click();
+  await dialog.getByRole("button", { name: "Wznów i start" }).click();
+  await expect(
+    widget.getByRole("button", { name: "Zatrzymaj pomiar" }),
+  ).toBeVisible();
+  expect(await activeSessions(page)).toHaveLength(1);
+  expect((await marks(page))[0]).toMatchObject({ endedAt: null, resumed: 1 });
+  await expect(
+    widget.getByRole("button", { name: "Zakończ dzień" }),
+  ).toBeVisible();
+});
+
+test.describe("aplikacja: start spoza głównego okna po zakończeniu dnia", () => {
+  const ended = () => ({
+    ...seed(),
+    dayMarks: [
+      {
+        day: TODAY,
+        startedAt: at(TODAY, "08:00"),
+        endedAt: at(TODAY, "11:30"),
+        resumed: 0,
+      },
+    ],
+  });
+  const commands = async (page: Page) =>
+    (await backend<{ cmd: string; args: any }[]>(page, "calls")).filter((c) =>
+      [
+        "day_start_request",
+        "day_start_answer",
+        "mutate",
+        "toggle_measurement",
+        "focus_action",
+      ].includes(c.cmd),
+    );
+
+  test("widget prosi główne okno o „Wznowić dzień?” zamiast startować", async ({
+    page,
+  }) => {
+    await openDesktop(page, { window: "widget", data: ended() });
+    const widget = page.locator("#widget");
+    await expect(widget.locator("strong")).toHaveText(
+      /^Dzień zakończony 11:30/,
+    );
+    await widget
+      .getByRole("button", { name: "Wznów ostatnie zadanie" })
+      .click();
+    await expect(widget.getByRole("status")).toHaveText(
+      "Wznowić dzień? Odpowiedz w głównym oknie",
+    );
+    await widget
+      .getByRole("button", { name: "Rozpocznij blok skupienia" })
+      .click();
+    expect(await commands(page)).toEqual([
+      { cmd: "day_start_request", args: { taskId: ids.analysis, focus: null } },
+      {
+        cmd: "day_start_request",
+        args: { taskId: ids.analysis, focus: "start" },
+      },
+    ]);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+  });
+
+  test("główne okno pyta po day-start-request i odpowiada backendowi", async ({
+    page,
+  }) => {
+    await openDesktop(page, { data: ended() });
+    const emit = (id: number) =>
+      page.evaluate(
+        (n) => (window as any).__tauriMock.emit("day-start-request", n),
+        id,
+      );
+    const dialog = page.getByRole("dialog", { name: "Wznowić dzień?" });
+    await emit(4);
+    await dialog.getByRole("button", { name: "Anuluj" }).click();
+    await expect(dialog).toHaveCount(0);
+    await emit(5);
+    await dialog.getByRole("button", { name: "Wznów i start" }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(await commands(page)).toEqual([
+      { cmd: "day_start_answer", args: { id: 4, resume: false } },
+      { cmd: "day_start_answer", args: { id: 5, resume: true } },
+    ]);
+  });
 });
