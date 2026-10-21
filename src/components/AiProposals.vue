@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { Bot } from "lucide-vue-next";
 import { applyProposal } from "../aiproposals";
+import { chat, claimedProposals } from "../aichat";
 import {
   mcpProposalResolve,
   mcpProposals,
@@ -22,14 +23,23 @@ const emit = defineEmits<{
   updated: [data: Snapshot];
   error: [message: string];
 }>();
-const proposals = ref<McpProposal[]>([]);
+const queue = ref<McpProposal[]>([]);
+/**
+ * Propozycje z czatu (A3) są kartami w rozmowie, więc baner ich nie dubluje;
+ * w trakcie odpowiedzi czatu baner czeka, aż karty przejmą nowe propozycje.
+ */
+const proposals = computed(() =>
+  chat.busy
+    ? []
+    : queue.value.filter((p) => !claimedProposals.value.has(p.id)),
+);
 const busy = ref(false);
 
 async function reload() {
   try {
-    proposals.value = await mcpProposals();
+    queue.value = await mcpProposals();
   } catch {
-    proposals.value = [];
+    queue.value = [];
   }
 }
 async function run(action: () => Promise<void>) {

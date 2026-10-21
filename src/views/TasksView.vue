@@ -289,6 +289,8 @@ watch(
     todayOnly.value = request.filter === "today" || request.filter === "due";
     dueIncluded.value = request.filter === "due";
     if (request.task != null) expanded.value.add(request.task);
+    // „Popraw” w karcie czatu: pole „Nowe zadanie” wypełnione składnią szybkiego dodawania.
+    if (request.newTask) newTitle.value = request.newTask;
     await nextTick();
     const target =
       (request.task != null &&
@@ -297,7 +299,8 @@ watch(
         [...document.querySelectorAll<HTMLElement>("section.task-group")].find(
           (s) => s.getAttribute("aria-label") === request.section,
         ));
-    if (target) target.scrollIntoView?.({ block: "nearest" });
+    if (request.newTask) newInput.value?.focus();
+    else if (target) target.scrollIntoView?.({ block: "nearest" });
   },
   { immediate: true },
 );

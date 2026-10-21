@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import {
+  Bot,
   CalendarArrowUp,
   Copy,
   FileText,
@@ -35,6 +36,7 @@ import { useTsSend } from "./composables/useTsSend";
 import { useTsProjectMap } from "./composables/useTsProjectMap";
 import { tsEntries } from "./timesheet";
 import { openView } from "./navigation";
+import { openChat, useChatEnabled } from "./aichat";
 import {
   dayTarget,
   targetDiffMinutes,
@@ -75,6 +77,8 @@ const total = computed(() => rowsTotal(rows.value));
 /** Godziny dnia z „Rozpocznij / Zakończ dzień” (B13); nadgodziny liczą się z pomiarów. */
 const dayLine = computed(() => dayHoursLine(dayMarkOf(props.data, props.day)));
 const settings = useSettings();
+/** Czat (A3): „Zapytaj asystenta” z dniem jako kontekstem. */
+const chatEnabled = useChatEnabled();
 /** Spotkania dnia: sekcja „Spotkania” i cel dnia pomniejszony o spotkania. */
 const calendar = useMeetings(() => dayBounds(props.day));
 /** Cel mierzonego czasu: cel dnia minus spotkania niepokryte pomiarem. */
@@ -240,6 +244,16 @@ async function move() {
     </p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="message" role="status">{{ message }}</p>
+    <p v-if="chatEnabled" class="close-assistant">
+      <button
+        class="today-button"
+        aria-label="Zapytaj asystenta o ten dzień"
+        title="Otwórz czat asystenta z tym dniem jako kontekstem"
+        @click="openChat({ day })"
+      >
+        <Bot :size="12" />Zapytaj asystenta
+      </button>
+    </p>
     <p v-if="active">
       Pomiar dla tego dnia nadal trwa. Zatrzymaj go przed zamknięciem dnia.
       <button

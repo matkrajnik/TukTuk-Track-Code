@@ -9,6 +9,7 @@
 import { computed, ref } from "vue";
 import {
   Archive,
+  Bot,
   ArrowRightCircle,
   BookmarkPlus,
   Check,
@@ -51,6 +52,7 @@ import type { CorrectionOf } from "../estimates";
 import { useSettings } from "../target";
 import { waitingProposal } from "../recurrence";
 import { issueRef } from "../issue";
+import { openChat, useChatEnabled } from "../aichat";
 
 const props = defineProps<{
   task: Task;
@@ -105,6 +107,8 @@ const issue = computed(() => issueRef(props.task));
  * zależy od systemu zgłoszenia).
  */
 const settings = useSettings();
+/** Czat (A3): „Zapytaj asystenta” tylko przy wybranym silniku i włączonym czacie. */
+const chatEnabled = useChatEnabled();
 const proposal = computed(() =>
   waitingProposal(
     props.task,
@@ -278,6 +282,19 @@ const issueWrite = computed(() =>
           @click="moves.openRedmineList"
         >
           <ArrowRightCircle :size="14" />Przesuń w Redmine…
+        </button>
+        <button
+          v-if="chatEnabled"
+          class="action-button"
+          :aria-label="'Zapytaj asystenta: ' + task.title"
+          title="Otwórz czat asystenta z tym zadaniem jako kontekstem"
+          @click="
+            openChat({
+              task: { id: task.id, title: task.title, key: issue?.key },
+            })
+          "
+        >
+          <Bot :size="14" />Zapytaj asystenta
         </button>
         <span class="details-actions-spacer" />
         <button

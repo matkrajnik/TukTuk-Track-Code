@@ -266,6 +266,41 @@ const views: {
     },
   },
   {
+    // A3: panel czatu po prawej z pytaniem, odpowiedzią symulatora, listą użytych
+    // narzędzi i kartą akcji „Utwórz zadanie”; pozycja „Asystent” w nawigacji.
+    name: "asystent-czat",
+    open: async (page) => {
+      await page.evaluate(() => {
+        localStorage.setItem(
+          "todo-track-preview-ai-v1",
+          JSON.stringify({
+            claude: {
+              path: "C:\\Users\\jan\\.local\\bin\\claude.exe",
+              version: "2.1.304",
+            },
+          }),
+        );
+        localStorage.setItem(
+          "todo-track-preview-settings-v1",
+          JSON.stringify({ aiEngine: "claude" }),
+        );
+      });
+      await page.reload();
+      await page.keyboard.press("Control+j");
+      const input = page.getByRole("textbox", {
+        name: "Wiadomość do asystenta",
+      });
+      await input.fill("Utwórz zadanie „Poprawić raport błędów”");
+      await input.press("Enter");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("region", { name: "Propozycja: Poprawić raport błędów" }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Wyślij" })).toBeVisible();
+    },
+  },
+  {
     name: "ustawienia-timesheet",
     // Połączone konto symulowanego TS z jednym domyślnym zadaniem projektu.
     open: async (page) => {

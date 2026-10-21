@@ -2992,3 +2992,204 @@ html.widget-root body {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Czat (A3): panel po prawej stronie okna, szerokość z `--chat-width`. */
+.app-body.chat-open {
+  grid-template-columns: auto minmax(0, 1fr) var(--chat-width, 380px);
+}
+.app-body > .chat-panel {
+  grid-column: 3;
+  grid-row: 1 / -1;
+}
+.chat-panel {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+.chat-inner {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+}
+.app-shell:has(> .titlebar) .chat-inner {
+  top: 32px;
+  height: calc(100vh - 32px);
+  height: calc(100dvh - 32px);
+}
+.chat-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  z-index: 2;
+  width: 6px;
+  cursor: col-resize;
+}
+.chat-resizer:hover,
+.chat-resizer:focus-visible {
+  background: var(--accent);
+  opacity: 0.6;
+}
+.chat-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  height: 48px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+.chat-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+}
+.chat-head small {
+  color: var(--muted);
+}
+.chat-head-spacer {
+  flex: 1;
+}
+.chat-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  max-width: calc(100% - 32px);
+  margin: var(--space-2) var(--space-4) 0;
+  padding: 2px 4px 2px 10px;
+  border-radius: var(--radius);
+  background: var(--accent-bg);
+  font-size: var(--fs-sm);
+}
+.chat-context span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-log {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+  padding: var(--space-3) var(--space-4);
+  overflow-y: auto;
+}
+.chat-empty {
+  margin: 0;
+}
+.chat-message {
+  min-width: 0;
+}
+.chat-message.user {
+  align-self: flex-end;
+  max-width: 92%;
+  padding: 8px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-bg);
+}
+.chat-message.assistant {
+  align-self: stretch;
+}
+.chat-message p {
+  margin: 0 0 6px;
+}
+.chat-message > :last-child {
+  margin-bottom: 0;
+}
+.chat-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.chat-message-context {
+  color: var(--muted);
+  font-size: var(--fs-xs);
+}
+.chat-message .ai-preview {
+  margin: 6px 0 0;
+}
+.chat-tools {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.chat-tools li::before {
+  content: "· ";
+}
+.chat-tools li.failed {
+  color: var(--danger);
+}
+.chat-card {
+  margin-top: var(--space-2);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+.chat-card h3 {
+  margin: 0 0 4px;
+  font-size: var(--fs-base);
+}
+.chat-card .planning-actions {
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--line);
+}
+.chat-form textarea {
+  width: 100%;
+  min-height: 56px;
+  max-height: 160px;
+  padding: 8px;
+  font: inherit;
+  resize: vertical;
+}
+.chat-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.chat-form-actions .hint {
+  margin: 0;
+}
+/* Wąskie okno: panel nakłada się na treść zamiast ją ściskać. */
+@media (max-width: 900px) {
+  .app-body.chat-open {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .app-body > .chat-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 14;
+    width: min(var(--chat-width, 380px), 100vw);
+    box-shadow: 0 16px 32px #0006;
+  }
+  .app-shell:has(> .titlebar) .chat-panel {
+    top: 32px;
+  }
+  .chat-inner {
+    position: static;
+    height: 100%;
+  }
+}
+@media (max-width: 640px) {
+  .app-body.chat-open {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

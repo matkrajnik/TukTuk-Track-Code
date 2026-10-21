@@ -166,6 +166,18 @@ fn configured(path: &str) -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
+/// Komunikat, gdy wybrany silnik nie został wykryty.
+pub fn missing_message(engine: Engine, detected: &Detected) -> String {
+    if detected.any() {
+        format!(
+            "Nie znaleziono {}. Wybierz inny silnik albo podaj ścieżkę w Ustawieniach → Asystent AI.",
+            engine.name()
+        )
+    } else {
+        NOT_FOUND_ANY.to_string()
+    }
+}
+
 /// Kolejność z planu: `%USERPROFILE%\.local\bin\claude.exe`, `PATH`, `ai_claude_path`.
 pub fn claude_candidates(loc: &Locations, configured_path: &str) -> Vec<PathBuf> {
     let mut list = Vec::new();
@@ -339,7 +351,7 @@ pub fn kill_tree_spec(pid: u32, system_root: Option<&Path>) -> (PathBuf, Vec<Str
 }
 
 /// Zabija drzewo procesów po przekroczeniu czasu (tylko [`Process`]).
-fn kill_tree(pid: u32) {
+pub(crate) fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -684,7 +696,7 @@ pub fn parse_claude(stdout: &str) -> Result<Value, Failure> {
 }
 
 /// Tekst z jednego zdarzenia `codex exec --json`: wiadomość agenta albo błąd.
-fn codex_event_text(event: &Value) -> Option<(bool, String)> {
+pub(crate) fn codex_event_text(event: &Value) -> Option<(bool, String)> {
     let kind = event["type"].as_str().unwrap_or_default();
     let item = &event["item"];
     let msg = &event["msg"];
@@ -1020,15 +1032,11 @@ fn run_inner(
         return Err(fail(call, "off", OFF.to_string()));
     };
     let Some(cli) = cfg.detected.get(engine) else {
-        let message = if cfg.detected.any() {
-            format!(
-                "Nie znaleziono {}. Wybierz inny silnik albo podaj ścieżkę w Ustawieniach → Asystent AI.",
-                engine.name()
-            )
-        } else {
-            NOT_FOUND_ANY.to_string()
-        };
-        return Err(fail(call, "missing", message));
+        return Err(fail(
+            call,
+            "missing",
+            missing_message(engine, &cfg.detected),
+        ));
     };
     // Wejście zawsze po filtrze danych osobowych.
     let (text, pseudonyms) = ai_privacy::redact(prompt, dict);

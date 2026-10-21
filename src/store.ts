@@ -85,6 +85,7 @@ import {
   type RedmineProject,
   type RedmineStatus,
 } from "./api/redmine";
+import type { ChatRequest } from "./api/aichat";
 import type { AiCall, AiStatus } from "./api/ai";
 import type {
   OrcaCreated,
@@ -507,6 +508,10 @@ export interface NavigateRequest {
    * `startup`; nieznana sekcja otwiera ostatnią).
    */
   section?: string | null;
+  /** Tekst pola „Nowe zadanie” (np. „Popraw” w karcie czatu); fokus w polu. */
+  newTask?: string | null;
+  /** Otwórz czat asystenta (A3) z kontekstem albo pytaniem; bez `view` widok się nie zmienia. */
+  chat?: ChatRequest | null;
   /** Plan i historia → Zamknięcie dnia. */
   dayClose?: boolean;
 }

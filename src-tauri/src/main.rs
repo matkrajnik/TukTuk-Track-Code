@@ -2,6 +2,7 @@
 mod agent_time;
 mod agents;
 mod ai;
+mod ai_chat;
 mod ai_privacy;
 mod autostart;
 mod backup;
@@ -489,6 +490,7 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             ai::setup(app.handle());
+            ai_chat::setup(app.handle());
             mcp::setup(app.handle());
             hooks::setup(app.handle());
             suggest::setup(app.handle());
@@ -625,6 +627,9 @@ fn main() {
             ai::ai_calls,
             ai::ai_redact_preview,
             ai::ai_test,
+            ai_chat::ai_chat_send,
+            ai_chat::ai_chat_stop,
+            ai_chat::ai_chat_reset,
             mcp::mcp_proposals,
             mcp::mcp_proposal_resolve,
             mcp::mcp_status,
@@ -712,8 +717,14 @@ fn main() {
             timesheet::ts_project_map,
             timesheet::ts_set_project_map
         ])
-        .run(tauri::generate_context!())
-        .expect("Nie udało się uruchomić Todo Track");
+        .build(tauri::generate_context!())
+        .expect("Nie udało się uruchomić Todo Track")
+        .run(|app, event| {
+            // Zamknięcie aplikacji kończy rozmowę czatu i jej proces CLI (A3).
+            if let tauri::RunEvent::Exit = event {
+                ai_chat::shutdown(app);
+            }
+        });
 }
 
 #[cfg(test)]

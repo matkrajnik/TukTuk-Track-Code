@@ -81,3 +81,37 @@ export async function mcpSync(): Promise<McpStatus> {
   window.dispatchEvent(new Event(mcpStatusEvent));
   return status;
 }
+
+/**
+ * Symulowane `propose_*` (czat w podglądzie, A3): dopisuje propozycję do
+ * kolejki jak serwer MCP i powiadamia baner. Niczego nie zmienia w danych.
+ */
+export async function mcpPropose(
+  proposal: Partial<McpProposal> & Pick<McpProposal, "kind">,
+): Promise<McpProposal> {
+  const list = await mcpProposals();
+  const created: McpProposal = {
+    id: list.reduce((max, p) => Math.max(max, p.id), 0) + 1,
+    at: Date.now(),
+    taskId: null,
+    taskTitle: "",
+    title: "",
+    project: "",
+    key: "",
+    day: "",
+    estimate: 0,
+    text: "",
+    folder: "",
+    ...proposal,
+  };
+  try {
+    localStorage.setItem(
+      mcpKey,
+      JSON.stringify({ ...stored(), proposals: [...list, created] }),
+    );
+  } catch {
+    // Bez localStorage kolejka nie zapamięta propozycji.
+  }
+  window.dispatchEvent(new Event(mcpProposalsEvent));
+  return created;
+}

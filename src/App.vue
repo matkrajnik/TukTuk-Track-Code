@@ -13,6 +13,8 @@ import FocusBanner from "./components/FocusBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import DayDialogs from "./components/DayDialogs.vue";
 import AiFirstRun from "./components/AiFirstRun.vue";
+import AiChat from "./components/AiChat.vue";
+import { chat, openChat, setChatOpen, startChat, useChatEnabled } from "./aichat";
 import {
   confirmStart,
   dayMarkOf,
@@ -84,6 +86,15 @@ async function askAboutAi() {
   } catch {
     // Bez wykrywania aplikacja działa bez dialogu (Ustawienia → Asystent AI).
   }
+}
+/** Czat (A3): panel po prawej, tylko przy wybranym silniku i włączonym `aiChat`. */
+const chatEnabled = useChatEnabled();
+const chatVisible = computed(() => chatEnabled.value && chat.open);
+/** Ctrl+J: pokazuje albo chowa panel czatu (fokus w polu wiadomości po otwarciu). */
+function toggleChat() {
+  if (!chatEnabled.value) return;
+  if (chat.open) setChatOpen(false);
+  else openChat();
 }
 const view = ref<View>("tasks");
 /** Zakładka „Historia i kopie”. */
@@ -270,6 +281,11 @@ async function navigate(
   request: NavigateRequest,
   source: "app" | "external" | "morning" = "app",
 ) {
+  // Prośba o czat (Ctrl+K po „?”, z innego okna): otwiera panel bez zmiany widoku.
+  if (request.chat && chatEnabled.value) {
+    userNavigated(source === "external");
+    openChat(request.chat);
+  }
   const target = views.find((v) => v === request.view);
   if (!target) return;
   if (source !== "morning") userNavigated(source === "external");
@@ -415,6 +431,16 @@ function shortcut(e: KeyboardEvent) {
   } else if (e.ctrlKey && !e.altKey && !e.metaKey && e.key === ",") {
     e.preventDefault();
     void navigate({ view: "settings" });
+  } else if (
+    e.ctrlKey &&
+    !e.altKey &&
+    !e.metaKey &&
+    !e.shiftKey &&
+    key === "j" &&
+    chatEnabled.value
+  ) {
+    e.preventDefault();
+    if (!e.repeat) toggleChat();
   } else if (e.defaultPrevented) {
     return;
   } else if (
@@ -508,6 +534,11 @@ let tick: ReturnType<typeof setInterval>;
 onMounted(async () => {
   window.addEventListener("keydown", shortcut);
   setNavigator((request) => void navigate(request));
+  try {
+    unsubscribers.push(await startChat());
+  } catch {
+    // Bez nasłuchu czat nie dostanie odpowiedzi, reszta aplikacji działa.
+  }
   tick = setInterval(() => {
     now.value = Date.now();
   }, 1000);
@@ -583,11 +614,18 @@ onUnmounted(() => {
       >Przejdź do treści</a
     >
     <TitleBar v-if="desktop" @error="error = $event" />
-    <div class="app-body">
+    <div
+      class="app-body"
+      :class="{ 'chat-open': chatVisible }"
+      :style="chatVisible ? { '--chat-width': `${chat.width}px` } : undefined"
+    >
     <AppNav
       v-model:view="view"
       :running="running"
       :day-ended="dayEnded"
+      :chat-enabled="chatEnabled"
+      :chat-open="chatVisible"
+      @chat="toggleChat"
       @quick="openQuick"
       @stop="act('stop')"
       @end-day="endDay"
@@ -709,6 +747,12 @@ onUnmounted(() => {
         @stop="act('stop')"
       />
     </main>
+    <AiChat
+      v-if="chatVisible"
+      :tasks="data.tasks"
+      @updated="updated"
+      @error="error = $event"
+    />
     </div>
     <SessionEditor
       v-if="editingSession"

@@ -31,6 +31,7 @@ import QuickChips from "./components/QuickChips.vue";
 import DayDialogs from "./components/DayDialogs.vue";
 import { corrections } from "./estimates";
 import { setNavigator } from "./navigation";
+import { openChat, useChatEnabled } from "./aichat";
 const emit = defineEmits<{ close: []; updated: [data: Snapshot] }>();
 const data = ref<Snapshot>({ tasks: [], sessions: [] }),
   query = ref(""),
@@ -46,8 +47,24 @@ const ownWindow = desktop && getCurrentWindow().label === "quick";
 /** Poprawka szacunków z wczytanych danych (podpowiedź „zwykle ~…”). */
 const correctionOf = computed(() => corrections(data.value, Date.now()));
 let off: UnlistenFn | undefined;
+/**
+ * Tekst po „?” idzie do czatu asystenta (A3), tylko gdy czat jest dostępny.
+ * Wtedy lista zadań i tworzenie zadania są wyłączone.
+ */
+const chatEnabled = useChatEnabled();
+const asking = computed(
+  () => chatEnabled.value && query.value.trimStart().startsWith("?"),
+);
+const question = computed(() => query.value.trimStart().slice(1).trim());
+async function ask() {
+  const text = question.value;
+  if (!text || busy.value) return;
+  if (desktop) await navigateMain({ chat: { question: text, send: true } });
+  else openChat({ question: text, send: true });
+  await close();
+}
 const matches = computed(() =>
-  data.value.tasks
+  asking.value ? [] : data.value.tasks
     .filter(
       (t) =>
         !t.done &&
@@ -86,6 +103,7 @@ const createLabel = computed(() => {
 /** Brak wyników i jest co utworzyć: Enter tworzy i uruchamia, Shift+Enter tylko tworzy. */
 const creatable = computed(
   () =>
+    !asking.value &&
     !matches.value.length &&
     !!query.value.trim() &&
     (!!parsed.value.title.trim() ||
@@ -158,6 +176,9 @@ function keys(e: KeyboardEvent) {
   } else if (e.key === "ArrowUp") {
     e.preventDefault();
     index.value = Math.max(0, index.value - 1);
+  } else if (e.key === "Enter" && asking.value) {
+    e.preventDefault();
+    void ask();
   } else if (e.key === "Enter" && matches.value[index.value] && !busy.value) {
     e.preventDefault();
     void start(matches.value[index.value].id);
@@ -223,7 +244,17 @@ onUnmounted(() => off?.());
         <span>{{ task.title }}</span
         ><small>{{ task.details?.project || "Bez projektu" }} · Start</small>
       </button>
-      <p v-if="!matches.length" class="report-note">
+      <div v-if="asking" class="quick-create">
+        <button
+          class="quick-result selected"
+          :disabled="busy || !question"
+          @click="ask"
+        >
+          <span>Zapytaj asystenta: {{ question || "wpisz pytanie" }}</span
+          ><small>Enter</small>
+        </button>
+      </div>
+      <p v-else-if="!matches.length" class="report-note">
         Brak pasujących nieukończonych zadań.
       </p>
       <div v-if="creatable" class="quick-create">
@@ -242,7 +273,7 @@ onUnmounted(() => off?.());
       </div>
     </div>
     <p class="hint">
-      ↑ ↓ wybór · Enter uruchamia{{ creatable ? " · Shift+Enter tylko tworzy" : "" }} · Esc zamyka
+      ↑ ↓ wybór · Enter uruchamia{{ creatable ? " · Shift+Enter tylko tworzy" : "" }}{{ chatEnabled ? " · ? pytanie do asystenta" : "" }} · Esc zamyka
     </p>
   </section>
   <DayDialogs v-if="ownWindow" :data="data" @updated="data = $event" />

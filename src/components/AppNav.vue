@@ -21,6 +21,7 @@ import {
   History,
   LayoutDashboard,
   ListTodo,
+  Bot,
   Menu,
   Moon,
   PictureInPicture2,
@@ -51,10 +52,14 @@ const view = defineModel<View>("view", { required: true });
  */
 defineProps<{
   running?: { title: string; elapsed: string } | null;
+  /** Czat (A3): pozycja „Asystent” pod Ustawieniami, tylko gdy czat jest dostępny. */
+  chatEnabled?: boolean;
+  chatOpen?: boolean;
   dayEnded?: string | null;
 }>();
 const emit = defineEmits<{
   quick: [];
+  chat: [];
   stop: [];
   endDay: [];
   resumeDay: [];
@@ -310,6 +315,16 @@ async function hide() {
         @click="go('settings')"
       >
         <Settings :size="20" aria-hidden="true" /><span class="nav-label">Ustawienia</span>
+      </button>
+      <button
+        v-if="chatEnabled"
+        class="nav-item nav-assistant"
+        :class="{ selected: chatOpen }"
+        :aria-pressed="chatOpen"
+        :title="chatOpen ? 'Schowaj asystenta (Ctrl+J)' : 'Asystent AI (Ctrl+J)'"
+        @click="emit('chat')"
+      >
+        <Bot :size="20" aria-hidden="true" /><span class="nav-label">Asystent</span>
       </button>
     </nav>
     </div>
