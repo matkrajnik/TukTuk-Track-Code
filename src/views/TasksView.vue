@@ -511,7 +511,7 @@ async function priority(task: Task, e: Event) {
     >
   </div>
   <section
-    v-if="todayOnly && calendar.shown.value"
+    v-if="todayOnly"
     class="today-meetings"
     aria-label="Spotkania dziś"
   >

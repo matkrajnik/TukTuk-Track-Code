@@ -17,7 +17,7 @@ import {
   type CalendarEvent,
   type Task,
 } from "../store";
-import { clock, dayKey } from "../time";
+import { clock, dayBounds, dayKey } from "../time";
 
 const props = defineProps<{
   /** Edytowane ręczne spotkanie; brak = nowe. */
@@ -50,7 +50,14 @@ const from = ref(clock(initialStart));
 const to = ref(editing?.allDay ? clock(initialStart + HALF_HOUR) : clock(initialEnd));
 const allDay = ref(editing?.allDay ?? false);
 const showAs = ref(editing?.showAs ?? "busy");
-const taskId = ref<number>(editing?.taskId ?? 0);
+/**
+ * Zadanie spotkania w koszu (albo usunięte) nie ma go w `props.tasks`, a
+ * zapis z takim zadaniem zostałby odrzucony: formularz zaczyna od
+ * „Bez zadania” i mówi dlaczego.
+ */
+const taskGone =
+  editing?.taskId != null && !props.tasks.some((t) => t.id === editing.taskId);
+const taskId = ref<number>(taskGone ? 0 : (editing?.taskId ?? 0));
 const busy = ref(false);
 const error = ref("");
 const confirming = ref(false);
@@ -71,7 +78,12 @@ async function save() {
   error.value = "";
   try {
     const start = +new Date(`${day.value}T${allDay.value ? "00:00" : from.value}`);
-    const end = allDay.value ? start : +new Date(`${day.value}T${to.value}`);
+    // „Do” = 00:00 to koniec dnia (północ następnego), np. 23:30–00:00.
+    const end = allDay.value
+      ? start
+      : to.value === "00:00"
+        ? dayBounds(day.value)[1]
+        : +new Date(`${day.value}T${to.value}`);
     if (!Number.isFinite(start) || !Number.isFinite(end))
       throw new Error("Wprowadź poprawny dzień i godziny.");
     const input = {
@@ -191,6 +203,10 @@ async function remove() {
         :disabled="busy"
         :options="taskOptions"
       />
+      <p v-if="taskGone" class="hint meeting-task-gone">
+        Zadanie tego spotkania jest w koszu. Wybierz inne albo zapisz bez
+        zadania.
+      </p>
       <p class="hint">
         Ręczne spotkanie zmniejsza pojemność dnia, a plan dnia je omija. Zadanie
         podpowie się w „Dodaj jako czas” w Zamknięciu dnia.

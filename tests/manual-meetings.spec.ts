@@ -367,3 +367,82 @@ test("podgląd: walidacja komend ręcznych spotkań jak w meetings.rs", async ({
   }, [at(TODAY, "09:00"), at(TODAY, "11:00")]);
   expect(sources).toEqual(["outlook:Daily WMS", `manual:${"x".repeat(200)}`]);
 });
+
+test("Zadania → Dzisiaj bez kalendarza i bez spotkań: „Dodaj spotkanie”, koniec o północy", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await page.getByLabel("Dzisiaj: plan i praca").check();
+  // Sekcja widoczna także bez połączonego kalendarza i bez żadnego spotkania.
+  const today = page.getByRole("region", { name: "Spotkania dziś" });
+  await expect(today.locator("li")).toHaveCount(0);
+  await expect(today.locator(".hint")).toHaveText(
+    "Brak nadchodzących spotkań dziś.",
+  );
+  await today.getByRole("button", { name: "Dodaj spotkanie" }).click();
+  const add = dialog(page, "Dodaj spotkanie");
+  await add.getByLabel("Temat", { exact: true }).fill("Wdrożenie nocne");
+  await add.getByLabel("Od", { exact: true }).fill("23:30");
+  // „Do” = 00:00 to północ kończąca dzień, nie początek dnia.
+  await add.getByLabel("Do", { exact: true }).fill("00:00");
+  await add.getByRole("button", { name: "Zapisz" }).click();
+  await expect(add).toHaveCount(0);
+  await expect(today.locator("li")).toHaveCount(1);
+  await expect(today.locator("li").first()).toHaveText(
+    /23:30–00:00\s*Wdrożenie nocne\s*ręczne/,
+  );
+  const saved = async () =>
+    page.evaluate(() =>
+      JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+    );
+  expect((await saved())[0]).toMatchObject({
+    start: at(TODAY, "23:30"),
+    end: at("2026-10-16", "00:00"),
+  });
+
+  // Ponowny zapis spotkania kończącego się o północy (Do = 00:00) przechodzi.
+  await today
+    .getByRole("button", { name: "Edytuj spotkanie: Wdrożenie nocne" })
+    .click();
+  const edit = dialog(page, "Edytuj spotkanie");
+  await expect(edit.getByLabel("Do", { exact: true })).toHaveValue("00:00");
+  await edit.getByLabel("Temat", { exact: true }).fill("Wdrożenie produkcyjne");
+  await edit.getByRole("button", { name: "Zapisz" }).click();
+  await expect(edit).toHaveCount(0);
+  expect((await saved())[0]).toMatchObject({
+    subject: "Wdrożenie produkcyjne",
+    end: at("2026-10-16", "00:00"),
+  });
+});
+
+test("edycja spotkania z zadaniem w koszu: „Bez zadania” z podpowiedzią i zapis", async ({
+  page,
+}) => {
+  const [, client] = manualMeetings();
+  await openPreview(page, {
+    meetings: [{ ...client, taskId: ids.trashed }],
+  });
+  await openDay(page);
+  await chart(page)
+    .getByRole("button", {
+      name: "Spotkanie: Spotkanie u klienta · 15:00–16:00 · ręczne",
+    })
+    .click();
+  const edit = dialog(page, "Edytuj spotkanie");
+  await expect(edit.locator(".meeting-task-gone")).toHaveText(
+    "Zadanie tego spotkania jest w koszu. Wybierz inne albo zapisz bez zadania.",
+  );
+  await expect(
+    edit.getByRole("combobox", { name: "Zadanie spotkania" }),
+  ).toHaveValue("Bez zadania");
+  await edit.getByLabel("Do", { exact: true }).fill("16:30");
+  await edit.getByRole("button", { name: "Zapisz" }).click();
+  await expect(edit).toHaveCount(0);
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+  );
+  expect(saved[0]).toMatchObject({
+    taskId: null,
+    end: at(TODAY, "16:30"),
+  });
+});
