@@ -127,8 +127,12 @@ async function loadOrca() {
   try {
     status.value = await orcaStatus();
     if (runnable.value) {
+      // Przy autostarcie to wywołanie uruchamia Orkę (orca open).
+      const starting = !status.value.running;
       repos.value = await orcaRepos();
       if (reference.value) existing.value = await orcaFind(reference.value);
+      // Po starcie odśwież stan, żeby zniknęła informacja o uruchamianiu.
+      if (starting) status.value = await orcaStatus();
     }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
@@ -200,7 +204,7 @@ async function create() {
         </button>
       </p>
       <p v-else-if="status && !status.running && status.autostart" class="hint">
-        Orca nie działa; zostanie uruchomiona przy tworzeniu worktree
+        Orca nie działa; zostanie uruchomiona przy otwarciu tego dialogu
         (Ustawienia → Agenci).
       </p>
       <p v-if="existing.length" class="hint" role="status">

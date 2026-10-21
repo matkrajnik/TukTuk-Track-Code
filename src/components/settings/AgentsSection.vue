@@ -167,7 +167,8 @@ watch(
   <p class="hint">
     Wyłączone (domyślnie): przy nieuruchomionej Orce dialog pokazuje „Orca nie
     działa” i nic nie tworzy. Włączone: aplikacja uruchomi Orkę (orca open)
-    dopiero przy otwarciu dialogu worktree.
+    przy otwarciu dialogu worktree, gdy Orca nie działa; komunikat w dialogu
+    znika po jej starcie.
   </p>
   <h3>Ostatnie zdarzenia</h3>
   <ul

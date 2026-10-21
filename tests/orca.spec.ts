@@ -218,6 +218,8 @@ test("„Uruchamiaj Orkę, gdy nie działa” uruchamia Orkę przy otwarciu dial
     dialog(page).getByRole("button", { name: "Utwórz worktree" }),
   ).toBeEnabled();
   expect((await orcaState(page)).running).toBe(true);
+  // Po starcie Orki znika informacja o jej uruchamianiu.
+  await expect(dialog(page)).not.toContainText("zostanie uruchomiona");
 });
 
 test("brak orca.cmd: komunikat z podpowiedzią o Ustawieniach", async ({

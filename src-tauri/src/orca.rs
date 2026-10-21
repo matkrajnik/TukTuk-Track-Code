@@ -9,8 +9,8 @@
 //!
 //! Nic nie startuje samo: `worktree create` wykonuje się tylko po kliknięciu
 //! w dialogu; Orkę uruchamia aplikacja tylko przy włączonym „Uruchamiaj Orkę, gdy
-//! nie działa” i tylko przy tworzeniu worktree albo odczycie listy repozytoriów
-//! po kliknięciu. Tło (mapowanie folderów) tylko czyta `worktree list` i nigdy
+//! nie działa” i tylko z dialogu worktree: przy jego otwarciu (lista repozytoriów
+//! i istniejących worktree), „Sprawdź ponownie” albo tworzeniu worktree. Tło (mapowanie folderów) tylko czyta `worktree list` i nigdy
 //! nie uruchamia Orki.
 use crate::agents::{jira_key, norm_folder};
 use crate::db;
@@ -72,38 +72,63 @@ impl Runner for Process {
             // CREATE_NO_WINDOW: bez migającego okna konsoli.
             command.creation_flags(0x0800_0000);
         }
+        // `open` uruchamia aplikację Orki, która może dziedziczyć uchwyty potoków
+        // i trzymać je otwarte; jej wyjścia nie czytamy (liczy się kod wyjścia
+        // i późniejszy `status`).
+        let capture = args.first().map(String::as_str) != Some("open");
+        if !capture {
+            command.stdout(Stdio::null()).stderr(Stdio::null());
+        }
         let mut child = command
             .spawn()
             .map_err(|e| format!("Nie udało się uruchomić orca.cmd: {e}"))?;
-        let read = |pipe: Option<Box<dyn Read + Send>>| {
+        let (tx, rx) = std::sync::mpsc::channel::<(bool, String)>();
+        let read = |pipe: Option<Box<dyn Read + Send>>, is_out: bool| {
+            let tx = tx.clone();
             std::thread::spawn(move || {
                 let mut text = Vec::new();
                 if let Some(mut pipe) = pipe {
                     let _ = pipe.read_to_end(&mut text);
                 }
-                String::from_utf8_lossy(&text).into_owned()
-            })
+                let _ = tx.send((is_out, String::from_utf8_lossy(&text).into_owned()));
+            });
         };
-        let out = read(child.stdout.take().map(|p| Box::new(p) as _));
-        let err = read(child.stderr.take().map(|p| Box::new(p) as _));
+        let pipes = if capture { 2 } else { 0 };
+        if capture {
+            read(child.stdout.take().map(|p| Box::new(p) as _), true);
+            read(child.stderr.take().map(|p| Box::new(p) as _), false);
+        }
+        drop(tx);
         let started = Instant::now();
+        let deadline = started + timeout;
+        let late = || "Orca nie odpowiedziała w oczekiwanym czasie.".to_string();
         let status = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() > timeout => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("Orca nie odpowiedziała w oczekiwanym czasie.".into());
+                    return Err(late());
                 }
                 Ok(None) => std::thread::sleep(Duration::from_millis(40)),
                 Err(e) => return Err(format!("Błąd procesu orca.cmd: {e}")),
             }
         };
-        Ok(Output {
+        // Odczyt wyjścia też ma limit: proces potomny orca.cmd może trzymać
+        // potoki otwarte i read_to_end nigdy by się nie skończył.
+        let mut output = Output {
             success: status.success(),
-            stdout: out.join().unwrap_or_default(),
-            stderr: err.join().unwrap_or_default(),
-        })
+            ..Output::default()
+        };
+        for _ in 0..pipes {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match rx.recv_timeout(left) {
+                Ok((true, text)) => output.stdout = text,
+                Ok((false, text)) => output.stderr = text,
+                Err(_) => return Err(late()),
+            }
+        }
+        Ok(output)
     }
 }
 
