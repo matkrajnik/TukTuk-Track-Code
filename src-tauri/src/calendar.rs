@@ -86,7 +86,14 @@ pub struct CalendarEvent {
     pub all_day: bool,
     pub cancelled: bool,
     pub response: String,
+    /// Źródło: `"outlook"` (Microsoft 365, tylko do odczytu) albo `"manual"`
+    /// (ręczne spotkanie z `manual_meetings`, B12).
+    pub source: String,
+    /// Zadanie ręcznego spotkania („Dodaj jako czas” w Zamknięciu dnia).
+    pub task_id: Option<i64>,
 }
+/// Źródło spotkań z Microsoft 365.
+pub const OUTLOOK: &str = "outlook";
 
 /// Stan w pamięci: access token, trwające logowanie i pobieranie.
 #[derive(Default)]
@@ -566,6 +573,8 @@ pub fn parse_page<Tz: TimeZone>(
                 .as_str()
                 .unwrap_or("none")
                 .to_owned(),
+            source: OUTLOOK.into(),
+            task_id: None,
         });
     }
     let next = value["@odata.nextLink"].as_str().map(str::to_owned);
@@ -622,7 +631,8 @@ pub fn replace_range(
     tx.commit().map_err(|e| e.to_string())
 }
 
-/// Spotkania nakładające się na `[from, to)`, według początku.
+/// Spotkania z Outlooka (`calendar_events`) nakładające się na `[from, to)`,
+/// według początku, bez sprawdzania połączenia konta.
 pub fn events_between(db: &Connection, from: i64, to: i64) -> Result<Vec<CalendarEvent>, String> {
     let mut stmt = db
         .prepare(
@@ -641,11 +651,28 @@ pub fn events_between(db: &Connection, from: i64, to: i64) -> Result<Vec<Calenda
                 all_day: r.get(5)?,
                 cancelled: r.get(6)?,
                 response: r.get(7)?,
+                source: OUTLOOK.into(),
+                task_id: None,
             })
         })
         .map_err(|e| e.to_string())?;
     rows.collect::<rusqlite::Result<_>>()
         .map_err(|e| e.to_string())
+}
+
+/// Jedno źródło spotkań (B12): z Outlooka tylko przy połączonym koncie (bez
+/// niego spotkania z kalendarza nie obowiązują) i ręczne zawsze, według
+/// początku. Spotkania z obu źródeł nie są scalane jako duplikaty; pojemność
+/// liczy nienakładające się minuty (`capacity::meeting_spans`).
+pub fn meetings_between(db: &Connection, from: i64, to: i64) -> Result<Vec<CalendarEvent>, String> {
+    let mut all = if connected(db) {
+        events_between(db, from, to)?
+    } else {
+        Vec::new()
+    };
+    all.extend(crate::meetings::between(db, from, to)?);
+    all.sort_by(|a, b| (a.start, a.end, &a.id).cmp(&(b.start, b.end, &b.id)));
+    Ok(all)
 }
 
 fn graph_error(status: StatusCode) -> String {
@@ -958,7 +985,8 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
 }
 
 /// Rozłącza konto (albo przerywa trwające logowanie): usuwa token z magazynu
-/// i spotkania z bazy. Client ID i dzierżawca zostają.
+/// i spotkania z Outlooka z bazy. Client ID, dzierżawca i ręczne spotkania
+/// (`manual_meetings`) zostają.
 #[tauri::command]
 pub fn calendar_disconnect(app: tauri::AppHandle) -> Result<Status, String> {
     let state = app.state::<CalendarState>();
@@ -981,16 +1009,22 @@ pub fn calendar_disconnect(app: tauri::AppHandle) -> Result<Status, String> {
                 }
             }
         }
-        db.execute("DELETE FROM calendar_events", [])
-            .map_err(|e| e.to_string())?;
-        let mut saved = load(&db);
-        saved.email.clear();
-        saved.last_sync = None;
-        saved.last_error.clear();
-        store(&db, &saved)?;
+        forget_account(&db)?;
     }
     let _ = app.emit(EVENT, ());
     status(&app)
+}
+
+/// Część bazodanowa rozłączenia: usuwa spotkania z Outlooka i konto
+/// z konfiguracji. Ręczne spotkania (`manual_meetings`) zostają.
+pub fn forget_account(db: &Connection) -> Result<(), String> {
+    db.execute("DELETE FROM calendar_events", [])
+        .map_err(|e| e.to_string())?;
+    let mut saved = load(db);
+    saved.email.clear();
+    saved.last_sync = None;
+    saved.last_error.clear();
+    store(db, &saved)
 }
 
 /// „Odśwież”: pobiera spotkania teraz.
@@ -1009,7 +1043,8 @@ pub async fn calendar_refresh(app: tauri::AppHandle) -> Result<Status, String> {
     status(&app)
 }
 
-/// Spotkania nakładające się na `[from, to)` (Unix ms).
+/// Spotkania nakładające się na `[from, to)` (Unix ms): z Outlooka przy
+/// połączonym koncie i ręczne (`meetings_between`).
 #[tauri::command]
 pub fn calendar_events(
     app: tauri::AppHandle,
@@ -1021,11 +1056,7 @@ pub fn calendar_events(
     }
     let state = app.state::<Database>();
     let db = state.0.lock().map_err(|e| e.to_string())?;
-    // Bez połączonego konta żadne spotkania nie obowiązują.
-    if load(&db).email.is_empty() {
-        return Ok(Vec::new());
-    }
-    events_between(&db, from, to)
+    meetings_between(&db, from, to)
 }
 
 /// Pobieranie przy starcie i co 10 minut, gdy konto jest połączone.
@@ -1301,6 +1332,8 @@ mod tests {
             all_day: false,
             cancelled: false,
             response: "accepted".into(),
+            source: OUTLOOK.into(),
+            task_id: None,
         }
     }
 

@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import { meetingOccupies, meetingTitle, type Session, type Task } from "../store";
+import { CalendarPlus } from "lucide-vue-next";
+import {
+  isManualMeeting,
+  meetingOccupies,
+  meetingTitle,
+  type CalendarEvent,
+  type Session,
+  type Task,
+} from "../store";
 import {
   axisRange,
   colorVar,
@@ -16,6 +24,7 @@ import { clock, dayBounds, dayKey } from "../time";
 import { useMeetings } from "../composables/useMeetings";
 import { useAgentTime } from "../composables/useAgentTime";
 import { agentName } from "../agenttime";
+import MeetingEditor from "./MeetingEditor.vue";
 
 const props = defineProps<{
   tasks: Task[];
@@ -32,9 +41,34 @@ const emit = defineEmits<{
 }>();
 
 const settings = useSettings();
-/** Spotkania dnia; tor „Spotkania” tylko przy połączonym kalendarzu. */
+/**
+ * Spotkania dnia (Outlook przy połączonym kalendarzu i ręczne); tor
+ * „Spotkania” przy połączonym kalendarzu albo gdy jest choć jedno spotkanie.
+ */
 const calendar = useMeetings(() => dayBounds(props.day));
-const showMeetings = computed(() => calendar.connected.value);
+const showMeetings = computed(() => calendar.shown.value);
+/** Formularz ręcznego spotkania: nowe (z godziną z toru) albo edycja ręcznego. */
+const editor = ref<{ meeting: CalendarEvent | null; start: number | null } | null>(
+  null,
+);
+function addMeeting(start: number | null = null) {
+  editor.value = { meeting: null, start };
+}
+function editMeeting(e: CalendarEvent) {
+  if (isManualMeeting(e)) editor.value = { meeting: e, start: null };
+}
+/** Klik w pusty fragment toru „Spotkania”: godzina z miejsca kliknięcia (co 15 min). */
+function addAt(event: MouseEvent) {
+  const svg = (event.currentTarget as SVGElement).ownerSVGElement;
+  const box = svg?.getBoundingClientRect();
+  if (!box || box.width <= 0) return addMeeting();
+  const [from, to] = range.value;
+  const at = from + ((event.clientX - box.left) / box.width) * (to - from);
+  const quarter = 15 * 60_000;
+  const [dayFrom, dayTo] = dayBounds(props.day);
+  const start = Math.floor(at / quarter) * quarter;
+  addMeeting(Math.min(dayTo - quarter, Math.max(dayFrom, start)));
+}
 const meetings = computed(() => {
   const [from, to] = dayBounds(props.day);
   return calendar.events.value
@@ -170,10 +204,27 @@ const unmatchedAgents = computed(() =>
 const meetingText = (m: (typeof meetings.value)[number]) =>
   `Spotkanie: ${meetingTitle(m.event, settings.value.calendarShowTitles)} · ${
     m.event.allDay ? "cały dzień" : span(m.event.start, m.event.end)
-  }${m.event.showAs === "tentative" ? " · wstępnie" : ""}`;
+  }${m.event.showAs === "tentative" ? " · wstępnie" : ""}${
+    isManualMeeting(m.event) ? " · ręczne" : ""
+  }`;
 </script>
 <template>
   <div class="day-timeline">
+    <div class="dtl-actions">
+      <button type="button" class="today-button" @click="addMeeting()">
+        <CalendarPlus :size="14" />Dodaj spotkanie
+      </button>
+    </div>
+    <MeetingEditor
+      v-if="editor"
+      :meeting="editor.meeting"
+      :start="editor.start"
+      :day="day"
+      :tasks="tasks"
+      :now="now"
+      @close="editor = null"
+      @saved="editor = null"
+    />
     <div class="dtl-chart">
       <div
         class="dtl-labels"
@@ -218,12 +269,15 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
           </g>
           <rect
             v-if="showMeetings"
-            class="dtl-track"
+            class="dtl-track dtl-meeting-track"
             x="0"
             y="22"
             width="100%"
             height="28"
-          />
+            @click="addAt"
+          >
+            <title>Kliknij, aby dodać spotkanie o tej godzinie</title>
+          </rect>
           <rect
             v-for="m in meetings"
             :key="'m' + m.event.id"
@@ -231,6 +285,7 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
             :class="{
               tentative: m.event.showAs === 'tentative',
               allday: m.event.allDay,
+              manual: isManualMeeting(m.event),
             }"
             :x="pct(m.start) + '%'"
             y="23"
@@ -238,11 +293,14 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
             height="26"
             rx="4"
             tabindex="0"
-            role="img"
+            :role="isManualMeeting(m.event) ? 'button' : 'img'"
             :aria-label="meetingText(m)"
             @mouseenter="show(meetingText(m), m.start, m.end)"
             @focus="show(meetingText(m), m.start, m.end)"
             @blur="tip = null"
+            @click="editMeeting(m.event)"
+            @keydown.enter.prevent="editMeeting(m.event)"
+            @keydown.space.prevent="editMeeting(m.event)"
           />
           <rect
             class="dtl-track"

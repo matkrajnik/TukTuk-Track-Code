@@ -372,6 +372,39 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Kopia niesie ręczne spotkania z zadaniem (`manual_meetings`, B12).
+    #[test]
+    fn backup_carries_manual_meetings() {
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-manual-meetings-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        let source = Connection::open(&path).unwrap();
+        db::init(&source).unwrap();
+        source
+            .execute_batch(
+                "INSERT INTO tasks(title,created_at) VALUES('Analiza',0);
+                 INSERT INTO manual_meetings(id,start,\"end\",subject,show_as,all_day,task_id,created_at,updated_at)
+                 VALUES('manual:1',10,20,'Telefon','busy',0,1,1,1);",
+            )
+            .unwrap();
+        drop(source);
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        let staged = stage(&path).unwrap();
+        copy(&staged, &mut current).unwrap();
+        let meetings = crate::meetings::between(&current, 0, 100).unwrap();
+        assert_eq!(meetings.len(), 1);
+        assert_eq!(meetings[0].subject, "Telefon");
+        assert_eq!(meetings[0].task_id, Some(1));
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// Przywracanie zostawia konfigurację Jiry i Redmine bieżącej instalacji
     /// (poświadczenia w Menedżerze poświadczeń pasują do niej, nie do kopii),
     /// a pozostałe ustawienia bierze z kopii.

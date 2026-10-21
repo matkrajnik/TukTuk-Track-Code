@@ -499,6 +499,35 @@ export function calendarFixture(state: "connected" | "ready" = "connected") {
   };
 }
 
+export const MEETINGS_KEY = "todo-track-preview-meetings-v1";
+/**
+ * Ręczne spotkania podglądu (B12, jak z `manual_meetings`): dziś telefon
+ * 11:00–11:30 z zadaniem „Code review” (po pomiarze 8:00–10:30, przed teraz)
+ * i spotkanie u klienta 15:00–16:00 bez zadania.
+ */
+export function manualMeetings() {
+  return [
+    {
+      id: "manual:1",
+      start: at(TODAY, "11:00"),
+      end: at(TODAY, "11:30"),
+      subject: "Telefon z magazynem",
+      showAs: "busy",
+      allDay: false,
+      taskId: ids.review,
+    },
+    {
+      id: "manual:2",
+      start: at(TODAY, "15:00"),
+      end: at(TODAY, "16:00"),
+      subject: "Spotkanie u klienta",
+      showAs: "busy",
+      allDay: false,
+      taskId: null,
+    },
+  ];
+}
+
 export const AGENT_SESSIONS_KEY = "todo-track-preview-agent-sessions-v1";
 
 /**
@@ -537,6 +566,8 @@ export interface PreviewOptions extends SeedOptions {
   agents?: unknown[];
   /** Kalendarz Microsoft w podglądzie, np. `calendarFixture()`. */
   calendar?: unknown;
+  /** Ręczne spotkania w podglądzie (B12), np. `manualMeetings()`. */
+  meetings?: unknown[];
   /** Okresy pracy agentów w podglądzie, np. `agentSessions()`. */
   agentSessions?: unknown[];
   /** Symulowany Ideo TS w podglądzie, np. `tsFixture()`. */
@@ -564,7 +595,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
@@ -573,6 +604,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
         options.agentSessions ? JSON.stringify(options.agentSessions) : null,
         options.ts ? JSON.stringify(options.ts) : null,
         options.redmine ? JSON.stringify(options.redmine) : null,
+        options.meetings ? JSON.stringify(options.meetings) : null,
       ],
     ] as const,
   );

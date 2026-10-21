@@ -39,6 +39,7 @@ import {
   calendarEvent,
   type CalendarEvent,
   type CalendarStatus,
+  type MeetingInput,
 } from "./api/calendar";
 import {
   jiraMoveEvent,
@@ -517,7 +518,25 @@ export async function calendarEvents(
   if (desktop) return invoke("calendar_events", { from, to });
   return calendarSim.calendarEvents(from, to);
 }
-/** Nasłuch zmian kalendarza (pobranie, połączenie, rozłączenie). */
+/** „Zapisz” nowego ręcznego spotkania (B12). */
+export async function meetingAdd(meeting: MeetingInput): Promise<CalendarEvent> {
+  if (desktop) return invoke("meeting_add", { meeting });
+  return calendarSim.meetingAdd(meeting);
+}
+/** „Zapisz” istniejącego ręcznego spotkania; spotkania z Outlooka są tylko do odczytu. */
+export async function meetingUpdate(
+  id: string,
+  meeting: MeetingInput,
+): Promise<CalendarEvent> {
+  if (desktop) return invoke("meeting_update", { id, meeting });
+  return calendarSim.meetingUpdate(id, meeting);
+}
+/** „Usuń” ręcznego spotkania. */
+export async function meetingDelete(id: string): Promise<void> {
+  if (desktop) return invoke("meeting_delete", { id });
+  return calendarSim.meetingDelete(id);
+}
+/** Nasłuch zmian kalendarza (pobranie, połączenie, rozłączenie, ręczne spotkania). */
 export async function onCalendarChanged(
   handler: () => void,
 ): Promise<() => void> {

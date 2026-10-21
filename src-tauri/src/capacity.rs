@@ -115,20 +115,17 @@ pub fn day_goal_ms(
     (target_ms - uncovered).max(0)
 }
 
-/// Czy dzień `date` jest wolny przez całodniowe „poza biurem” z kalendarza
-/// (bez połączonego kalendarza: nie).
+/// Czy dzień `date` jest wolny przez całodniowe „poza biurem” ze spotkań
+/// (`calendar::meetings_between`: Outlook przy połączonym koncie i ręczne).
 pub fn off_day_in<Tz: TimeZone>(db: &Connection, tz: &Tz, date: NaiveDate) -> bool {
-    if !calendar::connected(db) {
-        return false;
-    }
     let day = stats::day_bounds(tz, date);
-    calendar::events_between(db, day.0, day.1)
+    calendar::meetings_between(db, day.0, day.1)
         .map(|events| off_day(&events, day))
         .unwrap_or(false)
 }
 
 /// Cel mierzonego czasu dnia `date` z bazy (tray, powiadomienie o celu).
-/// Bez połączonego kalendarza równy celowi dnia.
+/// Bez spotkań (ręcznych ani z połączonego kalendarza) równy celowi dnia.
 pub fn goal_ms_in<Tz: TimeZone>(
     db: &Connection,
     tz: &Tz,
@@ -137,11 +134,11 @@ pub fn goal_ms_in<Tz: TimeZone>(
     now: i64,
 ) -> rusqlite::Result<i64> {
     let target = i64::from(crate::holidays::day_target_minutes(s, date)) * 60_000;
-    if target <= 0 || !calendar::connected(db) {
+    if target <= 0 {
         return Ok(target);
     }
     let day = stats::day_bounds(tz, date);
-    let events = calendar::events_between(db, day.0, day.1).unwrap_or_default();
+    let events = calendar::meetings_between(db, day.0, day.1).unwrap_or_default();
     if events.is_empty() {
         return Ok(target);
     }
@@ -186,6 +183,8 @@ mod tests {
             all_day: false,
             cancelled: false,
             response: "accepted".into(),
+            source: crate::calendar::OUTLOOK.into(),
+            task_id: None,
         }
     }
 

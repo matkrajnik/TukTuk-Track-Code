@@ -24,7 +24,34 @@ export interface CalendarEvent {
   cancelled: boolean;
   /** Odpowiedź na zaproszenie, np. `accepted`, `declined`, `organizer`. */
   response: string;
+  /**
+   * Źródło (B12): `outlook` (Microsoft 365, tylko do odczytu; domyślne, gdy
+   * brak pola) albo `manual` (ręczne spotkanie z `manual_meetings`).
+   */
+  source?: "outlook" | "manual";
+  /** Zadanie ręcznego spotkania („Dodaj jako czas” w Zamknięciu dnia). */
+  taskId?: number | null;
 }
+/** Dane formularza ręcznego spotkania (`meeting_add` / `meeting_update`). */
+export interface MeetingInput {
+  start: number;
+  end: number;
+  subject: string;
+  showAs: string;
+  allDay: boolean;
+  taskId: number | null;
+}
+/** Czy spotkanie jest ręczne (edycja i „Usuń”), a nie z Outlooka. */
+export const isManualMeeting = (e: CalendarEvent) => e.source === "manual";
+/** Typy ręcznego spotkania (`meetings::SHOW_AS`) z etykietami formularza. */
+export const meetingTypes = [
+  { value: "busy", label: "Zajęte" },
+  { value: "tentative", label: "Wstępnie" },
+  { value: "oof", label: "Poza biurem" },
+  { value: "workingElsewhere", label: "Praca gdzie indziej" },
+] as const;
+/** Najdłuższy temat ręcznego spotkania (`meetings::MAX_SUBJECT`). */
+export const MEETING_SUBJECT_MAX = 200;
 export const calendarEvent = "calendar-changed";
 export const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Jak `calendar::valid_tenant`: organizations/common/consumers, GUID albo domena. */
@@ -44,6 +71,10 @@ export const meetingOccupies = (e: CalendarEvent) =>
   ["busy", "oof", "workingElsewhere", "tentative"].includes(e.showAs) &&
   !e.cancelled &&
   e.response !== "declined";
-/** Tytuł spotkania w interfejsie: „Spotkanie”, gdy tytuły są wyłączone albo puste. */
+/**
+ * Tytuł spotkania w interfejsie: „Spotkanie”, gdy tytuły są wyłączone albo
+ * puste. „Pokazuj tytuły spotkań” dotyczy tylko Outlooka: temat ręcznego
+ * spotkania wpisał użytkownik, więc jest widoczny zawsze.
+ */
 export const meetingTitle = (e: CalendarEvent, showTitles: boolean) =>
-  (showTitles && e.subject.trim()) || "Spotkanie";
+  ((showTitles || isManualMeeting(e)) && e.subject.trim()) || "Spotkanie";

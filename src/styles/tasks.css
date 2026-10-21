@@ -430,6 +430,12 @@ h3.details-heading {
 .today-meetings {
   margin: 0 0 18px;
 }
+.today-meetings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
 .today-meetings ul {
   margin: 0;
   padding: 0;

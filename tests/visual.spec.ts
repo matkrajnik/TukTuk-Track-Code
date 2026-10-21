@@ -3,6 +3,7 @@ import {
   calendarFixture,
   ids,
   jiraFixture,
+  manualMeetings,
   openPreview,
   seed,
 } from "./fixtures/seed";
@@ -55,6 +56,8 @@ const views: {
   ready: (page: Page) => Promise<void>;
   /** Połączony kalendarz z przykładowymi spotkaniami (tor, pojemność, sekcja). */
   calendar?: boolean;
+  /** Ręczne spotkania (B12) bez połączonego kalendarza. */
+  meetings?: boolean;
 }[] = [
   {
     // B1: rozwinięty kafelek — przyciski drugorzędne z tłem i ikoną, przedziały
@@ -117,6 +120,18 @@ const views: {
     },
     ready: (page) =>
       expect(page.getByRole("region", { name: "Plan dnia" })).toBeVisible(),
+  },
+  {
+    // B12: oś dnia z ręcznymi spotkaniami bez połączonego kalendarza
+    // (tor „Spotkania”, kropkowany obrys, plan omijający spotkania).
+    name: "plan-dzien-reczne",
+    meetings: true,
+    open: async (page) => {
+      await nav(page, "Plan i historia");
+      await nav(page, "Dzień");
+    },
+    ready: (page) =>
+      expect(page.locator(".dtl-meeting.manual")).toHaveCount(2),
   },
   {
     name: "plan-tablica-tygodnia",
@@ -228,6 +243,7 @@ for (const theme of themes)
           await openPreview(page, {
             active: { task: ids.analysis, from: "11:00" },
             calendar: view.calendar ? calendarFixture() : undefined,
+            meetings: view.meetings ? manualMeetings() : undefined,
           });
           await view.open(page);
           await view.ready(page);

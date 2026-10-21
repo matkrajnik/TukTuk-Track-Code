@@ -1121,6 +1121,62 @@ html.widget-root body {
 .dtl-meeting.allday {
   fill-opacity: 0.25;
 }
+/* Ręczne spotkania (B12): kropkowany obrys, klik otwiera edycję. */
+.dtl-meeting.manual {
+  stroke-dasharray: 2 2;
+  cursor: pointer;
+}
+.dtl-meeting-track {
+  cursor: copy;
+}
+.dtl-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 6px;
+}
+/* Formularz ręcznego spotkania (MeetingEditor). */
+.meeting-form .meeting-allday {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+.meeting-form .meeting-allday input {
+  width: auto;
+  padding: 0;
+}
+.meeting-hours {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.meeting-form .meeting-type {
+  width: 100%;
+  padding: 11px;
+}
+.meeting-form .modal-actions .meeting-delete {
+  margin-right: auto;
+}
+/* Znacznik „ręczne” przy spotkaniu na listach. */
+.meeting-manual {
+  font-size: var(--fs-xs);
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.meeting-edit {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
 .dtl-plot {
   position: relative;
   min-width: 0;
@@ -1307,6 +1363,20 @@ html.widget-root body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  position: relative;
+}
+/* „Dodaj spotkanie” w nagłówku dnia tablicy tygodnia (B12). */
+.week-column-head .week-add-meeting {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 26px;
+  height: 26px;
+  background: none;
+}
+.week-column-head .week-add-meeting:hover {
+  color: var(--text);
+  background: var(--raised);
 }
 .week-column-head h3 {
   margin: 0;

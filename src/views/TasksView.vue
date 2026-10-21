@@ -1,14 +1,23 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { Plus, Scissors, Search, Square, Timer } from "lucide-vue-next";
+import {
+  CalendarPlus,
+  Plus,
+  Scissors,
+  Search,
+  Square,
+  Timer,
+} from "lucide-vue-next";
 import { countdown, focusAction, useFocus } from "../focus";
 import TaskCard from "../components/TaskCard.vue";
+import MeetingEditor from "../components/MeetingEditor.vue";
 import SearchSelect from "../components/SearchSelect.vue";
 import { offerAfterDone } from "../jiramove";
 import {
   change,
   duration,
   jiraConnected,
+  isManualMeeting,
   meetingOccupies,
   meetingTitle,
   loadTemplates,
@@ -21,6 +30,7 @@ import {
   onRedmineChanged,
   templates,
   setPriority,
+  type CalendarEvent,
   type NavigateRequest,
   type Session,
   type Snapshot,
@@ -136,8 +146,11 @@ const upcomingMeetings = computed(() => {
         : clock(e.start) + "–" + clock(e.end),
       title: meetingTitle(e, settings.value.calendarShowTitles),
       now: e.start <= props.now,
+      manual: isManualMeeting(e),
     }));
 });
+/** Ręczne spotkanie (B12): `null` = nowe, spotkanie = edycja; `false` = zamknięte. */
+const meetingEditor = ref<CalendarEvent | null | false>(false);
 const visible = computed(() =>
   props.data.tasks.filter(
     (t) =>
@@ -498,13 +511,22 @@ async function priority(task: Task, e: Event) {
     >
   </div>
   <section
-    v-if="todayOnly && calendar.connected.value"
+    v-if="todayOnly && calendar.shown.value"
     class="today-meetings"
     aria-label="Spotkania dziś"
   >
-    <h2 class="task-group-heading">
-      Spotkania dziś <span>{{ upcomingMeetings.length }}</span>
-    </h2>
+    <div class="today-meetings-head">
+      <h2 class="task-group-heading">
+        Spotkania dziś <span>{{ upcomingMeetings.length }}</span>
+      </h2>
+      <button
+        type="button"
+        class="today-button"
+        @click="meetingEditor = null"
+      >
+        <CalendarPlus :size="14" />Dodaj spotkanie
+      </button>
+    </div>
     <ul v-if="upcomingMeetings.length">
       <li
         v-for="m in upcomingMeetings"
@@ -512,13 +534,32 @@ async function priority(task: Task, e: Event) {
         :class="{ tentative: m.event.showAs === 'tentative', now: m.now }"
       >
         <span class="mono">{{ m.time }}</span
-        ><span class="today-meeting-title">{{ m.title }}</span
+        ><span class="today-meeting-title"
+          ><button
+            v-if="m.manual"
+            type="button"
+            class="meeting-edit"
+            :aria-label="'Edytuj spotkanie: ' + m.title"
+            @click="meetingEditor = m.event"
+          >
+            {{ m.title }}</button
+          ><template v-else>{{ m.title }}</template></span
+        ><span v-if="m.manual" class="meeting-manual">ręczne</span
         ><small v-if="m.now">trwa</small
         ><small v-else-if="m.event.showAs === 'tentative'">wstępnie</small>
       </li>
     </ul>
     <p v-else class="hint">Brak nadchodzących spotkań dziś.</p>
   </section>
+  <MeetingEditor
+    v-if="meetingEditor !== false"
+    :meeting="meetingEditor"
+    :day="todayKey"
+    :tasks="data.tasks"
+    :now="now"
+    @close="meetingEditor = false"
+    @saved="meetingEditor = false"
+  />
   <div class="task-list" :aria-busy="busy || loading">
     <section
       v-for="group in taskGroups"

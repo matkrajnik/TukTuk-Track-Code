@@ -3,6 +3,7 @@ import { computed, ref } from "vue";
 import { TriangleAlert } from "lucide-vue-next";
 import {
   change,
+  isManualMeeting,
   meetingOccupies,
   meetingTitle,
   planTask,
@@ -80,6 +81,7 @@ const meetings = computed(() => {
       time: `${clock(Math.max(from, e.start))}–${clock(Math.min(to, e.end))}`,
       title: meetingTitle(e, settings.value.calendarShowTitles),
       tentative: e.showAs === "tentative",
+      manual: isManualMeeting(e),
     }));
 });
 /** Mnożniki poprawki szacunków; liczone raz na minutę. */
@@ -348,7 +350,10 @@ const reviewedAt = computed(() =>
       <ul v-if="meetings.length" class="morning-list" aria-label="Spotkania dziś">
         <li v-for="m in meetings" :key="m.id">
           <span class="mono">{{ m.time }}</span> {{ m.title
-          }}<small v-if="m.tentative" class="hint"> · wstępnie</small>
+          }}<small v-if="m.tentative" class="hint"> · wstępnie</small
+          ><template v-if="m.manual">
+            <span class="meeting-manual">ręczne</span></template
+          >
         </li>
       </ul>
       <p v-else class="report-note">

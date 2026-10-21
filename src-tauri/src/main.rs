@@ -17,6 +17,7 @@ mod jira_board;
 mod jira_fields;
 mod jira_move;
 mod maintenance;
+mod meetings;
 mod native_msg;
 mod notify;
 mod planner;
@@ -568,6 +569,9 @@ fn main() {
             calendar::calendar_disconnect,
             calendar::calendar_refresh,
             calendar::calendar_events,
+            meetings::meeting_add,
+            meetings::meeting_update,
+            meetings::meeting_delete,
             templates::templates_list,
             templates::template_save,
             templates::template_delete,

@@ -16,6 +16,7 @@ import {
   duration,
   MIN_GAP_MS,
   saveDetails,
+  isManualMeeting,
   meetingOccupies,
   meetingTitle,
   type Snapshot,
@@ -94,6 +95,7 @@ const meetings = computed(() => {
     .map((e) => ({
       event: e,
       title: meetingTitle(e, settings.value.calendarShowTitles),
+      manual: isManualMeeting(e),
       time: `${clock(e.start)}–${clock(e.end)}`,
       overlaps: all.some(
         (s) => s.startedAt < e.end && (s.endedAt === null || s.endedAt > e.start),
@@ -102,12 +104,18 @@ const meetings = computed(() => {
     }));
 });
 /** Żądanie otwarcia „Dodaj czas ręcznie” z godzinami spotkania. */
-const preset = ref<{ start: number; end: number; key: string } | null>(null);
+const preset = ref<{
+  start: number;
+  end: number;
+  key: string;
+  taskId: number | null;
+} | null>(null);
 function addMeeting(m: (typeof meetings.value)[number]) {
   preset.value = {
     start: m.event.start,
     end: m.event.end,
     key: m.event.id + ":" + Date.now(),
+    taskId: m.event.taskId ?? null,
   };
 }
 const activeTasks = computed(() => props.data.tasks.filter((t) => !t.archived));
@@ -276,7 +284,12 @@ async function move() {
       <ul class="close-meetings" aria-label="Spotkania dnia">
         <li v-for="m in meetings" :key="m.event.id">
           <span class="mono">{{ m.time }}</span
-          ><span class="close-meeting-title">{{ m.title }}</span>
+          ><span class="close-meeting-title"
+            >{{ m.title
+            }}<template v-if="m.manual">
+              <span class="meeting-manual">ręczne</span></template
+            ></span
+          >
           <span v-if="m.future" class="hint">Jeszcze się nie skończyło</span
           ><span
             v-else-if="m.overlaps"
@@ -295,7 +308,8 @@ async function move() {
       </ul>
       <p class="hint">
         Spotkanie nie dodaje się samo. „Dodaj jako czas” otwiera ręczne dodanie
-        czasu z godzinami spotkania; zadanie wybierasz sam.
+        czasu z godzinami spotkania; zadanie wybierasz sam (ręczne spotkanie
+        z zadaniem podpowiada je od razu).
       </p>
       <ManualTime
         :tasks="activeTasks"

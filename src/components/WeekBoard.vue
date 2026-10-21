@@ -25,6 +25,8 @@ import { spread, type SpreadResult } from "../spread";
 import { useMeetings } from "../composables/useMeetings";
 import { useReorder } from "../composables/useReorder";
 import WeekCard from "./WeekCard.vue";
+import MeetingEditor from "./MeetingEditor.vue";
+import { CalendarPlus } from "lucide-vue-next";
 
 /**
  * Tablica tygodnia Pon–Nd: kolumna „Do zaplanowania” i siedem dni.
@@ -46,6 +48,8 @@ const calendar = useMeetings(() => {
 const busy = ref(false);
 const error = ref("");
 const search = ref("");
+/** Dzień, dla którego otwarto „Dodaj spotkanie” (B12); pusty = zamknięte. */
+const meetingDay = ref("");
 /** Mnożniki poprawki szacunków; liczone raz na minutę, nie co sekundę. */
 const minute = computed(() => Math.floor(props.now / 60_000) * 60_000);
 const correctionOf = computed(() => corrections(props.data, minute.value));
@@ -604,7 +608,15 @@ function columnProps(id: string, lists: string[], day: string) {
               d.capacityTitle || 'Suma szacunków względem pojemności dnia'
             "
             >{{ hhmm(d.estimate) }} / {{ d.capacity }}</span
+          ><button
+            type="button"
+            class="icon-button week-add-meeting"
+            :aria-label="'Dodaj spotkanie: ' + d.long + ' ' + d.key"
+            title="Dodaj spotkanie"
+            @click="meetingDay = d.key"
           >
+            <CalendarPlus :size="14" />
+          </button>
         </header>
         <div
           class="week-capacity"
@@ -653,5 +665,13 @@ function columnProps(id: string, lists: string[], day: string) {
         </ul>
       </section>
     </div>
+    <MeetingEditor
+      v-if="meetingDay"
+      :day="meetingDay"
+      :tasks="data.tasks"
+      :now="now"
+      @close="meetingDay = ''"
+      @saved="meetingDay = ''"
+    />
   </section>
 </template>

@@ -5,6 +5,7 @@ import {
   calendarConnect,
   calendarDisconnect,
   calendarEvents,
+  isManualMeeting,
   calendarRefresh,
   calendarStatus,
   meetingOccupies,
@@ -39,7 +40,9 @@ async function load(fields = false) {
   }
   const [from, to] = dayBounds(dayKey(Date.now()));
   today.value = status.value.connected
-    ? (await calendarEvents(from, to)).filter(meetingOccupies).length
+    ? (await calendarEvents(from, to)).filter(
+        (e) => meetingOccupies(e) && !isManualMeeting(e),
+      ).length
     : 0;
 }
 async function run(action: () => Promise<CalendarStatus>) {

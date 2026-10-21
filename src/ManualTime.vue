@@ -11,6 +11,8 @@ interface ManualPreset {
   end: number;
   /** Nowy obiekt = nowe żądanie, nawet z tymi samymi godzinami. */
   key: string;
+  /** Zadanie ręcznego spotkania (B12): ma pierwszeństwo przed zapamiętanym. */
+  taskId?: number | null;
 }
 const props = defineProps<{
   tasks: Task[];
@@ -57,7 +59,10 @@ watch(
     if (!preset) return;
     start.value = localInput(preset.start);
     end.value = localInput(preset.end);
-    taskId.value = remembered() || taskId.value;
+    taskId.value =
+      preset.taskId && props.tasks.some((t) => t.id === preset.taskId)
+        ? preset.taskId
+        : remembered() || taskId.value;
     error.value = "";
     opened.value = true;
     await nextTick();

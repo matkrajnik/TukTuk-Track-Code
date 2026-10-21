@@ -19,7 +19,10 @@ const { busy, error, save } = useSettingsSection(settings);
     />Pokazuj tytuły spotkań</label
   >
   <p class="hint">
-    Wyłączone: zamiast tytułu widać „Spotkanie”, np. przy udostępnianiu
-    ekranu. Spotkania są tylko do odczytu; czas spotkania dodajesz sam.
+    Wyłączone: zamiast tytułu spotkania z Outlooka widać „Spotkanie”, np. przy
+    udostępnianiu ekranu. Spotkania z Outlooka są tylko do odczytu; czas
+    spotkania dodajesz sam. Ręczne spotkania (spoza Outlooka, także bez
+    połączonego konta) dodajesz przyciskiem „Dodaj spotkanie” na osi dnia,
+    w Zadaniach → Dzisiaj i na tablicy tygodnia; ich temat jest widoczny zawsze.
   </p>
 </template>

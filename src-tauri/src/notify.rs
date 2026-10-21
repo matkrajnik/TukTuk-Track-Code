@@ -1438,6 +1438,8 @@ mod tests {
                 all_day,
                 cancelled: false,
                 response: "accepted".into(),
+                source: crate::calendar::OUTLOOK.into(),
+                task_id: None,
             }
         };
         let (fri_from, fri_to) = crate::stats::day_bounds(
@@ -1947,6 +1949,8 @@ mod tests {
                 all_day: true,
                 cancelled: false,
                 response: "accepted".into(),
+                source: crate::calendar::OUTLOOK.into(),
+                task_id: None,
             }],
             at("2026-10-19 07:00"),
         )
@@ -2098,6 +2102,8 @@ mod tests {
                 all_day: true,
                 cancelled: false,
                 response: "accepted".into(),
+                source: crate::calendar::OUTLOOK.into(),
+                task_id: None,
             }],
             at("2026-10-19 07:00"),
         )
