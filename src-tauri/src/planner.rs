@@ -331,6 +331,33 @@ pub fn plan_task(db: &mut Connection, id: i64, day: &str, order: i64) -> Result<
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Zmienia tylko `$.priority` w JSON szczegółów; reszta (także niezapisany
+/// formularz planu) zostaje. Zadanie z kosza albo nieistniejące daje
+/// „Nie znaleziono zadania.”, jak `plan_task`.
+pub fn set_priority(db: &mut Connection, id: i64, priority: i32) -> Result<Snapshot, String> {
+    if !(-1..=1).contains(&priority) {
+        return Err("Niepoprawny priorytet.".into());
+    }
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let exists: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM tasks WHERE id=?1 AND id NOT IN (SELECT task_id FROM task_lifecycle WHERE deleted_at IS NOT NULL))",
+            [id],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if !exists {
+        return Err("Nie znaleziono zadania.".into());
+    }
+    tx.execute(
+        "INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?2)",
+        params![id, priority],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    db::snapshot(db).map_err(|e| e.to_string())
+}
+
 /// Entry of `plan_tasks`: new plan day (empty = "Do zaplanowania") and order of a task.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PlanEntry {
@@ -1172,5 +1199,48 @@ mod tests {
         // Bez zgłoszenia status jest pusty.
         db::change(&mut db, "add", None, Some("Bez zgłoszenia".into()), 0).unwrap();
         assert_eq!(issue_status(&db, 2).unwrap(), "");
+    }
+
+    #[test]
+    fn set_priority_changes_only_priority_and_rejects_missing_or_trashed_task() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db::init(&db).unwrap();
+        db::change(&mut db, "add", None, Some("Aktywne".into()), 0).unwrap();
+        db::change(&mut db, "add", None, Some("W koszu".into()), 0).unwrap();
+        save(
+            &mut db,
+            1,
+            Details {
+                planned_day: "2026-10-20".into(),
+                ..Details::default()
+            },
+        )
+        .unwrap();
+        let snap = set_priority(&mut db, 1, 1).unwrap();
+        let task = snap.tasks.iter().find(|t| t.id == 1).unwrap();
+        assert_eq!(task.details.priority, 1);
+        assert_eq!(task.details.planned_day, "2026-10-20");
+        db::change(&mut db, "delete", Some(2), None, 100).unwrap();
+        assert_eq!(
+            set_priority(&mut db, 2, 1).err().unwrap(),
+            "Nie znaleziono zadania."
+        );
+        assert_eq!(
+            set_priority(&mut db, 999, -1).err().unwrap(),
+            "Nie znaleziono zadania."
+        );
+        assert_eq!(
+            set_priority(&mut db, 1, 5).err().unwrap(),
+            "Niepoprawny priorytet."
+        );
+        // Zadanie z kosza nie dostało wiersza szczegółów.
+        let details: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_details WHERE task_id IN (2,999))",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!details);
     }
 }

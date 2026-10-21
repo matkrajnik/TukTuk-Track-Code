@@ -160,13 +160,9 @@ fn close_day(app: tauri::AppHandle, day: String, closed: bool) -> Result<db::Sna
 }
 #[tauri::command]
 fn set_priority(app: tauri::AppHandle, id: i64, priority: i32) -> Result<db::Snapshot, String> {
-    if !(-1..=1).contains(&priority) {
-        return Err("Niepoprawny priorytet.".into());
-    }
     let state = app.state::<Database>();
-    let db = state.0.lock().map_err(|e| e.to_string())?;
-    db.execute("INSERT INTO task_details(task_id,json) VALUES(?1,json_object('priority',?2)) ON CONFLICT(task_id) DO UPDATE SET json=json_set(json,'$.priority',?2)",rusqlite::params![id,priority]).map_err(|e|e.to_string())?;
-    let result = db::snapshot(&db).map_err(|e| e.to_string())?;
+    let mut db = state.0.lock().map_err(|e| e.to_string())?;
+    let result = planner::set_priority(&mut db, id, priority)?;
     let _ = app.emit("data-changed", ());
     Ok(result)
 }

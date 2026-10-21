@@ -21,15 +21,29 @@ fn copy(source: &Connection, target: &mut Connection) -> Result<(), String> {
         .run_to_completion(100, Duration::from_millis(10), None)
         .map_err(|e| e.to_string())
 }
-/// Wiersze `settings`, które przy przywracaniu kopii zostają z bieżącej
-/// instalacji: konfiguracja Jiry i Redmine (poświadczenie w Menedżerze
-/// poświadczeń należy do bieżącej konfiguracji, nigdy do kopii) oraz znacznik
-/// świeżości statusów Redmine (`site|czas`, spójny z konfiguracją).
-const CARRIED_KEYS: [&str; 3] = ["jira", "redmine", "redmine_statuses_at"];
-/// Przenosi do `staged` wartości `CARRIED_KEYS` z bieżącej bazy; klucz bez
+/// Wiersze `settings` z konfiguracją połączeń, które przy przywracaniu kopii
+/// zostają z bieżącej instalacji (jedyna lista tych kluczy):
+/// - `jira`, `redmine`, `timesheet` (login, `device_id` — inny identyfikator
+///   to dla TS nowe urządzenie), `calendar` (konto Microsoft): poświadczenia
+///   w Menedżerze poświadczeń należą do bieżącej konfiguracji, nigdy do kopii;
+/// - `jira_watch`, `redmine_watch`: znacznik `site|użytkownik` obserwacji
+///   przypisań, spójny z bieżącą konfiguracją;
+/// - `redmine_statuses_at`: znacznik świeżości statusów Redmine (`site|czas`).
+///
+/// Preferencje z `AppSettings` przychodzą z kopii.
+pub const KEEP_KEYS: [&str; 7] = [
+    "jira",
+    "jira_watch",
+    "timesheet",
+    "calendar",
+    "redmine",
+    "redmine_watch",
+    "redmine_statuses_at",
+];
+/// Przenosi do `staged` wartości `KEEP_KEYS` z bieżącej bazy; klucz bez
 /// wartości w bieżącej bazie znika także z kopii.
 fn carry_connections(current: &Connection, staged: &Connection) -> rusqlite::Result<()> {
-    for key in CARRIED_KEYS {
+    for key in KEEP_KEYS {
         let value: Option<String> = current
             .query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
                 r.get(0)
@@ -413,5 +427,85 @@ mod tests {
             value(&staged, "jira").as_deref(),
             Some("{\"site\":\"https://biezaca.atlassian.net\"}")
         );
+    }
+
+    /// Przywrócenie starszej kopii (sprzed Redmine, z innym kontem TS i
+    /// kalendarza) zostawia konfigurację połączeń bieżącej bazy: `timesheet`
+    /// z tym samym `device_id`, `calendar`, `redmine`, znaczniki obserwacji.
+    #[test]
+    fn restoring_older_backup_keeps_current_connection_keys() {
+        let value = |db: &Connection, key: &str| -> Option<String> {
+            db.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+                r.get(0)
+            })
+            .ok()
+        };
+        let root = std::env::temp_dir().join(format!(
+            "todo-track-keep-keys-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("old.sqlite");
+        let mut old = Connection::open(&path).unwrap();
+        db::init(&old).unwrap();
+        db::change(&mut old, "add", None, Some("Z kopii".into()), 0).unwrap();
+        old.execute_batch(
+            "INSERT INTO settings(key,value) VALUES
+             ('timesheet','{\"login\":\"stary\",\"deviceId\":\"urzadzenie-z-kopii\"}'),
+             ('calendar','{\"account\":\"stare@example.pl\"}'),
+             ('jira','{\"site\":\"https://kopia.atlassian.net\"}'),
+             ('jira_watch','https://kopia.atlassian.net|stary@example.pl'),
+             ('theme','dark');",
+        )
+        .unwrap();
+        drop(old);
+
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        db::change(&mut current, "add", None, Some("Bieżące".into()), 0).unwrap();
+        let kept = [
+            (
+                "timesheet",
+                "{\"login\":\"mk\",\"deviceId\":\"urzadzenie-biezace\"}",
+            ),
+            ("calendar", "{\"account\":\"mk@example.pl\"}"),
+            ("jira", "{\"site\":\"https://biezaca.atlassian.net\"}"),
+            ("jira_watch", "https://biezaca.atlassian.net|mk@example.pl"),
+            ("redmine", "{\"site\":\"https://redmine.example.pl\"}"),
+            ("redmine_watch", "https://redmine.example.pl|mk"),
+            ("redmine_statuses_at", "https://redmine.example.pl|1000"),
+        ];
+        for (key, raw) in kept {
+            current
+                .execute("INSERT INTO settings(key,value) VALUES(?1,?2)", [key, raw])
+                .unwrap();
+        }
+        current
+            .execute(
+                "INSERT INTO settings(key,value) VALUES('theme','light')",
+                [],
+            )
+            .unwrap();
+        // Każdy klucz połączenia z testu jest na wspólnej liście.
+        for (key, _) in kept {
+            assert!(KEEP_KEYS.contains(&key), "{key}");
+        }
+
+        // Jak `restore_backup`: przygotowanie, przeniesienie kluczy, kopia.
+        let staged = stage(&path).unwrap();
+        carry_connections(&current, &staged).unwrap();
+        copy(&staged, &mut current).unwrap();
+        for (key, raw) in kept {
+            assert_eq!(value(&current, key).as_deref(), Some(raw), "{key}");
+        }
+        // Dane i preferencje przychodzą z kopii.
+        assert_eq!(value(&current, "theme").as_deref(), Some("dark"));
+        let snap = db::snapshot(&current).unwrap();
+        assert_eq!(snap.tasks.len(), 1);
+        assert_eq!(snap.tasks[0].title, "Z kopii");
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -71,6 +71,25 @@ pub fn occurs(details: &Details, from: NaiveDate, date: NaiveDate, s: &AppSettin
     }
 }
 
+/// Wzorce z nieparsowalnym `repeat_from` już zgłoszone w logu (raz na wzorzec
+/// i wartość, bo `generate` działa co minutę).
+static BROKEN: std::sync::Mutex<Vec<(i64, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Zapisuje w logu pominięty wzorzec; zwraca `true` przy pierwszym zgłoszeniu.
+fn log_broken(id: i64, from: &str) -> bool {
+    let Ok(mut seen) = BROKEN.lock() else {
+        return false;
+    };
+    if seen.iter().any(|(i, f)| *i == id && f == from) {
+        return false;
+    }
+    seen.push((id, from.to_owned()));
+    eprintln!("Cykl zadania {id} pominięty: niepoprawny początek cyklu „{from}”.");
+    true
+}
+
+/// Tworzy zaległe i dzisiejsze wystąpienia wzorców. Wzorzec z nieparsowalnym
+/// początkiem cyklu jest pomijany (raz zalogowany), reszta działa dalej.
 pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
     let settings = crate::settings::load(db);
     let sources=db.prepare("SELECT t.id,t.title,d.json FROM tasks t JOIN task_details d ON d.task_id=t.id LEFT JOIN task_lifecycle l ON l.task_id=t.id WHERE l.deleted_at IS NULL AND COALESCE(l.archived,0)=0").map_err(|e|e.to_string())?.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
@@ -80,8 +99,11 @@ pub fn generate(db: &mut Connection, today: NaiveDate) -> Result<(), String> {
         if !is_recurring(&details) {
             continue;
         }
-        let from = NaiveDate::parse_from_str(&details.repeat_from, "%Y-%m-%d")
-            .map_err(|_| "Niepoprawny początek cyklu")?;
+        // Uszkodzony wzorzec nie blokuje wczytania danych ani pozostałych cykli.
+        let Ok(from) = NaiveDate::parse_from_str(&details.repeat_from, "%Y-%m-%d") else {
+            log_broken(id, &details.repeat_from);
+            continue;
+        };
         let last: Option<String> = tx
             .query_row(
                 "SELECT last_day FROM recurrence_state WHERE task_id=?1",
@@ -507,5 +529,59 @@ mod tests {
             .tasks
             .iter()
             .any(|t| t.details.planned_day == "2029-05-31"));
+    }
+
+    /// Wzorzec z uszkodzonym `repeat_from` (np. ręczna zmiana bazy albo kopia
+    /// ze starszej wersji) jest pomijany: `generate` kończy się sukcesem,
+    /// pozostałe cykle działają, a migawka (`get_snapshot`) się wczytuje.
+    #[test]
+    fn broken_repeat_from_is_skipped_without_blocking_other_patterns() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        db::init(&conn).unwrap();
+        db::change(&mut conn, "add", None, Some("Zepsuty".into()), 0).unwrap();
+        db::change(&mut conn, "add", None, Some("Daily".into()), 0).unwrap();
+        for id in [1, 2] {
+            crate::planner::save(
+                &mut conn,
+                id,
+                Details {
+                    repeat_days: vec![1, 2, 3, 4, 5],
+                    repeat_from: "2026-10-12".into(),
+                    planned_day: "2026-10-12".into(),
+                    ..Details::default()
+                },
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "UPDATE task_details SET json=json_set(json,'$.repeatFrom','12.10.2026') WHERE task_id=1",
+            [],
+        )
+        .unwrap();
+        let today = d("2026-10-14");
+        // Jak `get_snapshot`: generowanie, potem migawka.
+        generate(&mut conn, today).unwrap();
+        generate(&mut conn, today).unwrap();
+        let s = db::snapshot(&conn).unwrap();
+        let daily: Vec<_> = s
+            .tasks
+            .iter()
+            .filter(|t| t.title == "Daily")
+            .map(|t| t.details.planned_day.as_str())
+            .collect();
+        assert_eq!(daily.len(), 3, "{daily:?}");
+        assert_eq!(s.tasks.iter().filter(|t| t.title == "Zepsuty").count(), 1);
+        let state: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM recurrence_state WHERE task_id=1)",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!state);
+        // Log tylko przy pierwszym napotkaniu danego wzorca i wartości.
+        assert!(!log_broken(1, "12.10.2026"));
+        assert!(log_broken(1, "zmienione-w-tescie"));
+        assert!(!log_broken(1, "zmienione-w-tescie"));
     }
 }
