@@ -58,7 +58,10 @@ fn data_changed(app: &tauri::AppHandle, window: &tauri::Window) {
 /// generuje): przy nowych wystąpieniach świeża migawka, inaczej `result` bez
 /// zmian. Zmiana zadania jest już zapisana, więc błąd cykli jej nie odrzuca;
 /// zgłosi go wątek cykli (`storage-error`).
-fn with_recurrence(connection: &mut rusqlite::Connection, result: db::Snapshot) -> db::Snapshot {
+pub(crate) fn with_recurrence(
+    connection: &mut rusqlite::Connection,
+    result: db::Snapshot,
+) -> db::Snapshot {
     match recurrence::generate(connection, chrono::Local::now().date_naive()) {
         Ok(true) => db::snapshot(connection).unwrap_or(result),
         Ok(false) | Err(_) => result,
@@ -82,6 +85,13 @@ fn mutate(
 ) -> Result<db::Snapshot, String> {
     let mut connection = state.0.lock().map_err(|e| e.to_string())?;
     let result = db::change(&mut connection, &action, id, title, db::now())?;
+    // Wzorzec przywrócony z kosza lub archiwum ma stary `last_day`: zaległe
+    // wystąpienia od razu, nie dopiero po przebiegu wątku cykli.
+    let result = if matches!(action.as_str(), "restore" | "unarchive") {
+        with_recurrence(&mut connection, result)
+    } else {
+        result
+    };
     if matches!(
         action.as_str(),
         "start" | "stop" | "toggle" | "delete" | "archive"

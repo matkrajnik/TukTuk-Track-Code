@@ -213,6 +213,8 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
             .map_err(|e| e.to_string())?;
         replace(&mut db, &staged, &app.state::<crate::settings::Cache>())?;
         let result = db::snapshot(&db).map_err(|e| e.to_string())?;
+        // Kopia nie ma wystąpień cykli na dziś: tworzymy je od razu (B6).
+        let result = crate::with_recurrence(&mut db, result);
         drop(db);
         *app.state::<Pending>().0.lock().map_err(|e| e.to_string())? = None;
         crate::idle::clear(&app);
