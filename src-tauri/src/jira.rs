@@ -65,11 +65,75 @@ pub struct Issues {
     issues: Vec<Issue>,
     warnings: Vec<String>,
 }
-pub struct JiraState(Mutex<HashMap<String, Issue>>);
+/// Stan Jiry w pamięci: zgłoszenia ostatnio pobranej listy (`jira_issues`,
+/// tablica) i stan obserwacji przypisań (B5).
+pub struct JiraState(Mutex<HashMap<String, Issue>>, Mutex<WatchStatus>);
+
+/// Stan obserwacji przypisań (co 5 min, `watch_once`): czas ostatniego udanego
+/// sprawdzenia i ostatni błąd (wygasły token, 401, brak sieci). Udane
+/// sprawdzenie czyści błąd; błąd nie zmienia czasu ostatniego sukcesu.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WatchStatus {
+    pub last_ok: Option<i64>,
+    pub last_error: String,
+    pub last_error_at: Option<i64>,
+}
+
+/// Zdarzenie ze stanem obserwacji po każdym sprawdzeniu.
+pub const WATCH_EVENT: &str = "jira-watch";
+
+impl JiraState {
+    pub fn new() -> Self {
+        Self(
+            Mutex::new(HashMap::new()),
+            Mutex::new(WatchStatus::default()),
+        )
+    }
+    /// Zapisuje wynik sprawdzenia i zwraca nowy stan obserwacji.
+    pub fn record_watch(&self, result: Result<(), &str>, now: i64) -> WatchStatus {
+        let mut status = self.1.lock().unwrap_or_else(|e| e.into_inner());
+        match result {
+            Ok(()) => {
+                status.last_ok = Some(now);
+                status.last_error.clear();
+                status.last_error_at = None;
+            }
+            Err(e) => {
+                status.last_error = e.to_owned();
+                status.last_error_at = Some(now);
+            }
+        }
+        status.clone()
+    }
+    pub fn watch_status(&self) -> WatchStatus {
+        self.1.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    /// Nowe konto albo rozłączenie: stan obserwacji od zera.
+    pub fn reset_watch(&self) {
+        *self.1.lock().unwrap_or_else(|e| e.into_inner()) = WatchStatus::default();
+    }
+}
+impl Default for JiraState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub fn setup(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    app.manage(JiraState(Mutex::new(HashMap::new())));
+    app.manage(JiraState::new());
     Ok(())
+}
+/// Stan obserwacji przypisań: linia „Ostatnio sprawdzono … · błąd: …” w widoku
+/// Jira i w Ustawieniach → Jira.
+#[tauri::command]
+pub fn jira_watch_status(app: tauri::AppHandle) -> WatchStatus {
+    app.state::<JiraState>().watch_status()
+}
+/// Czyści stan obserwacji (nowe konto, rozłączenie) i powiadamia okna.
+fn reset_watch(app: &tauri::AppHandle) {
+    app.state::<JiraState>().reset_watch();
+    let _ = app.emit(WATCH_EVENT, WatchStatus::default());
 }
 /// Tytuł zgłoszenia z ostatnio pobranej listy (`jira_issues`), np. dla szybkiego
 /// dodawania z samym kluczem.
@@ -304,6 +368,7 @@ pub async fn jira_connect(
         .lock()
         .map_err(|e| e.to_string())?
         .clear();
+    reset_watch(&app);
     Ok(Settings {
         config: c,
         connected: true,
@@ -330,6 +395,7 @@ pub fn jira_disconnect(app: tauri::AppHandle) -> Result<Settings, String> {
         .lock()
         .map_err(|e| e.to_string())?
         .clear();
+    reset_watch(&app);
     Ok(Settings {
         config: c,
         connected: false,
@@ -936,7 +1002,11 @@ fn watch_once(app: &tauri::AppHandle) -> Option<Result<(Vec<Assigned>, Vec<i64>)
     if c.email.is_empty() {
         return None;
     }
-    let secret = token(app, &c).ok()?;
+    // Brak tokenu przy zapisanym koncie to błąd obserwacji, nie cisza.
+    let secret = match token(app, &c) {
+        Ok(secret) => secret,
+        Err(e) => return Some(Err(e)),
+    };
     let (extra, names) = jira_fields::card_context(app, &c.site);
     let fetched = tauri::async_runtime::block_on(async {
         let client = client()?;
@@ -996,6 +1066,13 @@ pub fn start(app: &tauri::AppHandle) {
                 None => last = None,
                 Some(result) => {
                     last = Some(now);
+                    // Błąd (wygasły token, 401, brak sieci) nie jest już
+                    // ignorowany: trafia do stanu obserwacji i na linię stanu.
+                    let status = app.state::<JiraState>().record_watch(
+                        result.as_ref().map(|_| ()).map_err(String::as_str),
+                        db::now(),
+                    );
+                    let _ = app.emit(WATCH_EVENT, status);
                     if let Ok((imported, ids)) = result {
                         let _ = app.emit("data-changed", ());
                         if !imported.is_empty() {
@@ -1315,6 +1392,40 @@ pub fn jira_open(app: tauri::AppHandle, url: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    /// B5: błąd obserwacji (np. 401) zostaje zapamiętany obok czasu ostatniego
+    /// udanego sprawdzenia; kolejny sukces go czyści.
+    #[test]
+    fn watch_status_keeps_last_error_and_last_success() {
+        let state = JiraState::new();
+        assert_eq!(state.watch_status(), WatchStatus::default());
+        let ok = state.record_watch(Ok(()), 1_000);
+        assert_eq!(ok.last_ok, Some(1_000));
+        assert!(ok.last_error.is_empty());
+        let failed = state.record_watch(Err("Jira odrzuciła token API (401)."), 2_000);
+        assert_eq!(failed.last_ok, Some(1_000));
+        assert_eq!(failed.last_error, "Jira odrzuciła token API (401).");
+        assert_eq!(failed.last_error_at, Some(2_000));
+        assert_eq!(state.watch_status(), failed);
+        let again = state.record_watch(Err("Brak połączenia z Jirą."), 3_000);
+        assert_eq!(again.last_ok, Some(1_000));
+        assert_eq!(again.last_error_at, Some(3_000));
+        let recovered = state.record_watch(Ok(()), 4_000);
+        assert_eq!(
+            recovered,
+            WatchStatus {
+                last_ok: Some(4_000),
+                last_error: String::new(),
+                last_error_at: None,
+            }
+        );
+        state.reset_watch();
+        assert_eq!(state.watch_status(), WatchStatus::default());
+        let json = serde_json::to_value(state.record_watch(Err("x"), 5)).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "lastOk": null, "lastError": "x", "lastErrorAt": 5 })
+        );
+    }
     #[test]
     fn cloud_board_search_follows_cursors_and_filters_current_user() {
         use std::{

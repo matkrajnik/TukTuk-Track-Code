@@ -18,6 +18,8 @@ import {
 import { dueChip } from "../issue";
 import { useSettings } from "../target";
 import RedmineIssueActions from "./RedmineIssueActions.vue";
+import IssueTaskMarker from "./IssueTaskMarker.vue";
+import { issueStartTitle, type IssueTaskState } from "../issueTask";
 
 /**
  * Karta zgłoszenia w widoku Redmine (PLAN_1.9.md, R3): numer, temat, tracker,
@@ -38,6 +40,8 @@ const props = defineProps<{
   showProject: boolean;
   /** Czas zmierzony w Todo Track i dzień planu lokalnego zadania. */
   local?: { ms: number; planned: string };
+  /** Lokalne zadanie zgłoszenia (B5): znacznik albo ostrzeżenie o koszu/archiwum. */
+  taskState?: IssueTaskState;
 }>();
 const emit = defineEmits<{
   start: [id: number];
@@ -126,7 +130,7 @@ const band = () => {
       }}</span
       ><span v-if="local?.planned" class="task-chip task-planned"
         >zaplanowane na {{ local.planned }}</span
-      >
+      ><IssueTaskMarker :state="taskState" />
     </div>
     <div class="jira-card-actions">
       <button
@@ -149,6 +153,7 @@ const band = () => {
         class="row-timer"
         :disabled="busy"
         :aria-label="'Rozpocznij: #' + issue.id"
+        :title="issueStartTitle(taskState)"
         @click="emit('start', issue.id)"
       >
         <Play :size="12" />Rozpocznij</button

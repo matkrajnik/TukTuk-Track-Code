@@ -11,6 +11,7 @@ import {
   type JiraFieldInfo,
 } from "../../store";
 import { checked, message, text, useSettingsSection } from "./section";
+import JiraWatchLine from "../jira/JiraWatchLine.vue";
 const settings = defineModel<AppSettings>("settings", { required: true });
 const { busy, error, save } = useSettingsSection(settings);
 
@@ -162,6 +163,7 @@ function moveField(index: number, delta: -1 | 1) {
     zaplanowania” z powiadomieniem; obecne przypisania przy pierwszym
     sprawdzeniu nie są importowane. Status z Jiry widać na kafelku zadania.
   </p>
+  <JiraWatchLine />
   <label class="settings-statuses"
     >Statusy oznaczające „Czekam na” (jeden w wierszu)<textarea
       :value="settings.waitingJiraStatuses.join('\n')"

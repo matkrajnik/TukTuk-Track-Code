@@ -23,6 +23,7 @@ import {
 import { openView } from "./navigation";
 import { clock, dayKey, dayText } from "./time";
 import RedmineIssueCard from "./components/RedmineIssueCard.vue";
+import { issueTasks } from "./issueTask";
 
 /**
  * Widok Redmine (PLAN_1.9.md, R3): układ „projekt → zgłoszenia”. U góry
@@ -177,6 +178,11 @@ const local = computed(() => {
   }
   return out;
 });
+
+/** Lokalne zadania zgłoszeń (B5): znacznik i ostrzeżenie jak w liście Jiry. */
+const issueTaskMap = computed(() =>
+  issueTasks(props.data, (t) => t.redmineId ?? null, props.now ?? Date.now()),
+);
 
 const errorText = (e: unknown) => String(e instanceof Error ? e.message : e);
 async function run(fn: () => Promise<void>) {
@@ -548,6 +554,7 @@ onUnmounted(() => {
               :busy="busy"
               :show-project="!!project && issue.projectId !== project.id"
               :local="local.get(issue.id)"
+              :task-state="issueTaskMap.get(issue.id)"
               @start="start"
               @stop="emit('stop')"
               @open="open"
@@ -597,6 +604,7 @@ onUnmounted(() => {
             :busy="busy"
             :show-project="true"
             :local="local.get(issue.id)"
+            :task-state="issueTaskMap.get(issue.id)"
             @start="start"
             @stop="emit('stop')"
             @open="open"

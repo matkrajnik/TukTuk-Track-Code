@@ -13,9 +13,12 @@ import { dayBounds, dayKey, inDay, stamp } from "../time";
 import {
   byTotal,
   dayRows,
+  overtimeOf,
   rowsTotal,
   tsText,
 } from "../report";
+import TaskSummary from "../components/task/TaskSummary.vue";
+import { dayTarget, hm, useSettings } from "../target";
 import { copyReport } from "../clipboard";
 import MultiDayReport from "../components/MultiDayReport.vue";
 import MonthReport from "../components/MonthReport.vue";
@@ -51,6 +54,28 @@ const report = computed(() =>
   dayRows(props.data, day.value, props.now).sort(byTotal),
 );
 const reportTotal = computed(() => rowsTotal(report.value));
+/**
+ * Nadgodziny dnia (B5): praca ponad normę dnia (cel dzienny; w dzień wolny
+ * lub święto cała praca), ta sama reguła co podział w „Wyślij do TS” (B4).
+ */
+const settings = useSettings();
+const reportOvertime = computed(() =>
+  overtimeOf(reportTotal.value, day.value, settings.value),
+);
+const reportNorm = computed(() => dayTarget(settings.value, day.value));
+/** Zmierzony czas zadań raportu (wszystkie dni) do planu i procentu na liście. */
+const taskTimes = computed(() => {
+  const ids = new Set(report.value.map((row) => row.task.id));
+  const out = new Map<number, number>();
+  for (const s of props.data.sessions)
+    if (ids.has(s.taskId))
+      out.set(
+        s.taskId,
+        (out.get(s.taskId) ?? 0) +
+          Math.max(0, (s.endedAt ?? props.now) - s.startedAt),
+      );
+  return out;
+});
 const tsReport = computed(() =>
   tsText([day.value], props.data, props.now, {
     includeNotes: tsIncludeNotes.value,
@@ -191,6 +216,17 @@ function toggle(id: number) {
       <div>
         <p>{{ reportLabel }}</p>
         <h2>Przepracowany czas</h2>
+        <p
+          v-if="reportOvertime > 0"
+          class="report-overtime"
+          :title="
+            reportNorm > 0
+              ? 'Praca ponad normę dnia ' + hm(reportNorm)
+              : 'Dzień wolny: cała praca to nadgodziny'
+          "
+        >
+          Nadgodziny: <span class="mono">{{ hm(reportOvertime) }}</span>
+        </p>
       </div>
       <strong class="mono report-total">{{ duration(reportTotal) }}</strong>
     </section>
@@ -290,8 +326,15 @@ function toggle(id: number) {
           :aria-controls="'report-' + row.task.id"
           @click="toggle(row.task.id)"
         >
-          <span class="task-title">{{ row.task.title }}</span
-          ><strong class="mono">{{ duration(row.total) }}</strong
+          <TaskSummary
+            :task="row.task"
+            :running="row.sessions.some((s) => s.endedAt === null)"
+            :now="now"
+            :today-key="todayKey"
+            :task-time="taskTimes.get(row.task.id) ?? 0"
+            :note="row.task.details?.notes?.[day]" /><strong class="mono">{{
+            duration(row.total)
+          }}</strong
           ><ChevronDown
             :size="16"
             :class="{ rotated: reportExpanded.has(row.task.id) }"

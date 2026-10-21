@@ -1,7 +1,8 @@
 <script setup lang="ts">
 /**
  * Tytuł i chipy zwiniętego kafelka zadania: projekt, zadanie TS, plan,
- * zgłoszenie z polami, „Czekam na”, szacunek i termin.
+ * zgłoszenie z polami, „Czekam na”, szacunek i termin. Prezentacyjny: używa go
+ * kafelek na liście zadań i lista Raportu dnia (B5, z notatką dnia).
  */
 import { computed } from "vue";
 import JiraFieldChips from "../JiraFieldChips.vue";
@@ -20,6 +21,8 @@ const props = defineProps<{
   todayKey: string;
   /** Zmierzony czas zadania (ms). */
   taskTime: number;
+  /** Notatka dnia (Raport dnia); kafelek listy jej nie pokazuje. */
+  note?: string;
 }>();
 
 const estimate = computed(() => estimateMs(props.task));
@@ -127,6 +130,8 @@ const waitingSince = computed(() =>
       class="task-deadline"
       :class="{ overdue: task.details.dueDay < todayKey }"
       >Termin: {{ dayText(task.details.dueDay) }}</span
+    ><span v-if="note?.trim()" class="task-day-note"
+      >Notatka: {{ note.trim() }}</span
     > </span
   >
 </template>

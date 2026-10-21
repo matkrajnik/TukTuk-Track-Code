@@ -76,6 +76,21 @@ export function chooseTransition(
 export const jiraWriteDisabled =
   "Zmiany w Jirze są wyłączone. Włączysz je w Ustawienia → Jira („Pozwól aplikacji zmieniać zgłoszenia w Jirze”).";
 export const jiraMoveEvent = "jira-move-prompts";
+/**
+ * Stan obserwacji przypisań (`jira::WatchStatus`, B5): czas ostatniego
+ * udanego sprawdzenia i ostatni błąd (pusty po udanym sprawdzeniu).
+ */
+export interface JiraWatchStatus {
+  lastOk: number | null;
+  lastError: string;
+  lastErrorAt: number | null;
+}
+export const jiraWatchEvent = "jira-watch";
+export const emptyJiraWatch = (): JiraWatchStatus => ({
+  lastOk: null,
+  lastError: "",
+  lastErrorAt: null,
+});
 // ---------------------------------------------------------------------------
 // J2: Jira z poziomu Todo Track (tablica, przejścia, przypisanie, komentarze,
 // nazwa gałęzi, nowe zgłoszenia). W aplikacji komendy z `jira.rs` i

@@ -42,6 +42,7 @@ import {
   jiraCommentLimit,
   jiraIssueLimit,
   jiraWriteDisabled,
+  emptyJiraWatch,
   priorityBand,
   projectPattern,
   validateNewIssue,
@@ -61,6 +62,7 @@ import {
   type JiraScope,
   type JiraTransition,
   type JiraTypeFields,
+  type JiraWatchStatus,
 } from "../api/jira";
 import {
   notifyPreviewData,
@@ -294,6 +296,27 @@ export async function jiraAccount(): Promise<JiraAccount> {
     },
     connected: true,
   };
+}
+/** Co ile symulowana obserwacja sprawdza przypisania (jak `jira::WATCH_EVERY`). */
+const previewWatchEvery = 5 * 60_000;
+/**
+ * `jira_watch_status` (B5): symulowana obserwacja przypisań. Przy włączonym
+ * „Dodawaj nowe zgłoszenia przypisane do mnie” odczyt wykonuje zaległe
+ * sprawdzenie (ostatnie starsze niż 5 min): sukces albo błąd `watchFail`,
+ * zapisany jak `JiraState::record_watch` (błąd nie zmienia czasu sukcesu).
+ */
+export async function jiraWatchStatus(): Promise<JiraWatchStatus> {
+  const state = previewJiraState();
+  const watch = state.watch ?? emptyJiraWatch();
+  if (previewJson(previewSettingsKey).jiraAutoImport === false) return watch;
+  const now = Date.now();
+  const last = Math.max(watch.lastOk ?? 0, watch.lastErrorAt ?? 0);
+  if (now - last < previewWatchEvery) return watch;
+  const next: JiraWatchStatus = state.watchFail
+    ? { ...watch, lastError: state.watchFail, lastErrorAt: now }
+    : { lastOk: now, lastError: "", lastErrorAt: null };
+  savePreviewJira({ ...state, watch: next });
+  return next;
 }
 const previewOnlyAccount =
   "W podglądzie Jira jest symulowana. Konto łączysz w aplikacji Windows.";

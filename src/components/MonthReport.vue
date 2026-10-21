@@ -4,7 +4,12 @@ import { ChevronLeft, ChevronRight } from "lucide-vue-next";
 import { duration, type Snapshot, type Task } from "../store";
 import { issueRef } from "../issue";
 import { dayBounds, dayKey, plural } from "../time";
-import { addToDays, closedDayTotals, decimalHours } from "../report";
+import {
+  addToDays,
+  closedDayTotals,
+  decimalHours,
+  overtimeOf,
+} from "../report";
 import { holidays } from "../holidays";
 import TargetBar from "./TargetBar.vue";
 import ExportButtons from "./ExportButtons.vue";
@@ -67,6 +72,8 @@ const totalOf = (day: string) =>
 const rows = computed(() =>
   days.value.map((day) => ({
     day,
+    /** Nadgodziny dnia (B5): ponad normę dnia, w dzień wolny cała praca. */
+    overtime: overtimeOf(totalOf(day), day, settings.value),
     label: new Intl.DateTimeFormat("pl-PL", {
       weekday: "short",
       day: "numeric",
@@ -78,6 +85,10 @@ const rows = computed(() =>
   })),
 );
 const total = computed(() => rows.value.reduce((sum, d) => sum + d.total, 0));
+/** Suma nadgodzin dni miesiąca (każdy dzień względem swojej normy). */
+const overtimeTotal = computed(() =>
+  rows.value.reduce((sum, d) => sum + d.overtime, 0),
+);
 const target = computed(() => daysTarget(settings.value, days.value));
 const workDays = computed(() => rows.value.filter((d) => d.target > 0).length);
 /** Święta w dniach tygodnia z ustawień, które obniżają cel miesiąca. */
@@ -237,6 +248,15 @@ const running = computed(
             <dd class="mono">{{ hhmm(target) }}</dd>
           </div>
         </dl>
+        <p
+          class="monthly-overtime-summary"
+          title="Suma pracy ponad normę każdego dnia (w dzień wolny i święto cała praca)"
+        >
+          Nadgodziny w miesiącu:
+          <span class="mono monthly-overtime-total">{{
+            hhmm(overtimeTotal)
+          }}</span>
+        </p>
         <TargetBar
           v-if="target > 0"
           :total="total"
@@ -373,15 +393,23 @@ const running = computed(
     <section class="dashboard-card" aria-label="Czas pracy w dniach miesiąca">
       <h2>Dni miesiąca</h2>
       <p class="report-note">
-        Linia oznacza cel dnia. Wybierz dzień, aby otworzyć jego raport.
+        Linia oznacza cel dnia, fragment słupka ponad nią to nadgodziny.
+        Wybierz dzień, aby otworzyć jego raport.
       </p>
+      <div class="monthly-grid monthly-day-head" aria-hidden="true">
+        <span>Dzień</span><span></span><span>Czas</span><span>Nadgodziny</span>
+      </div>
       <button
         v-for="d in rows"
         :key="d.day"
         class="monthly-day"
         :class="{ free: !d.target, holiday: !!d.holiday }"
         :aria-label="'Raport ' + d.day + ': ' + duration(d.total)"
-        :title="d.holiday ?? undefined"
+        :title="
+          [d.holiday, d.overtime > 0 ? 'Nadgodziny: ' + hhmm(d.overtime) : '']
+            .filter(Boolean)
+            .join(' · ') || undefined
+        "
         @click="emit('open', d.day)"
       >
         <span class="monthly-day-label"
@@ -389,18 +417,34 @@ const running = computed(
           }}<span v-if="d.holiday" class="monthly-day-holiday">
             · {{ d.holiday }}</span
           ></span
-        ><span class="dashboard-bar"
+        ><span class="dashboard-bar split"
           ><span
-            :class="{ over: d.target > 0 && d.total > d.target }"
-            :style="{ width: `${(d.total / maxDay) * 100}%` }" /><span
+            :style="{ width: `${((d.total - d.overtime) / maxDay) * 100}%` }" /><span
+            v-if="d.overtime > 0"
+            class="overtime"
+            :style="{ width: `${(d.overtime / maxDay) * 100}%` }" /><span
             v-if="d.target"
             class="target-line"
             :style="{ left: `${(d.target / maxDay) * 100}%` }"
         /></span
         ><span class="mono" :class="{ 'dashboard-zero': !d.total }">{{
           hhmm(d.total)
-        }}</span>
+        }}</span
+        ><span
+          class="mono monthly-overtime"
+          :class="{ 'dashboard-zero': !d.overtime }"
+          >{{ d.overtime > 0 ? hhmm(d.overtime) : "–" }}</span
+        >
       </button>
+      <div class="monthly-grid monthly-day-foot">
+        <span>Razem</span><span></span
+        ><span class="mono">{{ hhmm(total) }}</span
+        ><span
+          class="mono monthly-overtime"
+          :class="{ 'dashboard-zero': !overtimeTotal }"
+          >{{ hhmm(overtimeTotal) }}</span
+        >
+      </div>
     </section>
   </section>
 </template>

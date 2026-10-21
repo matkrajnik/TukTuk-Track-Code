@@ -273,9 +273,10 @@
   border-bottom: 0;
   font-weight: 600;
 }
-.monthly-day {
+.monthly-day,
+.monthly-grid {
   display: grid;
-  grid-template-columns: 170px minmax(20px, 1fr) 60px;
+  grid-template-columns: 170px minmax(20px, 1fr) 60px 84px;
   gap: 12px;
   align-items: center;
   width: 100%;
@@ -283,8 +284,26 @@
   font-size: var(--fs-sm);
   padding: 4px 0;
 }
-.monthly-day > .mono {
+.monthly-day > .mono,
+.monthly-grid > :nth-child(n + 3) {
   text-align: right;
+}
+/* B5: nagłówek i suma kolumn czasu i nadgodzin pod wykresem dni. */
+.monthly-grid {
+  font-size: var(--fs-xs);
+  color: var(--muted);
+  padding: 4px 0;
+}
+.monthly-day-foot {
+  margin-top: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text);
+}
+.monthly-overtime:not(.dashboard-zero) {
+  color: var(--warning);
 }
 .monthly-day-label {
   overflow: hidden;
@@ -308,8 +327,9 @@
   .monthly-tables {
     grid-template-columns: minmax(0, 1fr);
   }
-  .monthly-day {
-    grid-template-columns: 110px minmax(20px, 1fr) 52px;
+  .monthly-day,
+  .monthly-grid {
+    grid-template-columns: 110px minmax(20px, 1fr) 52px 72px;
   }
 }
 /* Eksport CSV/XLSX (zakładka Miesiąc i Wybrane dni). */
@@ -350,4 +370,24 @@
     13px/1.6 Consolas,
     monospace;
   white-space: pre;
+}
+/* B5: nadgodziny dnia pod przepracowanym czasem i notatka dnia na liście raportu. */
+.report-overtime {
+  margin: 6px 0 0;
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
+.task-day-note {
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.monthly-overtime-summary {
+  margin: 0 0 12px;
+  font-size: var(--fs-sm);
+  color: var(--muted);
+}
+.monthly-overtime-summary .mono {
+  color: var(--text);
 }

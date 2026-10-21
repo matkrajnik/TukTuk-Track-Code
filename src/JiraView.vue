@@ -42,6 +42,8 @@ import JiraBoardPicker from "./components/jira/JiraBoardPicker.vue";
 import JiraCreateForm from "./components/jira/JiraCreateForm.vue";
 import JiraIssueList from "./components/jira/JiraIssueList.vue";
 import JiraBoard from "./components/jira/JiraBoard.vue";
+import JiraWatchLine from "./components/jira/JiraWatchLine.vue";
+import { issueTasks } from "./issueTask";
 
 const props = defineProps<{
   activeUrl?: string | null;
@@ -161,6 +163,14 @@ const local = computed(() => {
   }
   return out;
 });
+
+/**
+ * Lokalne zadania zgłoszeń listy (B5): „W zadaniach · dziś HH:MM” albo
+ * ostrzeżenie, że zadanie jest w archiwum lub koszu.
+ */
+const issueTaskMap = computed(() =>
+  issueTasks(props.data, (t) => t.jiraKey || null, props.now ?? Date.now()),
+);
 
 /** Odświeżenie zamówione w trakcie innej operacji widoku (wykona się po niej). */
 let refreshQueued = false;
@@ -333,6 +343,7 @@ onMounted(async () => {
       @disconnected="disconnected"
     />
     <template v-if="settings.connected">
+      <JiraWatchLine />
       <div class="jira-toolbar">
         <div class="jira-board-chips">
           <span v-for="b in settings.config.boards" :key="b.id">{{
@@ -475,6 +486,7 @@ onMounted(async () => {
         :query="query"
         :updated-at="updatedAt"
         :active-url="activeUrl"
+        :tasks="issueTaskMap"
         @open="open"
         @start="start"
         @stop="emit('stop')"

@@ -86,6 +86,29 @@ const views: {
       ).toHaveAttribute("aria-current", "page"),
   },
   {
+    // B5: lista Raportu dnia jak kafelki (projekt, klucz i status, plan
+    // z procentem, termin, notatka dnia) bez akcji Start / Ukończ.
+    name: "raport-dnia",
+    open: async (page) => {
+      await nav(page, "Raporty dzienne");
+      await page.getByLabel("Dzień raportu").fill("2026-10-14");
+    },
+    ready: (page) =>
+      expect(page.locator(".report-card .task-day-note")).toHaveText(
+        "Notatka: Mapowanie kolumn",
+      ),
+  },
+  {
+    // B5: Miesiąc z kolumną i sumą nadgodzin pod wykresem dni.
+    name: "miesiac",
+    open: async (page) => {
+      await nav(page, "Raporty dzienne");
+      await nav(page, "Miesiąc");
+    },
+    ready: (page) =>
+      expect(page.locator(".monthly-day-foot")).toBeVisible(),
+  },
+  {
     name: "plan-dzien",
     calendar: true,
     open: async (page) => {

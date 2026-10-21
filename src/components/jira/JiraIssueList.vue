@@ -2,7 +2,9 @@
 /** Lista „Przypisane do mnie” widoku Jira (dane i odświeżanie w `JiraView`). */
 import { ExternalLink, Play, Square } from "lucide-vue-next";
 import JiraFieldChips from "../JiraFieldChips.vue";
+import IssueTaskMarker from "../IssueTaskMarker.vue";
 import type { JiraListIssue } from "../../store";
+import { issueStartTitle, type IssueTaskState } from "../../issueTask";
 
 defineProps<{
   /** Zgłoszenia po filtrze wyszukiwania. */
@@ -16,6 +18,8 @@ defineProps<{
   query: string;
   updatedAt: string;
   activeUrl?: string | null;
+  /** Lokalne zadania zgłoszeń po kluczu (B5): znacznik i ostrzeżenie. */
+  tasks?: Map<string, IssueTaskState>;
 }>();
 const emit = defineEmits<{ open: [url: string]; start: [key: string]; stop: [] }>();
 </script>
@@ -32,7 +36,10 @@ const emit = defineEmits<{ open: [url: string]; start: [key: string]; stop: [] }
       v-for="issue in issues"
       :key="issue.key"
       class="jira-issue"
-      :class="{ isRunning: activeUrl === issue.url }"
+      :class="{
+        isRunning: activeUrl === issue.url,
+        hasTask: tasks?.get(issue.key)?.kind === 'task',
+      }"
     >
       <div class="jira-issue-body">
         <div class="jira-issue-meta">
@@ -43,7 +50,8 @@ const emit = defineEmits<{ open: [url: string]; start: [key: string]; stop: [] }
             @click="emit('open', issue.url)"
           >
             {{ issue.key }}<ExternalLink :size="12" /></button
-          ><span class="jira-status">{{ issue.status }}</span>
+          ><span class="jira-status">{{ issue.status }}</span
+          ><IssueTaskMarker :state="tasks?.get(issue.key)" />
         </div>
         <h2>{{ issue.summary }}</h2>
         <p>{{ issue.boards.join(" · ") }}</p>
@@ -64,6 +72,7 @@ const emit = defineEmits<{ open: [url: string]; start: [key: string]; stop: [] }
         class="row-timer"
         :disabled="busy"
         :aria-label="'Rozpocznij: ' + issue.key"
+        :title="issueStartTitle(tasks?.get(issue.key))"
         @click="emit('start', issue.key)"
       >
         <Play :size="12" />Rozpocznij

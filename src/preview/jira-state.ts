@@ -15,13 +15,16 @@ import {
   type JiraMovePrompt,
   type JiraPerson,
   type JiraTransition,
+  type JiraWatchStatus,
 } from "../api/jira";
 import { previewJson, previewSettingsKey } from "./storage";
 import type { Snapshot } from "../api/task";
 /**
  * Symulowana Jira podglądu: ostatnio widziany pomiar i pytania; status zgłoszenia
  * to status z kafelka (pusty = „Do zrobienia”). `fail` (400 albo 403) symuluje
- * odrzucenie przejścia przez Jirę.
+ * odrzucenie przejścia przez Jirę. `watch` to stan obserwacji przypisań (B5),
+ * a `watchFail` — komunikat błędu, którym kończy się kolejne sprawdzenie
+ * (np. wygasły token).
  */
 export const previewJiraKey = "todo-track-preview-jira-v1";
 export interface PreviewJira {
@@ -29,6 +32,8 @@ export interface PreviewJira {
   seen?: [number, number] | null;
   prompts?: JiraMovePrompt[];
   fail?: number;
+  watch?: JiraWatchStatus;
+  watchFail?: string;
 }
 /** Przepływ symulowanej Jiry: z każdego statusu do pozostałych. */
 export const previewWorkflow: readonly JiraTransition[] = Object.freeze([

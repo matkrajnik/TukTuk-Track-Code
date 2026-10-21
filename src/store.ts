@@ -42,6 +42,8 @@ import {
 } from "./api/calendar";
 import {
   jiraMoveEvent,
+  jiraWatchEvent,
+  type JiraWatchStatus,
   type JiraAccount,
   type JiraBoardRef,
   type JiraBoardView,
@@ -609,6 +611,26 @@ export async function onMovePromptsChanged(
     window.removeEventListener(jiraMoveEvent, handler);
     window.removeEventListener("storage", storage);
   };
+}
+/** `jira_watch_status` (B5): ostatnie udane sprawdzenie przypisań i ostatni błąd. */
+export async function jiraWatchStatus(): Promise<JiraWatchStatus> {
+  if (desktop) return invoke("jira_watch_status");
+  return jiraSim.jiraWatchStatus();
+}
+/**
+ * Nasłuch stanu obserwacji po każdym sprawdzeniu (zdarzenie Rust z nowym
+ * stanem; w podglądzie zmiana stanu symulowanej Jiry z innego okna).
+ */
+export async function onJiraWatch(
+  handler: (status: JiraWatchStatus | null) => void,
+): Promise<() => void> {
+  if (desktop)
+    return listen<JiraWatchStatus>(jiraWatchEvent, (e) => handler(e.payload));
+  const storage = (e: StorageEvent) => {
+    if (e.key === previewJiraKey) handler(null);
+  };
+  window.addEventListener("storage", storage);
+  return () => window.removeEventListener("storage", storage);
 }
 /** `jira_settings` (w podglądzie połączone konto przykładowe). */
 export async function jiraAccount(): Promise<JiraAccount> {

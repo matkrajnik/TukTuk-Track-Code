@@ -8,7 +8,12 @@ import TargetBar from "./components/TargetBar.vue";
 import EstimateAccuracy from "./components/EstimateAccuracy.vue";
 import AgentsCard from "./components/AgentsCard.vue";
 import { useFocus, useFocusBlocks } from "./focus";
-import { averageDistraction, dayDistraction, oneDecimal } from "./report";
+import {
+  averageDistraction,
+  dayDistraction,
+  oneDecimal,
+  overtimeOf,
+} from "./report";
 import { previousWorkDay } from "./review";
 import { openSettings, openView } from "./navigation";
 import { dayGoal, offDayEvent } from "./capacity";
@@ -17,6 +22,7 @@ import {
   daysTarget,
   dayTarget,
   hhmm,
+  hm,
   targetHoliday,
   useSettings,
   weekDays,
@@ -64,11 +70,16 @@ const days = computed(() =>
       }).format(date),
       total: dayTotal(key),
       target: dayTarget(settings.value, key),
+      /** Nadgodziny (B5): praca ponad normę dnia, w dzień wolny cała praca. */
+      overtime: overtimeOf(dayTotal(key), key, settings.value),
     };
   }),
 );
 const weekTotal = computed(() =>
   days.value.reduce((sum, day) => sum + day.total, 0),
+);
+const weekOvertime = computed(() =>
+  days.value.reduce((sum, day) => sum + day.overtime, 0),
 );
 const workedDays = computed(
   () => days.value.filter((day) => day.total >= 60_000).length,
@@ -188,6 +199,10 @@ const topTasks = computed(() =>
             ? "Spotkania wypełniają cały cel dnia"
             : "Dzień wolny")
       }}</span>
+      <span v-if="days[6].overtime > 0" class="target-note dashboard-overtime"
+        >Nadgodziny:
+        <span class="mono">{{ hm(days[6].overtime) }}</span></span
+      >
     </section>
     <section class="dashboard-card">
       <h2>Ten tydzień</h2>
@@ -231,17 +246,32 @@ const topTasks = computed(() =>
       aria-label="Czas pracy w ostatnich 7 dniach"
     >
       <h2>Czas pracy · ostatnie 7 dni</h2>
-      <p class="report-note">Wybierz dzień, aby otworzyć jego raport.</p>
+      <p class="report-note">
+        Wybierz dzień, aby otworzyć jego raport.<template v-if="weekOvertime > 0">
+          Fragment słupka ponad normę dnia to nadgodziny.</template
+        >
+      </p>
+      <p v-if="weekOvertime > 0" class="dashboard-week-overtime">
+        Nadgodziny w tych 7 dniach:
+        <span class="mono">{{ hm(weekOvertime) }}</span>
+      </p>
       <button
         v-for="day in days"
         :key="day.key"
         class="dashboard-day"
         :aria-label="'Raport ' + day.key + ': ' + duration(day.total)"
+        :title="day.overtime > 0 ? 'Nadgodziny: ' + hm(day.overtime) : undefined"
         @click="$emit('report', day.key)"
       >
         <span>{{ day.label }}</span
-        ><span class="dashboard-bar"
-          ><span :style="{ width: `${(day.total / maxDay) * 100}%` }" /><span
+        ><span class="dashboard-bar split"
+          ><span
+            :style="{
+              width: `${((day.total - day.overtime) / maxDay) * 100}%`,
+            }" /><span
+            v-if="day.overtime > 0"
+            class="overtime"
+            :style="{ width: `${(day.overtime / maxDay) * 100}%` }" /><span
             v-if="day.target"
             class="target-line"
             :style="{ left: `${(day.target / maxDay) * 100}%` }"

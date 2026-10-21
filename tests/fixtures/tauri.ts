@@ -70,6 +70,11 @@ export interface TauriOptions {
    * zgłoszenia dla komend `redmine_*`. Domyślnie Redmine nie jest połączony.
    */
   redmine?: RedmineFixture;
+  /**
+   * Stan obserwacji przypisań Jiry (`jira_watch_status`, B5); domyślnie
+   * jeszcze nic nie sprawdzono.
+   */
+  jiraWatch?: { lastOk: number | null; lastError: string; lastErrorAt: number | null };
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -86,6 +91,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     redmineSite: REDMINE_SITE,
     update: options.update ?? null,
     redmine: options.redmine ?? null,
+    jiraWatch: options.jiraWatch ?? null,
   });
   await page.goto("/");
 }
@@ -120,6 +126,7 @@ function install(init: {
   redmineSite: string;
   update: { version: string; notes?: string; date?: string } | "offline" | null;
   redmine: RedmineFixture | null;
+  jiraWatch: { lastOk: number | null; lastError: string; lastErrorAt: number | null } | null;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -696,6 +703,10 @@ function install(init: {
           return redmineStart(args.id);
         case "redmine_open":
           return null;
+        case "jira_watch_status":
+          return clone(
+            init.jiraWatch ?? { lastOk: null, lastError: "", lastErrorAt: null },
+          );
         case "jira_boards":
           return { values: clone(init.jira?.boards ?? []), nextStart: null };
         case "jira_issues":
