@@ -503,7 +503,7 @@ fn main() {
             agents::start(app.handle());
             // Hooki agentów (B8): potok ze zdarzeniami i wpisy w plikach Claude Code i Codexa.
             hooks::start(app.handle());
-            hooks::sync(app.handle(), &settings::current(app.handle()));
+            hooks::sync(app.handle());
             notify::start(app.handle());
             focus::start(app.handle());
             // Rozszerzenie przeglądarki (W4): potok dla hosta i wpisy w rejestrze

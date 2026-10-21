@@ -258,7 +258,8 @@ fn silence_ends_working_and_waiting_sessions_then_forgets_them() {
     assert!(!s.expire(T0 + SILENCE));
     assert_eq!(phase(&s), Phase::Working);
     // Zdarzenie przedłuża sesję.
-    s.apply(&ev("claude", "PreToolUse"), T0 + SILENCE - 1);
+    // (PostToolUse: bez niezakończonego narzędzia obowiązuje zwykłe SILENCE.)
+    s.apply(&ev("claude", "PostToolUse"), T0 + SILENCE - 1);
     assert!(!s.expire(T0 + 2 * SILENCE - 2));
     assert_eq!(phase(&s), Phase::Working);
     // Brak zdarzeń przez SILENCE: sesja kończy się, lista pustnieje.
@@ -273,7 +274,16 @@ fn silence_ends_working_and_waiting_sessions_then_forgets_them() {
 
 #[test]
 fn session_end_removes_the_session_and_keeps_first_prompt_until_then() {
-    let mut s = Sessions::default();
+    // Bez `keep_prompts` (do A4: `ai_assign_suggest`) prompt nie zostaje w pamięci.
+    let mut off = Sessions::default();
+    let mut first = ev("claude", "UserPromptSubmit");
+    first.prompt = Some("pierwszy".into());
+    off.apply(&first, T0);
+    assert_eq!(off.session("claude", "s1").unwrap().first_prompt, None);
+    let mut s = Sessions {
+        keep_prompts: true,
+        ..Sessions::default()
+    };
     let mut first = ev("claude", "UserPromptSubmit");
     first.prompt = Some("pierwszy".into());
     s.apply(&first, T0);
@@ -432,10 +442,29 @@ fn uninstall_removes_only_own_entries() {
 
 #[test]
 fn merge_keeps_key_order_and_rejects_odd_shapes() {
-    let mut root: Value = serde_json::from_str(r#"{"zeta":1,"hooks":{},"alfa":2}"#).unwrap();
-    install(&mut root, &CODEX_EVENTS, "a/todo-track-hook.exe codex").unwrap();
-    let keys: Vec<_> = root.as_object().unwrap().keys().cloned().collect();
-    assert_eq!(keys, vec!["zeta", "hooks", "alfa"]);
+    let text = r#"{"zeta":1,"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"orca stop","timeout":3}]}]},"alfa":{"z":1,"a":2}}"#;
+    let mut doc = hooks_config::Doc::parse(text).unwrap();
+    install(&mut doc.value, &CODEX_EVENTS, "a/todo-track-hook.exe codex").unwrap();
+    let out = doc.to_text().unwrap();
+    let at = |needle: &str| {
+        out.find(needle)
+            .unwrap_or_else(|| panic!("{needle} w {out}"))
+    };
+    // Klucze z pliku zostają w swojej kolejności (także zagnieżdżone), nowe na końcu.
+    assert!(at("\"zeta\"") < at("\"hooks\"") && at("\"hooks\"") < at("\"alfa\""));
+    assert!(at("\"z\"") < at("\"a\""));
+    assert!(
+        at("\"matcher\"") < at("\"type\"") && at("\"type\"") < at("\"command\": \"orca stop\"")
+    );
+    assert!(at("\"command\": \"orca stop\"") < at("\"timeout\": 3"));
+    assert!(at("\"Stop\"") < at("\"SessionStart\""));
+    // Wpisanie i usunięcie własnych wpisów oddaje plik w pierwotnym układzie.
+    let mut back = hooks_config::Doc::parse(&out).unwrap();
+    assert!(uninstall(&mut back.value).unwrap());
+    assert_eq!(
+        back.to_text().unwrap(),
+        hooks_config::Doc::parse(text).unwrap().to_text().unwrap()
+    );
     let mut bad = json!({"hooks": []});
     assert!(install(&mut bad, &CODEX_EVENTS, "x").is_err());
     let mut bad = json!({"hooks": {"Stop": {}}});
@@ -689,4 +718,77 @@ fn event_travels_from_hook_client_to_pipe_server() {
     assert_eq!((ev.agent.as_str(), ev.session_id.as_str()), ("codex", "p1"));
     // Bez serwera hook kończy się błędem, który program połyka (cicho, bez aplikacji).
     assert!(hook_wire::forward(r"\\.\pipe\todo-track-hooks-nie-ma", &body).is_err());
+}
+
+#[test]
+fn stop_after_a_lost_subagent_stop_ends_the_session() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&sub("SubagentStart", "a1"), T0 + 1_000);
+    s.apply(&sub("PreToolUse", "a1"), T0 + 2_000);
+    s.apply(&sub("PostToolUse", "a1"), T0 + 3_000);
+    // SubagentStop zgubiony (przerwanie Esc, zalany potok). Kolejna tura po czasie:
+    s.apply(&ev("claude", "UserPromptSubmit"), T0 + 10 * 60_000);
+    s.apply(&ev("claude", "PreToolUse"), T0 + 10 * 60_000 + 1_000);
+    s.apply(&ev("claude", "PostToolUse"), T0 + 10 * 60_000 + 2_000);
+    // Stop kończy sesję, bo subagent milczy dłużej niż SUBAGENT_SILENCE.
+    s.apply(&ev("claude", "Stop"), T0 + 10 * 60_000 + 3_000);
+    assert_eq!(phase(&s), Phase::Done);
+    assert!(s.session("claude", "s1").unwrap().subagents.is_empty());
+    assert!(s.working().is_empty());
+}
+
+#[test]
+fn session_waiting_only_for_silent_subagents_ends_without_a_second_stop() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&sub("SubagentStart", "a1"), T0 + 1_000);
+    // Stop przy żywym subagencie: sesja pracuje dalej.
+    s.apply(&ev("claude", "Stop"), T0 + 2_000);
+    assert_eq!(phase(&s), Phase::Working);
+    assert!(!s.expire(T0 + 2_000 + SUBAGENT_SILENCE - 2_000));
+    assert_eq!(phase(&s), Phase::Working);
+    // SubagentStop się zgubił: po SUBAGENT_SILENCE (nie dopiero po SILENCE) koniec.
+    assert!(s.expire(T0 + 2_000 + SUBAGENT_SILENCE + 1_000));
+    assert_eq!(phase(&s), Phase::Done);
+    // Subagent w trakcie długiego narzędzia nadal trzyma sesję po Stop.
+    let mut t = Sessions::default();
+    t.apply(&ev("claude", "UserPromptSubmit"), T0);
+    t.apply(&sub("PreToolUse", "a1"), T0 + 1_000);
+    t.apply(&ev("claude", "Stop"), T0 + 2_000);
+    assert!(!t.expire(T0 + 30 * 60_000));
+    assert_eq!(phase(&t), Phase::Working);
+    t.apply(&sub("PostToolUse", "a1"), T0 + 31 * 60_000);
+    t.apply(&sub("SubagentStop", "a1"), T0 + 31 * 60_000 + 1);
+    assert!(t.expire(T0 + 31 * 60_000 + SUBAGENT_SILENCE + 10));
+    assert_eq!(phase(&t), Phase::Done);
+}
+
+#[test]
+fn long_tool_call_keeps_the_session_working_past_silence() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&ev("claude", "PreToolUse"), T0 + 1_000);
+    // Build trwa 25 minut bez zdarzeń: sesja dalej pracuje, `since` bez zmian.
+    assert!(!s.expire(T0 + 25 * 60_000));
+    assert_eq!(phase(&s), Phase::Working);
+    s.apply(&ev("claude", "PostToolUse"), T0 + 25 * 60_000 + 1);
+    assert_eq!(s.session("claude", "s1").unwrap().since, T0);
+    assert!(s.session("claude", "s1").unwrap().tools.is_empty());
+    // Po PostToolUse znów obowiązuje SILENCE.
+    assert!(s.expire(T0 + 25 * 60_000 + SILENCE + 10));
+    assert_eq!(phase(&s), Phase::Done);
+    // Także narzędzie kończy się po TOOL_SILENCE (zawieszony proces).
+    let mut t = Sessions::default();
+    t.apply(&ev("claude", "PreToolUse"), T0);
+    assert!(!t.expire(T0 + TOOL_SILENCE));
+    assert!(t.expire(T0 + TOOL_SILENCE + 1));
+    // Stop i Interrupt zamykają niezakończone wywołania.
+    let mut u = Sessions::default();
+    u.apply(&ev("claude", "PreToolUse"), T0);
+    u.apply(&ev("claude", "Stop"), T0 + 1);
+    assert!(u.session("claude", "s1").unwrap().tools.is_empty());
+    u.apply(&sub("PreToolUse", "a9"), T0 + 2);
+    u.apply(&ev("claude", "Interrupt"), T0 + 3);
+    assert!(u.session("claude", "s1").unwrap().tools.is_empty());
 }

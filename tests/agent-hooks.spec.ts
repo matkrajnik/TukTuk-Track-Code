@@ -35,7 +35,8 @@ const events = [
   ev(now - 2 * min, "codex", "PermissionRequest", "codex-api", { cwd: api }),
   // Sesja bez zdarzeń od ponad 10 minut kończy się sama.
   ev(now - 30 * min, "claude", "UserPromptSubmit", "claude-stale", { cwd: wms }),
-  ev(now - 11 * min, "claude", "PreToolUse", "claude-stale", { cwd: wms }),
+  // (PostToolUse: przy niezakończonym narzędziu limit jest dłuższy.)
+  ev(now - 11 * min, "claude", "PostToolUse", "claude-stale", { cwd: wms }),
   // Stop przy działającym subagencie nie kończy sesji.
   ev(now - 90_000, "claude", "UserPromptSubmit", "claude-sub", {
     cwd: "C:\\Projekty\\sub",
@@ -84,6 +85,37 @@ test("kafelek Agenci AI liczy pracę z hooków: praca tak, czekanie na zgodę i 
   ]);
 });
 
+test("długie narzędzie trzyma sesję w pracy, a zgubiony SubagentStop nie", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    agentHooks: {
+      events: [
+        // Build trwa od 25 minut: PreToolUse bez PostToolUse.
+        ev(now - 30 * min, "claude", "UserPromptSubmit", "claude-build", {
+          cwd: app,
+        }),
+        ev(now - 25 * min, "claude", "PreToolUse", "claude-build", { cwd: app }),
+        // Stop przy subagencie, którego SubagentStop się zgubił.
+        ev(now - 8 * min, "claude", "UserPromptSubmit", "claude-lost", {
+          cwd: api,
+        }),
+        ev(now - 7 * min, "claude", "SubagentStart", "claude-lost", {
+          cwd: api,
+          agentId: "agent-9",
+        }),
+        ev(now - 6 * min, "claude", "Stop", "claude-lost", { cwd: api }),
+      ],
+    },
+  });
+  await page.getByRole("button", { name: "Dashboard", exact: true }).click();
+  const card = page.getByRole("region", { name: "Agenci AI" });
+  await expect(card.locator(".dashboard-count")).toHaveText([
+    "Claude · to-do-track00:30:00",
+  ]);
+  await expect(card).not.toContainText("api");
+});
+
 test("wyłączone hooki nie zasilają kafelka, a lista agentów z localStorage działa jak dotąd", async ({
   page,
 }) => {
@@ -127,6 +159,9 @@ test("Ustawienia → Agenci: wyłącznik, stan rejestracji, zaufanie Codexa i os
   await expect(list).toContainText("Claude · PreToolUse");
   await expect(list).toContainText("czeka");
   await expect(list).not.toContainText("Dodaj hooki agentów");
+  // Windowsowe cwd z hooków: sama nazwa folderu, bez pełnej ścieżki.
+  await expect(list).toContainText("· api");
+  await expect(list).not.toContainText("C:\\Projekty");
 
   // Wyłączenie zapisuje ustawienie i zmienia stan rejestracji.
   await toggle.uncheck();

@@ -13,8 +13,11 @@
 //!   `idle_prompt` w trakcie pracy) = czekanie na użytkownika, nie praca;
 //! - `Stop` = koniec tury, ale dopóki trwają subagenci, sesja nadal pracuje;
 //!   `Interrupt` = koniec; `SessionEnd` usuwa sesję;
-//! - zdarzenia z `agent_id` to subagenci, liczeni do sesji nadrzędnej;
-//! - sesja bez zdarzeń przez [`SILENCE`] kończy się sama (ubity proces).
+//! - zdarzenia z `agent_id` to subagenci, liczeni do sesji nadrzędnej; subagent
+//!   bez zdarzeń przez [`SUBAGENT_SILENCE`] przestaje się liczyć (zgubiony
+//!   `SubagentStop`);
+//! - sesja bez zdarzeń przez [`SILENCE`] kończy się sama (ubity proces); w trakcie
+//!   wywołania narzędzia (`PreToolUse` bez `PostToolUse`) dopiero po [`TOOL_SILENCE`].
 //!
 //! Rejestracja hooków (`hooks_config`) jest zgodna z ustawieniem `agent_hooks`:
 //! przy starcie i co minutę (po aktualizacji instalatorem ścieżka exe się zmienia),
@@ -23,13 +26,19 @@ use crate::hooks_config::{self, Dirs, Registration};
 use crate::{agents, db, hook_wire, settings};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::Manager;
 
 /// Sesja bez zdarzeń tak długo kończy się sama.
 pub const SILENCE: i64 = 10 * 60_000;
+/// Limit ciszy sesji w trakcie wywołania narzędzia (`PreToolUse` bez
+/// `PostToolUse`): długi build, testy albo subagent pracują bez zdarzeń.
+pub const TOOL_SILENCE: i64 = 60 * 60_000;
+/// Subagent bez zdarzeń tak długo przestaje trzymać sesję w pracy (zgubiony
+/// `SubagentStop`: przerwanie, zalany potok); w trakcie narzędzia [`TOOL_SILENCE`].
+pub const SUBAGENT_SILENCE: i64 = 3 * 60_000;
 /// Zakończona sesja jest zapominana po takim czasie bez zdarzeń.
 pub const FORGET: i64 = 12 * 3_600_000;
 /// Najwięcej pamiętanych sesji (ochrona pamięci przed zalewem zdarzeń).
@@ -105,11 +114,40 @@ pub struct Session {
     pub since: i64,
     /// Ostatnie zdarzenie (ms).
     pub last: i64,
-    /// Subagenci, którzy zaczęli pracę i jeszcze się nie zakończyli.
-    pub subagents: BTreeSet<String>,
-    /// Pierwszy prompt sesji (do 500 znaków), tylko w pamięci; pod asystenta (A4).
+    /// Subagenci, którzy zaczęli pracę i jeszcze się nie zakończyli, z czasem
+    /// ich ostatniego zdarzenia (zgubiony `SubagentStop` nie trzyma sesji w pracy).
+    pub subagents: BTreeMap<String, i64>,
+    /// Rozpoczęte i niezakończone wywołania narzędzi (`PreToolUse` bez
+    /// `PostToolUse`) według wykonawcy: `""` to agent główny, inaczej `agent_id`.
+    pub tools: BTreeMap<String, u32>,
+    /// Agent główny zakończył turę (`Stop`), ale subagenci jeszcze pracują.
+    pub stopped: bool,
+    /// Pierwszy prompt sesji (do 500 znaków), tylko w pamięci; pod asystenta (A4),
+    /// zapisywany tylko przy [`Sessions::keep_prompts`].
     #[allow(dead_code)]
     pub first_prompt: Option<String>,
+}
+
+impl Session {
+    /// Trwa jakieś wywołanie narzędzia (długi build, testy, subagent z `Task`).
+    fn in_tool(&self) -> bool {
+        self.tools.values().any(|&n| n > 0)
+    }
+
+    /// Usuwa subagentów bez zdarzeń dłużej niż [`SUBAGENT_SILENCE`] (albo
+    /// [`TOOL_SILENCE`], gdy subagent jest w trakcie wywołania narzędzia).
+    fn prune_subagents(&mut self, now: i64) {
+        let tools = &mut self.tools;
+        self.subagents.retain(|id, last| {
+            let busy = tools.get(id).is_some_and(|&n| n > 0);
+            let limit = if busy { TOOL_SILENCE } else { SUBAGENT_SILENCE };
+            let keep = now >= *last && now - *last <= limit;
+            if !keep {
+                tools.remove(id);
+            }
+            keep
+        });
+    }
 }
 
 /// Wpis diagnostyki: ostatnie zdarzenia hooków (bez treści promptów).
@@ -131,6 +169,10 @@ pub struct Recent {
 pub struct Sessions {
     map: HashMap<(String, String), Session>,
     recent: VecDeque<Recent>,
+    /// Zapamiętywanie pierwszego promptu sesji. Plan wiąże je z ustawieniem
+    /// `ai_assign_suggest`, które powstaje dopiero w A4; do tego czasu wyłączone.
+    // TODO(A4): ustawiać z `ai_assign_suggest` (i czyścić `first_prompt` po wyłączeniu).
+    pub keep_prompts: bool,
 }
 
 fn phase_name(phase: Phase) -> &'static str {
@@ -159,20 +201,23 @@ impl Sessions {
             if !self.map.contains_key(&key) {
                 self.make_room(now);
             }
+            let keep_prompts = self.keep_prompts;
             let s = self.map.entry(key.clone()).or_insert_with(|| Session {
                 agent: ev.agent.clone(),
                 cwd: ev.cwd.clone(),
                 phase: Phase::Done,
                 since: now,
                 last: now,
-                subagents: BTreeSet::new(),
+                subagents: BTreeMap::new(),
+                tools: BTreeMap::new(),
+                stopped: false,
                 first_prompt: None,
             });
             s.last = now;
             if !ev.cwd.is_empty() {
                 s.cwd = ev.cwd.clone();
             }
-            Self::transition(s, ev, now);
+            Self::transition(s, ev, now, keep_prompts);
             if detail.is_empty() {
                 detail = phase_name(s.phase).into();
             }
@@ -191,35 +236,46 @@ impl Sessions {
         before != self.visible(&key)
     }
 
-    fn transition(s: &mut Session, ev: &HookEvent, now: i64) {
+    fn transition(s: &mut Session, ev: &HookEvent, now: i64, keep_prompts: bool) {
         let work = |s: &mut Session| {
             if s.phase != Phase::Working {
                 s.since = now;
             }
             s.phase = Phase::Working;
         };
+        // Wykonawca zdarzenia: subagent (`agent_id`) albo agent główny (`""`).
+        let actor = ev.agent_id.clone().unwrap_or_default();
+        if let Some(id) = &ev.agent_id {
+            if ev.event != "SubagentStop" {
+                s.subagents.insert(id.clone(), now);
+            }
+        }
         match ev.event.as_str() {
             "UserPromptSubmit" => {
                 work(s);
-                if s.first_prompt.is_none() {
+                s.stopped = false;
+                if keep_prompts && s.first_prompt.is_none() {
                     s.first_prompt = ev.prompt.clone();
                 }
             }
-            "PreToolUse" | "PostToolUse" => {
-                if let Some(id) = &ev.agent_id {
-                    s.subagents.insert(id.clone());
+            "PreToolUse" => {
+                *s.tools.entry(actor).or_default() += 1;
+                work(s);
+            }
+            "PostToolUse" => {
+                if let Some(n) = s.tools.get_mut(&actor) {
+                    *n = n.saturating_sub(1);
+                    if *n == 0 {
+                        s.tools.remove(&actor);
+                    }
                 }
                 work(s);
             }
-            "SubagentStart" => {
-                if let Some(id) = &ev.agent_id {
-                    s.subagents.insert(id.clone());
-                }
-                work(s);
-            }
+            "SubagentStart" => work(s),
             "SubagentStop" => {
                 if let Some(id) = &ev.agent_id {
                     s.subagents.remove(id);
+                    s.tools.remove(id);
                 }
             }
             "PermissionRequest" => s.phase = Phase::Waiting,
@@ -232,12 +288,22 @@ impl Sessions {
                 _ => {}
             },
             "Stop" => {
+                // Koniec tury: wywołania narzędzi agenta głównego są zakończone
+                // (także te bez `PostToolUse`, np. nieudane), a subagenci bez
+                // zdarzeń od dawna nie trzymają już sesji w pracy.
+                s.tools.remove("");
+                s.prune_subagents(now);
                 if s.subagents.is_empty() {
                     s.phase = Phase::Done;
+                    s.stopped = false;
+                } else {
+                    s.stopped = true;
                 }
             }
             "Interrupt" => {
                 s.subagents.clear();
+                s.tools.clear();
+                s.stopped = false;
                 s.phase = Phase::Done;
             }
             // SessionStart zakłada sesję (bezczynną); pozostałe zdarzenia tylko
@@ -270,16 +336,29 @@ impl Sessions {
         }
     }
 
-    /// Timeout braku zdarzeń: praca i czekanie kończą się po [`SILENCE`], a
-    /// zakończone sesje są zapominane po [`FORGET`]. Zwraca `true`, gdy ubyła
+    /// Timeout braku zdarzeń: praca i czekanie kończą się po [`SILENCE`] (po
+    /// [`TOOL_SILENCE`], gdy trwa wywołanie narzędzia), sesja po `Stop` czekająca
+    /// tylko na subagentów kończy się, gdy ich zabraknie (zgubiony `SubagentStop`),
+    /// a zakończone sesje są zapominane po [`FORGET`]. Zwraca `true`, gdy ubyła
     /// pracująca sesja.
     pub fn expire(&mut self, now: i64) -> bool {
         let mut changed = false;
         for s in self.map.values_mut() {
-            if s.phase != Phase::Done && (now - s.last > SILENCE || now < s.last) {
+            if s.phase == Phase::Done {
+                continue;
+            }
+            let limit = if s.in_tool() { TOOL_SILENCE } else { SILENCE };
+            let silent = now - s.last > limit || now < s.last;
+            let orphaned = s.stopped && {
+                s.prune_subagents(now);
+                s.subagents.is_empty() && now - s.last > SUBAGENT_SILENCE
+            };
+            if silent || orphaned {
                 changed |= s.phase == Phase::Working;
                 s.phase = Phase::Done;
                 s.subagents.clear();
+                s.tools.clear();
+                s.stopped = false;
             }
         }
         self.map
@@ -488,6 +567,9 @@ struct Registered {
 #[derive(Default)]
 pub struct State {
     registered: Mutex<Registered>,
+    /// Jedna rejestracja naraz (start, zapis ustawień, kopia i ponowienie działają
+    /// w różnych wątkach i piszą te same pliki).
+    io: Mutex<()>,
 }
 
 pub fn setup(app: &tauri::AppHandle) {
@@ -522,21 +604,29 @@ fn apply_dirs(dirs: &Dirs, exe: Option<&Path>, enabled: bool) -> Result<(), Stri
     }
 }
 
-/// Stosuje ustawienie `agent_hooks` (start, zapis ustawień, przywrócenie kopii).
-pub fn sync(app: &tauri::AppHandle, s: &settings::AppSettings) {
-    attempt(app, s.agent_hooks, db::now(), false);
+/// Stosuje ustawienie `agent_hooks` (start, zmiana wyłącznika, przywrócenie kopii).
+/// Pliki agentów (katalog domowy może być wolny albo sieciowy) czytamy i piszemy w
+/// osobnym wątku, żeby nie blokować wątku głównego i okna.
+pub fn sync(app: &tauri::AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || attempt(&app, db::now(), false));
 }
 
 /// Ponowne sprawdzenie rejestracji co [`RESYNC`] z pętli agentów (nowa ścieżka exe
 /// po aktualizacji, plik nadpisany przez agenta albo błąd przy poprzedniej próbie).
 pub fn retry(app: &tauri::AppHandle, now: i64) {
-    attempt(app, settings::current(app).agent_hooks, now, true);
+    attempt(app, now, true);
 }
 
-fn attempt(app: &tauri::AppHandle, enabled: bool, now: i64, periodic: bool) {
+fn attempt(app: &tauri::AppHandle, now: i64, periodic: bool) {
     let Some(state) = app.try_state::<State>() else {
         return;
     };
+    let Ok(_io) = state.io.lock() else {
+        return;
+    };
+    // Ustawienie czytane pod blokadą: przy szybkim przełączaniu wygrywa ostatnie.
+    let enabled = settings::current(app).agent_hooks;
     {
         let Ok(mut reg) = state.registered.lock() else {
             return;
@@ -675,7 +765,8 @@ pub fn status_for(
     }
 }
 
-#[tauri::command]
+/// Asynchroniczna: czyta pliki agentów poza wątkiem głównym (Ustawienia pytają co 5 s).
+#[tauri::command(async)]
 pub fn agent_hooks_status(app: tauri::AppHandle) -> Status {
     let enabled = settings::current(&app).agent_hooks;
     let error = app

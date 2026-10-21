@@ -61,8 +61,8 @@ const trust = computed(() => {
 });
 const folderName = (cwd: string) =>
   cwd
-    .replace(/[\/]+$/, "")
-    .split(/[\/]/)
+    .replace(/[\\/]+$/, "")
+    .split(/[\\/]/)
     .pop() ?? "";
 
 let timer: number | undefined;

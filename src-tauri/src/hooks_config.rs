@@ -278,18 +278,192 @@ pub fn registration(root: &Value, events: &[&str], command: &str) -> Registratio
     }
 }
 
+// --- kolejność kluczy ---
+//
+// `serde_json::Value` bez cechy `preserve_order` trzyma klucze obiektów posortowane.
+// Żeby zapis nie przestawiał kluczy w plikach agentów (i żeby nie włączać tej cechy
+// dla całej aplikacji), przy odczycie zapamiętujemy kolejność kluczy z pliku
+// ([`Order`]), a przy zapisie wypisujemy obiekty w tej kolejności; nowe klucze
+// trafiają na koniec obiektu.
+
+/// Kolejność kluczy dokumentu JSON (same klucze, bez wartości prostych).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Order {
+    keys: Vec<(String, Order)>,
+    items: Vec<Order>,
+}
+
+impl<'de> serde::Deserialize<'de> for Order {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = Order;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("JSON")
+            }
+            fn visit_bool<E>(self, _: bool) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_i64<E>(self, _: i64) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_u64<E>(self, _: u64) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_f64<E>(self, _: f64) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_str<E>(self, _: &str) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_unit<E>(self) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_none<E>(self) -> Result<Order, E> {
+                Ok(Order::default())
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<Order, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element::<Order>()? {
+                    items.push(item);
+                }
+                Ok(Order {
+                    keys: Vec::new(),
+                    items,
+                })
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Order, A::Error> {
+                let mut keys = Vec::new();
+                while let Some(key) = map.next_key::<String>()? {
+                    let sub = map.next_value::<Order>()?;
+                    keys.push((key, sub));
+                }
+                Ok(Order {
+                    keys,
+                    items: Vec::new(),
+                })
+            }
+        }
+        deserializer.deserialize_any(V)
+    }
+}
+
+/// Wartość do zapisu z podpowiedzią kolejności: oryginalna wartość z pliku i jej
+/// kolejność kluczy (`None`: brak odpowiednika w pliku, klucze posortowane).
+struct Ordered<'a> {
+    value: &'a Value,
+    hint: Option<(&'a Value, &'a Order)>,
+}
+
+impl serde::Serialize for Ordered<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        match self.value {
+            Value::Object(map) => {
+                let mut out = serializer.serialize_map(Some(map.len()))?;
+                let mut done: Vec<&str> = Vec::new();
+                if let Some((Value::Object(orig), order)) = self.hint {
+                    for (key, sub) in &order.keys {
+                        if done.contains(&key.as_str()) {
+                            continue;
+                        }
+                        if let Some(value) = map.get(key) {
+                            done.push(key);
+                            let hint = orig.get(key).map(|o| (o, sub));
+                            out.serialize_entry(key, &Ordered { value, hint })?;
+                        }
+                    }
+                }
+                for (key, value) in map {
+                    if !done.contains(&key.as_str()) {
+                        out.serialize_entry(key, &Ordered { value, hint: None })?;
+                    }
+                }
+                out.end()
+            }
+            Value::Array(list) => {
+                let mut out = serializer.serialize_seq(Some(list.len()))?;
+                let orig = match self.hint {
+                    Some((Value::Array(orig), order)) => Some((orig, order)),
+                    _ => None,
+                };
+                let mut used = vec![false; orig.map_or(0, |(o, _)| o.len())];
+                for (i, value) in list.iter().enumerate() {
+                    // Element bez zmian (także po usunięciu wcześniejszych) ma swój
+                    // odpowiednik w pliku; zmieniony bierze kolejność z tej samej pozycji.
+                    let hint = orig.and_then(|(o, order)| {
+                        let at = o
+                            .iter()
+                            .enumerate()
+                            .position(|(j, v)| !used[j] && v == value)
+                            .or_else(|| (i < o.len() && !used[i]).then_some(i))?;
+                        used[at] = true;
+                        Some((&o[at], order.items.get(at)?))
+                    });
+                    out.serialize_element(&Ordered { value, hint })?;
+                }
+                out.end()
+            }
+            other => other.serialize(serializer),
+        }
+    }
+}
+
+/// Plik JSON agenta: wartość do scalania i kolejność kluczy z dysku.
+#[derive(Clone, Debug, Default)]
+pub struct Doc {
+    pub value: Value,
+    original: Value,
+    order: Order,
+}
+
+impl Doc {
+    /// Dokument z tekstu pliku (pusty tekst to pusty obiekt).
+    pub fn parse(text: &str) -> Result<Self, serde_json::Error> {
+        let text = text.trim_start_matches('\u{feff}');
+        if text.trim().is_empty() {
+            return Ok(Self {
+                value: json!({}),
+                original: json!({}),
+                order: Order::default(),
+            });
+        }
+        let value: Value = serde_json::from_str(text)?;
+        let order: Order = serde_json::from_str(text)?;
+        Ok(Self {
+            original: value.clone(),
+            value,
+            order,
+        })
+    }
+
+    /// Tekst do zapisu: obiekty w kolejności kluczy z pliku, nowe klucze na końcu.
+    pub fn to_text(&self) -> Result<String, String> {
+        let ordered = Ordered {
+            value: &self.value,
+            hint: Some((&self.original, &self.order)),
+        };
+        let mut text = serde_json::to_string_pretty(&ordered).map_err(|e| e.to_string())?;
+        text.push('\n');
+        Ok(text)
+    }
+}
+
 /// Odczyt pliku JSON: brak pliku to pusty obiekt, niepoprawny JSON to błąd
 /// (plik zostaje nietknięty).
-pub fn read_json(path: &Path) -> Result<Value, String> {
+pub fn read_doc(path: &Path) -> Result<Doc, String> {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("Nie udało się odczytać {}: {e}", path.display())),
     };
-    if text.trim().is_empty() {
-        return Ok(json!({}));
-    }
-    serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| {
+    Doc::parse(&text).map_err(|_| {
         format!(
             "Plik {} nie jest poprawnym JSON-em (może zawierać komentarze); nie zmieniam go.",
             path.display()
@@ -297,10 +471,14 @@ pub fn read_json(path: &Path) -> Result<Value, String> {
     })
 }
 
+/// Sama wartość pliku JSON (jak [`read_doc`]).
+pub fn read_json(path: &Path) -> Result<Value, String> {
+    read_doc(path).map(|d| d.value)
+}
+
 /// Zapis przez plik tymczasowy i podmianę, żeby agent nie przeczytał połowy pliku.
-pub fn write_json(path: &Path, value: &Value) -> Result<(), String> {
-    let mut text = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    text.push('\n');
+pub fn write_doc(path: &Path, doc: &Doc) -> Result<(), String> {
+    let text = doc.to_text()?;
     let tmp = path.with_extension("json.todo-track-tmp");
     std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))
@@ -338,18 +516,18 @@ fn sync_file(
         ..Outcome::default()
     };
     let result = (|| {
-        let mut root = read_json(&file)?;
+        let mut doc = read_doc(&file)?;
         let changed = match command {
-            Some(c) => install(&mut root, events, c)?,
+            Some(c) => install(&mut doc.value, events, c)?,
             None => {
                 if !file.exists() {
                     return Ok(false);
                 }
-                uninstall(&mut root)?
+                uninstall(&mut doc.value)?
             }
         };
         if changed {
-            write_json(&file, &root)?;
+            write_doc(&file, &doc)?;
         }
         Ok::<bool, String>(changed)
     })();

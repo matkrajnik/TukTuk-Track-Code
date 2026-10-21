@@ -599,6 +599,7 @@ pub fn get_settings(app: tauri::AppHandle) -> Result<AppSettings, String> {
 
 #[tauri::command]
 pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, String> {
+    let hooks_before = current(&app).agent_hooks;
     let result = {
         let state = app.state::<Database>();
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
@@ -612,8 +613,11 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     crate::suggest::refresh(&app, crate::db::now());
     // Rozszerzenie przeglądarki: wpisy hosta w rejestrze przy zmianie wyłącznika.
     crate::browser::sync(&app, &result);
-    // Hooki agentów: wpisy w plikach Claude Code i Codexa zgodne z wyłącznikiem.
-    crate::hooks::sync(&app, &result);
+    // Hooki agentów: wpisy w plikach Claude Code i Codexa zgodne z wyłącznikiem,
+    // tylko przy jego zmianie (pozostałe przypadki ponawia pętla agentów co minutę).
+    if result.agent_hooks != hooks_before {
+        crate::hooks::sync(&app);
+    }
     Ok(result)
 }
 
