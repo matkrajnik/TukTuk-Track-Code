@@ -186,12 +186,15 @@ defineExpose({ focus: () => input.value?.focus() });
       @blur="close"
     /><ChevronDown class="search-select-chevron" :size="14" aria-hidden="true" />
     <!-- Lista tylko przy otwartym polu: zamknięte pola nie dokładają do strony
-         ukrytych pozycji (tytuły zadań), a nazwa listy nie dubluje etykiety pola. -->
+         ukrytych pozycji (tytuły zadań), a nazwa listy nie dubluje etykiety pola.
+         @mousedown.prevent na całej liście: pasek przewijania, nagłówek grupy
+         ani wiersz „Brak pasujących pozycji” nie zabierają fokusu z pola. -->
     <ul
       v-if="open"
       :id="listId"
       class="search-select-list"
       role="listbox"
+      @mousedown.prevent
     >
       <template v-for="row in rows" :key="String(row.option.value)">
         <li
@@ -211,7 +214,6 @@ defineExpose({ focus: () => input.value?.focus() });
           role="option"
           :aria-selected="row.option.value === modelValue"
           :aria-disabled="row.option.disabled || undefined"
-          @mousedown.prevent
           @mousemove="enabled(row.index) && (active = row.index)"
           @click.prevent="choose(row.index)"
         >

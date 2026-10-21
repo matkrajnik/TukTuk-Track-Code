@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Plus, Scissors, Search, Square, Timer } from "lucide-vue-next";
 import { countdown, focusAction, useFocus } from "../focus";
 import TaskCard from "../components/TaskCard.vue";
+import SearchSelect from "../components/SearchSelect.vue";
 import { offerAfterDone } from "../jiramove";
 import {
   change,
@@ -88,6 +89,12 @@ const projects = computed(() =>
     ),
   ].sort((a, b) => a.localeCompare(b, "pl")),
 );
+/** Pozycje filtru projektu: dwie stałe na początku, potem projekty zadań. */
+const projectFilterOptions = computed(() => [
+  { value: "", label: "Wszystkie projekty" },
+  { value: "__none__", label: "Bez projektu" },
+  ...projects.value.map((project) => ({ value: project, label: project })),
+]);
 const active = computed(() =>
   props.data.sessions.find((s) => s.endedAt === null),
 );
@@ -482,13 +489,12 @@ async function priority(task: Task, e: Event) {
     >
     <label
       >Projekt
-      <select v-model="projectFilter" aria-label="Filtr projektu">
-        <option value="">Wszystkie projekty</option>
-        <option value="__none__">Bez projektu</option>
-        <option v-for="project in projects" :key="project" :value="project">
-          {{ project }}
-        </option>
-      </select></label
+      <SearchSelect
+        v-model="projectFilter"
+        class="toolbar-select"
+        label="Filtr projektu"
+        :options="projectFilterOptions"
+      /></label
     >
   </div>
   <section

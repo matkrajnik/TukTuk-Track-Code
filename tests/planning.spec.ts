@@ -42,7 +42,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
   await expect(page.getByRole("status")).toHaveText("Zapisano plan i notatki.");
   await page.reload();
   await expect(page.getByLabel("Priorytet: Import WMS", {exact:true})).toHaveValue("1");
-  await page.getByLabel("Filtr projektu").selectOption("WMS");
+  await pick(page.getByRole("combobox", { name: "Filtr projektu" }), "WMS");
   await expect(page.locator(".task-card")).toHaveCount(1);
   await page
     .getByRole("button", { name: "Raporty dzienne", exact: true })

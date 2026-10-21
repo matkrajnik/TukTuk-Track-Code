@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
+import { CalendarArrowUp } from "lucide-vue-next";
 import type { Task } from "../store";
 import { hhmm } from "../target";
 import { dayMonth, dayText } from "../time";
@@ -135,7 +136,7 @@ function arrows(event: KeyboardEvent) {
         :disabled="busy"
         @click="openMenu"
       >
-        Przenieś na…
+        <CalendarArrowUp :size="14" aria-hidden="true" />Przenieś na…
       </button>
       <div
         v-if="open"

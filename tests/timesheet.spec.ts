@@ -101,6 +101,32 @@ const groups = (page: Page) =>
 const detailsOf = async (page: Page, id: number) =>
   (await stored(page)).tasks.find((t: { id: number }) => t.id === id).details;
 
+test("SearchSelect: kliknięcie w nagłówek grupy i pusty wynik nie zamyka listy", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await setTs(page, { connected: true, login: "jan" });
+  await expand(page, "Code review");
+  const select = page.getByRole("combobox", { name: "Zadanie TS: Code review" });
+  await select.click();
+  await groups(page).first().click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await expect(select).toBeFocused();
+  await expect(select).toHaveAttribute("aria-expanded", "true");
+  // Wiersz „Brak pasujących pozycji” też nie zabiera fokusu.
+  await select.fill("zzz-brak");
+  await page.locator(".search-select-empty").click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await expect(select).toBeFocused();
+  // Wybór dalej działa po kliknięciach w listę.
+  await select.fill("Code");
+  await page
+    .getByRole("listbox")
+    .getByRole("option", { name: "Code review", exact: true })
+    .click();
+  await expect(select).toHaveAttribute("data-value", "1103");
+});
+
 test("pole „Zadanie TS” w kafelku: wybór z listy, zapamiętanie i stan bez połączenia", async ({
   page,
 }) => {
