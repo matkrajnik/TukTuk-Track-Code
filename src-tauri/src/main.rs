@@ -33,6 +33,7 @@ mod meetings;
 mod native_msg;
 mod notify;
 mod orca;
+mod plan_assist;
 mod planner;
 mod quickadd;
 mod recurrence;
@@ -635,6 +636,10 @@ fn main() {
             assign::ai_suggest_ts_preview,
             day_assist::ai_day_analyze,
             day_assist::ai_day_preview,
+            plan_assist::ai_morning_comment,
+            plan_assist::ai_morning_preview,
+            plan_assist::ai_week_draft,
+            plan_assist::ai_week_preview,
             ai_chat::ai_chat_send,
             ai_chat::ai_chat_stop,
             ai_chat::ai_chat_reset,

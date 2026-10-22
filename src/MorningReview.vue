@@ -12,6 +12,8 @@ import {
   type Task,
 } from "./store";
 import DayControls from "./components/DayControls.vue";
+import MorningAssistant from "./components/MorningAssistant.vue";
+import { usePlanAssistEnabled } from "./aiplan";
 import { dayMarkOf, dayStateOf } from "./days";
 import { offerAfterDone } from "./jiramove";
 import { issueRef } from "./issue";
@@ -40,6 +42,8 @@ import {
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
 const settings = useSettings();
+/** Komentarz asystenta (A6): sekcja „Asystent” pod planem dnia. */
+const assistEnabled = usePlanAssistEnabled();
 const busy = ref(false),
   error = ref(""),
   message = ref("");
@@ -382,6 +386,12 @@ const reviewedAt = computed(() =>
         </li>
       </ol>
       <p v-else class="report-note">Brak zaplanowanych zadań na dziś.</p>
+      <MorningAssistant
+        v-if="assistEnabled"
+        :data="data"
+        :day="today"
+        @updated="emit('updated', $event)"
+      />
     </section>
 
     <div class="modal-actions morning-actions">

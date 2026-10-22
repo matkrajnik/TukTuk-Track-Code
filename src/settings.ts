@@ -114,6 +114,7 @@ export interface AppSettings {
   aiChat: boolean;
   aiAssignSuggest: boolean;
   aiDayClose: boolean;
+  aiPlanAssist: boolean;
 }
 /** Błędy rejestracji skrótów globalnych; pusty tekst = skrót działa. */
 export interface ShortcutErrors {
@@ -194,6 +195,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   aiChat: true,
   aiAssignSuggest: true,
   aiDayClose: true,
+  aiPlanAssist: true,
 });
 const key = "todo-track-preview-settings-v1";
 const eventName = "settings-changed";

@@ -142,6 +142,8 @@ pub struct AppSettings {
     pub ai_assign_suggest: bool,
     /// Asystent w Zamknięciu dnia (A5); działa tylko przy wybranym silniku.
     pub ai_day_close: bool,
+    /// Asystent w Rano i przeglądzie tygodnia (A6); działa tylko przy wybranym silniku.
+    pub ai_plan_assist: bool,
 }
 
 /// Domyślne statusy Jiry oznaczające czekanie.
@@ -241,6 +243,7 @@ impl Default for AppSettings {
             ai_chat: true,
             ai_assign_suggest: true,
             ai_day_close: true,
+            ai_plan_assist: true,
         }
     }
 }

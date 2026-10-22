@@ -3303,3 +3303,25 @@ html.widget-root body {
   display: flex;
   gap: 8px;
 }
+
+/* Rano i przegląd tygodnia z asystentem (A6). */
+.morning-assist {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 8px);
+}
+.morning-assist h4 {
+  margin: 0 0 8px;
+}
+.assist-comment {
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+}
+.week-notes-assist {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}

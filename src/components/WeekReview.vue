@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
+import { Bot } from "lucide-vue-next";
+import AiPreview from "./AiPreview.vue";
+import {
+  aiWeekDraft,
+  aiWeekPreview,
+  usePlanAssistEnabled,
+  withDraft,
+} from "../aiplan";
 import {
   duration,
   saveWeekNote,
@@ -196,6 +204,46 @@ watch(
   { immediate: true },
 );
 const dirty = computed(() => notes.value.trim() !== saved.value);
+/**
+ * „Szkic wniosków” (A6): jedno wywołanie modelu na kliknięcie. Szkic trafia do pola
+ * „Wnioski” jako tekst do edycji (pod tym, co już tam jest); zapisuje dopiero
+ * „Zapisz wnioski”.
+ */
+const assistEnabled = usePlanAssistEnabled();
+const drafting = ref(false);
+const draftError = ref("");
+const draftMessage = ref("");
+const draftPreview = computed(() => () => aiWeekPreview(monday.value));
+// Nowy tydzień zaczyna bez komunikatów po szkicu poprzedniego.
+watch(monday, () => {
+  draftError.value = "";
+  draftMessage.value = "";
+});
+async function draftNotes() {
+  if (drafting.value) return;
+  const week = monday.value;
+  drafting.value = true;
+  draftError.value = "";
+  draftMessage.value = "";
+  try {
+    const result = await aiWeekDraft(week);
+    // Tydzień zmienił się w trakcie wywołania: szkic nie pasuje do widoku.
+    if (week !== monday.value) return;
+    if (!result.text) {
+      draftMessage.value = result.message;
+      return;
+    }
+    notes.value = withDraft(notes.value, result.text);
+    notesStatus.value = "";
+    draftMessage.value =
+      "Szkic asystenta jest w polu poniżej. Popraw go i zapisz — dopiero wtedy trafi do wniosków.";
+  } catch (e) {
+    if (week === monday.value)
+      draftError.value = String(e instanceof Error ? e.message : e);
+  } finally {
+    drafting.value = false;
+  }
+}
 async function saveNotes() {
   if (saving.value) return;
   saving.value = true;
@@ -402,6 +450,21 @@ async function saveNotes() {
   </section>
   <section class="dashboard-card dashboard-top" aria-label="Wnioski">
     <h2>Wnioski</h2>
+    <template v-if="assistEnabled">
+      <div class="week-notes-assist">
+        <button
+          type="button"
+          class="secondary-button"
+          :disabled="drafting || saving"
+          @click="draftNotes"
+        >
+          <Bot :size="14" />{{ drafting ? "Piszę szkic…" : "Szkic wniosków" }}
+        </button>
+      </div>
+      <AiPreview :load="draftPreview" />
+      <p v-if="draftError" class="error" role="alert">{{ draftError }}</p>
+      <p v-if="draftMessage" class="hint" role="status">{{ draftMessage }}</p>
+    </template>
     <form class="week-notes" @submit.prevent="saveNotes">
       <textarea
         v-model="notes"

@@ -360,6 +360,14 @@ async function runTest() {
       @change="save({ aiDayClose: checked($event) })"
     />Asystent w Zamknięciu dnia</label
   >
+  <label class="inline-check"
+    ><input
+      :checked="settings.aiPlanAssist"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ aiPlanAssist: checked($event) })"
+    />Asystent w Rano i przeglądzie tygodnia</label
+  >
   <p class="hint">
     Funkcje działają tylko przy wybranym i wykrytym silniku; model jest wołany
     wyłącznie na zdarzenie (nigdy w pętli), a jego propozycje czekają na
