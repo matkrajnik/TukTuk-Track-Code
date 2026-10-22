@@ -85,6 +85,7 @@ const shared = ref<AppSettings>({
   workDays: [...defaultSettings.workDays],
 });
 let started = false;
+const loaded = ref(false);
 
 /**
  * Wspólne, reaktywne ustawienia dla widoków. Wczytywane raz, potem
@@ -96,7 +97,14 @@ export function useSettings() {
     void onSettingsChanged((s) => (shared.value = s)).catch(() => undefined);
     void readSettings()
       .then((s) => (shared.value = s))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => (loaded.value = true));
   }
   return readonly(shared);
 }
+
+/**
+ * Czy pierwszy odczyt ustawień `useSettings` już się zakończył (także błędem).
+ * Do tego czasu `useSettings` zwraca wartości domyślne, a nie zapisane.
+ */
+export const settingsLoaded = readonly(loaded);

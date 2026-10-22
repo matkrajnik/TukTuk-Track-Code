@@ -282,4 +282,53 @@ test.describe("aplikacja: układ okna widgetu liczy Rust", () => {
       fullHeight: 64,
     });
   });
+
+  test("start malutkiego bez chwilowego pełnego rozmiaru okna", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 96, height: 28 });
+    await openDesktop(page, {
+      window: "widget",
+      settings: { widgetEnabled: true, widgetCompact: true },
+    });
+    await expect(page.locator("#widget")).toHaveClass(/compact/);
+    await expect.poll(async () => (await layouts(page)).length).toBeGreaterThan(0);
+    // Pierwszy układ już z zapisanych ustawień, nie z domyślnych (compact: false).
+    expect((await layouts(page))[0]).toEqual({
+      compact: true,
+      expanded: false,
+      fullHeight: 64,
+    });
+  });
+
+  test("otwarte okno ⇄ trzyma powiększony widok bez mignięcia malutkiego", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 96, height: 28 });
+    await openDesktop(page, {
+      window: "widget",
+      settings: { widgetEnabled: true, widgetCompact: true },
+    });
+    const widget = page.locator("#widget");
+    await expect(widget).toHaveClass(/compact/);
+    await widget.hover();
+    await expect(widget).not.toHaveClass(/compact/);
+    // Okno ⇄ jest osobnym oknem: widget wie o nim tylko od Rusta.
+    await page.evaluate(() => ((window as any).__widgetQuickOpen = true));
+    const before = (await layouts(page)).length;
+    await page.mouse.move(700, 500);
+    for (let i = 0; i < 8; i++) {
+      await page.waitForTimeout(200);
+      await expect(widget).not.toHaveClass(/compact/);
+    }
+    // Bez prób zwinięcia i ponownego powiększenia okna.
+    expect((await layouts(page)).slice(before)).toEqual([]);
+    await page.evaluate(() => ((window as any).__widgetQuickOpen = false));
+    await expect(widget).toHaveClass(/compact/);
+    expect((await layouts(page)).at(-1)).toEqual({
+      compact: true,
+      expanded: false,
+      fullHeight: 64,
+    });
+  });
 });

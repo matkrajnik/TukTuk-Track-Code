@@ -597,6 +597,8 @@ function install(init: {
           };
         case "widget_set_layout":
           return args.compact && args.expanded;
+        case "widget_can_collapse":
+          return !(globalThis as any).__widgetQuickOpen;
         case "agents_status":
           return [];
         // Asystent AI (A1): logika w `ai.rs`, e2e na podglądzie; tu bez wykrytych CLI.

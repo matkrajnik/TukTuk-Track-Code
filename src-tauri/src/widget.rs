@@ -72,6 +72,29 @@ pub fn expanded_rect(compact: Rect, full_w: i32, full_h: i32, work: Rect) -> (Re
     (rect, anchor)
 }
 
+/// Nowy rozmiar już powiększonego okna (np. zmiana wysokości po przypięciu
+/// zadania): ten sam narożnik `anchor` zostaje tam, gdzie okno stoi teraz
+/// (także po przeciągnięciu), a okno nie wychodzi poza obszar roboczy.
+pub fn resized_rect(now: Rect, anchor: Anchor, full_w: i32, full_h: i32, work: Rect) -> Rect {
+    let fit = |start: i32, size: i32, lo: i32, span: i32| start.min(lo + span - size).max(lo);
+    let x = if anchor.right {
+        now.x + now.w - full_w
+    } else {
+        now.x
+    };
+    let y = if anchor.bottom {
+        now.y + now.h - full_h
+    } else {
+        now.y
+    };
+    Rect {
+        x: fit(x, full_w, work.x, work.w),
+        y: fit(y, full_h, work.y, work.h),
+        w: full_w,
+        h: full_h,
+    }
+}
+
 /// Malutkie okno wyliczone z położenia przesuniętego powiększonego okna
 /// (użytkownik przeciągnął pełny widok): ten sam narożnik zostaje na miejscu.
 pub fn collapsed_rect(placed: Rect, anchor: Anchor, compact_w: i32, compact_h: i32) -> Rect {
@@ -386,19 +409,36 @@ pub fn widget_set_layout(
         return Ok(false);
     }
     if expanded {
-        let compact_rect = match *open {
-            Some(o) => o.compact,
-            None => {
-                let now = rect_of(&window).ok_or("Brak położenia okna.")?;
-                Rect {
-                    w: cw,
-                    h: ch,
-                    ..now
-                }
-            }
-        };
         let full_w = (FULL_WIDTH * scale).round() as i32;
         let full_h = (f64::from(full_height) * scale).round() as i32;
+        let now = rect_of(&window);
+        if let Some(o) = *open {
+            // Już powiększony (np. inna wysokość po przypięciu zadania): tylko
+            // rozmiar od tego samego narożnika, bez powrotu na miejsce
+            // z powiększenia, gdy użytkownik przeciągnął pełny widok.
+            let now = now.unwrap_or(o.placed);
+            let compact_rect = if (now.x, now.y) != (o.placed.x, o.placed.y) {
+                collapsed_rect(now, o.anchor, cw, ch)
+            } else {
+                o.compact
+            };
+            let placed = resized_rect(now, o.anchor, full_w, full_h, work_area(&window));
+            if placed != now {
+                place(&window, placed);
+            }
+            *open = Some(Open {
+                compact: compact_rect,
+                placed,
+                anchor: o.anchor,
+            });
+            return Ok(true);
+        }
+        let now = now.ok_or("Brak położenia okna.")?;
+        let compact_rect = Rect {
+            w: cw,
+            h: ch,
+            ..now
+        };
         let (placed, anchor) = expanded_rect(compact_rect, full_w, full_h, work_area(&window));
         place(&window, placed);
         *open = Some(Open {
@@ -409,10 +449,7 @@ pub fn widget_set_layout(
         return Ok(true);
     }
     if let Some(o) = *open {
-        let quick_open = app
-            .get_webview_window("quick")
-            .is_some_and(|w| w.is_visible().unwrap_or(false));
-        if quick_open {
+        if quick_visible(&app) {
             return Ok(true);
         }
         collapse_open(&window, o, cw, ch);
@@ -423,6 +460,20 @@ pub fn widget_set_layout(
             .map_err(|e| e.to_string())?;
     }
     Ok(false)
+}
+
+/// Czy widoczne jest okno szybkiego przełączania (⇄), otwarte z widgetu.
+fn quick_visible(app: &tauri::AppHandle) -> bool {
+    app.get_webview_window("quick")
+        .is_some_and(|w| w.is_visible().unwrap_or(false))
+}
+
+/// Czy powiększony malutki widget może się zwinąć: nie przy otwartym oknie
+/// szybkiego przełączania (⇄). Frontend pyta przed zmianą widoku, żeby nie
+/// migał malutkim widokiem w pętli ponawiania.
+#[tauri::command]
+pub fn widget_can_collapse(app: tauri::AppHandle) -> bool {
+    !quick_visible(&app)
 }
 
 /// Klik w nazwę zadania na widgecie: pokazuje główne okno.
@@ -646,6 +697,43 @@ mod tests {
             (compact.x - 300, compact.y - 200),
             "malutki widget zostaje pod tym samym narożnikiem"
         );
+    }
+
+    #[test]
+    fn resize_of_expanded_window_keeps_the_dragged_corner() {
+        // Prawy dolny róg: powiększony widok rośnie w lewo i w górę.
+        let compact = compact_at(1800, 900, 1.0);
+        let (rect, anchor) = grow(compact, WORK, 1.0);
+        // Użytkownik przeciągnął pełny widok, potem przypiął zadanie (64 -> 96).
+        let moved = Rect {
+            x: rect.x - 300,
+            y: rect.y - 200,
+            ..rect
+        };
+        let taller = resized_rect(moved, anchor, 320, 96, WORK);
+        assert_eq!(taller.x + taller.w, moved.x + moved.w);
+        assert_eq!(taller.y + taller.h, moved.y + moved.h);
+        assert_eq!((taller.w, taller.h), (320, 96));
+        // Zwinięcie z nowego rozmiaru wraca pod ten sam narożnik co z przeciągniętego.
+        assert_eq!(
+            collapsed_rect(taller, anchor, 96, 28),
+            collapsed_rect(moved, anchor, 96, 28)
+        );
+        // Ta sama wysokość: okno stoi w miejscu.
+        assert_eq!(resized_rect(moved, anchor, 320, 64, WORK), moved);
+        // Lewy górny róg: rośnie w dół, a przy dolnej krawędzi zostaje w obszarze.
+        let top_left = Anchor {
+            right: false,
+            bottom: false,
+        };
+        let low = Rect {
+            x: 10,
+            y: 1040 - 70,
+            w: 320,
+            h: 64,
+        };
+        let r = resized_rect(low, top_left, 320, 96, WORK);
+        assert_eq!((r.x, r.y + r.h), (10, 1040));
     }
 
     #[test]

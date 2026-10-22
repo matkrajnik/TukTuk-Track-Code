@@ -61,7 +61,8 @@ import {
 import { issueRef } from "./issue";
 import { clock, dayBounds, dayKey, hm, inDay, plural } from "./time";
 import { dayGoal } from "./capacity";
-import { dayTarget, useSettings } from "./target";
+import { dayTarget, settingsLoaded, useSettings } from "./target";
+import { widgetCanCollapse, widgetSetLayout } from "./widget";
 import { writeSettings } from "./settings";
 import { useMeetings } from "./composables/useMeetings";
 import {
@@ -250,9 +251,25 @@ function scheduleCollapse() {
 /** Dialog albo menu widgetu (okno ⇄ w podglądzie) trzyma powiększony widok. */
 const holdsOpen = () =>
   quickPreview.value || !!document.querySelector('[role="dialog"]');
-function collapse() {
-  if (hovering || !expanded.value) return;
+let collapsing = false;
+/**
+ * Zwinięcie dopiero po zgodzie Rusta (`widget_can_collapse`): w aplikacji okno
+ * ⇄ jest osobnym oknem i widok zostaje powiększony, bez mignięcia malutkiego.
+ */
+async function collapse() {
+  if (hovering || !expanded.value || collapsing) return;
   if (holdsOpen()) return scheduleCollapse();
+  collapsing = true;
+  let allowed = true;
+  try {
+    allowed = await widgetCanCollapse();
+  } catch {
+    // Bez odpowiedzi zwijamy; Rust i tak nie zwinie okna przy otwartym ⇄.
+  } finally {
+    collapsing = false;
+  }
+  if (hovering || !expanded.value) return;
+  if (!allowed || holdsOpen()) return scheduleCollapse();
   expanded.value = false;
 }
 /** Wysokość pełnego widoku: 64, z rzędem przypiętych 96 (jak `.widget-card.has-pins`). */
@@ -261,21 +278,26 @@ const fullHeight = computed(() => (pins.value.length > 0 ? 96 : 64));
  * Układ okna liczy Rust (`widget_set_layout`): rozmiar malutkiego, powiększenie
  * od narożnika najbliższego krawędzi ekranu i powrót na miejsce malutkiego.
  * W podglądzie okna nie ma: rozmiar strony ustawia przeglądarka (testy).
- * Odpowiedź `true` przy prośbie o zwinięcie: okno ⇄ jest otwarte, zostajemy
- * powiększeni i ponawiamy zwinięcie.
+ * Pierwsze wywołanie dopiero po odczycie ustawień: wartości domyślne
+ * (`widgetCompact: false`) powiększyłyby malutki widget przy każdym starcie.
+ * Odpowiedź `true` przy prośbie o zwinięcie (okno ⇄ otwarte tuż po zgodzie
+ * `widget_can_collapse`): okno zostało powiększone, więc widok wraca do
+ * powiększonego bez nowej prośby o powiększenie i ponawiamy zwinięcie.
  */
+let keptOpen = false;
 watch(
-  [compact, expanded, fullHeight],
-  async ([isCompact, isExpanded, height]) => {
+  [compact, expanded, fullHeight, settingsLoaded],
+  async ([isCompact, isExpanded, height, loaded]) => {
     if (!isCompact && expanded.value) expanded.value = false;
-    if (!desktop) return;
+    if (!loaded) return;
+    if (keptOpen) {
+      keptOpen = false;
+      if (isCompact && isExpanded) return;
+    }
     try {
-      const open = await invoke<boolean>("widget_set_layout", {
-        compact: isCompact,
-        expanded: isExpanded,
-        fullHeight: height,
-      });
+      const open = await widgetSetLayout(isCompact, isExpanded, height);
       if (isCompact && !isExpanded && open && !expanded.value) {
+        keptOpen = true;
         expanded.value = true;
         scheduleCollapse();
       }
