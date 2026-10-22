@@ -794,7 +794,7 @@ fn notes_and_ts_descriptions_map_with_dedupe() {
             Some(1),
             "Inny opis tego samego zadania",
         ),
-        proposal("ts_description", "", "", Some(2), "Przegląd PR"),
+        proposal("ts_description", "", "", Some(3), "Rozmowa o eksporcie"),
     ]);
     let kinds: Vec<(&str, i64, &str)> = found
         .iter()
@@ -806,7 +806,7 @@ fn notes_and_ts_descriptions_map_with_dedupe() {
             ("note", 1, "Naprawiono eksport CSV."),
             ("note", 1, "Dodano test."),
             ("ts_description", 1, "Eksport CSV: poprawka i test"),
-            ("ts_description", 2, "Przegląd PR"),
+            ("ts_description", 3, "Rozmowa o eksporcie"),
         ]
     );
     // Numer w odpowiedzi to stabilny klucz karty.
@@ -817,6 +817,50 @@ fn notes_and_ts_descriptions_map_with_dedupe() {
     assert_eq!(found[0].from, "");
     assert_eq!(found[0].from_ms, None);
     assert_eq!(found[0].folder, None);
+}
+
+#[test]
+fn a_ts_description_is_only_for_tasks_without_a_day_note() {
+    // Zadanie 2 ma notatkę dnia („Przegląd PR”): wiersz TS ma już z niej opis.
+    let found = parsed(vec![
+        proposal("ts_description", "", "", Some(2), "Przegląd PR i poprawki"),
+        proposal("note", "", "", Some(2), "Dodano komentarze."),
+        proposal("ts_description", "", "", Some(1), "Eksport CSV"),
+    ]);
+    let kinds: Vec<(&str, i64)> = found.iter().map(|p| (p.kind.as_str(), p.task_id)).collect();
+    assert_eq!(kinds, vec![("note", 2), ("ts_description", 1)]);
+    // Zapytanie mówi modelowi o tej zasadzie.
+    assert!(
+        prompt(&collected(&settings()), &Warsaw).contains("tylko gdy zadanie nie ma notatki dnia")
+    );
+}
+
+#[test]
+fn gap_edges_with_milliseconds_are_rounded_to_whole_seconds_inside_the_gap() {
+    // Pomiar zatrzymany o 09:00:30.456, następny od 09:29:45.789: ręczny czas ma
+    // dokładność sekundy, więc luka zaczyna się o 09:00:31 i kończy o 09:29:45.
+    let mut input = collected(&settings());
+    input.gaps[0].from += 30_456;
+    input.gaps[0].to -= 14_211;
+    let start = input.gaps[0].from;
+    let end = input.gaps[0].to;
+    let value = json!({"proposals": [
+        proposal("gap", "09:00", "09:29", Some(1), ""),
+        proposal("gap", "09:00", "09:10", Some(3), ""),
+    ]});
+    let found = parse(&value, &input, &Warsaw);
+    assert_eq!(found.len(), 2);
+    let a = found[0].from_ms.unwrap();
+    let b = found[0].to_ms.unwrap();
+    assert_eq!(a, at("2026-10-15 09:00") + 31_000);
+    assert_eq!(b, at("2026-10-15 09:29") + 45_000);
+    assert!(a >= start && b <= end && a % 1000 == 0 && b % 1000 == 0);
+    // Cała luka (po zaokrągleniu) nadal łączy się z poprzednim pomiarem.
+    assert_eq!(found[0].fill.as_ref().unwrap().mode, "previous");
+    // Fragment od początku luki też zaczyna się po końcu poprzedniego pomiaru.
+    assert_eq!(found[1].from_ms, Some(at("2026-10-15 09:00") + 31_000));
+    assert_eq!(found[1].to_ms, Some(at("2026-10-15 09:10")));
+    assert_eq!(found[1].fill, None);
 }
 
 #[test]

@@ -267,6 +267,51 @@ test("luka z zadaniem sąsiedniego pomiaru: „Dołącz do poprzedniego pomiaru�
   expect(analysis.endedAt).toBe(at(TODAY, "11:00"));
 });
 
+test("luka po pomiarze zatrzymanym w ułamku sekundy: „Dodaj jako czas” zapisuje się bez nakładania", async ({
+  page,
+}) => {
+  const data = dayData();
+  // Pomiar „Analiza importu” zatrzymany o 10:30:30.456 (db::now() ma milisekundy).
+  const stopped = data.sessions.find(
+    (s: { taskId: number; endedAt?: number | null }) =>
+      s.taskId === ids.analysis && s.endedAt === at(TODAY, "10:30"),
+  )!;
+  stopped.endedAt = at(TODAY, "10:30") + 30_456;
+  await openPreview(page, {
+    data,
+    settings,
+    ai: ai([{ kind: "gap", from: "10:30", to: "11:00", taskId: ids.review }]),
+  });
+  await openClose(page);
+  await analyzeButton(page).click();
+  const card = cards(page).filter({ hasText: "Luka 10:30–11:00" });
+  await card.getByRole("button", { name: "Dodaj jako czas: luka 10:30–11:00" }).click();
+  await page.getByRole("button", { name: "Zapisz ręczny czas" }).click();
+  await expect(card).toContainText("Zastosowano.");
+  const saved = (await stored(page)).sessions.find(
+    (s: { taskId: number; endedAt: number }) =>
+      s.taskId === ids.review && s.endedAt === at(TODAY, "11:00"),
+  );
+  expect(saved.startedAt).toBe(at(TODAY, "10:30") + 31_000);
+});
+
+test("ponowna analiza zamyka otwarty formularz czasu i nie oznacza kart nowej odpowiedzi", async ({
+  page,
+}) => {
+  await openPreview(page, { data: dayData(), settings, ai: ai(everything) });
+  await openClose(page);
+  await analyzeButton(page).click();
+  const card = cards(page).filter({ hasText: "Luka 11:32–11:38" });
+  await card.getByRole("button", { name: "Dodaj jako czas: luka 11:32–11:38" }).click();
+  await expect(page.getByLabel("Początek ręcznego czasu")).toBeVisible();
+  await analyzeButton(page).click();
+  await expect.poll(() => calls(page, "day_close")).toBe(2);
+  await expect(page.getByLabel("Początek ręcznego czasu")).toHaveCount(0);
+  await expect(cards(page)).toHaveCount(5);
+  await expect(card.getByRole("button", { name: /^Dodaj jako czas/ })).toBeVisible();
+  await expect(assistant(page).getByText("Zastosowano.")).toHaveCount(0);
+});
+
 test("fragment luki i luka z cudzym zadaniem mają tylko „Dodaj jako czas”", async ({ page }) => {
   await openPreview(page, { data: dayData(), settings, ai: ai(everything) });
   await openClose(page);
@@ -297,6 +342,40 @@ test("czas agenta bez zadania: „Przypisz” zapisuje przypisanie folderu, nic 
   await expect
     .poll(() => page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "[]"), BINDINGS_KEY))
     .toEqual([{ folder: "C:\\Projekty\\narzedzia", taskId: ids.review }]);
+  await expect(card).not.toContainText("ostatnich 7 dni");
+});
+
+test("„Przypisz” dla dnia starszego niż 7 dni: folder przypisany, karta mówi, że czas z tego dnia został bez zadania", async ({
+  page,
+}) => {
+  const OLD = "2026-10-07";
+  const periods = [
+    ...agentSessions(),
+    {
+      id: 9,
+      agent: "codex",
+      folder: "C:\\Projekty\\stare",
+      taskId: null,
+      start: at(OLD, "09:00"),
+      end: at(OLD, "10:00"),
+    },
+  ];
+  await openPreview(page, {
+    data: dayData(),
+    settings,
+    agentSessions: periods,
+    ai: ai([{ kind: "unassigned", from: "09:00", to: "10:00", taskId: ids.review }]),
+  });
+  await openClose(page);
+  await page.getByLabel("Dzień planu").fill(OLD);
+  await analyzeButton(page).click();
+  const card = cards(page).filter({ hasText: "Praca agenta w „stare”" });
+  await card.getByRole("button", { name: "Przypisz: stare" }).click();
+  await expect(card).toContainText("Zastosowano.");
+  await expect(card).toContainText("przypisanie uzupełnia tylko okresy z ostatnich 7 dni");
+  await expect
+    .poll(() => page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "[]"), BINDINGS_KEY))
+    .toEqual([{ folder: "C:\\Projekty\\stare", taskId: ids.review }]);
 });
 
 test("notatka: edytowalna przed zapisem, „Dodaj do notatki” dopisuje do notatki dnia", async ({
@@ -362,7 +441,7 @@ test("opis TS: karta tylko informuje, a opis czeka w podglądzie „Wyślij do T
     settings,
     ts: tsFixture(),
     ai: ai([
-      { kind: "ts_description", taskId: ids.analysis, text: "Eksport CSV: poprawka i test", reason: "Brak notatki dnia." },
+      { kind: "ts_description", taskId: ids.labels, text: "Eksport CSV: poprawka i test", reason: "Brak notatki dnia." },
     ]),
   });
   await openClose(page);
@@ -397,7 +476,7 @@ test("„Pomiń” przy opisie TS chowa propozycję w podglądzie, a odrzucona k
     settings,
     ts: tsFixture(),
     ai: ai([
-      { kind: "ts_description", taskId: ids.analysis, text: "Opis A" },
+      { kind: "ts_description", taskId: ids.labels, text: "Opis A" },
       { kind: "ts_description", taskId: ids.review, text: "Opis B" },
     ]),
   });
@@ -417,6 +496,25 @@ test("„Pomiń” przy opisie TS chowa propozycję w podglądzie, a odrzucona k
   await hint.getByRole("button", { name: "Pomiń opis: Rozwój" }).click();
   await expect(hint).toHaveCount(0);
   await expect(dialog.getByLabel("Opis wpisu TS: Rozwój")).toHaveValue("Import CSV; Wdrożenie etykiet");
+});
+
+test("opis TS dla zadania z notatką dnia jest pomijany (wiersz ma już opis z notatki)", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: tsSeed(),
+    settings,
+    ts: tsFixture(),
+    ai: ai([
+      { kind: "ts_description", taskId: ids.analysis, text: "Opis zadania z notatką" },
+      { kind: "ts_description", taskId: ids.labels, text: "Opis zadania bez notatki" },
+    ]),
+  });
+  await openClose(page);
+  await analyzeButton(page).click();
+  await expect(cards(page)).toHaveCount(1);
+  await expect(cards(page).first()).toContainText("Wdrożenie etykiet");
+  await expect(cards(page).first()).toContainText("Opis zadania bez notatki");
 });
 
 test("„Odrzuć” usuwa kartę bez żadnej zmiany", async ({ page }) => {

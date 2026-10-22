@@ -279,7 +279,14 @@ function snap(day: string, text: string, exact: number[]): number | null {
   return exact.find((e) => clock(e) === clock(ms)) ?? ms;
 }
 
-/** Odpowiedź modelu jako propozycje zgodne z danymi (`day_assist::parse`). */
+/** Granice luki do pełnych sekund do środka (`day_assist::ceil_second` / `floor_second`). */
+const ceilSecond = (ms: number) => Math.ceil(ms / 1000) * 1000;
+const floorSecond = (ms: number) => Math.floor(ms / 1000) * 1000;
+
+/**
+ * Odpowiedź modelu jako propozycje zgodne z danymi (`day_assist::parse`): opis TS
+ * tylko dla zadań bez notatki dnia, granice luki w pełnych sekundach.
+ */
 function parse(value: unknown, input: DayInput): DayProposal[] {
   const items = (value as { proposals?: unknown } | null)?.proposals;
   if (!Array.isArray(items)) return [];
@@ -308,14 +315,18 @@ function parse(value: unknown, input: DayInput): DayProposal[] {
       fill: null,
     };
     if (kind === "gap") {
-      const a = snap(input.day, str("from"), input.gaps.map((g) => g.from));
-      const b = snap(input.day, str("to"), input.gaps.map((g) => g.to));
-      if (a === null || b === null) return;
-      const gap = input.gaps.find((g) => a >= g.from && b <= g.to && a < b);
+      const rawA = snap(input.day, str("from"), input.gaps.map((g) => ceilSecond(g.from)));
+      const rawB = snap(input.day, str("to"), input.gaps.map((g) => floorSecond(g.to)));
+      if (rawA === null || rawB === null) return;
+      const a = ceilSecond(rawA);
+      const b = floorSecond(rawB);
+      const gap = input.gaps.find(
+        (g) => a >= ceilSecond(g.from) && b <= floorSecond(g.to) && a < b,
+      );
       if (!gap || seen.has(`gap:${a}:${b}`)) return;
       seen.add(`gap:${a}:${b}`);
       Object.assign(p, { from: clock(a), to: clock(b), fromMs: a, toMs: b });
-      if (a === gap.from && b === gap.to) {
+      if (a === ceilSecond(gap.from) && b === floorSecond(gap.to)) {
         const mode =
           gap.before.taskId === taskId ? "previous" : gap.after.taskId === taskId ? "next" : null;
         if (mode)
@@ -343,6 +354,7 @@ function parse(value: unknown, input: DayInput): DayProposal[] {
     } else if (kind === "note" || kind === "ts_description") {
       const text = clip(str("text"), TEXT_MAX);
       if (!text) return;
+      if (kind === "ts_description" && input.notes.some((n) => n.taskId === taskId)) return;
       const key = kind === "note" ? `note:${taskId}:${text}` : `ts:${taskId}`;
       if (seen.has(key)) return;
       seen.add(key);

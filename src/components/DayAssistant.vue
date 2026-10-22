@@ -23,7 +23,14 @@ import {
   type DayProposal,
   type TsDescriptionHint,
 } from "../aiday";
-import { bindAgentFolder, duration, fillGap, read, type Snapshot } from "../store";
+import {
+  agentTime,
+  bindAgentFolder,
+  duration,
+  fillGap,
+  read,
+  type Snapshot,
+} from "../store";
 
 const props = defineProps<{
   data: Snapshot;
@@ -48,6 +55,8 @@ const dismissed = reactive<Record<number, boolean>>({});
 const drafts = reactive<Record<number, string>>({});
 /** Błędy zapisu przy karcie. */
 const cardError = reactive<Record<number, string>>({});
+/** Uwagi po zapisie karty (np. przypisanie bez czasu z analizowanego dnia). */
+const cardInfo = reactive<Record<number, string>>({});
 let request = 0;
 
 function reset() {
@@ -55,7 +64,11 @@ function reset() {
   analysis.value = null;
   loading.value = false;
   error.value = "";
-  for (const map of [applied, dismissed, drafts, cardError])
+  clearCards();
+}
+/** Czyści stan kart i zamyka formularz czasu (karty mają numery z jednej odpowiedzi). */
+function clearCards() {
+  for (const map of [applied, dismissed, drafts, cardError, cardInfo])
     for (const key of Object.keys(map)) delete map[Number(key)];
   preset.value = null;
 }
@@ -71,8 +84,7 @@ async function analyze() {
   try {
     const result = await aiDayAnalyze(props.day);
     if (id !== request) return;
-    for (const map of [applied, dismissed, drafts, cardError])
-      for (const key of Object.keys(map)) delete map[Number(key)];
+    clearCards();
     for (const p of result.proposals) if (p.kind === "note") drafts[p.id] = p.text;
     analysis.value = result;
   } catch (e) {
@@ -100,16 +112,20 @@ const hints = computed<TsDescriptionHint[]>(() =>
 );
 watch(hints, (list) => emit("hints", list), { immediate: true, deep: true });
 
-/** Wykonuje zapis karty: błąd zostaje przy karcie, a karta czeka dalej. */
+/**
+ * Wykonuje zapis karty: błąd zostaje przy karcie, a karta czeka dalej. Wynik
+ * zapisu, który skończył się po nowej analizie, nie oznacza kart nowej odpowiedzi.
+ */
 async function guard(p: DayProposal, action: () => Promise<void>) {
   if (busy.value) return;
   busy.value = true;
+  const id = request;
   delete cardError[p.id];
   try {
     await action();
-    applied[p.id] = true;
+    if (id === request) applied[p.id] = true;
   } catch (e) {
-    cardError[p.id] = String(e instanceof Error ? e.message : e);
+    if (id === request) cardError[p.id] = String(e instanceof Error ? e.message : e);
   } finally {
     busy.value = false;
   }
@@ -123,6 +139,8 @@ const preset = ref<{
   key: string;
   taskId: number | null;
   card: number;
+  /** Analiza, z której pochodzi karta. */
+  request: number;
 } | null>(null);
 /** „Dodaj jako czas”: otwiera ręczny czas z godzinami luki i zadaniem z propozycji. */
 function openTime(p: DayProposal) {
@@ -134,10 +152,11 @@ function openTime(p: DayProposal) {
     key: p.id + ":" + Date.now(),
     taskId: p.taskId,
     card: p.id,
+    request,
   };
 }
 function timeSaved(data: Snapshot) {
-  if (preset.value) applied[preset.value.card] = true;
+  if (preset.value && preset.value.request === request) applied[preset.value.card] = true;
   preset.value = null;
   emit("updated", data);
 }
@@ -156,12 +175,25 @@ function fill(p: DayProposal) {
 
 const folderName = (path: string | null) =>
   (path ?? "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "";
+const sameFolder = (a: string, b: string) =>
+  a.trim().replace(/[\\/]+$/, "").toLowerCase() ===
+  b.trim().replace(/[\\/]+$/, "").toLowerCase();
 function assign(p: DayProposal) {
   const folder = p.folder;
   if (!folder) return;
+  const id = request;
   return guard(p, async () => {
     await bindAgentFolder(folder, p.taskId);
     emit("updated", await read());
+    // Przypisanie uzupełnia tylko okresy z ostatnich 7 dni (`agent_time::backfill`):
+    // przy starszym dniu czas agenta z tej analizy zostaje bez zadania.
+    if (p.fromMs === null || p.toMs === null) return;
+    const left = (await agentTime(p.fromMs, p.toMs)).periods.some(
+      (x) => x.taskId === null && sameFolder(x.folder, folder),
+    );
+    if (left && id === request)
+      cardInfo[p.id] =
+        "Folder przypisano, ale czas agenta z tego dnia nadal jest bez zadania: przypisanie uzupełnia tylko okresy z ostatnich 7 dni.";
   });
 }
 
@@ -209,7 +241,7 @@ const tasks = computed(() => props.data.tasks.filter((t) => !t.archived));
       <button
         type="button"
         class="secondary-button"
-        :disabled="loading"
+        :disabled="loading || busy"
         @click="analyze"
       >
         <Bot :size="14" />{{ loading ? "Analizuję dzień…" : "Przeanalizuj dzień" }}
@@ -268,6 +300,9 @@ const tasks = computed(() => props.data.tasks.filter((t) => !t.archived));
           </p>
           <p v-if="cardError[p.id]" class="error" role="alert">
             {{ cardError[p.id] }}
+          </p>
+          <p v-if="cardInfo[p.id]" class="assist-card-reason" role="note">
+            {{ cardInfo[p.id] }}
           </p>
           <p v-if="applied[p.id]" class="assist-card-done" role="status">
             Zastosowano.

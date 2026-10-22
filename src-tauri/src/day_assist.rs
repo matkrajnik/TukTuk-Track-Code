@@ -772,7 +772,7 @@ pub fn prompt<Tz: TimeZone>(input: &DayInput, tz: &Tz) -> String {
          - \"note\": jedno zdanie po polsku do notatki dnia zadania (\"taskId\"), oparte na commitach, \
          pracy agentów i zmianach statusów; \"from\" i \"to\" puste;\n\
          - \"ts_description\": krótki opis wpisu w Timesheet dla zadania (\"taskId\") po polsku, \
-         zwłaszcza gdy zadanie nie ma notatki dnia; \"from\" i \"to\" puste.\n\
+         tylko gdy zadanie nie ma notatki dnia (\"notes\"); \"from\" i \"to\" puste.\n\
          Do każdej propozycji dodaj w \"reason\" jedno krótkie zdanie po polsku z konkretnym powodem \
          (np. godzina i temat commitu). Używaj wyłącznie id zadań z listy. Nie zgaduj: gdy dane nie \
          uzasadniają propozycji, jej nie dawaj. Odpowiedz wyłącznie obiektem JSON \
@@ -849,10 +849,24 @@ fn snap<Tz: TimeZone>(tz: &Tz, date: NaiveDate, text: &str, exact: &[i64]) -> Op
     )
 }
 
+/// Początek przedziału zaokrąglony w górę do pełnej sekundy (ręczny czas ma
+/// dokładność sekundy, więc nowy przedział nie może zacząć się przed końcem
+/// poprzedniego pomiaru, który ma milisekundy).
+fn ceil_second(ms: i64) -> i64 {
+    (ms + 999).div_euclid(1000) * 1000
+}
+
+/// Koniec przedziału zaokrąglony w dół do pełnej sekundy.
+fn floor_second(ms: i64) -> i64 {
+    ms.div_euclid(1000) * 1000
+}
+
 /// Odpowiedź modelu jako propozycje: tylko zgodne z danymi wejściowymi. Pozycje
 /// niepoprawne (zadanie spoza listy, luka spoza osi dnia, pusty tekst notatki)
 /// odpadają po cichu; powtórzenia (ta sama notatka, ten sam folder, ta sama luka)
-/// liczą się raz.
+/// liczą się raz. Opis TS dotyczy tylko zadań bez notatki dnia (wiersz z notatką
+/// ma już opis z niej). Granice luki są zaokrąglone do pełnych sekund do środka
+/// luki, żeby zapis ręcznego czasu nie nachodził na sąsiednie pomiary.
 pub fn parse<Tz: TimeZone>(value: &Value, input: &DayInput, tz: &Tz) -> Vec<DayProposal> {
     let Ok(date) = NaiveDate::parse_from_str(&input.day, "%Y-%m-%d") else {
         return Vec::new();
@@ -898,18 +912,18 @@ pub fn parse<Tz: TimeZone>(value: &Value, input: &DayInput, tz: &Tz) -> Vec<DayP
         };
         match kind {
             "gap" => {
-                let starts: Vec<i64> = input.gaps.iter().map(|g| g.from).collect();
-                let ends: Vec<i64> = input.gaps.iter().map(|g| g.to).collect();
+                let starts: Vec<i64> = input.gaps.iter().map(|g| ceil_second(g.from)).collect();
+                let ends: Vec<i64> = input.gaps.iter().map(|g| floor_second(g.to)).collect();
                 let (Some(a), Some(b)) = (
-                    snap(tz, date, text_of("from"), &starts),
-                    snap(tz, date, text_of("to"), &ends),
+                    snap(tz, date, text_of("from"), &starts).map(ceil_second),
+                    snap(tz, date, text_of("to"), &ends).map(floor_second),
                 ) else {
                     continue;
                 };
                 let Some(gap) = input
                     .gaps
                     .iter()
-                    .find(|g| a >= g.from && b <= g.to && a < b)
+                    .find(|g| a >= ceil_second(g.from) && b <= floor_second(g.to) && a < b)
                 else {
                     continue;
                 };
@@ -920,7 +934,7 @@ pub fn parse<Tz: TimeZone>(value: &Value, input: &DayInput, tz: &Tz) -> Vec<DayP
                 proposal.to = hm(tz, b);
                 proposal.from_ms = Some(a);
                 proposal.to_ms = Some(b);
-                if (a, b) == (gap.from, gap.to) {
+                if (a, b) == (ceil_second(gap.from), floor_second(gap.to)) {
                     let mode = if gap.before.task_id == task_id {
                         Some("previous")
                     } else if gap.after.task_id == task_id {
@@ -962,6 +976,9 @@ pub fn parse<Tz: TimeZone>(value: &Value, input: &DayInput, tz: &Tz) -> Vec<DayP
             "note" | "ts_description" => {
                 let text = clip(text_of("text"), TEXT_MAX);
                 if text.is_empty() {
+                    continue;
+                }
+                if kind == "ts_description" && input.notes.iter().any(|n| n.task_id == task_id) {
                     continue;
                 }
                 let key = if kind == "note" {
