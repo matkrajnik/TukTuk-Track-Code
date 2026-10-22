@@ -535,9 +535,23 @@ pub fn fire_due<Tz: TimeZone>(
     now: i64,
     startup: bool,
 ) -> rusqlite::Result<Vec<Message>> {
+    fire_due_tracked(db, tz, now, startup).map(|(out, _)| out)
+}
+
+/// `fire_due` z flagą „zmieniono tabelę `reminders`” (wykonane jednorazowe,
+/// przesunięte powtarzalne, zdjęte odłożenie) — także gdy toast nie wychodzi,
+/// bo klucz już był. Pętla w `notify::start` wysyła wtedy `EVENT`, żeby lista
+/// i znacznik 🔔 na kafelku odświeżyły się bez przeładowania.
+pub fn fire_due_tracked<Tz: TimeZone>(
+    db: &Connection,
+    tz: &Tz,
+    now: i64,
+    startup: bool,
+) -> rusqlite::Result<(Vec<Message>, bool)> {
     let (Some(current), Some(exact)) = (local_minute(tz, now), local_exact(tz, now)) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
+    let mut changed = false;
     let today = current.date();
     let reminders = list(db).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
     let mut out = Vec::new();
@@ -554,6 +568,7 @@ pub fn fire_due<Tz: TimeZone>(
         };
         let key = format!("rem:{}:{}", r.id, format_at(due));
         let fresh = notify::claim(db, &key, now)?;
+        changed = true;
         let weekdays = &r.weekdays;
         if r.repeat == "none" {
             db.execute(
@@ -583,7 +598,7 @@ pub fn fire_due<Tz: TimeZone>(
             ));
         }
     }
-    Ok(out)
+    Ok((out, changed))
 }
 
 /// Przypomnienia przed spotkaniem w chwili `now`: spotkania z `meetings_between`
@@ -599,6 +614,11 @@ pub fn meeting_messages<Tz: TimeZone>(
     tz: &Tz,
     now: i64,
 ) -> rusqlite::Result<Vec<Message>> {
+    // Wyłącznik obejmuje wszystkie spotkania, także te z własnym ustawieniem
+    // (plan C3 pkt 5); nadpisanie działa tylko przy włączonych przypomnieniach.
+    if !s.meeting_reminder_enabled {
+        return Ok(Vec::new());
+    }
     let longest = i64::from(*MEETING_MINUTES.last().unwrap_or(&30)) * 60_000;
     let events = calendar::meetings_between(db, now, now + longest + 60_000).unwrap_or_default();
     if events.is_empty() {
@@ -617,9 +637,7 @@ pub fn meeting_messages<Tz: TimeZone>(
         }
         let lead = match overrides.iter().find(|o| o.meeting_id == e.id) {
             Some(o) => o.minutes,
-            None => s
-                .meeting_reminder_enabled
-                .then_some(s.meeting_reminder_minutes),
+            None => Some(s.meeting_reminder_minutes),
         };
         let Some(lead) = lead else { continue };
         if now < e.start - i64::from(lead) * 60_000 {
@@ -1049,6 +1067,37 @@ mod tests {
         let off = add(&db, &Warsaw, &off, now).unwrap();
         let ids: Vec<i64> = list(&db).unwrap().iter().map(|r| r.id).collect();
         assert_eq!(ids, vec![soon.id, late.id, off.id]);
+    }
+
+    #[test]
+    fn fire_due_reports_changed_state() {
+        let db = setup();
+        let r = add(
+            &db,
+            &Warsaw,
+            &input("Zmiana", "2026-10-15T10:00", "none"),
+            at("2026-10-15 09:00"),
+        )
+        .unwrap();
+        // Przed terminem: bez zmian.
+        let (out, changed) = fire_due_tracked(&db, &Warsaw, at("2026-10-15 09:59"), false).unwrap();
+        assert!(out.is_empty() && !changed);
+        // Termin: toast i zmiana stanu (wykonane).
+        let (out, changed) = fire_due_tracked(&db, &Warsaw, at("2026-10-15 10:00"), false).unwrap();
+        assert!(out.len() == 1 && changed);
+        // Kolejny przebieg: przypomnienie wyłączone, nic się nie zmienia.
+        let (out, changed) = fire_due_tracked(&db, &Warsaw, at("2026-10-15 10:01"), false).unwrap();
+        assert!(out.is_empty() && !changed);
+        // Klucz już zapisany, a stan nie (restart po toaście): bez toastu, ale ze zmianą.
+        db.execute(
+            "UPDATE reminders SET enabled=1,at='2026-10-15T11:00' WHERE id=?1",
+            [r.id],
+        )
+        .unwrap();
+        assert!(notify::claim(&db, &format!("rem:{}:2026-10-15T11:00", r.id), 0).unwrap());
+        let (out, changed) = fire_due_tracked(&db, &Warsaw, at("2026-10-15 11:00"), false).unwrap();
+        assert!(out.is_empty() && changed);
+        assert!(!get(&db, r.id).unwrap().unwrap().enabled);
     }
 
     #[test]
@@ -1496,7 +1545,7 @@ mod tests {
         assert!(meeting_messages(&db, &s, &Warsaw, at("2026-10-15 09:55"))
             .unwrap()
             .is_empty());
-        // Nadpisanie działa też przy wyłączonym ustawieniu domyślnym.
+        // Wyłączone przypomnienia o spotkaniach wyciszają też nadpisania.
         let db = setup();
         let c = manual(
             &db,
@@ -1508,6 +1557,11 @@ mod tests {
         );
         s.meeting_reminder_enabled = false;
         set_meeting_reminder(&db, &c, &json!(10)).unwrap();
+        assert!(meeting_messages(&db, &s, &Warsaw, at("2026-10-15 09:50"))
+            .unwrap()
+            .is_empty());
+        // Po ponownym włączeniu nadpisanie (10 min) znów obowiązuje.
+        s.meeting_reminder_enabled = true;
         assert_eq!(
             meeting_messages(&db, &s, &Warsaw, at("2026-10-15 09:50"))
                 .unwrap()

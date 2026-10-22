@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
 import {
+  NOW,
   REMINDERS_KEY,
   SETTINGS_KEY,
   TODAY,
@@ -198,16 +199,42 @@ test("lista przypomnień: nadchodzące według terminu, potem wyłączone i wyko
   ]);
   await expect(items.nth(0)).toContainText("Jednorazowo · Code review");
   await expect(items.nth(2)).toContainText("Co tydzień: Pn, Pt");
-  // Wykonane jednorazowe można włączyć dopiero z nową godziną.
-  await remindersSection(page)
-    .getByLabel("Włączone: Odpisać na zgłoszenie")
-    .click();
-  await expect(remindersSection(page).getByRole("alert")).toHaveText(
-    "Przypomnienie jednorazowe musi być w przyszłości.",
+  // Wykonane jednorazowe można włączyć dopiero z nową godziną: pole otwiera edycję.
+  const done = remindersSection(page).getByLabel(
+    "Włączone: Odpisać na zgłoszenie",
   );
+  await expect(done).toHaveAttribute(
+    "title",
+    "Termin minął — włączenie otworzy edycję",
+  );
+  await done.click();
+  const edit = dialog(page, "Edytuj przypomnienie");
+  await expect(edit.getByLabel("Treść", { exact: true })).toHaveValue(
+    "Odpisać na zgłoszenie",
+  );
+  await expect(remindersSection(page).getByRole("alert")).toHaveCount(0);
+  await expect(done).not.toBeChecked();
+  // „Anuluj” zostawia wykonane bez zmian.
+  await edit.getByRole("button", { name: "Anuluj" }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(done).not.toBeChecked();
+  // Nowy termin w przyszłości: zapis włącza przypomnienie.
+  await done.click();
+  await edit.getByLabel("Dzień", { exact: true }).fill(TODAY);
+  await edit.getByLabel("Godzina", { exact: true }).fill("17:00");
+  await edit.getByRole("button", { name: "Zapisz" }).click();
+  await expect(edit).toHaveCount(0);
+  await expect(done).toBeChecked();
+  const item = remindersSection(page).locator("li", {
+    hasText: "Odpisać na zgłoszenie",
+  });
+  await expect(item.locator(".reminder-when")).toHaveText("17:00");
+  // Wyłączone powtarzalne włącza się od razu, bez formularza.
+  await remindersSection(page).getByLabel("Włączone: Sprawdzić dostawę").click();
   await expect(
-    remindersSection(page).getByLabel("Włączone: Odpisać na zgłoszenie"),
-  ).not.toBeChecked();
+    remindersSection(page).getByLabel("Włączone: Sprawdzić dostawę"),
+  ).toBeChecked();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("„Przypomnij…” z kafelka: formularz z zadaniem i znacznik 🔔 z godziną", async ({
@@ -353,9 +380,10 @@ test("spotkanie z Outlooka: przypomnienie na osi dnia i w „Dzisiaj”", async 
   const chart = page.getByRole("group", { name: "Oś planu i rzeczywistości" });
   // Spotkanie z Outlooka: zwykłe kliknięcie nic nie otwiera (tylko do odczytu),
   // prawy przycisk otwiera okno przypomnienia.
-  const block = chart.getByRole("img", {
-    name: "Spotkanie: Przegląd sprintu · 13:00–14:00 · wstępnie",
+  const block = chart.getByRole("button", {
+    name: "Spotkanie: Przegląd sprintu · 13:00–14:00 · wstępnie · Enter: przypomnienie",
   });
+  await expect(block).toHaveAttribute("aria-haspopup", "dialog");
   await block.click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await block.click({ button: "right" });
@@ -392,6 +420,57 @@ test("spotkanie z Outlooka: przypomnienie na osi dnia i w „Dzisiaj”", async 
     .getByRole("button", { name: "Anuluj" })
     .click();
   expect((await stored(page)).meetings).toEqual({ "m-review": null });
+});
+
+test("spotkanie z Outlooka: okno przypomnienia z klawiatury", async ({
+  page,
+}) => {
+  await openPreview(page, { calendar: calendarFixture() });
+  await nav(page, "Plan i historia");
+  await nav(page, "Dzień");
+  const block = page
+    .getByRole("group", { name: "Oś planu i rzeczywistości" })
+    .getByRole("button", { name: "Spotkanie: Przegląd sprintu" });
+  await block.focus();
+  await page.keyboard.press("Enter");
+  const reminder = dialog(page, "Przypomnienie o spotkaniu");
+  await expect(reminder).toBeVisible();
+  // Fokus trafia do okna („Anuluj” jest aktywne od razu), Esc zamyka.
+  await expect(reminder.getByRole("button", { name: "Anuluj" })).toBeFocused();
+  // Vue pomija obsługę zdarzenia o tym samym znaczniku czasu co montaż okna,
+  // gdy zegar strony stoi (jak w ai.spec.ts), więc zegar rusza przed Esc.
+  await page.clock.setFixedTime(Date.parse(NOW) + 1000);
+  await page.keyboard.press("Escape");
+  await expect(reminder).toHaveCount(0);
+  await expect(block).toBeFocused();
+  // Spacja też otwiera okno; Anuluj jest dostępne od razu.
+  await page.keyboard.press(" ");
+  await expect(reminder.getByRole("button", { name: "Anuluj" })).toBeEnabled();
+  await page.clock.setFixedTime(Date.parse(NOW) + 2000);
+  await page.keyboard.press("Escape");
+  await expect(reminder).toHaveCount(0);
+});
+
+test("wyłączone przypomnienia o spotkaniach: podpowiedź w oknie spotkania", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    calendar: calendarFixture(),
+    settings: { meetingReminderEnabled: false },
+  });
+  await nav(page, "Plan i historia");
+  await nav(page, "Dzień");
+  await page
+    .getByRole("group", { name: "Oś planu i rzeczywistości" })
+    .getByRole("button", { name: "Spotkanie: Przegląd sprintu" })
+    .click({ button: "right" });
+  const reminder = dialog(page, "Przypomnienie o spotkaniu");
+  await expect(reminder).toContainText(
+    "Przypomnienia o spotkaniach są wyłączone",
+  );
+  await expect(
+    reminder.getByLabel("Przypomnienie", { exact: true }).locator("option").first(),
+  ).toHaveText("Domyślne (wyłączone)");
 });
 
 test("ustawienia domyślne przypomnień przed spotkaniem", async ({ page }) => {

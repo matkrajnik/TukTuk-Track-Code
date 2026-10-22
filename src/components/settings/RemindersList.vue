@@ -9,6 +9,7 @@ import { BellPlus, Pencil, Trash2 } from "lucide-vue-next";
 import ConfirmDialog from "../ConfirmDialog.vue";
 import ReminderForm from "../ReminderForm.vue";
 import {
+  atFromMs,
   effectiveAt,
   onRemindersChanged,
   reminderDelete,
@@ -53,10 +54,21 @@ onUnmounted(() => {
   stop?.();
 });
 
+/** Jednorazowe z minionym terminem: włączenie wymaga nowego terminu. */
+const pastOneOff = (r: Reminder) =>
+  !r.enabled && r.repeat === "none" && r.at < atFromMs(Date.now());
 /** Włącza albo wyłącza przypomnienie (pełna walidacja jak przy edycji). */
 async function toggle(r: Reminder, event: Event) {
   if (busy.value) return;
   const box = event.target as HTMLInputElement;
+  // Termin minął: walidacja i tak by odrzuciła włączenie, więc otwiera się
+  // edycja (zapis włącza jednorazowe przypomnienie z nowym terminem).
+  if (pastOneOff(r)) {
+    box.checked = false;
+    error.value = "";
+    form.value = r;
+    return;
+  }
   busy.value = true;
   error.value = "";
   try {
@@ -122,6 +134,9 @@ const status = (r: Reminder) =>
           :checked="r.enabled"
           :disabled="busy"
           :aria-label="'Włączone: ' + r.text"
+          :title="
+            pastOneOff(r) ? 'Termin minął — włączenie otworzy edycję' : undefined
+          "
           @change="toggle(r, $event)"
         />
         <span class="reminder-main"

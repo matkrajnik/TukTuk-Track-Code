@@ -287,7 +287,7 @@ test("tytuły: „Pokazuj tytuły spotkań” dotyczy tylko Outlooka; rozłącze
   });
   await openDay(page);
   await expect(
-    chart(page).getByRole("img", { name: "Spotkanie: Spotkanie · 09:15–09:30" }),
+    chart(page).getByRole("button", { name: "Spotkanie: Spotkanie · 09:15–09:30" }),
   ).toBeVisible();
   await expect(
     chart(page).getByRole("button", {
@@ -296,7 +296,7 @@ test("tytuły: „Pokazuj tytuły spotkań” dotyczy tylko Outlooka; rozłącze
   ).toBeVisible();
   // Spotkanie z Outlooka jest tylko do odczytu: klik nie otwiera edycji.
   await chart(page)
-    .getByRole("img", { name: "Spotkanie: Spotkanie · 09:15–09:30" })
+    .getByRole("button", { name: "Spotkanie: Spotkanie · 09:15–09:30" })
     .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
@@ -305,7 +305,9 @@ test("tytuły: „Pokazuj tytuły spotkań” dotyczy tylko Outlooka; rozłącze
     const store = await import("/src/store.ts");
     await store.calendarDisconnect();
   });
-  await expect(chart(page).getByRole("img")).toHaveCount(0);
+  await expect(
+    chart(page).locator(".dtl-meeting:not(.manual)"),
+  ).toHaveCount(0);
   await expect(chart(page).locator(".dtl-meeting.manual")).toHaveCount(2);
 });
 

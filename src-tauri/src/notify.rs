@@ -387,6 +387,9 @@ pub struct NotifyClock {
     started: bool,
     due_checked: Option<NaiveDate>,
     evening_checked: Option<NaiveDate>,
+    /// Ostatni `tick` zmienił tabelę `reminders` (C3) — pętla wysyła wtedy
+    /// `reminders::EVENT`.
+    pub reminders_changed: bool,
 }
 
 /// „1 zadanie”, „3 zadania”, „5 zadań”.
@@ -584,7 +587,9 @@ impl NotifyClock {
 
         // Przypomnienia własne i przed spotkaniem (C3). Działają także po „Zakończ
         // dzień”, bo B13 wycisza tylko przypomnienia o braku pomiaru i propozycje.
-        out.extend(crate::reminders::fire_due(db, tz, now, startup)?);
+        let (fired, changed) = crate::reminders::fire_due_tracked(db, tz, now, startup)?;
+        self.reminders_changed = changed;
+        out.extend(fired);
         out.extend(crate::reminders::meeting_messages(db, s, tz, now)?);
 
         // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem, bez świąt).
@@ -1105,6 +1110,7 @@ pub fn start(app: &tauri::AppHandle) {
                 Ok(db) => {
                     let s = crate::settings::cached(&app, &db);
                     let now = crate::db::now();
+                    clock.reminders_changed = false;
                     let mut messages = clock.tick(&db, &s, &chrono::Local, now).unwrap_or_default();
                     if let Ok(Some(m)) = morning_review(&db, &s, &chrono::Local, now) {
                         messages.push(m);
@@ -1119,6 +1125,9 @@ pub fn start(app: &tauri::AppHandle) {
                 }
                 Err(_) => Vec::new(),
             };
+            if std::mem::take(&mut clock.reminders_changed) {
+                let _ = app.emit(crate::reminders::EVENT, ());
+            }
             for m in messages {
                 show(&app, &m);
             }

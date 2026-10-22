@@ -21,7 +21,10 @@ const emit = defineEmits<{ close: []; saved: [] }>();
 const settings = useSettings();
 const value = ref<MeetingReminderValue>("default");
 const initial = ref<MeetingReminderValue>("default");
-const busy = ref(true);
+/** Wczytywanie nadpisania: blokuje pole i „Zapisz”, ale nie „Anuluj”, żeby
+ * fokus okna (useModal) i Esc działały od pierwszej chwili. */
+const loading = ref(true);
+const busy = ref(false);
 const error = ref("");
 onMounted(async () => {
   try {
@@ -32,11 +35,11 @@ onMounted(async () => {
   } catch (e) {
     error.value = String(e);
   } finally {
-    busy.value = false;
+    loading.value = false;
   }
 });
 async function save() {
-  if (busy.value) return;
+  if (busy.value || loading.value) return;
   busy.value = true;
   error.value = "";
   try {
@@ -67,7 +70,11 @@ async function save() {
         >
       </p>
       <label for="meeting-reminder">Przypomnienie</label>
-      <MeetingReminderField v-model="value" :disabled="busy" />
+      <MeetingReminderField v-model="value" :disabled="busy || loading" />
+      <p v-if="!settings.meetingReminderEnabled" class="hint">
+        Przypomnienia o spotkaniach są wyłączone w Ustawienia → Powiadomienia;
+        po ich włączeniu obowiązuje to, co wybierzesz tutaj.
+      </p>
       <p class="hint">
         Spotkania z Outlooka są tylko do odczytu; zmieniasz tylko to, czy i
         kiedy aplikacja o nim przypomni.
@@ -75,7 +82,9 @@ async function save() {
       <div class="modal-actions">
         <button type="button" :disabled="busy" @click="emit('close')">
           Anuluj</button
-        ><button class="primary-button" :disabled="busy">Zapisz</button>
+        ><button class="primary-button" :disabled="busy || loading">
+          Zapisz
+        </button>
       </div>
     </form>
   </ConfirmDialog>

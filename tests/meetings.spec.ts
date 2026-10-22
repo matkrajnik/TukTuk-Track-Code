@@ -267,15 +267,15 @@ test("oś dnia: tor Spotkania nad planem, plan omija spotkania", async ({
   await nav(page, "Dzień");
   const chart = page.getByRole("group", { name: "Oś planu i rzeczywistości" });
   await expect(
-    chart.getByRole("img", { name: "Spotkanie: Daily WMS · 09:15–09:30" }),
+    chart.getByRole("button", { name: "Spotkanie: Daily WMS · 09:15–09:30" }),
   ).toBeVisible();
   await expect(
-    chart.getByRole("img", {
+    chart.getByRole("button", {
       name: "Spotkanie: Przegląd sprintu · 13:00–14:00 · wstępnie",
     }),
   ).toHaveClass(/tentative/);
   // Anulowane i odrzucone nie zajmują czasu.
-  await expect(chart.getByRole("img")).toHaveCount(2);
+  await expect(chart.locator(".dtl-meeting")).toHaveCount(2);
   await expect(page.locator(".dtl-labels")).toHaveText(
     /Spotkania\s*Plan\s*Rzeczywistość/,
   );
@@ -312,7 +312,7 @@ test("oś dnia: tor Spotkania nad planem, plan omija spotkania", async ({
   await nav(page, "Plan i historia");
   await nav(page, "Dzień");
   await expect(
-    page.getByRole("img", { name: "Spotkanie: Spotkanie · 09:15–09:30" }),
+    page.getByRole("button", { name: "Spotkanie: Spotkanie · 09:15–09:30" }),
   ).toBeVisible();
 
   // Bez połączonego kalendarza toru nie ma.

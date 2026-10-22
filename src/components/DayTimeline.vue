@@ -218,6 +218,11 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
   }${m.event.showAs === "tentative" ? " · wstępnie" : ""}${
     isManualMeeting(m.event) ? " · ręczne" : ""
   }`;
+/** Etykieta bloku: spotkanie z Outlooka mówi, że Enter otwiera przypomnienie (C3). */
+const meetingLabel = (m: (typeof meetings.value)[number]) =>
+  isManualMeeting(m.event)
+    ? meetingText(m)
+    : `${meetingText(m)} · Enter: przypomnienie`;
 </script>
 <template>
   <div class="day-timeline">
@@ -310,8 +315,9 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
             height="26"
             rx="4"
             tabindex="0"
-            :role="isManualMeeting(m.event) ? 'button' : 'img'"
-            :aria-label="meetingText(m)"
+            role="button"
+            :aria-haspopup="isManualMeeting(m.event) ? undefined : 'dialog'"
+            :aria-label="meetingLabel(m)"
             @mouseenter="show(meetingText(m), m.start, m.end)"
             @focus="show(meetingText(m), m.start, m.end)"
             @blur="tip = null"
