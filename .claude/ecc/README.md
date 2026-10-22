@@ -71,7 +71,11 @@ cd /c/Projekty/Private/to-do-track && node /c/Projekty/Private/ECC/scripts/insta
   na Stop formatowanie i typecheck edytowanych plików JS/TS, powiadomienie, koszty w `~/.claude/metrics/`.
 - Wyciszanie: `ECC_HOOK_PROFILE=minimal|standard|strict` (domyślnie `standard`), `ECC_DISABLED_HOOKS`.
 
-## Testy Rust w to-do-track (stan na 2026-10-21)
+## Testy Rust w to-do-track (analiza z 1.9.0, 2026-10-21)
+
+Od 2.0.0 jest 688 testów Rust i katalog `src-tauri/tests/` (`naming.rs`, `mcp_exe.rs`).
+Dwie główne luki poniżej (`native_msg.rs`, `db::move_session`) w 2.0.0 nadal nie mają testów;
+reszty analizy nie powtarzano.
 
 - 336 testów jednostkowych `#[test]` w modułach `src-tauri/src/*.rs` (~1 na 93 linie), brak `src-tauri/tests/`.
 - Playwright testuje frontend na zastępczym IPC (`tests/fixtures/tauri.ts`), więc nie sprawdza Rusta.

@@ -19,14 +19,16 @@ MANDATORY workflow:
 
 ## Troubleshooting Test Failures
 
-1. Use **tdd-guide** agent
+1. Use the **rust-testing** (Rust) or **e2e-testing** (Playwright) skill
 2. Check test isolation
 3. Verify mocks are correct
 4. Fix implementation, not tests (unless tests are wrong)
 
 ## Agent Support
 
-- **tdd-guide** - Use PROACTIVELY for new features, enforces write-tests-first
+- **rust-testing** skill - Rust unit and integration tests, write-tests-first
+- **e2e-testing** skill - Playwright E2E tests
+- **pr-test-analyzer** agent - Reviews whether tests cover behavior and would catch real bugs
 
 ## Test Structure (AAA Pattern)
 

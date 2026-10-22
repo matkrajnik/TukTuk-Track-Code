@@ -13,24 +13,24 @@ Agent(subagent_type: "planner", prompt: "...")
 |-------|---------|-------------|
 | planner | Implementation planning | Complex features, refactoring |
 | architect | System design | Architectural decisions |
-| tdd-guide | Test-driven development | New features, bug fixes |
 | code-reviewer | Code review | After writing code |
 | security-reviewer | Security analysis | Before commits |
-| build-error-resolver | Fix build errors | When build fails |
-| e2e-runner | E2E testing | Critical user flows |
+| build-error-resolver | Fix build errors | When `npm run build` fails |
+| rust-build-resolver | Fix Rust build errors | When `cargo build` / `cargo check` fails |
 | refactor-cleaner | Dead code cleanup | Code maintenance |
 | doc-updater | Documentation | Updating docs |
-| rust-reviewer | Rust code review | Rust projects |
-| harmonyos-app-resolver | HarmonyOS app development | HarmonyOS/ArkTS projects |
+| rust-reviewer | Rust code review | Changes in `src-tauri/**/*.rs` |
+| vue-reviewer | Vue code review | Changes in `src/**/*.vue` |
+| typescript-reviewer | TypeScript code review | Changes in `src/**/*.ts` |
 
-For the full roster of 69 agents, see `/ecc-guide`.
+This project has 20 agents in `.claude/agents/`; the full routing table (agents, commands, skills) is in `CLAUDE.md`. Test-first work uses the `rust-testing` (Rust) and `e2e-testing` (Playwright) skills; there is no `tdd-guide` or `e2e-runner` agent.
 
 ## Immediate Agent Usage
 
 No user prompt needed:
 1. Complex feature requests - Use **planner** agent
-2. Code just written/modified - Use **code-reviewer** agent
-3. Bug fix or new feature - Use **tdd-guide** agent
+2. Code just written/modified - Use **code-reviewer** agent, plus the language reviewer (**rust-reviewer**, **vue-reviewer**, **typescript-reviewer**)
+3. Bug fix or new feature - Write the test first, following the **rust-testing** or **e2e-testing** skill
 4. Architectural decision - Use **architect** agent
 
 ## Parallel Task Execution
