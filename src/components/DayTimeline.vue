@@ -61,7 +61,9 @@ function editMeeting(e: CalendarEvent) {
 /**
  * Spotkanie z Outlooka: okno przypomnienia (C3) z menu kontekstowego
  * (prawy przycisk) albo klawiszem Enter / Spacja; zwykłe kliknięcie nadal
- * niczego nie otwiera, bo spotkania z Outlooka są tylko do odczytu.
+ * niczego nie otwiera, bo spotkania z Outlooka są tylko do odczytu. Blok
+ * zachowuje rolę „img” sprzed C3; przyciskiem okno otwiera też
+ * „Przypomnienie o spotkaniu” w Zadania → Dzisiaj.
  */
 const reminderMeeting = ref<CalendarEvent | null>(null);
 function meetingMenu(e: CalendarEvent) {
@@ -218,11 +220,6 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
   }${m.event.showAs === "tentative" ? " · wstępnie" : ""}${
     isManualMeeting(m.event) ? " · ręczne" : ""
   }`;
-/** Etykieta bloku: spotkanie z Outlooka mówi, że Enter otwiera przypomnienie (C3). */
-const meetingLabel = (m: (typeof meetings.value)[number]) =>
-  isManualMeeting(m.event)
-    ? meetingText(m)
-    : `${meetingText(m)} · Enter: przypomnienie`;
 </script>
 <template>
   <div class="day-timeline">
@@ -315,9 +312,9 @@ const meetingLabel = (m: (typeof meetings.value)[number]) =>
             height="26"
             rx="4"
             tabindex="0"
-            role="button"
-            :aria-haspopup="isManualMeeting(m.event) ? undefined : 'dialog'"
-            :aria-label="meetingLabel(m)"
+            :role="isManualMeeting(m.event) ? 'button' : 'img'"
+            :aria-label="meetingText(m)"
+            :aria-keyshortcuts="isManualMeeting(m.event) ? undefined : 'Enter'"
             @mouseenter="show(meetingText(m), m.start, m.end)"
             @focus="show(meetingText(m), m.start, m.end)"
             @blur="tip = null"

@@ -380,10 +380,10 @@ test("spotkanie z Outlooka: przypomnienie na osi dnia i w „Dzisiaj”", async 
   const chart = page.getByRole("group", { name: "Oś planu i rzeczywistości" });
   // Spotkanie z Outlooka: zwykłe kliknięcie nic nie otwiera (tylko do odczytu),
   // prawy przycisk otwiera okno przypomnienia.
-  const block = chart.getByRole("button", {
-    name: "Spotkanie: Przegląd sprintu · 13:00–14:00 · wstępnie · Enter: przypomnienie",
+  const block = chart.getByRole("img", {
+    name: "Spotkanie: Przegląd sprintu · 13:00–14:00 · wstępnie",
   });
-  await expect(block).toHaveAttribute("aria-haspopup", "dialog");
+  await expect(block).toHaveAttribute("aria-keyshortcuts", "Enter");
   await block.click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await block.click({ button: "right" });
@@ -430,7 +430,7 @@ test("spotkanie z Outlooka: okno przypomnienia z klawiatury", async ({
   await nav(page, "Dzień");
   const block = page
     .getByRole("group", { name: "Oś planu i rzeczywistości" })
-    .getByRole("button", { name: "Spotkanie: Przegląd sprintu" });
+    .getByRole("img", { name: "Spotkanie: Przegląd sprintu" });
   await block.focus();
   await page.keyboard.press("Enter");
   const reminder = dialog(page, "Przypomnienie o spotkaniu");
@@ -462,7 +462,7 @@ test("wyłączone przypomnienia o spotkaniach: podpowiedź w oknie spotkania", a
   await nav(page, "Dzień");
   await page
     .getByRole("group", { name: "Oś planu i rzeczywistości" })
-    .getByRole("button", { name: "Spotkanie: Przegląd sprintu" })
+    .getByRole("img", { name: "Spotkanie: Przegląd sprintu" })
     .click({ button: "right" });
   const reminder = dialog(page, "Przypomnienie o spotkaniu");
   await expect(reminder).toContainText(
