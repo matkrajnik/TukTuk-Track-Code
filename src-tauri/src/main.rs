@@ -490,8 +490,9 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             ai::setup(app.handle());
-            ai_chat::setup(app.handle());
             mcp::setup(app.handle());
+            // Po `mcp::setup`: czat używa mapy pseudonimów serwera MCP.
+            ai_chat::setup(app.handle());
             hooks::setup(app.handle());
             suggest::setup(app.handle());
             foreground::setup(app.handle());

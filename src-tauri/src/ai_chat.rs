@@ -6,11 +6,15 @@
 //!   stream-json --output-format stream-json …`); wiadomości idą na stdin jako
 //!   linie JSON, zdarzenia ze stdout są parsowane i strumieniowane do UI,
 //! - **Codex**: `codex exec --json` na każdą wiadomość, z historią rozmowy w
-//!   prompcie i serwerem MCP podanym przez `-c mcp_servers.todo-track.command=…`.
+//!   prompcie i serwerem MCP jako jedynym serwerem (`-c mcp_servers={…}` zastępuje
+//!   całą tabelę serwerów z `~/.codex/config.toml`), bez wbudowanej powłoki.
 //!
 //! **Prywatność**: każda wiadomość użytkownika przechodzi przez
-//! `ai_privacy::redact_with` (ta sama mapa pseudonimów w całej rozmowie), a
-//! tekst i argumenty narzędzi z odpowiedzi przez `restore`, zanim trafią do UI.
+//! `ai_privacy::redact_with`, a tekst i argumenty narzędzi z odpowiedzi przez
+//! `restore`, zanim trafią do UI. Mapa pseudonimów jest **wspólna z serwerem MCP**
+//! (`mcp::State::pseudonyms`): „Osoba N” z wiadomości użytkownika i z wyniku
+//! narzędzia to jedna przestrzeń oznaczeń, więc przywrócenie zawsze trafia we
+//! właściwą osobę (także w argumentach `propose_*`).
 //! Do modelu nie trafia nic poza przefiltrowaną wiadomością i historią rozmowy
 //! (też przefiltrowaną). **Model tylko proponuje**: narzędzia MCP tworzą
 //! propozycje, które UI pokazuje jako karty „Zastosuj” / „Odrzuć”.
@@ -256,9 +260,20 @@ fn toml_string(text: &str) -> String {
     serde_json::to_string(text).unwrap_or_else(|_| "\"\"".into())
 }
 
+/// Wbudowane narzędzia Codexa wyłączone w czacie (`-c features.<klucz>=false`):
+/// powłoka mogłaby czytać pliki poza katalogiem AI (bazę aplikacji, pamięć
+/// podręczną Jiry) z pominięciem filtra danych osobowych, a wyszukiwanie w sieci
+/// wysyłałoby treść rozmowy poza model.
+pub const CODEX_DISABLED_FEATURES: [&str; 3] = ["shell_tool", "unified_exec", "web_search_request"];
+
 /// `codex exec --json --ephemeral --skip-git-repo-check -s read-only -C <katalog AI>
-/// -c mcp_servers.todo-track.command=<exe> -c mcp_servers.todo-track.args=[]
-/// -c notify=[] [-m <model>]`; prompt idzie na stdin.
+/// -c mcp_servers={"todo-track"={command=<exe>,args=[]}} -c features.shell_tool=false
+/// -c features.unified_exec=false -c features.web_search_request=false -c notify=[]
+/// [-m <model>]`; prompt idzie na stdin.
+///
+/// Cała tabela `mcp_servers` jest zastąpiona jednym wpisem (odpowiednik
+/// `--strict-mcp-config` Claude): serwery MCP zarejestrowane przez użytkownika w
+/// `~/.codex/config.toml` (np. Jira z narzędziami zapisu) nie są w czacie dostępne.
 pub fn codex_chat_args(dir: &Path, exe: &Path, model: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "exec".into(),
@@ -271,15 +286,17 @@ pub fn codex_chat_args(dir: &Path, exe: &Path, model: &str) -> Vec<String> {
         dir.to_string_lossy().into_owned(),
         "-c".into(),
         format!(
-            "mcp_servers.{}.command={}",
-            mcp_register::SERVER,
+            "mcp_servers={{{}={{command={},args=[]}}}}",
+            toml_string(mcp_register::SERVER),
             toml_string(&exe.to_string_lossy())
         ),
-        "-c".into(),
-        format!("mcp_servers.{}.args=[]", mcp_register::SERVER),
-        "-c".into(),
-        "notify=[]".into(),
     ];
+    for feature in CODEX_DISABLED_FEATURES {
+        args.push("-c".into());
+        args.push(format!("features.{feature}=false"));
+    }
+    args.push("-c".into());
+    args.push("notify=[]".into());
     if !model.is_empty() {
         args.push("-m".into());
         args.push(model.into());
@@ -443,6 +460,15 @@ enum Role {
     Assistant,
 }
 
+/// Wiadomość historii po filtrze (z pseudonimami) z numerem tury, żeby
+/// „Zatrzymaj” spóźnionej tury mogło ją usunąć z rozmowy.
+#[derive(Clone, Debug)]
+struct Line {
+    role: Role,
+    text: String,
+    turn: u64,
+}
+
 struct Live {
     gen: u64,
     child: Box<dyn Child>,
@@ -459,11 +485,16 @@ struct Active {
 struct Inner {
     next_gen: u64,
     turn: u64,
+    /// Rośnie przy „Zatrzymaj” i „Nowej rozmowie”: wysyłka, która zaczęła się
+    /// przed nimi, nie instaluje już swojego procesu.
+    epoch: u64,
+    /// Pokolenie procesu, którego strumień się zamknął (proces Claude wyjęty na
+    /// czas zapisu nie wraca wtedy jako żywy).
+    closed_gen: Option<u64>,
     live: Option<Live>,
     active: Option<Active>,
     /// Historia rozmowy po filtrze (z pseudonimami); do promptu Codexa i wznowienia Claude.
-    history: Vec<(Role, String)>,
-    pseudonyms: Pseudonyms,
+    history: Vec<Line>,
 }
 
 /// Wynik wysłania wiadomości.
@@ -474,28 +505,29 @@ pub struct Sent {
     pub sent: String,
 }
 
-/// Jedna rozmowa: proces, historia i pseudonimy.
+/// Jedna rozmowa: proces i historia. Pseudonimy są wspólne z serwerem MCP.
 pub struct Manager {
     spawner: Arc<dyn Spawner>,
     inner: Arc<Mutex<Inner>>,
+    pseudonyms: Arc<Mutex<Pseudonyms>>,
 }
 
 /// Historia jako tekst na początek promptu (Codex i wznowienie Claude po
 /// zatrzymaniu); ostatnie [`HISTORY_MAX`] wiadomości.
-fn transcript(history: &[(Role, String)]) -> String {
+fn transcript(history: &[Line]) -> String {
     let start = history.len().saturating_sub(HISTORY_MAX);
     history[start..]
         .iter()
-        .map(|(role, text)| match role {
-            Role::User => format!("Użytkownik: {text}"),
-            Role::Assistant => format!("Asystent: {text}"),
+        .map(|line| match line.role {
+            Role::User => format!("Użytkownik: {}", line.text),
+            Role::Assistant => format!("Asystent: {}", line.text),
         })
         .collect::<Vec<_>>()
         .join("\n\n")
 }
 
 /// Prompt Codexa: rola, dotychczasowa rozmowa i nowe pytanie.
-fn codex_prompt(history: &[(Role, String)], message: &str) -> String {
+fn codex_prompt(history: &[Line], message: &str) -> String {
     let mut prompt = format!("{ROLE}\n\n");
     if !history.is_empty() {
         prompt.push_str(&format!(
@@ -509,7 +541,7 @@ fn codex_prompt(history: &[(Role, String)], message: &str) -> String {
 
 /// Pierwsza wiadomość nowego procesu Claude: po zatrzymaniu rozmowy zawiera
 /// dotychczasową historię, bo `--no-session-persistence` nie zachowuje kontekstu.
-fn claude_first_message(history: &[(Role, String)], message: &str) -> String {
+fn claude_first_message(history: &[Line], message: &str) -> String {
     if history.is_empty() {
         message.to_string()
     } else {
@@ -520,15 +552,20 @@ fn claude_first_message(history: &[(Role, String)], message: &str) -> String {
     }
 }
 
-fn lock(inner: &Mutex<Inner>) -> std::sync::MutexGuard<'_, Inner> {
-    inner.lock().unwrap_or_else(|e| e.into_inner())
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Proces gotowy do zainstalowania po zapisie wiadomości (faza bez blokady).
+type Prepared = (Live, Option<Receiver<Stream>>);
+
 impl Manager {
-    pub fn new(spawner: Arc<dyn Spawner>) -> Self {
+    /// `pseudonyms`: mapa wspólna z serwerem MCP (`mcp::State::pseudonyms`).
+    pub fn new(spawner: Arc<dyn Spawner>, pseudonyms: Arc<Mutex<Pseudonyms>>) -> Self {
         Self {
             spawner,
             inner: Arc::new(Mutex::new(Inner::default())),
+            pseudonyms,
         }
     }
 
@@ -540,6 +577,11 @@ impl Manager {
 
     /// Wysyła wiadomość: filtr danych osobowych, start procesu (Claude: tylko gdy
     /// nie żyje), zapis na stdin i strumieniowanie odpowiedzi do `sink`.
+    ///
+    /// Blokada stanu nie jest trzymana w czasie startu procesu i zapisu na stdin
+    /// (długi prompt może czekać na potok): tura jest rezerwowana pod blokadą,
+    /// proces startuje bez niej, a na końcu tura jest zatwierdzana, o ile w
+    /// międzyczasie nie było „Zatrzymaj” ani „Nowej rozmowy”.
     pub fn send(
         &self,
         cfg: &Config,
@@ -550,88 +592,133 @@ impl Manager {
         if text.trim().is_empty() {
             return Err(EMPTY.to_string());
         }
+        // 1. Rezerwacja tury.
+        let (turn, gen, epoch, sent, payload, close_input, reused) = {
+            let mut guard = lock(&self.inner);
+            let inner = &mut *guard;
+            if inner.active.is_some() {
+                return Err(BUSY.to_string());
+            }
+            // Wejście zawsze po filtrze; mapa wspólna z wynikami narzędzi MCP.
+            let sent = ai_privacy::redact_with(text.trim(), dict, &mut lock(&self.pseudonyms));
+            // Proces Claude, który zakończył się sam, nie jest już żywy (wątek
+            // odczytu zdejmuje go przy `Closed`); wiadomość startuje wtedy nowy.
+            let reused = match cfg.engine {
+                Engine::Claude => inner.live.take(),
+                Engine::Codex => None,
+            };
+            let (payload, close_input) = match cfg.engine {
+                Engine::Claude => {
+                    let first = if reused.is_some() {
+                        sent.clone()
+                    } else {
+                        claude_first_message(&inner.history, &sent)
+                    };
+                    (claude_user_line(&first) + "\n", false)
+                }
+                Engine::Codex => (codex_prompt(&inner.history, &sent), true),
+            };
+            inner.next_gen += 1;
+            let gen = reused.as_ref().map_or(inner.next_gen, |l| l.gen);
+            inner.turn += 1;
+            let turn = inner.turn;
+            inner.history.push(Line {
+                role: Role::User,
+                text: sent.clone(),
+                turn,
+            });
+            inner.active = Some(Active {
+                turn,
+                gen,
+                text: String::new(),
+            });
+            (turn, gen, inner.epoch, sent, payload, close_input, reused)
+        };
+        // 2. Start procesu i zapis wiadomości bez blokady.
+        let prepared = self.prepare(cfg, gen, reused, &payload, close_input);
+        // 3. Zatwierdzenie tury.
         let mut guard = lock(&self.inner);
         let inner = &mut *guard;
-        if inner.active.is_some() {
-            return Err(BUSY.to_string());
-        }
-        // Wejście zawsze po filtrze; ta sama mapa pseudonimów w całej rozmowie.
-        let sent = ai_privacy::redact_with(text.trim(), dict, &mut inner.pseudonyms);
-        std::fs::create_dir_all(&cfg.dir)
-            .map_err(|e| format!("Nie można utworzyć katalogu asystenta: {e}"))?;
-        // Proces Claude, który zakończył się sam, nie jest już żywy (wątek odczytu
-        // zdejmuje go przy `Closed`); wiadomość startuje wtedy nowy.
-        let reuse = cfg.engine == Engine::Claude && inner.live.is_some();
-        let (payload, stdin) = match cfg.engine {
-            Engine::Claude => {
-                let first = if reuse {
-                    sent.clone()
-                } else {
-                    claude_first_message(&inner.history, &sent)
-                };
-                (claude_user_line(&first) + "\n", false)
+        let (mut live, rx) = match prepared {
+            Ok(prepared) => prepared,
+            Err(e) => {
+                if inner.active.as_ref().is_some_and(|a| a.turn == turn) {
+                    inner.active = None;
+                }
+                inner.history.retain(|line| line.turn != turn);
+                return Err(e);
             }
-            Engine::Codex => (codex_prompt(&inner.history, &sent), true),
         };
-        let mut spawned: Option<(Box<dyn Child>, Receiver<Stream>)> = None;
-        if !reuse {
-            let spec = self.spec(cfg)?;
-            spawned = Some(
-                self.spawner
-                    .spawn(&spec)
-                    .map_err(|e| format!("Nie udało się uruchomić {}: {e}", cfg.engine.name()))?,
-            );
+        if inner.epoch != epoch {
+            // „Zatrzymaj” albo „Nowa rozmowa” w trakcie startu: proces niepotrzebny.
+            drop(guard);
+            live.child.kill();
+            return Ok(Sent { turn, sent });
         }
-        inner.next_gen += 1;
-        let gen = if reuse {
-            inner.live.as_ref().map_or(inner.next_gen, |l| l.gen)
-        } else {
-            inner.next_gen
-        };
+        if rx.is_none() && inner.closed_gen == Some(gen) {
+            // Proces Claude zamknął się w trakcie zapisu; wątek odczytu zgłosił już błąd.
+            drop(guard);
+            live.child.kill();
+            return Ok(Sent { turn, sent });
+        }
+        let old = inner.live.replace(live);
+        if let Some(rx) = rx {
+            let engine = cfg.engine;
+            let state = Arc::clone(&self.inner);
+            let pseudonyms = Arc::clone(&self.pseudonyms);
+            let sink = Arc::clone(&sink);
+            std::thread::spawn(move || read_stream(state, pseudonyms, sink, engine, gen, rx));
+        }
+        drop(guard);
+        // Poprzedni, martwy proces zostaje zastąpiony.
+        if let Some(mut old) = old {
+            old.child.kill();
+        }
+        Ok(Sent { turn, sent })
+    }
+
+    /// Faza bez blokady: nowy proces (z plikiem konfiguracji MCP) albo żywy proces
+    /// Claude i zapis wiadomości na stdin.
+    fn prepare(
+        &self,
+        cfg: &Config,
+        gen: u64,
+        reused: Option<Live>,
+        payload: &str,
+        close_input: bool,
+    ) -> Result<Prepared, String> {
         let write = |child: &mut Box<dyn Child>| -> Result<(), String> {
-            child.write(&payload)?;
-            if stdin {
+            child.write(payload)?;
+            if close_input {
                 child.finish_input();
             }
             Ok(())
         };
-        if let Some((mut child, rx)) = spawned {
-            if let Err(e) = write(&mut child) {
-                child.kill();
-                return Err(format!(
-                    "Nie udało się wysłać wiadomości do {}: {e}",
-                    cfg.engine.name()
-                ));
-            }
-            // Poprzedni, martwy proces zostaje zastąpiony.
-            if let Some(mut old) = inner.live.take() {
-                old.child.kill();
-            }
-            inner.live = Some(Live { gen, child });
-            let engine = cfg.engine;
-            let state = Arc::clone(&self.inner);
-            let sink = Arc::clone(&sink);
-            std::thread::spawn(move || read_stream(state, sink, engine, gen, rx));
-        } else if let Some(live) = inner.live.as_mut() {
+        let failed = |e: String| {
+            format!(
+                "Nie udało się wysłać wiadomości do {}: {e}",
+                cfg.engine.name()
+            )
+        };
+        if let Some(mut live) = reused {
             if let Err(e) = write(&mut live.child) {
-                if let Some(mut dead) = inner.live.take() {
-                    dead.child.kill();
-                }
-                return Err(format!(
-                    "Nie udało się wysłać wiadomości do {}: {e}",
-                    cfg.engine.name()
-                ));
+                live.child.kill();
+                return Err(failed(e));
             }
+            return Ok((live, None));
         }
-        inner.turn += 1;
-        let turn = inner.turn;
-        inner.history.push((Role::User, sent.clone()));
-        inner.active = Some(Active {
-            turn,
-            gen,
-            text: String::new(),
-        });
-        Ok(Sent { turn, sent })
+        std::fs::create_dir_all(&cfg.dir)
+            .map_err(|e| format!("Nie można utworzyć katalogu asystenta: {e}"))?;
+        let spec = self.spec(cfg)?;
+        let (mut child, rx) = self
+            .spawner
+            .spawn(&spec)
+            .map_err(|e| format!("Nie udało się uruchomić {}: {e}", cfg.engine.name()))?;
+        if let Err(e) = write(&mut child) {
+            child.kill();
+            return Err(failed(e));
+        }
+        Ok((Live { gen, child }, Some(rx)))
     }
 
     /// Polecenie startu procesu; zapisuje plik konfiguracji MCP Claude.
@@ -656,36 +743,69 @@ impl Manager {
 
     /// „Zatrzymaj”: kończy proces i bieżącą odpowiedź; częściowy tekst zostaje
     /// w historii. Kolejna wiadomość startuje nowy proces (Claude dostaje historię).
-    pub fn stop(&self, sink: &dyn Sink) {
-        let mut guard = lock(&self.inner);
-        let inner = &mut *guard;
-        if let Some(mut live) = inner.live.take() {
-            live.child.kill();
-        }
-        if let Some(active) = inner.active.take() {
-            if !active.text.is_empty() {
-                inner.history.push((Role::Assistant, active.text));
+    ///
+    /// `turn`: tylko ta tura (spóźniona wysyłka zatrzymana w interfejsie, zanim
+    /// znał jej numer); inna trwająca tura i żywy proces zostają. `discard`: tura
+    /// znika z historii (wysyłka sprzed „Nowej rozmowy”). Proces jest kończony po
+    /// zwolnieniu blokady.
+    pub fn stop(&self, turn: Option<u64>, discard: bool, sink: &dyn Sink) {
+        let killed = {
+            let mut guard = lock(&self.inner);
+            let inner = &mut *guard;
+            let matches = |active: &Option<Active>| match turn {
+                None => true,
+                Some(t) => active.as_ref().is_some_and(|a| a.turn == t),
+            };
+            let killed = if matches(&inner.active) {
+                inner.epoch += 1;
+                let live = inner.live.take();
+                if let Some(active) = inner.active.take() {
+                    if !active.text.is_empty() {
+                        inner.history.push(Line {
+                            role: Role::Assistant,
+                            text: active.text,
+                            turn: active.turn,
+                        });
+                    }
+                    sink.emit(active.turn, Event::Stopped);
+                }
+                live
+            } else {
+                None
+            };
+            if let (Some(t), true) = (turn, discard) {
+                inner.history.retain(|line| line.turn != t);
             }
-            sink.emit(active.turn, Event::Stopped);
+            killed
+        };
+        if let Some(mut live) = killed {
+            live.child.kill();
         }
     }
 
-    /// „Nowa rozmowa” i koniec aplikacji: kończy proces, kasuje historię i pseudonimy.
+    /// „Nowa rozmowa” i koniec aplikacji: kończy proces i kasuje historię.
+    /// Pseudonimy zostają: mapa jest wspólna z serwerem MCP, z którego mogą
+    /// korzystać też sesje agentów poza czatem, a ta sama osoba ma mieć ten sam
+    /// pseudonim w całym działaniu aplikacji.
     pub fn reset(&self) {
-        let mut guard = lock(&self.inner);
-        let inner = &mut *guard;
-        if let Some(mut live) = inner.live.take() {
+        let killed = {
+            let mut guard = lock(&self.inner);
+            let inner = &mut *guard;
+            inner.epoch += 1;
+            inner.active = None;
+            inner.history.clear();
+            inner.live.take()
+        };
+        if let Some(mut live) = killed {
             live.child.kill();
         }
-        inner.active = None;
-        inner.history.clear();
-        inner.pseudonyms = Pseudonyms::new();
     }
 }
 
 /// Wątek odczytu jednego procesu: parsuje linie, przywraca nazwy i wysyła zdarzenia.
 fn read_stream(
     state: Arc<Mutex<Inner>>,
+    pseudonyms: Arc<Mutex<Pseudonyms>>,
     sink: Arc<dyn Sink>,
     engine: Engine,
     gen: u64,
@@ -702,23 +822,28 @@ fn read_stream(
             }
             Stream::Stdout(line) => {
                 for parsed in parse_line(engine, &line) {
-                    handle(&state, sink.as_ref(), engine, gen, parsed);
+                    handle(&state, &pseudonyms, sink.as_ref(), engine, gen, parsed);
                 }
             }
             Stream::Closed => {
                 let mut guard = lock(&state);
                 let inner = &mut *guard;
+                inner.closed_gen = Some(gen);
                 if inner.live.as_ref().is_some_and(|l| l.gen == gen) {
                     inner.live = None;
                 }
                 let Some(active) = inner.active.take_if(|a| a.gen == gen) else {
                     return;
                 };
+                let turn = active.turn;
                 // Proces skończył bez wyniku: Codex po tekście bez `turn.completed`
                 // to koniec odpowiedzi, reszta to ubity albo przerwany proces.
                 if engine == Engine::Codex && !active.text.is_empty() {
-                    let turn = active.turn;
-                    inner.history.push((Role::Assistant, active.text));
+                    inner.history.push(Line {
+                        role: Role::Assistant,
+                        text: active.text,
+                        turn,
+                    });
                     sink.emit(turn, Event::Done);
                     return;
                 }
@@ -728,16 +853,27 @@ fn read_stream(
                     other => ai::failure_message(engine, &other),
                 };
                 if !active.text.is_empty() {
-                    inner.history.push((Role::Assistant, active.text.clone()));
+                    inner.history.push(Line {
+                        role: Role::Assistant,
+                        text: active.text,
+                        turn,
+                    });
                 }
-                sink.emit(active.turn, Event::Error { message });
+                sink.emit(turn, Event::Error { message });
                 return;
             }
         }
     }
 }
 
-fn handle(state: &Mutex<Inner>, sink: &dyn Sink, engine: Engine, gen: u64, parsed: Parsed) {
+fn handle(
+    state: &Mutex<Inner>,
+    pseudonyms: &Mutex<Pseudonyms>,
+    sink: &dyn Sink,
+    engine: Engine,
+    gen: u64,
+    parsed: Parsed,
+) {
     let mut guard = lock(state);
     let inner = &mut *guard;
     let Some(active) = inner.active.as_mut().filter(|a| a.gen == gen) else {
@@ -750,11 +886,11 @@ fn handle(state: &Mutex<Inner>, sink: &dyn Sink, engine: Engine, gen: u64, parse
                 active.text.push_str("\n\n");
             }
             active.text.push_str(&text);
-            let text = inner.pseudonyms.restore(&text);
+            let text = lock(pseudonyms).restore(&text);
             sink.emit(turn, Event::Text { text });
         }
         Parsed::Tool { name, input } => {
-            let input = inner.pseudonyms.restore_value(&input);
+            let input = lock(pseudonyms).restore_value(&input);
             sink.emit(turn, Event::Tool { name, input });
         }
         Parsed::ToolDone { error } => sink.emit(turn, Event::ToolDone { error }),
@@ -762,7 +898,7 @@ fn handle(state: &Mutex<Inner>, sink: &dyn Sink, engine: Engine, gen: u64, parse
             // Odpowiedź bez wcześniejszych akapitów: tekst wyniku jest jedyną treścią.
             if active.text.is_empty() && !final_text.trim().is_empty() {
                 active.text = final_text.clone();
-                let text = inner.pseudonyms.restore(&final_text);
+                let text = lock(pseudonyms).restore(&final_text);
                 sink.emit(turn, Event::Text { text });
             }
             finish(inner, engine, true);
@@ -781,7 +917,11 @@ fn handle(state: &Mutex<Inner>, sink: &dyn Sink, engine: Engine, gen: u64, parse
 fn finish(inner: &mut Inner, engine: Engine, keep_text: bool) {
     if let Some(active) = inner.active.take() {
         if keep_text && !active.text.is_empty() {
-            inner.history.push((Role::Assistant, active.text));
+            inner.history.push(Line {
+                role: Role::Assistant,
+                text: active.text,
+                turn: active.turn,
+            });
         }
     }
     if engine == Engine::Codex {
@@ -806,10 +946,15 @@ impl Sink for AppSink {
     }
 }
 
-/// Rejestruje stan modułu; wołać przed utworzeniem okien.
+/// Rejestruje stan modułu; wołać po `mcp::setup` (wspólna mapa pseudonimów)
+/// i przed utworzeniem okien.
 pub fn setup(app: &tauri::AppHandle) {
+    let pseudonyms = app
+        .try_state::<crate::mcp::State>()
+        .map(|mcp| mcp.pseudonyms())
+        .unwrap_or_default();
     app.manage(State {
-        manager: Manager::new(Arc::new(ProcessSpawner)),
+        manager: Manager::new(Arc::new(ProcessSpawner), pseudonyms),
     });
 }
 
@@ -848,18 +993,32 @@ pub async fn ai_chat_send(app: tauri::AppHandle, text: String) -> Result<Sent, S
     .map_err(|e| e.to_string())?
 }
 
-/// „Zatrzymaj”: kończy odpowiedź i proces.
+/// „Zatrzymaj”: kończy odpowiedź i proces. `turn`: tylko ta tura (spóźniona
+/// wysyłka), `discard`: usuń ją z historii (wysyłka sprzed „Nowej rozmowy”).
+/// Poza wątkiem okna: kończenie procesu czeka na `taskkill`.
 #[tauri::command]
-pub fn ai_chat_stop(app: tauri::AppHandle) {
-    if let Some(state) = app.try_state::<State>() {
-        state.manager.stop(&AppSink(app.clone()));
-    }
+pub async fn ai_chat_stop(
+    app: tauri::AppHandle,
+    turn: Option<u64>,
+    discard: Option<bool>,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(state) = app.try_state::<State>() {
+            state
+                .manager
+                .stop(turn, discard.unwrap_or(false), &AppSink(app.clone()));
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
-/// „Nowa rozmowa”: kończy proces i kasuje historię.
+/// „Nowa rozmowa”: kończy proces i kasuje historię (poza wątkiem okna).
 #[tauri::command]
-pub fn ai_chat_reset(app: tauri::AppHandle) {
-    shutdown(&app);
+pub async fn ai_chat_reset(app: tauri::AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || shutdown(&app))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

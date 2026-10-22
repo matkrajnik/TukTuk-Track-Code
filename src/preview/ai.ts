@@ -355,9 +355,13 @@ export async function aiChatSend(text: string): Promise<ChatSent> {
   return { turn, sent };
 }
 
-/** `ai_chat_stop` w podglądzie: przerywa odpowiedź. */
-export async function aiChatStop(): Promise<void> {
+/**
+ * `ai_chat_stop` w podglądzie: przerywa odpowiedź; z `turn` tylko tę turę
+ * (spóźniona wysyłka). Historii symulator nie prowadzi, więc `discard` nic nie zmienia.
+ */
+export async function aiChatStop(turn: number | null = null): Promise<void> {
   if (!chatRunning) return;
+  if (turn !== null && turn !== chatTurn) return;
   clearTimeout(chatTimer);
   chatRunning = false;
   emitChat(chatTurn, { kind: "stopped" });

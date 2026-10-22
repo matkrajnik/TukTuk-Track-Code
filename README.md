@@ -341,7 +341,7 @@ Pełna lista: `NEXT_SESSION.md` („Stan po 1.9.0”) i `PLAN_1.9.md` („Do rę
 
 ## Asystent AI — ochrona danych osobowych
 
-Każdy tekst i JSON, który trafia do modelu AI, przechodzi najpierw przez filtr `src-tauri/src/ai_privacy.rs`. Osoby zamieniane są na pseudonimy „Osoba 1”, „Osoba 2”… (ta sama osoba ma ten sam pseudonim w całym wywołaniu albo rozmowie czatu). Mapa pseudonimów jest tylko w pamięci i nie trafia do modelu; odpowiedź modelu wraca z prawdziwymi nazwiskami.
+Każdy tekst i JSON, który trafia do modelu AI, przechodzi najpierw przez filtr `src-tauri/src/ai_privacy.rs`. Osoby zamieniane są na pseudonimy „Osoba 1”, „Osoba 2”… (ta sama osoba ma ten sam pseudonim w całym wywołaniu; czat i serwer MCP mają jedną wspólną mapę na czas działania aplikacji, więc „Osoba 1” z pytania i z wyniku narzędzia to zawsze ta sama osoba — także po „Nowej rozmowie”). Mapa pseudonimów jest tylko w pamięci i nie trafia do modelu; odpowiedź modelu wraca z prawdziwymi nazwiskami.
 
 - **Pola osobowe** w danych Jiry, Redmine, spotkań i commitów (przypisany, zgłaszający, autor, użytkownik wpisu czasu, obserwujący, uczestnicy, pola Jiry typu osoba, zmiany przypisania w historii) są podmieniane w całości; adresy e-mail, loginy i identyfikatory kont znikają.
 - **Zwykły tekst** (tytuły zadań, notatki, wiadomości czatu) jest filtrowany słownikiem: osoby z Jiry i Redmine, własne imię i nazwisko oraz lista „Ukrywaj te nazwy” (`ai_hidden_names`, jedna nazwa w wierszu). Dopasowanie nie rozróżnia wielkości liter ani polskich znaków i rozpoznaje typowe odmiany (Kowalski, Kowalskiego, Kowalską; Anna, Anny, Anią).

@@ -1,5 +1,9 @@
 # Todo Track — stan po 1.9.0
 
+## Do sprawdzenia ręcznie (A3, czat z Codexem)
+
+- `ai_chat::codex_chat_args` zastępuje całą tabelę `mcp_servers` jednym wpisem (`-c mcp_servers={"todo-track"={command=…,args=[]}}`) i wyłącza `features.shell_tool`, `features.unified_exec`, `features.web_search_request`. Testy sprawdzają tylko linię poleceń (nie wolno uruchamiać prawdziwego `codex`). Na zainstalowanym Codexie sprawdzić: czat nie widzi innych serwerów MCP z `~/.codex/config.toml`, nie ma narzędzia powłoki (pytanie „pokaż pliki w katalogu nadrzędnym” nie wywołuje komendy), a Codex nie odrzuca tych kluczy konfiguracji. Jeśli wersja Codexa nazywa przełączniki inaczej, poprawić `CODEX_DISABLED_FEATURES`; do tego czasu powłoka Codexa w trybie `-s read-only` może czytać pliki poza katalogiem AI z pominięciem filtra nazwisk.
+
 ## Do zrobienia w A1/A2 (z A0, filtr osobowy)
 
 - `ai_privacy::Dictionary::from_db` bierze osoby tylko z `jira_issue_fields`, a tam są wyłącznie pola wybrane na kartę (`jira_card_fields`); osób z Redmine aplikacja nie zapisuje. A1 (wywołania i czat) i A2 (MCP) muszą podać w `extra_names` własne imię i nazwisko z konta Jiry i Redmine oraz osoby z pobranych danych — `ai_privacy::people_in(&json)` na odpowiedziach tablicy Jiry i listy zgłoszeń Redmine.

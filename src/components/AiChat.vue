@@ -46,10 +46,23 @@ async function submit() {
 /** Karta: stan i błąd po kliknięciu; zapis robi istniejąca komenda. */
 async function apply(card: ChatCard) {
   if (card.state !== "open") return;
+  const proposal = card.draft
+    ? { ...card.proposal, text: card.draft.text.trim(), day: card.draft.day }
+    : card.proposal;
+  if (card.draft) {
+    if (card.proposal.kind === "note_append" && !proposal.text) {
+      card.error = "Wpisz treść notatki.";
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(proposal.day)) {
+      card.error = "Wybierz dzień.";
+      return;
+    }
+  }
   card.state = "applying";
   card.error = "";
   try {
-    const data = await applyProposal(card.proposal, props.tasks);
+    const data = await applyProposal(proposal, props.tasks);
     // Zmiana zapisana; dopiero potem propozycja znika z kolejki.
     await mcpProposalResolve(card.proposal.id);
     card.state = "applied";
@@ -70,19 +83,32 @@ async function dismiss(card: ChatCard) {
   }
 }
 /**
- * „Popraw”: zwykły formularz z wypełnionymi polami (nowe zadanie w polu
- * „Nowe zadanie”, pozostałe w rozwiniętym zadaniu); propozycja schodzi z kolejki.
+ * „Popraw” z wypełnionymi polami:
+ * - nowe zadanie: pole „Nowe zadanie” w składni szybkiego dodawania (cała
+ *   propozycja przechodzi do pola, więc schodzi z kolejki),
+ * - notatka i plan: pola treści i dnia w karcie; „Zastosuj” zapisuje poprawione
+ *   wartości tymi samymi komendami, a do tego czasu propozycja czeka w kolejce
+ *   („Anuluj poprawkę” wraca do niej bez zmian),
+ * - folder i przełączenie nie mają pól: zadanie otwiera się na liście, a karta
+ *   zostaje z „Zastosuj” / „Odrzuć”.
  */
 async function edit(card: ChatCard) {
   if (card.state !== "open") return;
   card.error = "";
+  const p = card.proposal;
+  if (p.kind === "note_append" || p.kind === "plan") {
+    card.draft = { text: p.text, day: p.day };
+    return;
+  }
+  if (p.kind !== "task_create") {
+    if (p.taskId != null) openView({ view: "tasks", task: p.taskId });
+    card.info = "Otwarto zadanie na liście. Propozycja czeka na decyzję.";
+    return;
+  }
   try {
-    await mcpProposalResolve(card.proposal.id);
+    await mcpProposalResolve(p.id);
     card.state = "edited";
-    const p = card.proposal;
-    if (p.kind === "task_create")
-      openView({ view: "tasks", newTask: quickText(p) });
-    else if (p.taskId != null) openView({ view: "tasks", task: p.taskId });
+    openView({ view: "tasks", newTask: quickText(p) });
   } catch (e) {
     card.error = String(e instanceof Error ? e.message : e);
   }
@@ -234,6 +260,32 @@ onMounted(() => {
             >
               <h3>{{ cardTitle(card.proposal.kind) }}</h3>
               <p>{{ proposalText(card.proposal) }}</p>
+              <div
+                v-if="card.draft && (card.state === 'open' || card.state === 'applying')"
+                class="chat-card-fields"
+              >
+                <label v-if="card.proposal.kind === 'note_append'">
+                  Treść notatki
+                  <textarea
+                    v-model="card.draft.text"
+                    rows="3"
+                    maxlength="1000"
+                    :disabled="card.state === 'applying'"
+                  />
+                </label>
+                <label>
+                  {{ card.proposal.kind === "plan" ? "Dzień planu" : "Dzień notatki" }}
+                  <input
+                    v-model="card.draft.day"
+                    type="date"
+                    required
+                    :disabled="card.state === 'applying'"
+                  />
+                </label>
+              </div>
+              <p v-if="card.info && card.state === 'open'" class="hint" role="status">
+                {{ card.info }}
+              </p>
               <p v-if="card.error" class="error" role="alert">{{ card.error }}</p>
               <span
                 v-if="card.state === 'open' || card.state === 'applying'"
@@ -254,6 +306,15 @@ onMounted(() => {
                 >
                   Odrzuć</button
                 ><button
+                  v-if="card.draft"
+                  class="today-button"
+                  :disabled="card.state === 'applying'"
+                  :aria-label="`Anuluj poprawkę: ${proposalName(card.proposal)}`"
+                  @click="card.draft = null"
+                >
+                  Anuluj poprawkę</button
+                ><button
+                  v-else
                   class="today-button"
                   :disabled="card.state === 'applying'"
                   :aria-label="`Popraw propozycję: ${proposalName(card.proposal)}`"

@@ -149,11 +149,47 @@ fn codex_chat_command_line_passes_the_mcp_server() {
     assert_eq!(args[at("-s") + 1], "read-only");
     assert_eq!(args[at("-C") + 1], "C:\\ai");
     assert_eq!(args[at("-m") + 1], "gpt-x");
+    // Cała tabela serwerów MCP zastąpiona jednym wpisem: serwery użytkownika z
+    // ~/.codex/config.toml (np. Jira z zapisem) nie są w czacie dostępne.
     assert!(args.contains(
-        &"mcp_servers.todo-track.command=\"C:\\\\Apps\\\\todo-track-mcp.exe\"".to_string()
+        &"mcp_servers={\"todo-track\"={command=\"C:\\\\Apps\\\\todo-track-mcp.exe\",args=[]}}"
+            .to_string()
     ));
-    assert!(args.contains(&"mcp_servers.todo-track.args=[]".to_string()));
+    assert!(
+        !args.iter().any(|a| a.starts_with("mcp_servers.")),
+        "częściowe nadpisanie zostawiłoby inne serwery: {args:?}"
+    );
+    // Bez wbudowanej powłoki i wyszukiwania w sieci; każde `-c` ma wartość.
+    for feature in ["shell_tool", "unified_exec", "web_search_request"] {
+        let value = format!("features.{feature}=false");
+        assert_eq!(args[at(&value) - 1], "-c", "{value}");
+    }
+    assert_eq!(args[at("notify=[]") - 1], "-c");
     assert!(!codex_chat_args(Path::new("x"), Path::new("y"), "").contains(&"-m".to_string()));
+}
+
+#[test]
+fn codex_mcp_override_is_a_valid_toml_inline_table() {
+    // Ścieżka z cudzysłowem i odwrotnymi ukośnikami nie psuje wartości.
+    let args = codex_chat_args(
+        Path::new("C:\\ai"),
+        Path::new("C:\\Apps \"x\"\\todo-track-mcp.exe"),
+        "",
+    );
+    let value = args
+        .iter()
+        .find_map(|a| a.strip_prefix("mcp_servers="))
+        .unwrap();
+    // Ta sama wartość jako JSON po zamianie składni TOML (`=` → `:`, klucze w cudzysłowie).
+    let json_like = value
+        .replace("={command=", ":{\"command\":")
+        .replace(",args=[]}", ",\"args\":[]}");
+    let parsed: Value = serde_json::from_str(&json_like).unwrap();
+    assert_eq!(
+        parsed["todo-track"]["command"],
+        "C:\\Apps \"x\"\\todo-track-mcp.exe"
+    );
+    assert_eq!(parsed.as_object().unwrap().len(), 1);
 }
 
 #[test]
@@ -346,7 +382,7 @@ fn dict() -> Dictionary {
 fn setup() -> (Manager, Arc<FakeSpawner>, Arc<Events>) {
     let spawner = Arc::new(FakeSpawner::default());
     (
-        Manager::new(Arc::new(SharedSpawner(spawner.clone()))),
+        Manager::new(Arc::new(SharedSpawner(spawner.clone())), Arc::default()),
         spawner,
         Arc::new(Events::default()),
     )
@@ -476,7 +512,7 @@ fn stop_kills_the_process_keeps_partial_text_and_next_message_restarts_with_hist
         ))
         .unwrap();
     wait_for("częściowy tekst", || !events.kinds().is_empty());
-    manager.stop(events.as_ref());
+    manager.stop(None, false, events.as_ref());
     assert!(handle.killed.load(Ordering::SeqCst));
     assert!(!manager.busy());
     assert_eq!(events.kinds().last(), Some(&Event::Stopped));
@@ -565,7 +601,7 @@ fn error_result_ends_the_turn_and_keeps_the_process() {
 }
 
 #[test]
-fn reset_kills_the_process_and_forgets_history_and_pseudonyms() {
+fn reset_kills_the_process_and_forgets_history_but_keeps_the_shared_pseudonyms() {
     let (manager, spawner, events) = setup();
     let cfg = config(Engine::Claude, "reset");
     manager
@@ -574,15 +610,154 @@ fn reset_kills_the_process_and_forgets_history_and_pseudonyms() {
     manager.reset();
     assert!(spawner.handle(0).killed.load(Ordering::SeqCst));
     assert!(!manager.busy());
-    // Nowa rozmowa: numeracja pseudonimów od początku, bez historii w prompcie.
+    // Nowa rozmowa: bez historii w prompcie, a ta sama osoba ma ten sam pseudonim
+    // (mapa jest wspólna z serwerem MCP przez całe działanie aplikacji).
     let mut other = Dictionary::new();
     other.add_hidden_names(&["Anna Nowak".to_string(), "Jan Kowalski".to_string()]);
     let sent = manager
         .send(&cfg, &other, "Anna Nowak i Jan Kowalski", events.clone())
         .unwrap();
-    assert_eq!(sent.sent, "Osoba 1 i Osoba 2");
+    assert_eq!(sent.sent, "Osoba 2 i Osoba 1");
     let line: Value = serde_json::from_str(spawner.handle(1).written()[0].trim()).unwrap();
-    assert_eq!(line["message"]["content"][0]["text"], "Osoba 1 i Osoba 2");
+    assert_eq!(line["message"]["content"][0]["text"], "Osoba 2 i Osoba 1");
+}
+
+#[test]
+fn chat_and_mcp_results_share_one_pseudonym_map() {
+    // Mapa serwera MCP; czat dostaje ją w `setup` tak jak tutaj.
+    let mcp = crate::mcp::State::default();
+    let spawner = Arc::new(FakeSpawner::default());
+    let manager = Manager::new(Arc::new(SharedSpawner(spawner.clone())), mcp.pseudonyms());
+    let events = Arc::new(Events::default());
+    let mut people = Dictionary::new();
+    people.add_hidden_names(&["Jan Kowalski".to_string(), "Anna Nowak".to_string()]);
+    let cfg = config(Engine::Claude, "shared-map");
+    // Użytkownik pisze o Kowalskim: Osoba 1.
+    let sent = manager
+        .send(&cfg, &people, "Co mam z Janem Kowalskim?", events.clone())
+        .unwrap();
+    assert!(sent.sent.contains("Osoba 1"), "{}", sent.sent);
+    // Wynik narzędzia MCP (task_get) z przypisaną Anną Nową: filtr serwera na tej
+    // samej mapie daje kolejny numer, a nie drugie „Osoba 1”.
+    let result = ai_privacy::redact_with(
+        r#"{"assignee":"Anna Nowak"}"#,
+        &people,
+        &mut mcp.pseudonyms().lock().unwrap(),
+    );
+    assert!(result.contains("Osoba 2"), "{result}");
+    // Model odpowiada o obu osobach i przekazuje pseudonim do narzędzia.
+    let handle = spawner.handle(0);
+    handle.feed(concat!(
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__todo-track__propose_note_append","input":{"task":1,"text":"pinguj Osoba 2"}}]}}"#,
+        "\n",
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Osoba 2 ma zadanie, o które pyta Osoba 1."}]}}"#,
+        "\n",
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"x"}"#,
+    ));
+    wait_for("koniec odpowiedzi", || {
+        events.kinds().contains(&Event::Done)
+    });
+    let kinds = events.kinds();
+    assert!(kinds.contains(&Event::Text {
+        text: "Anna Nowak ma zadanie, o które pyta Jan Kowalski.".into()
+    }));
+    assert!(kinds.contains(&Event::Tool {
+        name: "propose_note_append".into(),
+        input: json!({"task": 1, "text": "pinguj Anna Nowak"}),
+    }));
+    // Serwer MCP przywraca argumenty `propose_*` tą samą mapą: pseudonim z
+    // wiadomości użytkownika wskazuje Kowalskiego, nie osobę z wyniku narzędzia.
+    let ps = mcp.pseudonyms();
+    let ps = ps.lock().unwrap();
+    assert_eq!(ps.restore("Osoba 1"), "Jan Kowalski");
+    assert_eq!(ps.restore("Osoba 2"), "Anna Nowak");
+}
+
+/// Spawner, który czeka na sygnał przed startem procesu (start trwa).
+struct SlowSpawner {
+    inner: SharedSpawner,
+    started: Mutex<Option<Sender<()>>>,
+    release: Mutex<Receiver<()>>,
+}
+
+impl Spawner for SlowSpawner {
+    fn spawn(&self, spec: &Spec) -> Result<(Box<dyn Child>, Receiver<Stream>), String> {
+        if let Some(tx) = self.started.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        let _ = self.release.lock().unwrap().recv();
+        self.inner.spawn(spec)
+    }
+}
+
+#[test]
+fn stop_during_a_slow_start_does_not_wait_and_the_late_process_is_killed() {
+    let fake = Arc::new(FakeSpawner::default());
+    let (started_tx, started_rx) = channel();
+    let (release_tx, release_rx) = channel();
+    let manager = Arc::new(Manager::new(
+        Arc::new(SlowSpawner {
+            inner: SharedSpawner(fake.clone()),
+            started: Mutex::new(Some(started_tx)),
+            release: Mutex::new(release_rx),
+        }),
+        Arc::default(),
+    ));
+    let events = Arc::new(Events::default());
+    let cfg = config(Engine::Claude, "slow-start");
+    let sending = {
+        let manager = manager.clone();
+        let events = events.clone();
+        std::thread::spawn(move || manager.send(&cfg, &dict(), "Pytanie", events))
+    };
+    started_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+    // Start procesu trwa: „Zatrzymaj” i „Nowa rozmowa” nie czekają na blokadę.
+    let begun = Instant::now();
+    manager.stop(None, false, events.as_ref());
+    manager.reset();
+    assert!(begun.elapsed() < Duration::from_secs(2));
+    assert!(!manager.busy());
+    assert_eq!(events.kinds(), vec![Event::Stopped]);
+    release_tx.send(()).unwrap();
+    let sent = sending.join().unwrap().unwrap();
+    assert_eq!(sent.turn, 1);
+    // Spóźniony proces nie zostaje żywy, a odpowiedź nie trafia do UI.
+    assert!(fake.handle(0).killed.load(Ordering::SeqCst));
+    fake.handle(0).feed(CLAUDE);
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(events.kinds(), vec![Event::Stopped]);
+    assert!(!manager.busy());
+}
+
+#[test]
+fn stop_of_a_given_turn_leaves_other_turns_and_can_drop_it_from_history() {
+    let (manager, spawner, events) = setup();
+    let cfg = config(Engine::Claude, "stop-turn");
+    manager
+        .send(&cfg, &dict(), "Pierwsze", events.clone())
+        .unwrap();
+    spawner.handle(0).feed(CLAUDE);
+    wait_for("koniec odpowiedzi", || {
+        events.kinds().contains(&Event::Done)
+    });
+    let second = manager
+        .send(&cfg, &dict(), "Drugie", events.clone())
+        .unwrap();
+    // Spóźnione „Zatrzymaj” pierwszej tury nie rusza trwającej drugiej.
+    manager.stop(Some(1), false, events.as_ref());
+    assert!(manager.busy());
+    assert!(!spawner.handle(0).killed.load(Ordering::SeqCst));
+    // Zatrzymanie drugiej tury z usunięciem jej z historii (sprzed „Nowej rozmowy”).
+    manager.stop(Some(second.turn), true, events.as_ref());
+    assert!(!manager.busy());
+    assert!(spawner.handle(0).killed.load(Ordering::SeqCst));
+    manager
+        .send(&cfg, &dict(), "Trzecie", events.clone())
+        .unwrap();
+    let line: Value = serde_json::from_str(spawner.handle(1).written()[0].trim()).unwrap();
+    let text = line["message"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("Użytkownik: Pierwsze"), "{text}");
+    assert!(!text.contains("Drugie"), "{text}");
 }
 
 #[test]
@@ -651,7 +826,7 @@ fn stand_in_manager() -> (Manager, Arc<AtomicUsize>, Config) {
         spec,
         starts: starts.clone(),
     };
-    (Manager::new(Arc::new(spawner)), starts, cfg)
+    (Manager::new(Arc::new(spawner), Arc::default()), starts, cfg)
 }
 
 fn errors(events: &Events) -> usize {
@@ -707,7 +882,7 @@ fn real_process_killed_mid_turn_reports_an_error_and_stop_ends_the_next_one() {
         .send(&cfg, &dict(), "zwykła wiadomość", events.clone())
         .unwrap();
     assert_eq!(starts.load(Ordering::SeqCst), 2);
-    manager.stop(events.as_ref());
+    manager.stop(None, false, events.as_ref());
     assert!(!manager.busy());
     assert_eq!(events.kinds().last(), Some(&Event::Stopped));
     // Po zatrzymaniu proces nie żyje: następna wiadomość startuje trzeci.

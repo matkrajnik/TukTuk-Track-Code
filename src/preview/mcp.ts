@@ -90,8 +90,15 @@ export async function mcpPropose(
   proposal: Partial<McpProposal> & Pick<McpProposal, "kind">,
 ): Promise<McpProposal> {
   const list = await mcpProposals();
+  // Numery rosną jak w Rust (`Queue::next`): rozpatrzona propozycja nie oddaje
+  // swojego numeru następnej, bo czat pamięta numery pokazanych kart.
+  const id =
+    Math.max(
+      Number(stored().next) || 0,
+      list.reduce((max, p) => Math.max(max, p.id), 0),
+    ) + 1;
   const created: McpProposal = {
-    id: list.reduce((max, p) => Math.max(max, p.id), 0) + 1,
+    id,
     at: Date.now(),
     taskId: null,
     taskTitle: "",
@@ -107,7 +114,7 @@ export async function mcpPropose(
   try {
     localStorage.setItem(
       mcpKey,
-      JSON.stringify({ ...stored(), proposals: [...list, created] }),
+      JSON.stringify({ ...stored(), next: id, proposals: [...list, created] }),
     );
   } catch {
     // Bez localStorage kolejka nie zapamięta propozycji.

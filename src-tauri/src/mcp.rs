@@ -31,7 +31,7 @@ use serde::Serialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
 
 /// Zdarzenie okien po zmianie kolejki propozycji.
@@ -122,7 +122,9 @@ pub struct State {
     queue: Mutex<Queue>,
     /// Pseudonimy w obrębie działania aplikacji: ta sama osoba ma ten sam
     /// pseudonim we wszystkich odpowiedziach; mapa nigdy nie trafia do modelu.
-    pseudonyms: Mutex<Pseudonyms>,
+    /// Wspólna z czatem w aplikacji (`ai_chat`), więc „Osoba N” z wiadomości
+    /// użytkownika i z wyniku narzędzia to ta sama przestrzeń oznaczeń.
+    pseudonyms: Arc<Mutex<Pseudonyms>>,
     /// Lista zadań TS zapamiętana przy ostatnim udanym pobraniu (nigdy na dysku).
     ts_cache: Mutex<Option<Vec<Project>>>,
     status: Mutex<Status>,
@@ -134,7 +136,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             queue: Mutex::new(Queue::default()),
-            pseudonyms: Mutex::new(Pseudonyms::new()),
+            pseudonyms: Arc::new(Mutex::new(Pseudonyms::new())),
             ts_cache: Mutex::new(None),
             status: Mutex::new(Status::default()),
             io: Mutex::new(()),
@@ -158,6 +160,10 @@ impl State {
             }
             Err(_) => Vec::new(),
         }
+    }
+    /// Mapa pseudonimów do współdzielenia z czatem (`ai_chat::setup`).
+    pub fn pseudonyms(&self) -> Arc<Mutex<Pseudonyms>> {
+        Arc::clone(&self.pseudonyms)
     }
     pub fn remember_ts(&self, projects: &[Project]) {
         if let Ok(mut cache) = self.ts_cache.lock() {
@@ -826,7 +832,8 @@ fn run<Tz: TimeZone>(
 }
 
 /// Wykonuje narzędzie i **przepuszcza wynik (także błąd) przez `ai_privacy::redact`**.
-/// Pseudonimy są wspólne dla wszystkich wywołań w czasie działania aplikacji, a
+/// Pseudonimy są wspólne dla wszystkich wywołań w czasie działania aplikacji (i z
+/// czatem w aplikacji), a
 /// argumenty od modelu przechodzą przez `restore`, więc „Osoba 1” z wcześniejszej
 /// odpowiedzi znaczy tę samą osobę także w propozycji.
 pub fn call<Tz: TimeZone>(

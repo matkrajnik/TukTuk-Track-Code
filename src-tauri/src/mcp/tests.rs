@@ -876,6 +876,31 @@ fn proposals_restore_pseudonyms_so_the_user_sees_real_names() {
 }
 
 #[test]
+fn pseudonyms_from_the_chat_and_from_tool_results_do_not_collide() {
+    let f = Fixture::new();
+    // Czat filtruje wiadomość użytkownika na mapie serwera (wspólnej, A3).
+    let sent = ai_privacy::redact_with(
+        "Ustal z Jan Kowalski",
+        &f.dict,
+        &mut f.state.pseudonyms().lock().unwrap(),
+    );
+    assert_eq!(sent, "Ustal z Osoba 1");
+    // Wynik narzędzia z inną osobą dostaje kolejny numer.
+    let blocked = f.call("tasks_list", json!({"filter": "blocked"})).unwrap();
+    assert!(blocked.contains("Osoba 2"), "{blocked}");
+    assert!(!blocked.contains("Osoba 1"), "{blocked}");
+    // Model przekazuje do propozycji pseudonim z wiadomości użytkownika.
+    f.call(
+        "propose_note_append",
+        json!({"task": 1, "text": "Ustalone z Osoba 1, czeka Osoba 2."}),
+    )
+    .unwrap();
+    let text = &f.state.proposals()[0].text;
+    assert!(text.contains("Ustalone z Jan Kowalski"), "{text}");
+    assert!(text.contains("Nowak"), "{text}");
+}
+
+#[test]
 fn queue_is_capped_and_resolve_removes_one() {
     let f = Fixture::new();
     for i in 0..55 {

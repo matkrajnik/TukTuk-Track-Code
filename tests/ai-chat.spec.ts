@@ -209,6 +209,91 @@ test("karta „Popraw” otwiera zwykły formularz z wypełnionymi polami", asyn
   expect(await queue(page)).toEqual([]);
 });
 
+test("„Popraw” notatki i planu wypełnia pola karty, a propozycja czeka do decyzji", async ({ page }) => {
+  await open(page, {
+    ai: {
+      claude,
+      chat: {
+        replies: [
+          {
+            match: "notatk",
+            text: "Proponuję notatkę.",
+            tools: [{ name: "propose_note_append", input: { task: ids.analysis } }],
+            proposal: {
+              kind: "note_append",
+              taskId: ids.analysis,
+              taskTitle: "Analiza importu",
+              day: TODAY,
+              text: "Szkic od asystenta.",
+            },
+          },
+          {
+            match: "zaplanuj",
+            text: "Proponuję plan.",
+            tools: [{ name: "propose_plan", input: { task: ids.docs } }],
+            proposal: {
+              kind: "plan",
+              taskId: ids.docs,
+              taskTitle: "Dokumentacja API",
+              day: "2026-10-28",
+            },
+          },
+        ],
+      },
+    },
+  });
+  await page.keyboard.press("Control+j");
+  await ask(page, "Dopisz notatkę");
+  const note = panel(page).getByRole("region", { name: "Propozycja: Analiza importu" });
+  await note.getByRole("button", { name: "Popraw propozycję: Analiza importu" }).click();
+  const text = note.getByRole("textbox", { name: "Treść notatki" });
+  await expect(text).toHaveValue("Szkic od asystenta.");
+  await expect(note.getByLabel("Dzień notatki")).toHaveValue(TODAY);
+  // Poprawka nic nie zapisuje i nie zdejmuje propozycji z kolejki.
+  expect((await queue(page)).length).toBe(1);
+  // „Anuluj poprawkę” wraca do propozycji bez zmian.
+  await text.fill("Coś innego");
+  await note.getByRole("button", { name: "Anuluj poprawkę: Analiza importu" }).click();
+  await expect(note.getByRole("textbox", { name: "Treść notatki" })).toHaveCount(0);
+  expect((await queue(page)).length).toBe(1);
+  await note.getByRole("button", { name: "Popraw propozycję: Analiza importu" }).click();
+  await note.getByRole("textbox", { name: "Treść notatki" }).fill("Poprawiona notatka.");
+  await note.getByRole("button", { name: "Zastosuj propozycję: Analiza importu" }).click();
+  await expect(note).toContainText("Zastosowano.");
+  const analysis = (await stored(page)).tasks.find(
+    (t: { id: number }) => t.id === ids.analysis,
+  );
+  expect(analysis.details.notes[TODAY]).toContain("Poprawiona notatka.");
+  expect(analysis.details.notes[TODAY]).not.toContain("Szkic od asystenta.");
+  expect(await queue(page)).toEqual([]);
+
+  await ask(page, "Zaplanuj dokumentację");
+  const plan = panel(page).getByRole("region", { name: "Propozycja: Dokumentacja API" });
+  await plan.getByRole("button", { name: "Popraw propozycję: Dokumentacja API" }).click();
+  const day = plan.getByLabel("Dzień planu");
+  await expect(day).toHaveValue("2026-10-28");
+  await day.fill("2026-10-30");
+  await plan.getByRole("button", { name: "Zastosuj propozycję: Dokumentacja API" }).click();
+  await expect(plan).toContainText("Zastosowano.");
+  const docs = (await stored(page)).tasks.find((t: { id: number }) => t.id === ids.docs);
+  expect(docs.details.plannedDay).toBe("2026-10-30");
+  expect(await queue(page)).toEqual([]);
+});
+
+test("„Nowa rozmowa” w trakcie odpowiedzi: spóźnione zdarzenia nie wracają", async ({ page }) => {
+  await open(page, { ai: { claude, chat: { stepMs: 400 } } });
+  await page.keyboard.press("Control+j");
+  await ask(page, "Podsumuj dzień");
+  await panel(page).getByRole("button", { name: "Nowa rozmowa" }).click();
+  await expect(panel(page).getByRole("article")).toHaveCount(0);
+  await expect(panel(page).getByRole("button", { name: "Wyślij" })).toBeVisible();
+  await page.waitForTimeout(1200);
+  await expect(panel(page).getByRole("article")).toHaveCount(0);
+  // Nowa wiadomość działa od razu po resecie.
+  await ask(page, "Podsumuj dzień");
+  await expect(answers(page)).toContainText("Dziś pracowałeś");
+});
+
 test("składnia „Popraw” zgadza się ze składnią szybkiego dodawania", () => {
   const base = {
     id: 1,

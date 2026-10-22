@@ -3137,6 +3137,19 @@ html.widget-root body {
   margin: 0 0 4px;
   font-size: var(--fs-base);
 }
+.chat-card-fields {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+.chat-card-fields label {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-sm);
+}
+.chat-card-fields textarea {
+  resize: vertical;
+}
 .chat-card .planning-actions {
   gap: var(--space-2);
   margin-top: var(--space-2);

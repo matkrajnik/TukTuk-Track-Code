@@ -31,10 +31,16 @@ export async function chatSend(text: string): Promise<ChatSent> {
   if (desktop) return invoke("ai_chat_send", { text });
   return aiSim.aiChatSend(text);
 }
-/** `ai_chat_stop`: „Zatrzymaj”. */
-export async function chatStop(): Promise<void> {
-  if (desktop) return invoke("ai_chat_stop");
-  return aiSim.aiChatStop();
+/**
+ * `ai_chat_stop`: „Zatrzymaj”. `turn`: tylko ta tura (wysyłka, która wróciła
+ * po zatrzymaniu), `discard`: usuń ją z historii (wysyłka sprzed „Nowej rozmowy”).
+ */
+export async function chatStop(
+  turn: number | null = null,
+  discard = false,
+): Promise<void> {
+  if (desktop) return invoke("ai_chat_stop", { turn, discard });
+  return aiSim.aiChatStop(turn);
 }
 /** `ai_chat_reset`: „Nowa rozmowa”, kończy proces i kasuje historię. */
 export async function chatReset(): Promise<void> {
@@ -65,6 +71,13 @@ export interface ChatCard {
   proposal: McpProposal;
   state: CardState;
   error: string;
+  /**
+   * „Popraw” przy notatce i planie: pola karty wypełnione propozycją; „Zastosuj”
+   * zapisuje poprawione wartości, a propozycja czeka w kolejce do decyzji.
+   */
+  draft: { text: string; day: string } | null;
+  /** Informacja po „Popraw” bez pól do poprawy (folder, przełączenie). */
+  info: string;
 }
 export interface ChatMessage {
   id: number;
@@ -147,9 +160,13 @@ interface Turn {
   baseline: Set<number>;
   /** Zdarzenia, które przyszły przed numerem tury. */
   early: ChatPayload[];
+  /** „Zatrzymaj” przed powrotem `ai_chat_send`. */
+  stopped: boolean;
 }
 let current: Turn | null = null;
 let sequence = 0;
+/** Rośnie przy „Nowej rozmowie”: wysyłka sprzed niej jest po powrocie odwoływana. */
+let conversation = 0;
 
 const message = (e: unknown) => String(e instanceof Error ? e.message : e);
 
@@ -171,7 +188,13 @@ async function claim(turn: Turn) {
     ...fresh.map((p) => p.id),
   ]);
   for (const proposal of fresh)
-    turn.assistant.cards.push({ proposal, state: "open", error: "" });
+    turn.assistant.cards.push({
+      proposal,
+      state: "open",
+      error: "",
+      draft: null,
+      info: "",
+    });
 }
 
 async function handle(turn: Turn, payload: ChatPayload) {
@@ -215,8 +238,10 @@ async function handle(turn: Turn, payload: ChatPayload) {
 
 function finish(turn: Turn) {
   turn.assistant.pending = false;
+  // Tura z poprzedniej rozmowy nie odblokowuje pola nowej.
+  if (current !== turn) return;
   chat.busy = false;
-  if (current === turn) current = null;
+  current = null;
 }
 
 /** Strumień odpowiedzi do bieżącej tury; spóźnione zdarzenia starych tur są pomijane. */
@@ -264,31 +289,55 @@ export async function sendMessage(text: string): Promise<void> {
   chat.messages.push(user, assistant);
   chat.draft = "";
   chat.busy = true;
-  let baseline = new Set<number>();
+  // Tura jest bieżąca od razu, żeby „Zatrzymaj” i „Nowa rozmowa” w trakcie
+  // oczekiwania na kolejkę i `ai_chat_send` ją widziały.
+  const turn: Turn = {
+    turn: 0,
+    assistant,
+    baseline: new Set(),
+    early: [],
+    stopped: false,
+  };
+  current = turn;
+  const generation = conversation;
+  const abandoned = () => generation !== conversation;
   try {
-    baseline = new Set((await mcpProposals()).map((p) => p.id));
+    turn.baseline = new Set((await mcpProposals()).map((p) => p.id));
   } catch {
     // Bez kolejki propozycji karty nie powstaną, rozmowa działa dalej.
   }
-  const turn: Turn = { turn: 0, assistant, baseline, early: [] };
-  current = turn;
+  if (turn.stopped || abandoned()) return;
+  let sent: ChatSent;
   try {
-    const sent = await chatSend(prefix ? `${prefix}\n\n${body}` : body);
-    user.sent = sent.sent;
-    turn.turn = sent.turn;
-    for (const payload of turn.early.splice(0))
-      if (payload.turn === sent.turn) await handle(turn, payload);
+    sent = await chatSend(prefix ? `${prefix}\n\n${body}` : body);
   } catch (e) {
+    if (turn.stopped || abandoned()) return;
     assistant.error = message(e);
     finish(turn);
+    return;
   }
+  if (abandoned()) {
+    // Wysyłka sprzed „Nowej rozmowy”: proces kończy się, a tura znika z historii.
+    void chatStop(sent.turn, true).catch(() => {});
+    return;
+  }
+  user.sent = sent.sent;
+  if (turn.stopped) {
+    // „Zatrzymaj” przed powrotem wysyłki: odpowiedź nie leci bez odbiorcy.
+    void chatStop(sent.turn).catch(() => {});
+    return;
+  }
+  turn.turn = sent.turn;
+  for (const payload of turn.early.splice(0))
+    if (payload.turn === sent.turn) await handle(turn, payload);
 }
 
 /** „Zatrzymaj”: kończy odpowiedź; bez aktywnej tury tylko odblokowuje pole. */
 export async function stopChat(): Promise<void> {
   const turn = current;
+  if (turn) turn.stopped = true;
   try {
-    await chatStop();
+    await chatStop(turn?.turn || null);
   } catch (e) {
     if (turn) turn.assistant.error = message(e);
   }
@@ -300,17 +349,22 @@ export async function stopChat(): Promise<void> {
 
 /** „Nowa rozmowa”: kończy proces, kasuje historię i kontekst. Karty bez decyzji wracają do banera. */
 export async function newConversation(): Promise<void> {
+  // Wysyłka w toku należy do starej rozmowy: po powrocie zostanie odwołana.
+  conversation++;
+  if (current) current.stopped = true;
+  current = null;
+  chat.messages = [];
+  chat.context = null;
+  chat.draft = "";
+  claimedProposals.value = new Set();
+  // Do końca resetu nowa wiadomość nie wychodzi (reset ubiłby jej proces).
+  chat.busy = true;
   try {
     await chatReset();
   } catch {
     // Rozmowa i tak jest czyszczona po stronie interfejsu.
   }
-  current = null;
-  chat.messages = [];
-  chat.context = null;
-  chat.draft = "";
   chat.busy = false;
-  claimedProposals.value = new Set();
 }
 
 /** Otwiera panel z kontekstem z kafelka, Zamknięcia dnia albo pytaniem z Ctrl+K. */
