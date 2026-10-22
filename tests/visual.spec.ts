@@ -5,6 +5,7 @@ import {
   jiraFixture,
   manualMeetings,
   openPreview,
+  remindersFixture,
   seed,
 } from "./fixtures/seed";
 import { openDesktop } from "./fixtures/tauri";
@@ -58,6 +59,8 @@ const views: {
   calendar?: boolean;
   /** Ręczne spotkania (B12) bez połączonego kalendarza. */
   meetings?: boolean;
+  /** Przypomnienia własne (C3). */
+  reminders?: boolean;
 }[] = [
   {
     // B1: rozwinięty kafelek — przyciski drugorzędne z tłem i ikoną, przedziały
@@ -181,6 +184,27 @@ const views: {
       expect(
         page.getByRole("heading", { name: "Czas pracy", exact: true }),
       ).toBeVisible(),
+  },
+  {
+    // C3: Ustawienia → Powiadomienia z sekcją „Moje przypomnienia”: nadchodzące
+    // (jednorazowe z zadaniem, codzienne, tygodniowe), wyłączone i wykonane.
+    name: "ustawienia-przypomnienia",
+    reminders: true,
+    open: async (page) => {
+      await page.evaluate(() =>
+        localStorage.setItem("tuktuk-track-settings-section", "notifications"),
+      );
+      await page.reload();
+      await nav(page, "Ustawienia");
+    },
+    ready: async (page) => {
+      await expect(
+        page.getByRole("region", { name: "Moje przypomnienia" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("region", { name: "Moje przypomnienia" }).locator("li"),
+      ).toHaveCount(5);
+    },
   },
   {
     // R3: symulowany Redmine podglądu — śledzony projekt, grupy statusów,
@@ -343,6 +367,7 @@ for (const theme of themes)
             active: { task: ids.analysis, from: "11:00" },
             calendar: view.calendar ? calendarFixture() : undefined,
             meetings: view.meetings ? manualMeetings() : undefined,
+            reminders: view.reminders ? remindersFixture() : undefined,
           });
           await view.open(page);
           await view.ready(page);

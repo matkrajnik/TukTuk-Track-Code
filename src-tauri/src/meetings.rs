@@ -217,6 +217,9 @@ pub fn delete(db: &Connection, id: &str) -> Result<(), String> {
     if changed == 0 {
         return Err("Nie ma takiego spotkania.".into());
     }
+    // Nadpisanie przypomnienia (C3) znika razem ze spotkaniem.
+    db.execute("DELETE FROM meeting_reminders WHERE meeting_id=?1", [id])
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 

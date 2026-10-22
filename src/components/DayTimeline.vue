@@ -25,6 +25,7 @@ import { useMeetings } from "../composables/useMeetings";
 import { useAgentTime } from "../composables/useAgentTime";
 import { agentName } from "../agenttime";
 import MeetingEditor from "./MeetingEditor.vue";
+import MeetingReminderDialog from "./MeetingReminderDialog.vue";
 
 const props = defineProps<{
   tasks: Task[];
@@ -56,6 +57,16 @@ function addMeeting(start: number | null = null) {
 }
 function editMeeting(e: CalendarEvent) {
   if (isManualMeeting(e)) editor.value = { meeting: e, start: null };
+}
+/**
+ * Spotkanie z Outlooka: okno przypomnienia (C3) z menu kontekstowego
+ * (prawy przycisk) albo klawiszem Enter / Spacja; zwykłe kliknięcie nadal
+ * niczego nie otwiera, bo spotkania z Outlooka są tylko do odczytu.
+ */
+const reminderMeeting = ref<CalendarEvent | null>(null);
+function meetingMenu(e: CalendarEvent) {
+  if (isManualMeeting(e)) editMeeting(e);
+  else reminderMeeting.value = e;
 }
 /** Klik w pusty fragment toru „Spotkania”: godzina z miejsca kliknięcia (co 15 min). */
 function addAt(event: MouseEvent) {
@@ -225,6 +236,12 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
       @close="editor = null"
       @saved="editor = null"
     />
+    <MeetingReminderDialog
+      v-if="reminderMeeting"
+      :meeting="reminderMeeting"
+      @close="reminderMeeting = null"
+      @saved="reminderMeeting = null"
+    />
     <div class="dtl-chart">
       <div
         class="dtl-labels"
@@ -299,8 +316,9 @@ const meetingText = (m: (typeof meetings.value)[number]) =>
             @focus="show(meetingText(m), m.start, m.end)"
             @blur="tip = null"
             @click="editMeeting(m.event)"
-            @keydown.enter.prevent="editMeeting(m.event)"
-            @keydown.space.prevent="editMeeting(m.event)"
+            @contextmenu.prevent="meetingMenu(m.event)"
+            @keydown.enter.prevent="meetingMenu(m.event)"
+            @keydown.space.prevent="meetingMenu(m.event)"
           />
           <rect
             class="dtl-track"

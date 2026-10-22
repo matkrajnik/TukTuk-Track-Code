@@ -23,6 +23,8 @@ const props = defineProps<{
   taskTime: number;
   /** Notatka dnia (Raport dnia); kafelek listy jej nie pokazuje. */
   note?: string;
+  /** Znacznik 🔔 z godziną najbliższego przypomnienia zadania (C3). */
+  reminder?: { label: string; title: string } | null;
 }>();
 
 const estimate = computed(() => estimateMs(props.task));
@@ -60,6 +62,7 @@ const waitingSince = computed(() =>
         task.details?.project ||
         tsTask ||
         plannedLabel ||
+        reminder ||
         (!task.done && (task.details?.waiting || running))
       "
       class="task-meta"
@@ -87,6 +90,12 @@ const waitingSince = computed(() =>
         :class="{ today: task.details?.plannedDay === todayKey }"
         :title="'Zaplanowane: ' + task.details?.plannedDay"
         >{{ plannedLabel }}</span
+      >
+      <span
+        v-if="reminder"
+        class="task-chip task-reminder"
+        :title="reminder.title"
+        >🔔 {{ reminder.label }}</span
       >
       <span
         v-if="issue"

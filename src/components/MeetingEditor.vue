@@ -5,8 +5,9 @@
  * „Cały dzień”, typ i opcjonalne zadanie. Przy edycji „Usuń” z potwierdzeniem.
  * Spotkania z Outlooka są tylko do odczytu i tu nie trafiają.
  */
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import ConfirmDialog from "./ConfirmDialog.vue";
+import MeetingReminderField from "./MeetingReminderField.vue";
 import SearchSelect from "./SearchSelect.vue";
 import {
   MEETING_SUBJECT_MAX,
@@ -17,6 +18,11 @@ import {
   type CalendarEvent,
   type Task,
 } from "../store";
+import {
+  meetingReminderList,
+  meetingReminderSet,
+  type MeetingReminderValue,
+} from "../remindersapi";
 import { clock, dayBounds, dayKey } from "../time";
 
 const props = defineProps<{
@@ -61,6 +67,25 @@ const taskId = ref<number>(taskGone ? 0 : (editing?.taskId ?? 0));
 const busy = ref(false);
 const error = ref("");
 const confirming = ref(false);
+/**
+ * Przypomnienie przed spotkaniem (C3): nadpisanie dla tego spotkania
+ * (`meeting_reminder_set`); zapisywane razem ze spotkaniem, tylko gdy się zmieniło.
+ */
+const reminder = ref<MeetingReminderValue>("default");
+const initialReminder = ref<MeetingReminderValue>("default");
+/** Spotkanie zapisane w tym oknie: drugi „Zapisz” po błędzie go nie dubluje. */
+const persisted = ref<CalendarEvent | null>(editing);
+onMounted(async () => {
+  if (!editing) return;
+  try {
+    const found = (await meetingReminderList()).find(
+      (o) => o.meetingId === editing.id,
+    );
+    initialReminder.value = reminder.value = found ? found.minutes : "default";
+  } catch {
+    // Bez nadpisań pole zostaje na „Domyślne”.
+  }
+});
 
 const taskOptions = computed(() => [
   { value: 0, label: "Bez zadania" },
@@ -94,10 +119,15 @@ async function save() {
       allDay: allDay.value,
       taskId: taskId.value || null,
     };
-    emit(
-      "saved",
-      editing ? await meetingUpdate(editing.id, input) : await meetingAdd(input),
-    );
+    const saved = persisted.value
+      ? await meetingUpdate(persisted.value.id, input)
+      : await meetingAdd(input);
+    persisted.value = saved;
+    if (reminder.value !== initialReminder.value) {
+      await meetingReminderSet(saved.id, reminder.value);
+      initialReminder.value = reminder.value;
+    }
+    emit("saved", saved);
   } catch (e) {
     error.value = String(e);
   } finally {
@@ -203,6 +233,8 @@ async function remove() {
         :disabled="busy"
         :options="taskOptions"
       />
+      <label for="meeting-reminder">Przypomnienie</label
+      ><MeetingReminderField v-model="reminder" :disabled="busy" />
       <p v-if="taskGone" class="hint meeting-task-gone">
         Zadanie tego spotkania jest w koszu. Wybierz inne albo zapisz bez
         zadania.

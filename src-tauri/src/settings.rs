@@ -44,6 +44,10 @@ pub struct AppSettings {
     pub notify_evening: String,
     pub notify_evening_enabled: bool,
     pub notify_target: bool,
+    /// Przypomnienie przed każdym spotkaniem (C3); nadpisywane per spotkanie.
+    pub meeting_reminder_enabled: bool,
+    /// Ile minut przed spotkaniem (1, 5, 10, 15 albo 30).
+    pub meeting_reminder_minutes: u32,
     /// Co 5 min dodaje nowe zgłoszenia przypisane w Jirze do „Do zaplanowania”.
     pub jira_auto_import: bool,
     /// Główny wyłącznik zapisów do Jiry (J1, J2): wyłączony blokuje każdą zmianę
@@ -204,6 +208,8 @@ impl Default for AppSettings {
             notify_evening: "17:30".into(),
             notify_evening_enabled: true,
             notify_target: false,
+            meeting_reminder_enabled: true,
+            meeting_reminder_minutes: 5,
             jira_auto_import: true,
             jira_write: true,
             jira_ask_move: true,
@@ -449,6 +455,9 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     if s.notify_long_minutes > 1440 {
         return Err("Próg długiego pomiaru musi mieć od 0 do 1440 minut.".into());
+    }
+    if !crate::reminders::MEETING_MINUTES.contains(&s.meeting_reminder_minutes) {
+        return Err("Przypomnienie przed spotkaniem: 1, 5, 10, 15 albo 30 minut.".into());
     }
     if !(1..=240).contains(&s.focus_block_minutes) {
         return Err("Blok skupienia musi mieć od 1 do 240 minut.".into());
@@ -1105,6 +1114,39 @@ mod tests {
                 engine
             );
         }
+    }
+
+    /// Przypomnienia przed spotkaniem (C3): domyślnie włączone, 5 minut; tylko
+    /// 1/5/10/15/30 i zapis pod kluczami snake_case.
+    #[test]
+    fn meeting_reminder_settings_default_validate_and_save() {
+        let mut db = db();
+        let s = load(&db);
+        assert!(s.meeting_reminder_enabled);
+        assert_eq!(s.meeting_reminder_minutes, 5);
+        for minutes in [1, 5, 10, 15, 30] {
+            let saved = save(&mut db, &json!({"meetingReminderMinutes": minutes})).unwrap();
+            assert_eq!(saved.meeting_reminder_minutes, minutes);
+            assert_eq!(load(&db), saved);
+        }
+        for bad in [0, 2, 20, 60] {
+            assert!(
+                save(&mut db, &json!({"meetingReminderMinutes": bad})).is_err(),
+                "{bad}"
+            );
+        }
+        assert_eq!(load(&db).meeting_reminder_minutes, 30);
+        let saved = save(&mut db, &json!({"meetingReminderEnabled": false})).unwrap();
+        assert!(!saved.meeting_reminder_enabled);
+        let raw: String = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='meeting_reminder_enabled'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "false");
+        assert!(save(&mut db, &json!({"meetingReminderEnabled": "tak"})).is_err());
     }
 
     /// `widget_compact` (C2): domyślnie wyłączony, zapis pod kluczem snake_case.

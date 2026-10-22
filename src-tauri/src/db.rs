@@ -100,7 +100,10 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS status_changes_at ON status_changes(at);
         CREATE TRIGGER IF NOT EXISTS jira_status_changed AFTER UPDATE OF status ON jira_issues WHEN OLD.status<>'' AND NEW.status<>'' AND OLD.status<>NEW.status BEGIN INSERT INTO status_changes(system,issue,from_status,to_status,at) VALUES('jira',NEW.issue_key,OLD.status,NEW.status,CAST(strftime('%s','now') AS INTEGER)*1000); END;
         CREATE TRIGGER IF NOT EXISTS redmine_status_changed AFTER UPDATE OF status ON redmine_issues WHEN OLD.status<>'' AND NEW.status<>'' AND OLD.status<>NEW.status BEGIN INSERT INTO status_changes(system,issue,from_status,to_status,at) VALUES('redmine',CAST(NEW.issue_id AS TEXT),OLD.status,NEW.status,CAST(strftime('%s','now') AS INTEGER)*1000); END;
-        CREATE TABLE IF NOT EXISTS day_marks (day TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, resumed INTEGER NOT NULL DEFAULT 0);")
+        CREATE TABLE IF NOT EXISTS day_marks (day TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, resumed INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, at TEXT NOT NULL, repeat TEXT NOT NULL DEFAULT 'none', weekdays TEXT, enabled INTEGER NOT NULL DEFAULT 1, snooze_until TEXT, last_fired_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS reminders_at ON reminders(at);
+        CREATE TABLE IF NOT EXISTS meeting_reminders (meeting_id TEXT PRIMARY KEY, minutes INTEGER);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;

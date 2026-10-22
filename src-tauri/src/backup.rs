@@ -452,6 +452,47 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// Kopia niesie przypomnienia i nadpisania przypomnień spotkań (C3).
+    #[test]
+    fn backup_carries_reminders() {
+        let root = std::env::temp_dir().join(format!(
+            "tuktuk-track-reminders-{}-{}",
+            std::process::id(),
+            db::now()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("copy.sqlite");
+        let source = Connection::open(&path).unwrap();
+        db::init(&source).unwrap();
+        source
+            .execute_batch(
+                "INSERT INTO tasks(title,created_at) VALUES('Analiza',0);
+                 INSERT INTO reminders(text,task_id,at,repeat,weekdays,enabled,created_at,updated_at)
+                 VALUES('Co tydzień',1,'2026-10-19T09:00','weekly','1,5',1,1,1);
+                 INSERT INTO meeting_reminders(meeting_id,minutes) VALUES('manual:1',15),('o-2',NULL);",
+            )
+            .unwrap();
+        drop(source);
+        let mut current = Connection::open_in_memory().unwrap();
+        db::init(&current).unwrap();
+        let staged = stage(&path).unwrap();
+        copy(&staged, &mut current).unwrap();
+        let list = crate::reminders::list(&current).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(
+            (list[0].task_id, list[0].weekdays.clone()),
+            (Some(1), vec![1, 5])
+        );
+        let overrides = crate::reminders::meeting_overrides(&current).unwrap();
+        assert_eq!(
+            overrides.iter().map(|o| o.minutes).collect::<Vec<_>>(),
+            vec![Some(15), None]
+        );
+        drop(staged);
+        drop(current);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     /// Kopia niesie ręczne spotkania z zadaniem (`manual_meetings`, B12).
     #[test]
     fn backup_carries_manual_meetings() {

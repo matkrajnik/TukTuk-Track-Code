@@ -11,6 +11,7 @@ import {
 import { countdown, focusAction, useFocus } from "../focus";
 import TaskCard from "../components/TaskCard.vue";
 import MeetingEditor from "../components/MeetingEditor.vue";
+import MeetingReminderDialog from "../components/MeetingReminderDialog.vue";
 import SearchSelect from "../components/SearchSelect.vue";
 import { offerAfterDone } from "../jiramove";
 import {
@@ -165,6 +166,8 @@ const upcomingMeetings = computed(() => {
 });
 /** Ręczne spotkanie (B12): `null` = nowe, spotkanie = edycja; `false` = zamknięte. */
 const meetingEditor = ref<CalendarEvent | null | false>(false);
+/** Spotkanie z Outlooka z oknem przypomnienia (C3). */
+const reminderMeeting = ref<CalendarEvent | null>(null);
 /**
  * Przedziały pogrupowane po zadaniu (od najnowszego), liczone raz na zmianę
  * danych zamiast filtrowania wszystkich przedziałów dla każdej karty co sekundę
@@ -603,7 +606,15 @@ async function priority(task: Task, e: Event) {
             @click="meetingEditor = m.event"
           >
             {{ m.title }}</button
-          ><template v-else>{{ m.title }}</template></span
+          ><button
+            v-else
+            type="button"
+            class="meeting-edit"
+            :aria-label="'Przypomnienie o spotkaniu: ' + m.title"
+            @click="reminderMeeting = m.event"
+          >
+            {{ m.title }}</button
+          ></span
         ><span v-if="m.manual" class="meeting-manual">ręczne</span
         ><small v-if="m.now">trwa</small
         ><small v-else-if="m.event.showAs === 'tentative'">wstępnie</small>
@@ -611,6 +622,12 @@ async function priority(task: Task, e: Event) {
     </ul>
     <p v-else class="hint">Brak nadchodzących spotkań dziś.</p>
   </section>
+  <MeetingReminderDialog
+    v-if="reminderMeeting"
+    :meeting="reminderMeeting"
+    @close="reminderMeeting = null"
+    @saved="reminderMeeting = null"
+  />
   <MeetingEditor
     v-if="meetingEditor !== false"
     :meeting="meetingEditor"

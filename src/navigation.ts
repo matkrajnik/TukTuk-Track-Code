@@ -192,6 +192,11 @@ export const settingsSections = [
       "Czekam na",
       "blokada",
       "Przypomnij o „Czekam na” po (dni robocze, 0 wyłącza)",
+      "przypomnienia",
+      "Moje przypomnienia",
+      "Dodaj przypomnienie",
+      "Przypominaj przed spotkaniami",
+      "Ile minut przed spotkaniem",
     ],
   },
   {

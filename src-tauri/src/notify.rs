@@ -19,7 +19,9 @@
 //!   `waiting_notify_days` dni roboczych albo nadszedł dzień „Przypomnij jutro”
 //!   (`waiting_reminders`, osobno od `tick`);
 //! - `week:<poniedziałek>`: ostatni dzień roboczy tygodnia od `week_review_time`
-//!   (`week_review`, osobno od `tick`).
+//!   (`week_review`, osobno od `tick`);
+//! - `rem:<id>:<termin>` i `meet:<id spotkania>:<start>`: przypomnienia własne i przed
+//!   spotkaniem (C3, `reminders.rs`), z `tick`, także po „Zakończ dzień”.
 //!
 //! Logika siedzi w `NotifyClock` z czasem i strefą podawanymi z zewnątrz, więc testy
 //! sterują zegarem. Klucz trafia do bazy przed wysłaniem (`INSERT OR IGNORE`), dlatego
@@ -114,6 +116,10 @@ pub const WAITING_UNBLOCK: &str = "waiting-unblock";
 pub const WAITING_REMIND: &str = "waiting-remind";
 /// „Przesuń” z pytania o przesunięcie zgłoszenia w Jirze (id zadania, J1).
 pub const JIRA_MOVE: &str = "jira-move";
+/// „Odłóż 10 min” z przypomnienia własnego (id przypomnienia, C3).
+pub const REMINDER_SNOOZE: &str = "reminder-snooze";
+/// „Pokaż” z przypomnienia własnego (id przypomnienia, C3): tylko widok, bez timera.
+pub const REMINDER_SHOW: &str = "reminder-show";
 
 /// Przycisk w powiadomieniu; `arg` (np. id przedziału) jest doklejany do `id`.
 #[derive(Clone, Debug, PartialEq)]
@@ -178,6 +184,10 @@ pub enum Command {
     WaitingRemind(i64),
     /// „Przesuń” zgłoszenie zadania w Jirze; wykonuje `jira_move::activate` (sieć).
     JiraMove(i64),
+    /// „Odłóż 10 min” z przypomnienia (id przypomnienia); nie dotyka pomiaru.
+    ReminderSnooze(i64),
+    /// „Pokaż” z przypomnienia (id przypomnienia): kafelek zadania albo Ustawienia.
+    ReminderShow(i64),
     /// Pokaż główne okno z widokiem.
     Open(View),
 }
@@ -203,6 +213,8 @@ pub fn command(argument: Option<&str>, open: &View) -> Command {
         WAITING_UNBLOCK => number.map(Command::WaitingUnblock),
         WAITING_REMIND => number.map(Command::WaitingRemind),
         JIRA_MOVE => number.map(Command::JiraMove),
+        REMINDER_SNOOZE => number.map(Command::ReminderSnooze),
+        REMINDER_SHOW => number.map(Command::ReminderShow),
         PLAN_TODAY => arg
             .split(',')
             .map(|n| n.parse::<i64>().ok().filter(|n| *n > 0))
@@ -338,6 +350,24 @@ pub fn perform(
             changed: false,
             navigate: Some(View::tasks()),
         }),
+        // Odłożenie przypomnienia nie zmienia pomiaru ani zadań; okno nie wyskakuje.
+        Command::ReminderSnooze(id) => {
+            crate::reminders::snooze(
+                db,
+                &chrono::Local,
+                id,
+                crate::reminders::SNOOZE_MINUTES,
+                now,
+            )?;
+            Ok(changed(false))
+        }
+        Command::ReminderShow(id) => {
+            let task = crate::reminders::get(db, id)?.and_then(|r| r.task_id);
+            Ok(Outcome {
+                changed: false,
+                navigate: Some(crate::reminders::show_view(task)),
+            })
+        }
         Command::Open(view) => Ok(Outcome {
             changed: false,
             navigate: Some(view),
@@ -388,7 +418,7 @@ pub fn short(title: &str) -> String {
 }
 
 /// Zapisuje klucz; `true`, gdy wcześniej go nie było (powiadomienie do wysłania).
-fn claim(db: &Connection, key: &str, now: i64) -> rusqlite::Result<bool> {
+pub(crate) fn claim(db: &Connection, key: &str, now: i64) -> rusqlite::Result<bool> {
     Ok(db.execute(
         "INSERT OR IGNORE INTO notifications_sent(key,at) VALUES(?1,?2)",
         params![key, now],
@@ -551,6 +581,11 @@ impl NotifyClock {
                 }
             }
         }
+
+        // Przypomnienia własne i przed spotkaniem (C3). Działają także po „Zakończ
+        // dzień”, bo B13 wycisza tylko przypomnienia o braku pomiaru i propozycje.
+        out.extend(crate::reminders::fire_due(db, tz, now, startup)?);
+        out.extend(crate::reminders::meeting_messages(db, s, tz, now)?);
 
         // Cel dnia osiągnięty (tylko dni robocze z niezerowym celem, bez świąt).
         // Cel pomniejszają spotkania niepokryte pomiarem; urlop całodniowy = brak celu.
@@ -925,6 +960,7 @@ pub fn activate(app: &tauri::AppHandle, command: Command) {
         crate::days::ask_resume(app, crate::days::Pending::Notify(command));
         return;
     }
+    let reminders_touched = matches!(command, Command::ReminderSnooze(_));
     let result = if matches!(command, Command::FocusBreak(_) | Command::FocusNext(_)) {
         crate::focus::activate(app, command)
     } else {
@@ -939,6 +975,9 @@ pub fn activate(app: &tauri::AppHandle, command: Command) {
     };
     match result {
         Ok(outcome) => {
+            if reminders_touched {
+                let _ = app.emit(crate::reminders::EVENT, ());
+            }
             if outcome.changed {
                 crate::reminder::reset(app);
                 let _ = app.emit("data-changed", ());
@@ -2389,5 +2428,130 @@ mod tests {
         .unwrap();
         assert!(!out.changed);
         assert!(active(&db).unwrap().is_some());
+    }
+
+    /// Przypomnienia (C3): akcje toastu mają argumenty i nigdy nie startują pomiaru.
+    #[test]
+    fn reminder_actions_parse_and_never_start_measurement() {
+        assert_eq!(
+            command(Some("reminder-snooze:7"), &View::default()),
+            Command::ReminderSnooze(7)
+        );
+        assert_eq!(
+            command(Some("reminder-show:7"), &View::default()),
+            Command::ReminderShow(7)
+        );
+        // Uszkodzony argument tylko pokazuje okno.
+        assert_eq!(
+            command(Some("reminder-snooze:x"), &View::default()),
+            Command::Open(View::default())
+        );
+        assert!(!starts_measurement(&Command::ReminderSnooze(1)));
+        assert!(!starts_measurement(&Command::ReminderShow(1)));
+    }
+
+    #[test]
+    fn reminder_snooze_and_show_leave_timer_alone() {
+        let mut db = setup();
+        let running = session(&db, 1, at("2026-10-14 08:00"), None);
+        let now = at("2026-10-14 10:00");
+        db.execute(
+            "INSERT INTO reminders(text,task_id,at,repeat,enabled,created_at,updated_at) VALUES('Raport',2,'2026-10-14T09:00','none',0,0,0)",
+            [],
+        )
+        .unwrap();
+        let out = perform(&mut db, Command::ReminderSnooze(1), "2026-10-14", now).unwrap();
+        assert_eq!(
+            out,
+            Outcome {
+                changed: false,
+                navigate: None
+            }
+        );
+        let r = crate::reminders::get(&db, 1).unwrap().unwrap();
+        assert!(r.enabled && r.at.as_str() > "2026-10-14T09:00");
+        assert_eq!(active(&db).unwrap().map(|a| a.0), Some(running));
+        // „Pokaż” z zadaniem: kafelek zadania; bez zadania: Ustawienia → Powiadomienia.
+        let shown = perform(&mut db, Command::ReminderShow(1), "2026-10-14", now).unwrap();
+        assert_eq!(
+            shown.navigate,
+            Some(View {
+                task: Some(2),
+                ..View::tasks()
+            })
+        );
+        db.execute("UPDATE reminders SET task_id=NULL", []).unwrap();
+        let shown = perform(&mut db, Command::ReminderShow(1), "2026-10-14", now).unwrap();
+        assert_eq!(
+            shown.navigate,
+            Some(View {
+                view: Some("settings"),
+                section: Some("notifications"),
+                ..View::default()
+            })
+        );
+        // Stary toast po usunięciu przypomnienia: bez błędu i bez zmian.
+        db.execute("DELETE FROM reminders", []).unwrap();
+        assert_eq!(
+            perform(&mut db, Command::ReminderSnooze(1), "2026-10-14", now)
+                .unwrap()
+                .changed,
+            false
+        );
+        assert!(
+            perform(&mut db, Command::ReminderShow(1), "2026-10-14", now)
+                .unwrap()
+                .navigate
+                .is_some()
+        );
+        assert_eq!(active(&db).unwrap().map(|a| a.0), Some(running));
+    }
+
+    #[test]
+    fn tick_fires_reminders_and_meeting_reminders_once_even_after_day_end() {
+        let mut clock = NotifyClock::default();
+        let db = setup();
+        let s = AppSettings {
+            notify_due: false,
+            notify_long_minutes: 0,
+            notify_evening_enabled: false,
+            ..AppSettings::default()
+        };
+        db.execute(
+            "INSERT INTO reminders(text,at,repeat,enabled,created_at,updated_at) VALUES('Zadzwonić','2026-10-14T16:50','none',1,0,0)",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO manual_meetings(id,start,\"end\",subject,show_as,all_day,created_at,updated_at) VALUES('manual:1',?1,?2,'Telefon','busy',0,0,0)",
+            params![at("2026-10-14 17:00"), at("2026-10-14 17:30")],
+        )
+        .unwrap();
+        // Dzień zakończony: przypomnienia własne i spotkań dalej działają.
+        db.execute(
+            "INSERT INTO day_marks(day,started_at,ended_at,resumed) VALUES('2026-10-14',1,2,0)",
+            [],
+        )
+        .unwrap();
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 16:40"))
+            .unwrap()
+            .is_empty());
+        let out = clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 16:55"))
+            .unwrap();
+        assert_eq!(keys(&out).len(), 2, "{:?}", keys(&out));
+        assert!(out.iter().any(|m| m.key.starts_with("rem:1:")));
+        assert!(out.iter().any(|m| m.key.starts_with("meet:manual:1:")));
+        // Kolejny przebieg i nowy zegar (restart) nic nie dublują.
+        assert!(clock
+            .tick(&db, &s, &Warsaw, at("2026-10-14 16:56"))
+            .unwrap()
+            .is_empty());
+        let mut restarted = NotifyClock::default();
+        assert!(restarted
+            .tick(&db, &s, &Warsaw, at("2026-10-14 16:57"))
+            .unwrap()
+            .is_empty());
     }
 }

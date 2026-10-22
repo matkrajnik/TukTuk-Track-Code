@@ -508,6 +508,7 @@ export function calendarFixture(state: "connected" | "ready" = "connected") {
   };
 }
 
+export const REMINDERS_KEY = "tuktuk-track-preview-reminders-v1";
 export const MEETINGS_KEY = "tuktuk-track-preview-meetings-v1";
 /**
  * Ręczne spotkania podglądu (B12, jak z `manual_meetings`): dziś telefon
@@ -535,6 +536,26 @@ export function manualMeetings() {
       taskId: null,
     },
   ];
+}
+
+/**
+ * Przypomnienia podglądu (C3, jak z `reminders`): jednorazowe dziś 15:30
+ * z zadaniem „Code review”, codzienne 08:45 bez zadania (jutro, bo dziś już
+ * minęło), tygodniowe w pn i pt 09:00, wykonane z wczoraj i wyłączone.
+ */
+export function remindersFixture() {
+  const base = { snoozeUntil: null, lastFiredAt: null, createdAt: 0, updatedAt: 0 };
+  return {
+    nextId: 6,
+    reminders: [
+      { id: 1, text: "Zadzwonić do klienta w sprawie importu", taskId: ids.review, at: `${TODAY}T15:30`, repeat: "none", weekdays: [], enabled: true, ...base },
+      { id: 2, text: "Uzupełnić czas w TS", taskId: null, at: "2026-10-16T08:45", repeat: "daily", weekdays: [], enabled: true, ...base },
+      { id: 3, text: "Przegląd tygodnia", taskId: null, at: "2026-10-16T09:00", repeat: "weekly", weekdays: [1, 5], enabled: true, ...base },
+      { id: 4, text: "Odpisać na zgłoszenie", taskId: null, at: "2026-10-14T16:00", repeat: "none", weekdays: [], enabled: false, ...base, lastFiredAt: at("2026-10-14", "16:00") },
+      { id: 5, text: "Sprawdzić dostawę", taskId: null, at: "2026-10-19T10:00", repeat: "workdays", weekdays: [], enabled: false, ...base },
+    ],
+    meetings: {},
+  };
 }
 
 export const AGENT_SESSIONS_KEY = "tuktuk-track-preview-agent-sessions-v1";
@@ -583,6 +604,8 @@ export interface PreviewOptions extends SeedOptions {
   calendar?: unknown;
   /** Ręczne spotkania w podglądzie (B12), np. `manualMeetings()`. */
   meetings?: unknown[];
+  /** Przypomnienia podglądu (C3), np. `remindersFixture()`. */
+  reminders?: unknown;
   /** Okresy pracy agentów w podglądzie, np. `agentSessions()`. */
   agentSessions?: unknown[];
   /** Symulowany Ideo TS w podglądzie, np. `tsFixture()`. */
@@ -610,7 +633,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
       });
     },
     [
-      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY, AGENT_HOOKS_KEY, ORCA_KEY, AI_KEY],
+      [PREVIEW_KEY, SETTINGS_KEY, AGENTS_KEY, CALENDAR_KEY, AGENT_SESSIONS_KEY, TS_KEY, REDMINE_KEY, MEETINGS_KEY, AGENT_HOOKS_KEY, ORCA_KEY, AI_KEY, REMINDERS_KEY],
       [
         JSON.stringify(data),
         options.settings ? JSON.stringify(options.settings) : null,
@@ -623,6 +646,7 @@ export async function openPreview(page: Page, options: PreviewOptions = {}) {
         options.agentHooks ? JSON.stringify(options.agentHooks) : null,
         options.orca ? JSON.stringify(options.orca) : null,
         options.ai ? JSON.stringify(options.ai) : null,
+        options.reminders ? JSON.stringify(options.reminders) : null,
       ],
     ] as const,
   );

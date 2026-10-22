@@ -9,6 +9,7 @@
 import { computed, ref } from "vue";
 import {
   Archive,
+  Bell,
   Bot,
   ArrowRightCircle,
   BookmarkPlus,
@@ -25,6 +26,7 @@ import {
   Trash2,
 } from "lucide-vue-next";
 import TaskPlanning from "../TaskPlanning.vue";
+import ReminderForm from "./ReminderForm.vue";
 import ReorderHandle from "./ReorderHandle.vue";
 import AgentTaskTime from "./AgentTaskTime.vue";
 import JiraIssueActions from "./JiraIssueActions.vue";
@@ -53,6 +55,8 @@ import { useSettings } from "../target";
 import { waitingProposal } from "../recurrence";
 import { issueRef } from "../issue";
 import { openChat, useChatEnabled } from "../aichat";
+import { useReminders } from "../composables/useReminders";
+import { effectiveAt, repeatText, whenLabel } from "../remindersapi";
 
 const props = defineProps<{
   task: Task;
@@ -130,6 +134,19 @@ async function changeWaiting(change: WaitingChange) {
     waitingBusy.value = false;
   }
 }
+/** Znacznik 🔔 (C3): najbliższe włączone przypomnienie tego zadania. */
+const { byTask: remindersByTask } = useReminders();
+const reminderMark = computed(() => {
+  const r = remindersByTask.value.get(props.task.id);
+  if (!r || props.task.done) return null;
+  const label = whenLabel(effectiveAt(r), props.todayKey);
+  return {
+    label,
+    title: `Przypomnienie: ${r.text} · ${label} · ${repeatText(r)}`,
+  };
+});
+/** „Przypomnij…”: formularz przypomnienia z przypiętym zadaniem. */
+const reminderOpen = ref(false);
 /** Przypięcie do widgetu („w toku”): przyciski przełączania jednym kliknięciem. */
 const pinned = computed(() => (props.task.details?.pinnedAt ?? 0) > 0);
 const pinBusy = ref(false);
@@ -198,7 +215,8 @@ const issueWrite = computed(() =>
           :running="running"
           :now="now"
           :today-key="todayKey"
-          :task-time="taskTime" /><span
+          :task-time="taskTime"
+          :reminder="reminderMark" /><span
           class="task-duration mono"
           :class="{ zero: !taskTime }"
           >{{ duration(taskTime) }}</span
@@ -296,6 +314,16 @@ const issueWrite = computed(() =>
         >
           <Bot :size="14" />Zapytaj asystenta
         </button>
+        <button
+          v-if="!task.done"
+          class="action-button"
+          :aria-label="'Przypomnij: ' + task.title"
+          title="Ustaw przypomnienie o tym zadaniu (powiadomienie, bez startu pomiaru)"
+          :aria-expanded="reminderOpen"
+          @click="reminderOpen = true"
+        >
+          <Bell :size="14" />Przypomnij…
+        </button>
         <span class="details-actions-spacer" />
         <button
           v-if="!task.done"
@@ -347,6 +375,12 @@ const issueWrite = computed(() =>
           <Trash2 :size="14" />Usuń
         </button>
       </div>
+      <ReminderForm
+        v-if="reminderOpen"
+        :task="{ id: task.id, title: task.title }"
+        @close="reminderOpen = false"
+        @saved="reminderOpen = false"
+      />
       <TaskIssueMoves :task="task" :issue="issue" :moves="moves" />
       <JiraIssueActions
         v-if="task.jiraKey && jiraConnected"

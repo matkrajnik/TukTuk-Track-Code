@@ -40,6 +40,7 @@ mod quickadd;
 mod recurrence;
 mod redmine;
 mod reminder;
+mod reminders;
 mod settings;
 mod shortcuts;
 mod stats;
@@ -729,6 +730,13 @@ fn main() {
             meetings::meeting_add,
             meetings::meeting_update,
             meetings::meeting_delete,
+            reminders::reminder_list,
+            reminders::reminder_add,
+            reminders::reminder_update,
+            reminders::reminder_delete,
+            reminders::reminder_snooze,
+            reminders::meeting_reminder_list,
+            reminders::meeting_reminder_set,
             templates::templates_list,
             templates::template_save,
             templates::template_delete,

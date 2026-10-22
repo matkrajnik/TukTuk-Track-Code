@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { desktop, previewWidgetSettingsChanged } from "./store";
+import { meetingReminderMinutes } from "./api/reminders";
 
 /** Odpowiednik `AppSettings` z src-tauri/src/settings.rs (klucze camelCase). */
 export interface AppSettings {
@@ -35,6 +36,10 @@ export interface AppSettings {
   notifyEvening: string;
   notifyEveningEnabled: boolean;
   notifyTarget: boolean;
+  /** Przypomnienie przed każdym spotkaniem (C3); nadpisywane per spotkanie. */
+  meetingReminderEnabled: boolean;
+  /** Ile minut przed spotkaniem: 1, 5, 10, 15 albo 30. */
+  meetingReminderMinutes: number;
   jiraAutoImport: boolean;
   /** Główny przełącznik zapisów do Jiry (J1, J2); wyłączony blokuje też backend. */
   jiraWrite: boolean;
@@ -150,6 +155,8 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyEvening: "17:30",
   notifyEveningEnabled: true,
   notifyTarget: false,
+  meetingReminderEnabled: true,
+  meetingReminderMinutes: 5,
   jiraAutoImport: true,
   jiraWrite: true,
   jiraAskMove: true,
@@ -418,6 +425,10 @@ function applyFields(
     throw new Error("Cel dzienny musi mieć od 0 do 1440 minut.");
   if (!minutes(s.notifyLongMinutes))
     throw new Error("Próg długiego pomiaru musi mieć od 0 do 1440 minut.");
+  if (!(meetingReminderMinutes as readonly number[]).includes(s.meetingReminderMinutes))
+    throw new Error(
+      "Przypomnienie przed spotkaniem: 1, 5, 10, 15 albo 30 minut.",
+    );
   if (!range(s.focusBlockMinutes, 1, 240))
     throw new Error("Blok skupienia musi mieć od 1 do 240 minut.");
   if (!range(s.focusBreakMinutes, 1, 60))

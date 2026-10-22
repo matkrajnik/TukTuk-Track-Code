@@ -1,6 +1,8 @@
 <script setup lang="ts">
 /** Ustawienia → Powiadomienia. */
+import RemindersList from "./RemindersList.vue";
 import type { AppSettings } from "../../settings";
+import { meetingReminderMinutes } from "../../remindersapi";
 import { checked, number, text, useSettingsSection } from "./section";
 const settings = defineModel<AppSettings>("settings", { required: true });
 const { busy, error, save } = useSettingsSection(settings);
@@ -88,6 +90,28 @@ const { busy, error, save } = useSettingsSection(settings);
         @change="save({ waitingNotifyDays: number($event) })"
     /></label>
   </div>
+  <label class="inline-check"
+    ><input
+      :checked="settings.meetingReminderEnabled"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ meetingReminderEnabled: checked($event) })"
+    />Przypominaj przed spotkaniami</label
+  >
+  <div class="planning-fields settings-fields">
+    <label
+      >Ile minut przed spotkaniem<select
+        aria-label="Ile minut przed spotkaniem"
+        :value="settings.meetingReminderMinutes"
+        :disabled="busy || !settings.meetingReminderEnabled"
+        @change="save({ meetingReminderMinutes: number($event) })"
+      >
+        <option v-for="m in meetingReminderMinutes" :key="m" :value="m">
+          {{ m }} min
+        </option>
+      </select></label
+    >
+  </div>
   <p class="hint">
     Powiadomienia Windows: terminy przy starcie i o 09:00, długi pomiar raz
     na przedział, wieczór o wybranej godzinie, cel raz dziennie, przegląd
@@ -98,6 +122,11 @@ const { busy, error, save } = useSettingsSection(settings);
     najwyżej raz, także po ponownym uruchomieniu. Potwierdzenie skrótu
     Start/Stop pokazuje się, gdy widget jest schowany. Po „Zakończ dzień”
     przypomnienie o braku pomiaru, cel dnia i propozycje przełączenia milczą
-    do północy albo do „Wznów dzień”.
+    do północy albo do „Wznów dzień”. Przypomnienie przed spotkaniem
+    (bez całodniowych i „Wolny”) działa także po „Zakończ dzień”; dla
+    jednego spotkania zmienisz je albo wyłączysz w edytorze ręcznego spotkania,
+    a dla spotkania z Outlooka prawym przyciskiem na osi dnia albo w Zadania →
+    Dzisiaj.
   </p>
+  <RemindersList />
 </template>
