@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { Plug, PlugZap, Plus, RefreshCw, Trash2, Unplug } from "lucide-vue-next";
+import {
+  Plug,
+  PlugZap,
+  Plus,
+  RefreshCw,
+  Trash2,
+  TriangleAlert,
+  Unplug,
+} from "lucide-vue-next";
 import ConfirmDialog from "./ConfirmDialog.vue";
 import SearchSelect from "./SearchSelect.vue";
 import {
@@ -203,7 +211,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="ts-beta-note" role="note" aria-label="Wersja niefinalna">
+  <aside
+    class="idle-banner infobar-warning ts-beta-note"
+    role="note"
+    aria-label="Wersja niefinalna"
+  >
+    <TriangleAlert class="infobar-icon" :size="20" aria-hidden="true" />
     <strong>Wersja niefinalna</strong>
     <p>
       Integracja z Ideo Timesheet nie jest wersją finalną. Korzystasz z niej na
