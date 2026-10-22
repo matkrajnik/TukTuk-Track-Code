@@ -1,10 +1,11 @@
-Todo Track 1.9.0: Redmine obok Jiry.
+TukTuk Track 2.0.0: aplikacja zmienia nazwę z Todo Track na TukTuk Track.
 
-- Nowa sekcja Ustawienia → Redmine. Połączenie z własnym Redmine przez adres (także z prefiksem ścieżki, np. https://firma.pl/redmine) i klucz API z „Moje konto”. Klucz jest przechowywany w Menedżerze poświadczeń Windows. Są też przyciski „Testuj połączenie” i „Rozłącz”. Aplikacja ufa certyfikatom z magazynu Windows; w „Zaawansowane” jest opcja dla niezaufanego certyfikatu w sieci wewnętrznej.
-- Nowy widok Redmine. Wybierasz śledzone projekty, a zgłoszenia każdego z nich są pogrupowane według statusu. Do tego zakres „Moje” albo „Wszystkie otwarte”, filtr trackera, wyszukiwanie, „Rozpocznij” i „Otwórz w Redmine”. Na dole jest sekcja zgłoszeń przypisanych do Ciebie spoza śledzonych projektów.
-- Co 5 minut nowe zgłoszenia przypisane do Ciebie trafiają do „Do zaplanowania” i pojawia się powiadomienie. Odświeżają się też statusy na kafelkach. Pierwsze sprawdzenie niczego nie importuje.
-- Kafelek zadania pokazuje #1234, status, tracker i termin. Szybkie dodawanie rozumie „#1234”, gdy Redmine jest połączony. Zadanie może mieć jedno zgłoszenie: z Jiry albo z Redmine.
-- Start pracy nad zgłoszeniem w statusie początkowym pyta, czy przesunąć je do „In Progress” (nazwę ustawisz w Ustawieniach). Kafelek i karta w widoku mają też „Przesuń do…”, „Przypisz do mnie”, „Dodaj komentarz” i „Kopiuj nazwę gałęzi”. Do Redmine nic nie zapisuje się bez Twojego kliknięcia, a zapisy wyłącza jeden przełącznik.
-- Jira i Redmine działają niezależnie. Można połączyć jedno, oba albo żadne.
+- Nowa nazwa, ten sam program. Instalator 2.0 sam wykrywa Todo Track, pyta o aktualizację i usuwa starą instalację bez kasowania danych. Przy pierwszym starcie zadania, historia i ustawienia są kopiowane do nowego katalogu, a logowania Jira, kalendarza Microsoft, TS i Redmine przenoszą się same. Stary katalog zostaje jako zapas. Rozszerzenie przeglądarki trzeba raz przeładować z folderu `browser-extension` nowej instalacji.
+- Pomiary: akcje przy lukach w zapisie, „Przytnij i wznów” po przerwie, poprawa startu trwającego pomiaru. „Rozpocznij dzień”, „Zakończ dzień” i „Wznów dzień”. Plan dnia otwiera się rano przy pierwszym uruchomieniu.
+- Wysyłka do TS z nadgodzinami (automatyczny podział ponad normę dnia), edycją godzin, przypisaniem zadania TS w podglądzie i wysyłką wielu dni naraz. Raporty i Dashboard pokazują nadgodziny.
+- Ręczne spotkania spoza Outlooka, także bez kalendarza Microsoft. Pola wyboru z wyszukiwaniem i czytelniejsze przyciski.
+- Agenci AI wykrywani przez hooki Claude Code i Codexa (Ustawienia → Agenci); w Codexie hooki trzeba raz zatwierdzić poleceniem `/hooks`. „Otwórz worktree w Orce” z kafelka zadania.
+- Asystent AI (Ustawienia → Asystent AI): korzysta z subskrypcji Claude Code albo Codexa, bez klucza API; silnik wybierasz przy pierwszym uruchomieniu. Czat w panelu bocznym (Ctrl+J), serwer MCP dla agentów, podpowiedzi przypisań, analiza w Zamknięciu dnia i komentarz w Rano. Model tylko proponuje: nic nie zmienia się bez kliknięcia „Zastosuj”. Dane wychodzące do modelu przechodzą przez filtr nazwisk, który ma ograniczenia opisane w README.
+- Szybsza praca aplikacji i drobne poprawki układu, nawigacji i kopii zapasowych.
 
-Integracja nie była jeszcze sprawdzana z prawdziwym serwerem Redmine. Przy polskich nazwach statusów (np. „Nowy”, „W toku”) wpisz je w Ustawienia → Redmine; pomoże przycisk „Wstaw statusy z Redmine”.
+Wersja 2.0 nie była jeszcze instalowana ani sprawdzana z prawdziwymi Claude Code, Codexem, Orką, TS, Jirą i Redmine. Lista rzeczy do sprawdzenia jest w `NEXT_SESSION.md`.
