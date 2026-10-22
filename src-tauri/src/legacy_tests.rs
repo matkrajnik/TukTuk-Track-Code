@@ -116,6 +116,76 @@ fn dir_keeps_existing_files_in_new_directory_without_database() {
 }
 
 #[test]
+fn dir_retry_replaces_partial_copies_from_interrupted_attempt() {
+    let root = temp("przerwana");
+    let old_dir = old_data(&root);
+    let new = root.join("nowy");
+    // Przerwana wcześniejsza próba: ucięty plik tymczasowy, bez bazy.
+    write(&new.join("backups").join("kopia.sqlite.kopiowanie"), "uc");
+    let report = migrate_dir(&old_dir, &new);
+    assert_eq!(report.state, DirState::Copied, "{:?}", report.warnings);
+    assert_eq!(read(&new.join("backups").join("kopia.sqlite")), "kopia");
+    assert!(!new.join("backups").join("kopia.sqlite.kopiowanie").exists());
+}
+
+#[test]
+fn early_migration_paths_match_tauri_directories() {
+    let vars = |name: &str| match name {
+        "APPDATA" => Some(r"C:\Users\ala\AppData\Roaming".to_string()),
+        "LOCALAPPDATA" => Some(r"C:\Users\ala\AppData\Local".to_string()),
+        _ => None,
+    };
+    let dirs = early_dirs("pl.tuktuktrack.desktop", &vars);
+    if cfg!(windows) {
+        let (data, local) = dirs.unwrap();
+        assert_eq!(
+            data,
+            PathBuf::from(r"C:\Users\ala\AppData\Roaming").join("pl.tuktuktrack.desktop")
+        );
+        assert_eq!(
+            local,
+            Some(PathBuf::from(r"C:\Users\ala\AppData\Local").join("pl.tuktuktrack.desktop"))
+        );
+        // Bez %APPDATA% migracja zostaje w `setup` aplikacji.
+        assert_eq!(early_dirs("x", &|_| None), None);
+    } else {
+        assert_eq!(dirs, None);
+    }
+}
+
+#[test]
+fn early_migration_copies_window_state_and_webview_data_before_plugins() {
+    // `migrate_dirs` działa przed `tauri::Builder`: plugin stanu okien wczyta wtedy
+    // już przeniesiony `.window-state.json` z pozycjami okien.
+    let root = temp("wczesna");
+    let roaming = root.join("Roaming");
+    let local = root.join("Local");
+    old_data(&roaming);
+    write(
+        &local
+            .join(old::IDENTIFIER)
+            .join("EBWebView")
+            .join("Local Storage")
+            .join("x"),
+        "ls",
+    );
+    let new = roaming.join("pl.tuktuktrack.desktop");
+    let new_local = local.join("pl.tuktuktrack.desktop");
+    let report = migrate_dirs(&new, Some(&new_local));
+    assert_eq!(report.state, DirState::Copied);
+    assert_eq!(read(&new.join(".window-state.json")), "{\"main\":{}}");
+    assert_eq!(
+        read(&new_local.join("EBWebView").join("Local Storage").join("x")),
+        "ls"
+    );
+    // Drugi start: nic do zrobienia.
+    assert_eq!(
+        migrate_dirs(&new, Some(&new_local)).state,
+        DirState::AlreadyMoved
+    );
+}
+
+#[test]
 fn dir_with_both_databases_overwrites_nothing() {
     let root = temp("oba");
     let old_dir = old_data(&root);
@@ -412,6 +482,7 @@ fn credentials_rerun_after_interrupted_move_removes_old_entry() {
 #[derive(Default)]
 struct FakeRegistry {
     values: RefCell<HashMap<(String, String), String>>,
+    binary: RefCell<HashMap<(String, String), Vec<u8>>>,
     fail_set: RefCell<bool>,
     fail_delete_key: RefCell<Vec<String>>,
 }
@@ -427,10 +498,24 @@ impl FakeRegistry {
             .get(&(key.to_string(), name.to_string()))
             .cloned()
     }
+    fn put_binary(&self, key: &str, name: &str, value: &[u8]) {
+        self.binary
+            .borrow_mut()
+            .insert((key.into(), name.into()), value.to_vec());
+    }
+    fn binary_value(&self, key: &str, name: &str) -> Option<Vec<u8>> {
+        self.binary
+            .borrow()
+            .get(&(key.to_string(), name.to_string()))
+            .cloned()
+    }
 }
 impl Registry for FakeRegistry {
     fn get(&self, key: &str, name: &str) -> Result<Option<String>, String> {
         Ok(self.value(key, name))
+    }
+    fn get_binary(&self, key: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
+        Ok(self.binary_value(key, name))
     }
     fn set(&self, key: &str, name: &str, value: &str) -> Result<(), String> {
         if *self.fail_set.borrow() {
@@ -440,6 +525,9 @@ impl Registry for FakeRegistry {
         Ok(())
     }
     fn delete_value(&self, key: &str, name: &str) -> Result<(), String> {
+        self.binary
+            .borrow_mut()
+            .remove(&(key.to_string(), name.to_string()));
         self.values
             .borrow_mut()
             .remove(&(key.to_string(), name.to_string()));
@@ -604,6 +692,67 @@ fn autostart_write_error_keeps_old_entry() {
     assert!(reg.value(RUN_KEY, old::NAME).is_some());
 }
 
+/// Wartość `StartupApproved\Run` po wyłączeniu w Menedżerze zadań (bajt 0x03 i czas).
+const TASK_MANAGER_DISABLED: [u8; 12] =
+    [3, 0, 0, 0, 0x8c, 0x1f, 0x2a, 0x55, 0x10, 0x3b, 0xdb, 0x01];
+/// Wartość włączonego wpisu (zapisuje ją `auto-launch` przy włączeniu).
+const TASK_MANAGER_ENABLED: [u8; 12] = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+
+#[test]
+fn startup_approved_values_follow_auto_launch_rule() {
+    assert!(startup_disabled(&TASK_MANAGER_DISABLED));
+    assert!(!startup_disabled(&TASK_MANAGER_ENABLED));
+    assert!(!startup_disabled(&[3, 0]));
+    assert!(!startup_disabled(&[]));
+}
+
+#[test]
+fn autostart_disabled_in_task_manager_is_not_turned_on() {
+    let reg = FakeRegistry::default();
+    reg.put(
+        RUN_KEY,
+        old::NAME,
+        r#""C:\L\Todo Track\todo-track.exe" --hidden"#,
+    );
+    reg.put_binary(STARTUP_APPROVED_KEY, old::NAME, &TASK_MANAGER_DISABLED);
+    assert_eq!(
+        migrate_autostart(&reg, old::NAME, "TukTuk Track", NEW_EXE),
+        AutostartState::Disabled
+    );
+    // Nowego wpisu nie ma (autostart zostaje wyłączony), stare wpisy usunięte.
+    assert_eq!(reg.value(RUN_KEY, "TukTuk Track"), None);
+    assert_eq!(reg.value(RUN_KEY, old::NAME), None);
+    assert_eq!(reg.binary_value(STARTUP_APPROVED_KEY, old::NAME), None);
+    assert_eq!(reg.binary_value(STARTUP_APPROVED_KEY, "TukTuk Track"), None);
+}
+
+#[test]
+fn autostart_enabled_in_task_manager_is_moved_and_old_override_removed() {
+    let reg = FakeRegistry::default();
+    reg.put(RUN_KEY, old::NAME, r#""C:\L\Todo Track\todo-track.exe""#);
+    reg.put_binary(STARTUP_APPROVED_KEY, old::NAME, &TASK_MANAGER_ENABLED);
+    assert_eq!(
+        migrate_autostart(&reg, old::NAME, "TukTuk Track", NEW_EXE),
+        AutostartState::Moved
+    );
+    assert_eq!(
+        reg.value(RUN_KEY, "TukTuk Track"),
+        Some(format!("\"{NEW_EXE}\""))
+    );
+    assert_eq!(reg.binary_value(STARTUP_APPROVED_KEY, old::NAME), None);
+}
+
+#[test]
+fn autostart_orphaned_old_override_is_removed() {
+    let reg = FakeRegistry::default();
+    reg.put_binary(STARTUP_APPROVED_KEY, old::NAME, &TASK_MANAGER_DISABLED);
+    assert_eq!(
+        migrate_autostart(&reg, old::NAME, "TukTuk Track", NEW_EXE),
+        AutostartState::None
+    );
+    assert_eq!(reg.binary_value(STARTUP_APPROVED_KEY, old::NAME), None);
+}
+
 // ---------------------------------------------------------------------------
 // Całość
 
@@ -743,7 +892,7 @@ fn run_with_credential_error_retries_next_time_and_asks_to_reconnect() {
     let exe = PathBuf::from(NEW_EXE);
     let status = run(&db, &ctx(&dir, &exe), &store, &reg);
     assert_eq!(status.migrated_at, None);
-    assert_eq!(status.reconnect, vec!["Jira".to_string()]);
+    assert_eq!(status.reconnect, vec!["jira".to_string()]);
     assert!(status.message.contains("Jira"));
     assert!(status.message.contains("Połącz"));
     assert!(db

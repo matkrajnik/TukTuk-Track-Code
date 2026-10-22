@@ -748,33 +748,38 @@ Section Install
     ${EndIf}
     ExecWait '$LegacyUninstall /S /UPDATE _?=$LegacyDir' $0
     ${If} $0 <> 0
+      ; Stary deinstalator się nie powiódł: jego plik, skróty i wpis w Programach
+      ; zostają, żeby starą wersję dało się odinstalować ręcznie (bez osieroconej
+      ; instalacji). Dane i tak zostają; TukTuk Track przeniesie je przy starcie.
       DetailPrint "Odinstalowanie ${LEGACYPRODUCTNAME} zakończyło się kodem $0; dane zostają."
-    ${EndIf}
-    Delete "$LegacyDir\uninstall.exe"
-    RMDir "$LegacyDir"
-    !insertmacro IsShortcutTarget "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
-    Pop $0
-    ${If} $0 = 1
-      !insertmacro UnpinShortcut "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
-      Delete "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
-    ${EndIf}
-    ${If} $AppStartMenuFolder != ""
-      !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+      MessageBox MB_OK|MB_ICONEXCLAMATION "Nie udało się odinstalować ${LEGACYPRODUCTNAME} (kod $0). Dane zostaną przeniesione do ${PRODUCTNAME}, a starą wersję możesz odinstalować ręcznie w Ustawieniach Windows → Aplikacje." /SD IDOK
+    ${Else}
+      Delete "$LegacyDir\uninstall.exe"
+      RMDir "$LegacyDir"
+      !insertmacro IsShortcutTarget "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
       Pop $0
       ${If} $0 = 1
-        !insertmacro UnpinShortcut "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
-        Delete "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
+        !insertmacro UnpinShortcut "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
+        Delete "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
       ${EndIf}
+      ${If} $AppStartMenuFolder != ""
+        !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+        Pop $0
+        ${If} $0 = 1
+          !insertmacro UnpinShortcut "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
+          Delete "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
+        ${EndIf}
+      ${EndIf}
+      !insertmacro IsShortcutTarget "$DESKTOP\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro UnpinShortcut "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
+        Delete "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
+      ${EndIf}
+      DeleteRegKey SHCTX "${LEGACYUNINSTKEY}"
+      DeleteRegKey SHCTX "${LEGACYMANUPRODUCTKEY}"
+      DeleteRegKey /ifempty SHCTX "${LEGACYMANUKEY}"
     ${EndIf}
-    !insertmacro IsShortcutTarget "$DESKTOP\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
-    Pop $0
-    ${If} $0 = 1
-      !insertmacro UnpinShortcut "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
-      Delete "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
-    ${EndIf}
-    DeleteRegKey SHCTX "${LEGACYUNINSTKEY}"
-    DeleteRegKey SHCTX "${LEGACYMANUPRODUCTKEY}"
-    DeleteRegKey /ifempty SHCTX "${LEGACYMANUKEY}"
   ${EndIf}
   ; LEGACY-END
 

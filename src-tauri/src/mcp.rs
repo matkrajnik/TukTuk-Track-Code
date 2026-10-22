@@ -991,6 +991,40 @@ pub fn exe_path() -> Option<PathBuf> {
 static LEGACY_MCP_CHECKED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Stary serwer sprzed zmiany nazwy (N1). Trwały znacznik w `settings`
+/// (`legacy_mcp_checked_at`) powstaje, gdy każde wykryte CLI odpowiedziało, a stary
+/// wpis usunięto albo go nie było; potem kolejne starty nie uruchamiają już
+/// dodatkowych procesów CLI. Po błędzie CLI próba wraca przy następnym starcie
+/// (w tym procesie najwyżej raz, i dopiero gdy wykrywanie znalazło jakieś CLI).
+fn remove_legacy_once(app: &tauri::AppHandle, dir: &std::path::Path) {
+    use std::sync::atomic::Ordering;
+    if LEGACY_MCP_CHECKED.load(Ordering::SeqCst) {
+        return;
+    }
+    let database = app.try_state::<crate::Database>();
+    let checked = database
+        .as_ref()
+        .and_then(|db| db.0.lock().ok().map(|db| crate::legacy::mcp_checked(&db)))
+        .unwrap_or(false);
+    if checked {
+        LEGACY_MCP_CHECKED.store(true, Ordering::SeqCst);
+        return;
+    }
+    let detected = ai::detected_cached(app);
+    if !detected.any() {
+        return;
+    }
+    LEGACY_MCP_CHECKED.store(true, Ordering::SeqCst);
+    let cleanup = mcp_register::remove_legacy(&ai::Process, &detected, dir);
+    if cleanup.complete {
+        if let Some(Ok(db)) = database.as_ref().map(|db| db.0.lock()) {
+            if let Err(e) = crate::legacy::mark_mcp_checked(&db, crate::db::now()) {
+                eprintln!("Znacznik starego serwera MCP: {e}");
+            }
+        }
+    }
+}
+
 fn run_sync(app: &tauri::AppHandle) -> Status {
     let Some(state) = app.try_state::<State>() else {
         return Status::default();
@@ -1003,10 +1037,7 @@ fn run_sync(app: &tauri::AppHandle) -> Status {
     // Puste `ai_engine` (jeszcze nie pytano) nie uruchamia żadnego procesu.
     if !settings.ai_engine.is_empty() {
         if let Some(dir) = ai::dir(app).filter(|d| std::fs::create_dir_all(d).is_ok()) {
-            // Stary serwer sprzed zmiany nazwy (N1): raz na uruchomienie aplikacji.
-            if !LEGACY_MCP_CHECKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                mcp_register::remove_legacy(&ai::Process, &ai::detected_cached(app), &dir);
-            }
+            remove_legacy_once(app, &dir);
             entries = mcp_register::sync_all(
                 &ai::Process,
                 &ai::detected_cached(app),

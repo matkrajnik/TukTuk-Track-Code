@@ -284,40 +284,63 @@ pub fn is_legacy_command(command: &str) -> bool {
         .contains(&crate::hooks_config::legacy_names::MCP_EXE.to_lowercase())
 }
 
+/// Wynik usuwania starego serwera MCP sprzed zmiany nazwy (N1).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LegacyCleanup {
+    /// Silniki, z których usunięto stary wpis.
+    pub removed: Vec<Engine>,
+    /// Co najmniej jedno CLI wykryte, każde odpowiedziało, a stary wpis (jeśli był
+    /// nasz) usunięto: sprawdzania nie trzeba powtarzać przy następnych startach.
+    pub complete: bool,
+}
+
 /// Usuwa z wykrytych CLI stary serwer MCP sprzed zmiany nazwy (N1), ale tylko wtedy,
 /// gdy wskazuje stary program (`...\<stary program>.exe`); wpis o tej nazwie
 /// z innym poleceniem zostaje. Najlepszym wysiłkiem: błąd jednego CLI nie przerywa
-/// drugiego. Zwraca silniki, z których usunięto wpis.
-pub fn remove_legacy(runner: &dyn Runner, detected: &Detected, dir: &Path) -> Vec<Engine> {
+/// drugiego, ale wynik nie jest wtedy `complete`.
+pub fn remove_legacy(runner: &dyn Runner, detected: &Detected, dir: &Path) -> LegacyCleanup {
     let name = crate::hooks_config::legacy_names::MCP_SERVER;
     let mut removed = Vec::new();
+    let mut checked = 0;
+    let mut complete = true;
     for engine in [Engine::Claude, Engine::Codex] {
         let Some(cli) = detected.get(engine) else {
             continue;
         };
+        checked += 1;
         let query = match engine {
             Engine::Claude => vec!["mcp".to_string(), "get".to_string(), name.to_string()],
             Engine::Codex => query_args(engine),
         };
         let Ok(output) = runner.run(&spec(cli, query, dir), TIMEOUT) else {
+            complete = false;
             continue;
         };
-        let text = format!(
-            "{}
-{}",
-            output.stdout, output.stderr
-        );
+        let text = format!("{}\n{}", output.stdout, output.stderr);
         let command = match engine {
             Engine::Claude => parse_claude_get(&text),
             Engine::Codex => parse_codex_list_named(&text, name),
         };
-        if command.is_some_and(|c| is_legacy_command(&c))
-            && run_step(runner, cli, remove_args_named(engine, name), dir).is_ok()
-        {
-            removed.push(engine);
+        let answered = match engine {
+            Engine::Claude => command.is_some() || claude_missing(&text),
+            Engine::Codex => output.success,
+        };
+        if !answered {
+            complete = false;
+            continue;
+        }
+        if command.is_some_and(|c| is_legacy_command(&c)) {
+            if run_step(runner, cli, remove_args_named(engine, name), dir).is_ok() {
+                removed.push(engine);
+            } else {
+                complete = false;
+            }
         }
     }
-    removed
+    LegacyCleanup {
+        removed,
+        complete: complete && checked > 0,
+    }
 }
 
 /// Rejestracja we wszystkich wykrytych CLI. `engine_setting` to `ai_engine`: puste

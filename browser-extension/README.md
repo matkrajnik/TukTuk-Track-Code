@@ -21,7 +21,7 @@ Rozpoznanie: `/browse/KEY`, parametr `selectedIssue=KEY`, `/issues/KEY`, a na ko
 
 ## Identyfikator i klucz
 
-Stały identyfikator wynika z pola `key` w `manifest.json` (klucz publiczny RSA). Klucz prywatny, potrzebny tylko do pakowania `.crx`, jest poza repozytorium (u autora w `%USERPROFILE%\.tuktuk-track\browser-extension-key.pem`); pliki `*.pem` i `*.crx` są w `.gitignore`. Ten sam identyfikator jest w `allowed_origins` manifestu hosta (`browser::EXTENSION_ID` w `src-tauri/src/browser.rs`; test Rust sprawdza zgodność z `key`).
+Stały identyfikator wynika z pola `key` w `manifest.json` (klucz publiczny RSA). Klucz prywatny, potrzebny tylko do pakowania `.crx`, jest poza repozytorium (u autora w `%USERPROFILE%\.todo-track\browser-extension-key.pem`; ten plik lokalny nie zmienia nazwy razem z aplikacją, tak jak klucz podpisu `todotrack.key`); pliki `*.pem` i `*.crx` są w `.gitignore`. Ten sam identyfikator jest w `allowed_origins` manifestu hosta (`browser::EXTENSION_ID` w `src-tauri/src/browser.rs`; test Rust sprawdza zgodność z `key`).
 
 ## Testy
 

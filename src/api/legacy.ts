@@ -10,7 +10,7 @@ export interface LegacyStatus {
   migratedAt: number | null;
   /** `none`, `copied`, `alreadyMoved`, `both`, `failed`. */
   dir: string;
-  /** Moduły, których logowanie trzeba połączyć ponownie. */
+  /** Rodzaje logowań do połączenia ponownie (`jira`, `calendar`, `timesheet`, `redmine`); sekcja modułu w Ustawieniach pokazuje „Połącz ponownie”. */
   reconnect: string[];
   /** Zdanie do pokazania w Ustawieniach; pusty tekst: nic do pokazania. */
   message: string;

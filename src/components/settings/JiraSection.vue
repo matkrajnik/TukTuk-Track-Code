@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** Ustawienia → Jira: zapisy, przesuwanie przy starcie, gałęzie i pola na kafelku. */
+import LegacyReconnect from "./LegacyReconnect.vue";
 import { computed, onMounted, ref } from "vue";
 import { Download, Plus } from "lucide-vue-next";
 import { openView } from "../../navigation";
@@ -100,6 +101,7 @@ function moveField(index: number, delta: -1 | 1) {
 <template>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <h2>Jira</h2>
+  <LegacyReconnect kind="jira" />
   <label class="inline-check"
     ><input
       :checked="settings.jiraWrite"

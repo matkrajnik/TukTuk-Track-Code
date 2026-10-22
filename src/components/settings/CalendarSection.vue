@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** Ustawienia → Kalendarz: konto Microsoft (`CalendarSettings`) i tytuły spotkań. */
+import LegacyReconnect from "./LegacyReconnect.vue";
 import CalendarSettings from "../CalendarSettings.vue";
 import type { AppSettings } from "../../settings";
 import { checked, useSettingsSection } from "./section";
@@ -9,6 +10,7 @@ const { busy, error, save } = useSettingsSection(settings);
 <template>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <h2>Kalendarz</h2>
+  <LegacyReconnect kind="calendar" />
   <CalendarSettings />
   <label class="inline-check"
     ><input

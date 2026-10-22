@@ -72,7 +72,7 @@ test("Ustawienia → Uruchamianie: wynik migracji z poprzedniej nazwy", async ({
         key,
         JSON.stringify({
           dir: "both",
-          reconnect: ["Jira"],
+          reconnect: ["jira"],
           message:
             "Znaleziono dane Todo Track i dane TukTuk Track. Używane są dane TukTuk Track.",
         }),
@@ -84,4 +84,33 @@ test("Ustawienia → Uruchamianie: wynik migracji z poprzedniej nazwy", async ({
   await expect(page.getByLabel("Przeniesienie danych")).toContainText(
     "Używane są dane TukTuk Track",
   );
+});
+
+test("Ustawienia: „Połącz ponownie” tylko w sekcjach modułów z nieprzeniesionym logowaniem", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await openSettings(page, "Jira");
+  await expect(page.getByLabel("Połącz ponownie")).toHaveCount(0);
+  await page.evaluate(
+    ([key]) =>
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          dir: "copied",
+          reconnect: ["jira", "redmine"],
+          message: "Nie udało się przenieść logowania: Jira, Redmine.",
+        }),
+      ),
+    [legacyKey],
+  );
+  await page.reload();
+  await openSettings(page, "Jira");
+  await expect(page.getByLabel("Połącz ponownie")).toContainText(
+    "Zaloguj się jeszcze raz",
+  );
+  await openSettings(page, "Redmine");
+  await expect(page.getByLabel("Połącz ponownie")).toHaveCount(1);
+  await openSettings(page, "Kalendarz");
+  await expect(page.getByLabel("Połącz ponownie")).toHaveCount(0);
 });

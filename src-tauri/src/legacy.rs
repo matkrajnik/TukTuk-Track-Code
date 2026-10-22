@@ -28,6 +28,9 @@ pub const MARKER_FILE: &str = "PRZENIESIONO-DO-TUKTUK-TRACK.txt";
 pub const MIGRATED_KEY: &str = "legacy_migrated_at";
 /// Klucz w tabeli `settings`: wynik ostatniej migracji dla Ustawień (JSON).
 pub const STATUS_KEY: &str = "legacy_status";
+/// Klucz w tabeli `settings`: czas (Unix ms) sprawdzenia i usunięcia starego serwera
+/// MCP we wszystkich wykrytych CLI; potem rejestracja MCP już go nie szuka.
+pub const MCP_CHECKED_KEY: &str = "legacy_mcp_checked_at";
 /// Klucz `HKCU` z wpisami uruchamiania z Windows.
 pub const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
@@ -106,11 +109,28 @@ fn copy_tree(src: &Path, dst: &Path, skip: &dyn Fn(&str) -> bool, warnings: &mut
         if from.is_dir() {
             copy_tree(&from, &to, &|_| false, warnings);
         } else if !to.exists() {
-            if let Err(e) = std::fs::copy(&from, &to) {
+            if let Err(e) = copy_file_atomic(&from, &to) {
                 warnings.push(format!("{}: {e}", from.display()));
             }
         }
     }
+}
+
+/// Przyrostek pliku tymczasowego przy kopiowaniu.
+const TEMP_SUFFIX: &str = ".kopiowanie";
+
+/// Kopiuje plik przez plik tymczasowy obok celu i zmianę nazwy: pod docelową nazwą
+/// leży albo pełna kopia, albo nic (przerwane kopiowanie nie zostawia uciętych kopii
+/// zapasowych, które ponowna próba by pominęła).
+fn copy_file_atomic(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut temp_name = to.file_name().unwrap_or_default().to_os_string();
+    temp_name.push(TEMP_SUFFIX);
+    let temp = to.with_file_name(temp_name);
+    let result = std::fs::copy(from, &temp).and_then(|_| std::fs::rename(&temp, to));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// Pliki bazy starego katalogu: główny, `-wal`, `-shm`.
@@ -163,7 +183,7 @@ pub fn migrate_dir(old_dir: &Path, new_dir: &Path) -> DirReport {
             for suffix in ["-wal", "-shm"] {
                 let _ = std::fs::remove_file(new_dir.join(format!("{DB_FILE}{suffix}")));
             }
-            let _ = std::fs::remove_file(new_dir.join(format!("{DB_FILE}.kopiowanie")));
+            let _ = std::fs::remove_file(new_dir.join(format!("{DB_FILE}{TEMP_SUFFIX}")));
             report.state = DirState::Failed;
             report.data_dir = old_dir.to_path_buf();
             report.db_file = old_db_name();
@@ -199,10 +219,8 @@ fn copy_db_dir(old_dir: &Path, new_dir: &Path, warnings: &mut Vec<String>) -> Re
                 .map_err(|e| format!("{}: {e}", from.display()))?;
         }
     }
-    let temp = new_dir.join(format!("{DB_FILE}.kopiowanie"));
     let from = old_dir.join(old::DB_FILE);
-    std::fs::copy(&from, &temp).map_err(|e| format!("{}: {e}", from.display()))?;
-    std::fs::rename(&temp, new_dir.join(DB_FILE)).map_err(|e| format!("{DB_FILE}: {e}"))
+    copy_file_atomic(&from, &new_dir.join(DB_FILE)).map_err(|e| format!("{}: {e}", from.display()))
 }
 
 /// Dane WebView2 (w tym `localStorage`) z `%LOCALAPPDATA%`: kopia tylko wtedy, gdy
@@ -361,6 +379,8 @@ fn kind_label(kind: &str) -> &'static str {
 pub trait Registry {
     fn get(&self, key: &str, name: &str) -> Result<Option<String>, String>;
     fn set(&self, key: &str, name: &str, value: &str) -> Result<(), String>;
+    /// Wartość binarna (`REG_BINARY`, np. `StartupApproved`); `Ok(None)`: jej nie ma.
+    fn get_binary(&self, key: &str, name: &str) -> Result<Option<Vec<u8>>, String>;
     /// Brak wartości to nie błąd.
     fn delete_value(&self, key: &str, name: &str) -> Result<(), String>;
     /// Usuwa klucz z podkluczami; brak klucza to nie błąd.
@@ -380,6 +400,17 @@ impl Registry for Hkcu {
         };
         match key.get_value::<String, _>(name) {
             Ok(value) => Ok(Some(value)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+    fn get_binary(&self, key: &str, name: &str) -> Result<Option<Vec<u8>>, String> {
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        let Ok(key) = RegKey::predef(HKEY_CURRENT_USER).open_subkey(key) else {
+            return Ok(None);
+        };
+        match key.get_raw_value(name) {
+            Ok(value) => Ok(Some(value.bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.to_string()),
         }
@@ -424,6 +455,9 @@ pub struct Hkcu;
 #[cfg(not(windows))]
 impl Registry for Hkcu {
     fn get(&self, _: &str, _: &str) -> Result<Option<String>, String> {
+        Ok(None)
+    }
+    fn get_binary(&self, _: &str, _: &str) -> Result<Option<Vec<u8>>, String> {
         Ok(None)
     }
     fn set(&self, _: &str, _: &str, _: &str) -> Result<(), String> {
@@ -501,11 +535,26 @@ pub enum AutostartState {
     Moved,
     /// Nowy wpis już istnieje: stary tylko usunięto.
     AlreadyThere,
+    /// Stary wpis był wyłączony w Menedżerze zadań: nowego nie utworzono, stary usunięto.
+    Disabled,
     Failed(String),
 }
 
+/// Wyłączenia wpisów `Run` z Menedżera zadań (`HKCU`).
+pub const STARTUP_APPROVED_KEY: &str =
+    r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
+/// Czy wartość `StartupApproved\Run` oznacza wpis wyłączony w Menedżerze zadań. Ta sama
+/// reguła co w `auto-launch` (`is_enabled`): wpis jest włączony, gdy ostatnie osiem
+/// bajtów (czas wyłączenia) to zera; krótsza wartość niczego nie wyłącza.
+pub fn startup_disabled(bytes: &[u8]) -> bool {
+    bytes.len() >= 8 && bytes.iter().rev().take(8).any(|b| *b != 0)
+}
+
 /// Zamienia wpis `Run\<stara nazwa>` na `Run\<nowa nazwa>`; stary znika dopiero po
-/// odczycie kontrolnym nowego.
+/// odczycie kontrolnym nowego. Wpis wyłączony w Menedżerze zadań nie jest przenoszony
+/// (autostart zostaje wyłączony, jak wybrał użytkownik), a stara wartość
+/// `StartupApproved\Run` jest usuwana razem ze starym wpisem.
 pub fn migrate_autostart(
     reg: &dyn Registry,
     old_name: &str,
@@ -514,9 +563,28 @@ pub fn migrate_autostart(
 ) -> AutostartState {
     let old_value = match reg.get(RUN_KEY, old_name) {
         Ok(Some(value)) => value,
-        Ok(None) => return AutostartState::None,
+        Ok(None) => {
+            // Osierocone wyłączenie bez wpisu `Run` niczemu nie służy.
+            return match reg.delete_value(STARTUP_APPROVED_KEY, old_name) {
+                Ok(()) => AutostartState::None,
+                Err(e) => AutostartState::Failed(e),
+            };
+        }
         Err(e) => return AutostartState::Failed(e),
     };
+    let disabled = match reg.get_binary(STARTUP_APPROVED_KEY, old_name) {
+        Ok(bytes) => bytes.is_some_and(|b| startup_disabled(&b)),
+        Err(e) => return AutostartState::Failed(e),
+    };
+    if disabled {
+        if let Err(e) = reg.delete_value(RUN_KEY, old_name) {
+            return AutostartState::Failed(e);
+        }
+        return match reg.delete_value(STARTUP_APPROVED_KEY, old_name) {
+            Ok(()) => AutostartState::Disabled,
+            Err(e) => AutostartState::Failed(e),
+        };
+    }
     let existing = match reg.get(RUN_KEY, new_name) {
         Ok(existing) => existing,
         Err(e) => return AutostartState::Failed(e),
@@ -535,7 +603,10 @@ pub fn migrate_autostart(
         }
         AutostartState::Moved
     };
-    match reg.delete_value(RUN_KEY, old_name) {
+    if let Err(e) = reg.delete_value(RUN_KEY, old_name) {
+        return AutostartState::Failed(e);
+    }
+    match reg.delete_value(STARTUP_APPROVED_KEY, old_name) {
         Ok(()) => state,
         Err(e) => AutostartState::Failed(e),
     }
@@ -552,7 +623,8 @@ pub struct Status {
     pub migrated_at: Option<i64>,
     /// `none`, `copied`, `alreadyMoved`, `both`, `failed`.
     pub dir: String,
-    /// Moduły, których logowanie trzeba połączyć ponownie.
+    /// Rodzaje poświadczeń (`jira`, `calendar`, `timesheet`, `redmine`), których logowanie
+    /// trzeba połączyć ponownie; sekcja danego modułu w Ustawieniach pokazuje „Połącz ponownie”.
     pub reconnect: Vec<String>,
     /// Zdanie do pokazania w Ustawieniach (pusty tekst: nic do pokazania).
     pub message: String,
@@ -589,7 +661,11 @@ fn message(dir: DirState, reconnect: &[String]) -> String {
     if !reconnect.is_empty() {
         parts.push(format!(
             "Nie udało się przenieść logowania: {}. Połącz te konta ponownie w Ustawieniach.",
-            reconnect.join(", ")
+            reconnect
+                .iter()
+                .map(|k| kind_label(k))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     parts.join(" ")
@@ -601,6 +677,25 @@ fn write_setting(db: &Connection, key: &str, value: &str) -> rusqlite::Result<()
         [key, value],
     )
     .map(|_| ())
+}
+
+fn read_setting(db: &Connection, key: &str) -> Option<String> {
+    db.query_row("SELECT value FROM settings WHERE key=?1", [key], |r| {
+        r.get::<_, String>(0)
+    })
+    .optional()
+    .ok()
+    .flatten()
+}
+
+/// Czy stary serwer MCP został już sprawdzony i usunięty we wszystkich wykrytych CLI.
+pub fn mcp_checked(db: &Connection) -> bool {
+    read_setting(db, MCP_CHECKED_KEY).is_some()
+}
+
+/// Zapisuje trwały znacznik sprawdzenia starego serwera MCP (czas Unix ms).
+pub fn mark_mcp_checked(db: &Connection, now: i64) -> rusqlite::Result<()> {
+    write_setting(db, MCP_CHECKED_KEY, &now.to_string())
 }
 
 /// Zapisany wynik ostatniej migracji (domyślny, gdy jej jeszcze nie było).
@@ -660,7 +755,7 @@ pub fn run(db: &Connection, ctx: &Ctx, store: &dyn CredentialStore, reg: &dyn Re
         match &result.state {
             CredState::Failed(e) => {
                 log(&format!("poświadczenie {}: {e}", result.kind));
-                reconnect.push(kind_label(result.kind).to_string());
+                reconnect.push(result.kind.to_string());
                 failed = true;
             }
             CredState::MovedKeptOld(e) => {
@@ -707,30 +802,79 @@ pub fn run(db: &Connection, ctx: &Ctx, store: &dyn CredentialStore, reg: &dyn Re
     status
 }
 
-/// Migracja katalogu danych na prawdziwych ścieżkach aplikacji (przed otwarciem
-/// bazy); dane WebView2 najlepszym wysiłkiem.
-pub fn migrate_dirs_native(app: &tauri::AppHandle) -> Result<DirReport, String> {
-    use tauri::Manager;
-    let new_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let report = match old_dir_for(&new_dir) {
-        Some(old_dir) => migrate_dir(&old_dir, &new_dir),
+/// Migracja katalogu danych `new_dir` (i najlepszym wysiłkiem danych WebView2 w
+/// `new_local`) ze starych katalogów obok nich.
+pub fn migrate_dirs(new_dir: &Path, new_local: Option<&Path>) -> DirReport {
+    let report = match old_dir_for(new_dir) {
+        Some(old_dir) => migrate_dir(&old_dir, new_dir),
         None => DirReport {
             state: DirState::None,
-            data_dir: new_dir.clone(),
+            data_dir: new_dir.to_path_buf(),
             db_file: DB_FILE,
             warnings: Vec::new(),
         },
     };
     if report.state == DirState::Copied {
-        if let Ok(new_local) = app.path().app_local_data_dir() {
-            if let Some(old_local) = old_dir_for(&new_local) {
-                for warning in migrate_local(&old_local, &new_local) {
+        if let Some(new_local) = new_local {
+            if let Some(old_local) = old_dir_for(new_local) {
+                for warning in migrate_local(&old_local, new_local) {
                     log(&format!("dane WebView2: {warning}"));
                 }
             }
         }
     }
-    Ok(report)
+    report
+}
+
+/// Migracja wykonana przed `tauri::Builder` (zanim pluginy wczytają swoje pliki).
+#[derive(Clone, Debug)]
+pub struct Early {
+    /// Katalog danych, dla którego liczono migrację.
+    pub new_dir: PathBuf,
+    pub report: DirReport,
+}
+
+/// Katalogi danych aplikacji wyliczone bez `AppHandle`: `%APPDATA%\<identyfikator>`
+/// i `%LOCALAPPDATA%\<identyfikator>` (tak jak `app_data_dir`, `app_config_dir` i
+/// `app_local_data_dir` Tauri na Windows). `None` poza Windows albo bez zmiennych.
+pub fn early_dirs(
+    identifier: &str,
+    var: &dyn Fn(&str) -> Option<String>,
+) -> Option<(PathBuf, Option<PathBuf>)> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let roaming = var("APPDATA").filter(|v| !v.is_empty())?;
+    let local = var("LOCALAPPDATA")
+        .filter(|v| !v.is_empty())
+        .map(|v| PathBuf::from(v).join(identifier));
+    Some((PathBuf::from(roaming).join(identifier), local))
+}
+
+/// Migracja katalogu danych przed rejestracją pluginów: `tauri-plugin-window-state`
+/// wczytuje `.window-state.json` w swoim `setup`, przed `setup` aplikacji, więc stan
+/// okien z poprzedniej nazwy musi już leżeć w nowym katalogu. Bez wyliczonych
+/// katalogów migracja odbywa się w `setup` ([`migrate_dirs_native`]).
+pub fn migrate_dirs_early(identifier: &str) -> Option<Early> {
+    let (new_dir, new_local) = early_dirs(identifier, &|name| std::env::var(name).ok())?;
+    let report = migrate_dirs(&new_dir, new_local.as_deref());
+    Some(Early { new_dir, report })
+}
+
+/// Migracja katalogu danych na prawdziwych ścieżkach aplikacji (przed otwarciem
+/// bazy); dane WebView2 najlepszym wysiłkiem. Wynik migracji sprzed `tauri::Builder`
+/// jest używany, gdy dotyczył tego samego katalogu.
+pub fn migrate_dirs_native(
+    app: &tauri::AppHandle,
+    early: Option<Early>,
+) -> Result<DirReport, String> {
+    use tauri::Manager;
+    let new_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    if let Some(early) = early.filter(|e| e.new_dir == new_dir) {
+        return Ok(early.report);
+    }
+    let new_local = app.path().app_local_data_dir().ok();
+    Ok(migrate_dirs(&new_dir, new_local.as_deref()))
 }
 
 /// Reszta migracji na prawdziwym rejestrze i Menedżerze poświadczeń.

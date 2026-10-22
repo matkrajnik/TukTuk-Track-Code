@@ -1,5 +1,6 @@
 <script setup lang="ts">
 /** Ustawienia → Timesheet: konto TS (`TimesheetSettings`) i przełącznik wysyłki. */
+import LegacyReconnect from "./LegacyReconnect.vue";
 import TimesheetSettings from "../TimesheetSettings.vue";
 import type { AppSettings } from "../../settings";
 import { checked, useSettingsSection } from "./section";
@@ -9,6 +10,7 @@ const { busy, error, save } = useSettingsSection(settings);
 <template>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <h2>Timesheet (TS)</h2>
+  <LegacyReconnect kind="timesheet" />
   <TimesheetSettings>
     <template #send>
       <h3>Wysyłka</h3>

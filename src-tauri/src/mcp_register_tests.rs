@@ -456,7 +456,9 @@ fn legacy_server_is_removed_from_claude_and_codex() {
             .into_boxed_str(),
     );
     let claude = claude_with(claude_text, true);
-    let removed = remove_legacy(&claude, &detected(true, false), dir());
+    let cleanup = remove_legacy(&claude, &detected(true, false), dir());
+    assert!(cleanup.complete);
+    let removed = cleanup.removed;
     assert_eq!(removed, vec![Engine::Claude]);
     assert_eq!(
         claude.args(),
@@ -466,7 +468,9 @@ fn legacy_server_is_removed_from_claude_and_codex() {
         ]
     );
     let codex = codex_with(codex_text);
-    let removed = remove_legacy(&codex, &detected(false, true), dir());
+    let cleanup = remove_legacy(&codex, &detected(false, true), dir());
+    assert!(cleanup.complete);
+    let removed = cleanup.removed;
     assert_eq!(removed, vec![Engine::Codex]);
     assert_eq!(
         codex.args(),
@@ -481,22 +485,29 @@ fn legacy_cleanup_leaves_other_servers_with_the_same_name() {
     let other: &'static str =
         Box::leak(format!("{name}:\n  Command: C:\\Inne\\serwer.exe\n").into_boxed_str());
     let claude = claude_with(other, true);
-    assert!(remove_legacy(&claude, &detected(true, false), dir()).is_empty());
+    let cleanup = remove_legacy(&claude, &detected(true, false), dir());
+    assert!(cleanup.removed.is_empty() && cleanup.complete);
     assert_eq!(claude.count(), 1);
     // Brak starego wpisu: tylko odczyt.
     let missing = claude_with(CLAUDE_MISSING, false);
-    assert!(remove_legacy(&missing, &detected(true, false), dir()).is_empty());
+    let cleanup = remove_legacy(&missing, &detected(true, false), dir());
+    assert!(cleanup.removed.is_empty() && cleanup.complete);
     assert_eq!(missing.count(), 1);
     // Nowy serwer nie jest starym.
     let current = codex_with(CODEX_LIST);
-    assert!(remove_legacy(&current, &detected(false, true), dir()).is_empty());
+    let cleanup = remove_legacy(&current, &detected(false, true), dir());
+    assert!(cleanup.removed.is_empty() && cleanup.complete);
     assert_eq!(current.count(), 1);
 }
 
 #[test]
 fn legacy_cleanup_without_clis_runs_nothing_and_survives_errors() {
     let never = Fake::new(|_| panic!("brak CLI: nic nie powinno się uruchomić"));
-    assert!(remove_legacy(&never, &detected(false, false), dir()).is_empty());
+    // Bez wykrytych CLI nie ma czego sprawdzić: bez trwałego znacznika.
+    assert_eq!(
+        remove_legacy(&never, &detected(false, false), dir()),
+        LegacyCleanup::default()
+    );
     // Błąd uruchomienia jednego CLI nie przerywa drugiego.
     let name = crate::hooks_config::legacy_names::MCP_SERVER;
     let exe = legacy_exe_path();
@@ -512,6 +523,35 @@ fn legacy_cleanup_without_clis_runs_nothing_and_survives_errors() {
     });
     assert_eq!(
         remove_legacy(&runner, &detected(true, true), dir()),
-        vec![Engine::Codex]
+        LegacyCleanup {
+            removed: vec![Engine::Codex],
+            // Claude nie odpowiedział: sprawdzenie wróci przy następnym starcie.
+            complete: false,
+        }
     );
+}
+
+#[test]
+fn legacy_cleanup_is_incomplete_after_failed_removal_or_unknown_answer() {
+    let name = crate::hooks_config::legacy_names::MCP_SERVER;
+    let exe = legacy_exe_path();
+    let claude_text: &'static str =
+        Box::leak(format!("{name}:\n  Command: {exe}\n").into_boxed_str());
+    // Usunięcie starego wpisu się nie udało.
+    let runner = Fake::new(move |spec| {
+        if is(spec, "get") {
+            Ok(out(true, claude_text, ""))
+        } else {
+            Ok(out(false, "", "odmowa"))
+        }
+    });
+    let cleanup = remove_legacy(&runner, &detected(true, false), dir());
+    assert!(cleanup.removed.is_empty());
+    assert!(!cleanup.complete);
+    // Nieznana odpowiedź `claude mcp get` (np. błąd logowania) to nie „brak wpisu”.
+    let unknown = Fake::new(|_| Ok(out(false, "", "Error: something went wrong")));
+    assert!(!remove_legacy(&unknown, &detected(true, false), dir()).complete);
+    // Błąd `codex mcp list` też.
+    let codex = Fake::new(|_| Ok(out(false, "", "błąd")));
+    assert!(!remove_legacy(&codex, &detected(false, true), dir()).complete);
 }

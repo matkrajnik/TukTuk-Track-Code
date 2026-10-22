@@ -402,6 +402,10 @@ fn add_session(
     Ok(result)
 }
 fn main() {
+    let context = tauri::generate_context!();
+    // Katalog danych z poprzedniej nazwy aplikacji (N1) przed pluginami: plugin stanu
+    // okien wczytuje swój plik w `setup` pluginu, przed `setup` aplikacji.
+    let early_migration = legacy::migrate_dirs_early(&context.config().identifier);
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(
@@ -444,7 +448,7 @@ fn main() {
         }))
         .setup(|app| {
             // Dane z poprzedniej nazwy aplikacji (N1) przed otwarciem bazy.
-            let migrated = legacy::migrate_dirs_native(app.handle())?;
+            let migrated = legacy::migrate_dirs_native(app.handle(), early_migration)?;
             let dir = migrated.data_dir.clone();
             std::fs::create_dir_all(&dir)?;
             let path = dir.join(migrated.db_file);
@@ -736,7 +740,7 @@ fn main() {
             timesheet::ts_project_map,
             timesheet::ts_set_project_map
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("Nie udało się uruchomić TukTuk Track")
         .run(|app, event| {
             // Zamknięcie aplikacji kończy rozmowę czatu i jej proces CLI (A3).
