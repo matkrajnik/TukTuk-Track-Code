@@ -12,3 +12,5 @@ playwright-report/
 *.key
 # Stan i wyniki skilla /backlog-run (lokalne, poza repozytorium).
 .claude/backlog-run/
+# Zależności runtime hooków ECC (npm install --prefix .claude, patrz .claude/ecc/README.md).
+.claude/node_modules/
