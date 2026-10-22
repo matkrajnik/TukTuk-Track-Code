@@ -397,11 +397,21 @@ pub fn decide(
 // ---------------------------------------------------------------------------
 // Integracja z aplikacją
 
-/// Pamięć sesji i kolejka wywołań (jedno naraz, żeby „busy” nie gubiło sesji).
+/// Pamięć sesji i kolejki wywołań (jedno naraz, żeby „busy” nie gubiło sesji
+/// ani pytań o zadanie TS z kilku pól naraz).
 #[derive(Default)]
 pub struct State {
     memory: Mutex<Memory>,
     worker: Mutex<()>,
+    /// Kolejka „Podpowiedz” (zadanie TS): kolejne kliknięcia czekają na swoją
+    /// kolej zamiast dostać błąd zajętości z `ai::acquire`.
+    ts_turn: Mutex<()>,
+}
+
+/// Uruchamia `f` w kolejce `turn`: wywołania nie nakładają się, tylko czekają.
+pub fn in_turn<T>(turn: &Mutex<()>, f: impl FnOnce() -> T) -> T {
+    let _turn = turn.lock().unwrap_or_else(|e| e.into_inner());
+    f()
 }
 
 /// Rejestruje stan modułu; wołać przed utworzeniem okien.
@@ -540,9 +550,32 @@ fn spawn(app: &tauri::AppHandle, job: Job) {
 // ---------------------------------------------------------------------------
 // Zadanie TS dla zadania
 
+/// Sprawdza dzień, przełącznik i listę oraz czyta zadanie z bazy (wspólne dla
+/// pytania i podglądu „Pokaż, co zostanie wysłane”).
+fn ts_request(
+    app: &tauri::AppHandle,
+    task_id: i64,
+    day: &str,
+    options: &[TsOption],
+) -> Result<TsQuery, String> {
+    timesheet::check_date(day)?;
+    if !crate::settings::current(app).ai_assign_suggest {
+        return Err(OFF_MESSAGE.to_string());
+    }
+    if options.is_empty() {
+        return Err("Brak listy zadań TS: połącz konto TS i odśwież listę.".to_string());
+    }
+    let database = app.state::<crate::Database>();
+    let conn = database.0.lock().map_err(|e| e.to_string())?;
+    let snapshot = db::snapshot(&conn).map_err(|e| e.to_string())?;
+    ts_query(&snapshot.tasks, task_id, day).ok_or_else(|| "Nie znaleziono zadania.".to_string())
+}
+
 /// Pytanie o zadanie TS dla zadania lokalnego; `options` to lista zadań TS
 /// z formularza dnia, którą interfejs już ma. Zwraca sugestię (zapis dopiero po
-/// wyborze użytkownika); wywołanie tylko po kliknięciu „Podpowiedz”.
+/// wyborze użytkownika); wywołanie tylko po kliknięciu „Podpowiedz”. Pytania
+/// z kilku pól naraz czekają w kolejce (`State::ts_turn`), a nie kończą się
+/// błędem zajętości.
 #[tauri::command]
 pub async fn ai_suggest_ts_task(
     app: tauri::AppHandle,
@@ -551,24 +584,38 @@ pub async fn ai_suggest_ts_task(
     options: Vec<TsOption>,
 ) -> Result<TsPick, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        timesheet::check_date(&day)?;
-        if !crate::settings::current(&app).ai_assign_suggest {
-            return Err(OFF_MESSAGE.to_string());
-        }
-        if options.is_empty() {
-            return Err("Brak listy zadań TS: połącz konto TS i odśwież listę.".to_string());
-        }
-        let query = {
-            let database = app.state::<crate::Database>();
-            let conn = database.0.lock().map_err(|e| e.to_string())?;
-            let snapshot = db::snapshot(&conn).map_err(|e| e.to_string())?;
-            ts_query(&snapshot.tasks, task_id, &day).ok_or("Nie znaleziono zadania.")?
+        let query = ts_request(&app, task_id, &day, &options)?;
+        let pick = || {
+            ts_pick(
+                &|kind, prompt, schema| ai::ask(&app, kind, Tier::Fast, prompt, schema),
+                &query,
+                &options,
+            )
         };
-        ts_pick(
-            &|kind, prompt, schema| ai::ask(&app, kind, Tier::Fast, prompt, schema),
-            &query,
-            &options,
-        )
+        match app.try_state::<State>() {
+            Some(state) => in_turn(&state.ts_turn, pick),
+            None => pick(),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// „Pokaż, co zostanie wysłane” przy „Podpowiedz”: treść pytania o zadanie TS
+/// po filtrze danych osobowych, ta sama co w [`ai_suggest_ts_task`]; nic nie
+/// wywołuje i nic nie wysyła.
+#[tauri::command]
+pub async fn ai_suggest_ts_preview(
+    app: tauri::AppHandle,
+    task_id: i64,
+    day: String,
+    options: Vec<TsOption>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let query = ts_request(&app, task_id, &day, &options)?;
+        let settings = crate::settings::current(&app);
+        let dict = ai::dictionary(&app, &settings);
+        Ok(crate::ai_privacy::redact(&ts_text(&query, &options), &dict).0)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -592,8 +639,14 @@ pub fn ts_pick(
     options: &[TsOption],
 ) -> Result<TsPick, String> {
     let options = &options[..options.len().min(TS_MAX)];
-    let answer = ask(KIND_TS_TASK, &ts_prompt(query, options), &ts_schema())?;
+    let answer = ask(KIND_TS_TASK, &ts_text(query, options), &ts_schema())?;
     Ok(parse_ts(&answer, options))
+}
+
+/// Treść pytania o zadanie TS przed filtrem (lista przycięta do [`TS_MAX`]);
+/// tę samą treść pokazuje „Pokaż, co zostanie wysłane”.
+pub fn ts_text(query: &TsQuery, options: &[TsOption]) -> String {
+    ts_prompt(query, &options[..options.len().min(TS_MAX)])
 }
 
 #[cfg(test)]

@@ -707,3 +707,80 @@ fn ts_pick_returns_errors_from_the_model_call() {
     .unwrap_err();
     assert_eq!(err, ai::TIMED_OUT);
 }
+
+// ---------------------------------------------------------------------------
+// Kolejka „Podpowiedz” i podgląd wysyłanego tekstu
+
+fn ts_options() -> Vec<TsOption> {
+    vec![TsOption {
+        id: "1103".into(),
+        name: "Code review".into(),
+        project: "Foundation".into(),
+    }]
+}
+
+#[test]
+fn ts_questions_in_turn_wait_instead_of_failing_busy() {
+    // Dwa pola „Podpowiedz” klikają naraz: drugie pytanie czeka na pierwsze
+    // zamiast dostać błąd zajętości z `ai::acquire`.
+    let runner = Fake::new(|_| {
+        std::thread::sleep(Duration::from_millis(150));
+        Ok(Output {
+            success: true,
+            stdout: claude_reply(json!({
+                "tsTaskId": "1103", "confidence": 0.9, "reason": "Pasuje."
+            })),
+            stderr: String::new(),
+        })
+    });
+    let state = AiState::default();
+    let turn = StdMutex::new(());
+    let d = dict();
+    let options = ts_options();
+    let results: Vec<Result<TsPick, String>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = ["Code review", "Przegląd API"]
+            .into_iter()
+            .map(|title| {
+                let (state, runner, d, turn, options) = (&state, &runner, &d, &turn, &options);
+                scope.spawn(move || {
+                    let ask = ask_with(state, runner, d);
+                    let query = TsQuery {
+                        title: title.into(),
+                        ..TsQuery::default()
+                    };
+                    in_turn(turn, || ts_pick(&ask, &query, options))
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert_eq!(runner.count(), 2);
+    for result in results {
+        assert_eq!(result.unwrap().ts_task_id.as_deref(), Some("1103"));
+    }
+}
+
+#[test]
+fn ts_preview_text_is_the_question_sent_to_the_model() {
+    let runner = Fake::answering(json!({ "tsTaskId": null, "confidence": 0.1, "reason": "" }));
+    let state = AiState::default();
+    let d = dict();
+    let ask = ask_with(&state, &runner, &d);
+    let query = TsQuery {
+        title: "Rozmowa z Janem Kowalskim".into(),
+        note: "Ustalenia z Janem Kowalskim".into(),
+        ..TsQuery::default()
+    };
+    let mut options = ts_options();
+    options.extend((0..TS_MAX).map(|i| TsOption {
+        id: format!("x{i}"),
+        name: format!("Zadanie {i}"),
+        project: String::new(),
+    }));
+    ts_pick(&ask, &query, &options).unwrap();
+    let preview = crate::ai_privacy::redact(&ts_text(&query, &options), &d).0;
+    assert!(!preview.contains("Kowalsk"), "{preview}");
+    assert!(runner.stdin().contains(&preview));
+    // Lista przycięta jak w pytaniu.
+    assert!(!preview.contains(&format!("\"x{}\"", TS_MAX - 1)));
+}

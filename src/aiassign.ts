@@ -41,3 +41,16 @@ export async function aiSuggestTsTask(
   if (desktop) return invoke("ai_suggest_ts_task", { taskId, day, options });
   return aiSim.aiSuggestTsTask(taskId, day, options);
 }
+
+/**
+ * `ai_suggest_ts_preview`: „Pokaż, co zostanie wysłane” przy „Podpowiedz” —
+ * treść pytania o zadanie TS po filtrze danych osobowych; nic nie wysyła.
+ */
+export async function aiSuggestTsPreview(
+  taskId: number,
+  day: string,
+  options: TsOption[],
+): Promise<string> {
+  if (desktop) return invoke("ai_suggest_ts_preview", { taskId, day, options });
+  return aiSim.aiSuggestTsPreview(taskId, day, options);
+}

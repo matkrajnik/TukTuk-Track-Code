@@ -631,6 +631,7 @@ fn main() {
             ai::ai_redact_preview,
             ai::ai_test,
             assign::ai_suggest_ts_task,
+            assign::ai_suggest_ts_preview,
             ai_chat::ai_chat_send,
             ai_chat::ai_chat_stop,
             ai_chat::ai_chat_reset,

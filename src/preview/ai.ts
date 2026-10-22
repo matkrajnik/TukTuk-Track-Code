@@ -9,7 +9,8 @@
  *   (`{ test: { error: "login" } }`); bez wpisu wywołanie kończy się sukcesem.
  *   Asystent przypisań (A4): `assign: { value: { taskId, confidence, reason } }` dla
  *   sesji agentów, `ts_task: { value, values: { "<id zadania>": … } }` dla zadań TS
- *   (`values` ma pierwszeństwo przed `value`),
+ *   (`values` ma pierwszeństwo przed `value`); `delayMs` we wpisie wydłuża wywołanie
+ *   (dwa wywołania jednego rodzaju naraz dają błąd zajętości jak `ai::acquire`),
  * - `chat.replies`: skryptowane odpowiedzi czatu (A3) `[{ match, text, tools, proposal }]`,
  *   sprawdzane przed wzorcami domyślnymi; odpowiedź idzie zdarzeniami okna jak `ai-chat-event`
  *   (`chat.stepMs` zwalnia odstęp między zdarzeniami),
@@ -130,15 +131,18 @@ export async function aiRedactPreview(text: string): Promise<string> {
   return out;
 }
 
+/** Wpis skryptu dla rodzaju wywołania. */
+function scriptEntry(kind: string) {
+  const script = stored().script;
+  return script && typeof script === "object"
+    ? ((script as Record<string, unknown>)[kind] as
+        | { value?: unknown; error?: string; delayMs?: unknown }
+        | undefined)
+    : undefined;
+}
 /** Odpowiedź ze skryptu albo błąd po polsku (jak `ai::failure_message`). */
 function scripted(kind: string, chosen: string, key = ""): unknown {
-  const script = stored().script;
-  const entry =
-    script && typeof script === "object"
-      ? ((script as Record<string, unknown>)[kind] as
-          | { value?: unknown; error?: string }
-          | undefined)
-      : undefined;
+  const entry = scriptEntry(kind);
   const keyed = (entry as { values?: Record<string, unknown> } | undefined)?.values?.[key];
   switch (entry?.error) {
     case "login":
@@ -175,12 +179,18 @@ async function record(kind: string, prompt: string, error: string) {
 function errorCode(message: string): string {
   if (message === aiMessages.timeout) return "timeout";
   if (message === aiMessages.schema) return "schema";
+  if (message === aiMessages.busy) return "busy";
   if (message.includes("nie jest zalogowany")) return "login";
   if (message.includes("Limit subskrypcji")) return "limit";
   return "error";
 }
 
-/** Wywołanie jednorazowe w podglądzie (`ai::ask`): odpowiedź ze skryptu. */
+/** Rodzaje wywołań w toku (symulacja `ai::acquire`). */
+const running = new Set<string>();
+/**
+ * Wywołanie jednorazowe w podglądzie (`ai::ask`): odpowiedź ze skryptu. Drugie
+ * wywołanie tego samego rodzaju w trakcie pierwszego to błąd zajętości.
+ */
 export async function aiAsk(
   kind: string,
   prompt: string,
@@ -201,7 +211,16 @@ export async function aiAsk(
         : aiMessages.notFoundAny,
     );
   }
+  // Jedno wywołanie danego rodzaju naraz, jak `ai::acquire`.
+  if (running.has(kind)) {
+    await record(kind, prompt, "busy");
+    throw new Error(aiMessages.busy);
+  }
+  running.add(kind);
   try {
+    const delay = scriptEntry(kind)?.delayMs;
+    if (typeof delay === "number" && delay > 0)
+      await new Promise((resolve) => setTimeout(resolve, delay));
     const value = scripted(kind, chosen, key);
     await record(kind, prompt, "");
     return value;
@@ -209,7 +228,18 @@ export async function aiAsk(
     const message = e instanceof Error ? e.message : String(e);
     await record(kind, prompt, errorCode(message));
     throw e;
+  } finally {
+    running.delete(kind);
   }
+}
+
+/** Kolejki wywołań jednego rodzaju (jak muteksy w `assign::State`). */
+const turns = new Map<string, Promise<unknown>>();
+/** Uruchamia `f` po zakończeniu poprzedniego wywołania w kolejce `name`. */
+function inTurn<T>(name: string, f: () => Promise<T>): Promise<T> {
+  const run = (turns.get(name) ?? Promise.resolve()).then(f);
+  turns.set(name, run.catch(() => undefined));
+  return run;
 }
 
 /** `ai_test` w podglądzie: próbne wywołanie z Ustawień. */
@@ -448,7 +478,8 @@ ${JSON.stringify({
       openTasks: tasks,
     })}`;
     try {
-      const value = (await aiAsk("assign", prompt)) as {
+      // Sesje czekają w kolejce (`assign::State::worker`).
+      const value = (await inTurn("assign", () => aiAsk("assign", prompt))) as {
         taskId?: unknown;
       } | null;
       const id = value?.taskId;
@@ -465,19 +496,15 @@ ${JSON.stringify({
   return run;
 }
 
-/** `ai_suggest_ts_task` w podglądzie: pytanie o zadanie TS z listy `options`. */
-export async function aiSuggestTsTask(
-  taskId: number,
-  day: string,
-  options: TsOption[],
-): Promise<TsSuggestion> {
+/** Treść pytania o zadanie TS (`assign::ts_request` + `ts_text`) albo błąd jak w aplikacji. */
+async function tsPrompt(taskId: number, day: string, options: TsOption[]): Promise<string> {
   if (settings().aiAssignSuggest === false)
     throw new Error("Podpowiedzi przypisań są wyłączone w Ustawieniach → Asystent AI.");
   if (!options.length)
     throw new Error("Brak listy zadań TS: połącz konto TS i odśwież listę.");
   const task = (await read()).tasks.find((t) => t.id === taskId);
   if (!task) throw new Error("Nie znaleziono zadania.");
-  const prompt = `Dane:
+  return `Dane:
 ${JSON.stringify({
     task: {
       title: task.title,
@@ -487,6 +514,32 @@ ${JSON.stringify({
     },
     tsTasks: options,
   })}`;
+}
+
+/** `ai_suggest_ts_preview`: treść pytania o zadanie TS po filtrze nazw; nic nie wysyła. */
+export async function aiSuggestTsPreview(
+  taskId: number,
+  day: string,
+  options: TsOption[],
+): Promise<string> {
+  return aiRedactPreview(await tsPrompt(taskId, day, options));
+}
+
+/** `ai_suggest_ts_task` w podglądzie: pytanie o zadanie TS z listy `options`. */
+export function aiSuggestTsTask(
+  taskId: number,
+  day: string,
+  options: TsOption[],
+): Promise<TsSuggestion> {
+  // Pytania z kilku pól czekają w kolejce (`assign::State::ts_turn`).
+  return inTurn("ts_task", () => suggestTs(taskId, day, options));
+}
+async function suggestTs(
+  taskId: number,
+  day: string,
+  options: TsOption[],
+): Promise<TsSuggestion> {
+  const prompt = await tsPrompt(taskId, day, options);
   const value = (await aiAsk("ts_task", prompt, String(taskId))) as {
     tsTaskId?: unknown;
     confidence?: unknown;

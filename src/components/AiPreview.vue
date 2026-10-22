@@ -10,7 +10,12 @@ import { aiRedactPreview } from "../store";
 
 const props = defineProps<{
   /** Tekst przed filtrem (prompt, wiadomość czatu). */
-  text: string;
+  text?: string;
+  /**
+   * Zamiast `text`: wczytuje tekst już po filtrze (np. treść pytania budowana
+   * w Ruście, `ai_suggest_ts_preview`). Zmiana funkcji wczytuje tekst ponownie.
+   */
+  load?: () => Promise<string>;
 }>();
 const open = ref(false);
 const sent = ref("");
@@ -18,10 +23,12 @@ const error = ref("");
 /** Ostatnie żądanie: wolniejsza odpowiedź nie nadpisuje nowszej. */
 let latest = 0;
 
-async function load() {
+async function refresh() {
   const id = ++latest;
   try {
-    const result = await aiRedactPreview(props.text);
+    const result = props.load
+      ? await props.load()
+      : await aiRedactPreview(props.text ?? "");
     if (id !== latest) return;
     sent.value = result;
     error.value = "";
@@ -33,14 +40,11 @@ async function load() {
 }
 function toggle(event: Event) {
   open.value = (event.target as HTMLDetailsElement).open;
-  if (open.value) void load();
+  if (open.value) void refresh();
 }
-watch(
-  () => props.text,
-  () => {
-    if (open.value) void load();
-  },
-);
+watch([() => props.text, () => props.load], () => {
+  if (open.value) void refresh();
+});
 </script>
 
 <template>

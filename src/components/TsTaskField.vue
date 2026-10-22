@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RefreshCw } from "lucide-vue-next";
 import SearchSelect from "./SearchSelect.vue";
+import AiPreview from "./AiPreview.vue";
 import type { SearchOption } from "../searchSelect";
 import {
   detailsOf,
@@ -14,6 +15,7 @@ import {
   type TsProject,
 } from "../store";
 import {
+  aiSuggestTsPreview,
   aiSuggestTsTask,
   tsOptionsOf,
   useAssignEnabled,
@@ -172,6 +174,19 @@ function applySuggestion() {
     suggestion.value = null;
   });
 }
+/** „Odrzuć” / „Zamknij”: bez zapisu; fokus wraca na „Podpowiedz”. */
+async function dismiss() {
+  suggestion.value = null;
+  await nextTick();
+  suggestButton.value?.focus();
+}
+const suggestButton = ref<HTMLButtonElement | null>(null);
+/** „Pokaż, co zostanie wysłane”: treść pytania „Podpowiedz” po filtrze. */
+const suggestPreview = computed(() => {
+  const id = props.task.id;
+  const options = tsOptionsOf(projects.value);
+  return () => aiSuggestTsPreview(id, dayKey(Date.now()), options);
+});
 /** Pozycje pola: „— brak —”, niedostępne zapamiętane, zadania w grupach projektów TS. */
 const options = computed<SearchOption<string>[]>(() => [
   { value: "", label: "— brak —" },
@@ -217,6 +232,7 @@ function connect() {
       </p>
       <button
         v-if="assistEnabled && state === 'ready'"
+        ref="suggestButton"
         type="button"
         class="secondary-button"
         :aria-label="'Podpowiedz zadanie TS: ' + task.title"
@@ -238,6 +254,7 @@ function connect() {
         <RefreshCw :size="14" />
       </button>
     </div>
+    <AiPreview v-if="assistEnabled && state === 'ready'" :load="suggestPreview" />
     <div
       v-if="suggestion"
       class="ts-task-suggestion"
@@ -265,7 +282,7 @@ function connect() {
             type="button"
             class="today-button"
             :disabled="busy"
-            @click="suggestion = null"
+            @click="dismiss"
           >
             Odrzuć
           </button>
@@ -279,7 +296,7 @@ function connect() {
               : suggestion.reason
           }}
         </p>
-        <button type="button" class="today-button" @click="suggestion = null">
+        <button type="button" class="today-button" @click="dismiss">
           Zamknij
         </button>
       </template>

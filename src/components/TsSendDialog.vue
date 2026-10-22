@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref } from "vue";
 import { Pencil, RotateCcw } from "lucide-vue-next";
 import SearchSelect from "./SearchSelect.vue";
+import AiPreview from "./AiPreview.vue";
 import type { SearchOption } from "../searchSelect";
 import {
   detailsOf,
@@ -17,6 +18,7 @@ import {
   type TsProject,
 } from "../store";
 import {
+  aiSuggestTsPreview,
   aiSuggestTsTask,
   tsOptionsOf,
   useAssignEnabled,
@@ -276,6 +278,19 @@ const assistEnabled = useAssignEnabled();
 const suggestions = ref<Record<number, TsSuggestion>>({});
 const suggesting = ref<Record<number, boolean>>({});
 const suggestingAll = ref(false);
+/**
+ * Trwa jakiekolwiek pytanie: przyciski „Podpowiedz” są wtedy wyłączone we
+ * wszystkich wierszach (pytania o zadanie TS idą do modelu po jednym).
+ */
+const anySuggesting = computed(
+  () => suggestingAll.value || Object.values(suggesting.value).some(Boolean),
+);
+/**
+ * Wartość „domyślne dla projektu” sprzed podpowiedzi, gdy zaznaczył je asystent:
+ * „Odrzuć” / „Zamknij” ją przywraca, żeby późniejszy wybór ręczny nie stał się
+ * po cichu domyślnym zadaniem projektu.
+ */
+const defaultBefore = ref<Record<number, boolean>>({});
 /** Projekt zadania nie ma domyślnego zadania TS (`ts_project_map`). */
 const noProjectMap = (task: Task) =>
   !!projectOf(task) &&
@@ -291,7 +306,11 @@ async function suggestFor(task: Task, day: DayState): Promise<boolean> {
       tsOptionsOf(day.projects),
     );
     suggestions.value = { ...suggestions.value, [task.id]: found };
-    if (found.tsTaskId && noProjectMap(task)) asDefault.value[task.id] = true;
+    if (found.tsTaskId && noProjectMap(task) && !asDefault.value[task.id]) {
+      if (!(task.id in defaultBefore.value))
+        defaultBefore.value = { ...defaultBefore.value, [task.id]: false };
+      asDefault.value[task.id] = true;
+    }
     return true;
   } catch (e) {
     day.error = String(e instanceof Error ? e.message : e);
@@ -317,26 +336,53 @@ const suggestedName = (task: Task) => {
   const id = suggestions.value[task.id]?.tsTaskId;
   return id ? findTsTask(cur.value.projects, id)?.name : undefined;
 };
-/** „Użyj podpowiedzi”: ta sama ścieżka co wybór z listy (`assign`). */
+/**
+ * „Użyj podpowiedzi”: ta sama ścieżka co wybór z listy (`assign`). Po błędzie
+ * zapisu sugestia zostaje, żeby nie trzeba było pytać modelu ponownie.
+ */
 async function applySuggestion(task: Task) {
   const id = suggestions.value[task.id]?.tsTaskId;
   if (!id) return;
   await assign(task, id);
-  const { [task.id]: _used, ...rest } = suggestions.value;
-  suggestions.value = rest;
 }
-function dismissSuggestion(task: Task) {
+function dropSuggestion(task: Task) {
   const { [task.id]: _dropped, ...rest } = suggestions.value;
   suggestions.value = rest;
+  const { [task.id]: _before, ...left } = defaultBefore.value;
+  defaultBefore.value = left;
 }
+/** „Odrzuć” / „Zamknij”: bez zapisu; przywraca pole „domyślne” i fokus w wierszu. */
+async function dismissSuggestion(task: Task) {
+  if (task.id in defaultBefore.value)
+    asDefault.value[task.id] = defaultBefore.value[task.id];
+  dropSuggestion(task);
+  await nextTick();
+  const row = root.value?.querySelector(`[data-unmapped="${task.id}"]`);
+  const target =
+    row?.querySelector<HTMLElement>(".ts-send-suggest:not(:disabled)") ??
+    row?.querySelector<HTMLElement>('[role="combobox"]:not(:disabled)');
+  if (target) target.focus();
+  else await refocus();
+}
+/** „Pokaż, co zostanie wysłane” przy „Podpowiedz wszystkie”: pytania o każde zadanie. */
+const suggestPreview = computed(() => {
+  const day = cur.value;
+  const tasks = plan.value.unmapped.map((u) => u.task);
+  const options = tsOptionsOf(day.projects);
+  return async () =>
+    (
+      await Promise.all(tasks.map((t) => aiSuggestTsPreview(t.id, day.day, options)))
+    ).join("\n\n");
+});
 const projectOf = (task: Task) => task.details?.project?.trim() ?? "";
 const tsOptions = computed<SearchOption<string>[]>(() =>
   cur.value.projects.flatMap((p) =>
     p.tasks.map((t) => ({ value: t.id, label: t.name, group: p.name })),
   ),
 );
-async function assign(task: Task, id: string) {
-  if (busy.value || !id) return;
+/** Zapis zadania TS w zadaniu; `true`, gdy się udał. */
+async function assign(task: Task, id: string): Promise<boolean> {
+  if (busy.value || !id) return false;
   const s = cur.value;
   const name = findTsTask(s.projects, id)?.name ?? "";
   busy.value = true;
@@ -356,6 +402,7 @@ async function assign(task: Task, id: string) {
       }),
     );
     done = true;
+    dropSuggestion(task);
     // Czas wpisu i podział nadgodzin dnia się zmieniają: wpisane ręcznie
     // wartości byłyby nieaktualne, więc wracają do podziału z pomiarów.
     if (Object.keys(s.edits).length) {
@@ -369,6 +416,7 @@ async function assign(task: Task, id: string) {
     busy.value = false;
   }
   if (done) await refocus();
+  return done;
 }
 /**
  * Po przypisaniu wiersz z polem wyboru znika z listy „Bez zadania TS”, a z nim
@@ -735,15 +783,19 @@ const saveLabel = computed(() => {
               <button
                 type="button"
                 class="secondary-button"
-                :disabled="busy || suggestingAll"
+                :disabled="busy || anySuggesting"
                 title="Zapytaj asystenta AI o zadanie TS dla każdego z tych zadań (nic nie zapisze bez Twojego wyboru)"
                 @click="suggestAll"
               >
                 {{ suggestingAll ? "Pytam asystenta…" : "Podpowiedz wszystkie" }}
               </button>
             </p>
+            <AiPreview
+              v-if="assistEnabled && !cur.loading && !cur.loadError && !cur.result"
+              :load="suggestPreview"
+            />
             <ul class="ts-send-unmapped">
-              <li v-for="u in plan.unmapped" :key="u.task.id">
+              <li v-for="u in plan.unmapped" :key="u.task.id" :data-unmapped="u.task.id">
                 <span>
                   <button
                     type="button"
@@ -776,9 +828,9 @@ const saveLabel = computed(() => {
                   <button
                     v-if="assistEnabled"
                     type="button"
-                    class="today-button"
+                    class="today-button ts-send-suggest"
                     :aria-label="'Podpowiedz zadanie TS: ' + u.task.title"
-                    :disabled="busy || suggesting[u.task.id] || suggestingAll"
+                    :disabled="busy || anySuggesting"
                     @click="suggestFor(u.task, cur)"
                   >
                     {{ suggesting[u.task.id] ? "Pytam…" : "Podpowiedz" }}

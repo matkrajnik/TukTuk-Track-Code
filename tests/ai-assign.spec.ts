@@ -5,11 +5,13 @@ import {
   ids,
   NOW,
   openPreview,
+  PREVIEW_KEY,
   stored,
   TODAY,
   tsFixture,
   tsSeed,
 } from "./fixtures/seed";
+import { pick } from "./fixtures/searchSelect";
 import { previewTsKey } from "../src/store";
 
 /**
@@ -535,4 +537,223 @@ test("w podglądzie „Wyślij do TS” nie ma przycisków asystenta bez silnika
   await openSend(page);
   await expect(warnings(page)).toContainText("Bez zadania TS: 2 zadania");
   await expect(dialog(page).getByRole("button", { name: /^Podpowiedz/ })).toHaveCount(0);
+});
+
+// ---------------------------------------------------------------------------
+// Uwagi z przeglądu A4: jedno pytanie naraz, błąd zapisu, „Odrzuć”, podgląd tekstu
+
+/** Ile wywołań danego rodzaju zakończyło się błędem zajętości. */
+const busyCalls = async (page: Page, kind: string) =>
+  ((await page.evaluate(
+    (k) => JSON.parse(localStorage.getItem(k) ?? "{}").calls ?? [],
+    AI_KEY,
+  )) as { kind: string; error: string }[]).filter(
+    (c) => c.kind === kind && c.error === "busy",
+  ).length;
+
+test("„Wyślij do TS”: w trakcie pytania pozostałe „Podpowiedz” czekają, bez błędu zajętości", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: twoUnmapped(),
+    settings,
+    ts: emptyTs(),
+    ai: {
+      claude,
+      script: {
+        ts_task: {
+          delayMs: 800,
+          values: {
+            [ids.review]: { tsTaskId: "1103", confidence: 0.9, reason: "Przegląd." },
+            [ids.docs]: { tsTaskId: "1102", confidence: 0.8, reason: "Wsparcie." },
+          },
+        },
+      },
+    },
+  });
+  await openSend(page);
+  const review = warnings(page).getByRole("button", {
+    name: "Podpowiedz zadanie TS: Code review",
+  });
+  const docs = warnings(page).getByRole("button", {
+    name: "Podpowiedz zadanie TS: Dokumentacja API",
+  });
+  await review.click();
+  await expect(review).toBeDisabled();
+  await expect(docs).toBeDisabled();
+  await expect(
+    warnings(page).getByRole("button", { name: "Podpowiedz wszystkie" }),
+  ).toBeDisabled();
+  await expect(
+    warnings(page).getByRole("status", { name: "Podpowiedź zadania TS: Code review" }),
+  ).toContainText("Asystent proponuje: Code review");
+  await expect(docs).toBeEnabled();
+  await docs.click();
+  await expect(
+    warnings(page).getByRole("status", { name: "Podpowiedź zadania TS: Dokumentacja API" }),
+  ).toContainText("Asystent proponuje: Błędy i wsparcie");
+  expect(await calls(page, "ts_task")).toBe(2);
+  expect(await busyCalls(page, "ts_task")).toBe(0);
+  await expect(dialog(page).getByRole("alert")).toHaveCount(0);
+});
+
+test("„Podpowiedz” w dwóch kafelkach naraz: drugie pytanie czeka w kolejce", async ({ page }) => {
+  await openPreview(page, {
+    settings,
+    ts: tsFixture(),
+    ai: {
+      claude,
+      script: {
+        ts_task: {
+          delayMs: 600,
+          values: {
+            [ids.review]: { tsTaskId: "1103", confidence: 0.85, reason: "Przegląd." },
+            [ids.labels]: { tsTaskId: "1102", confidence: 0.8, reason: "Etykiety." },
+          },
+        },
+      },
+    },
+  });
+  await expand(page, "Code review");
+  await expand(page, "Wdrożenie etykiet");
+  const review = page.getByRole("region", { name: "Zadanie TS: Code review" });
+  const labels = page.getByRole("region", { name: "Zadanie TS: Wdrożenie etykiet" });
+  await review.getByRole("button", { name: "Podpowiedz zadanie TS: Code review" }).click();
+  await labels
+    .getByRole("button", { name: "Podpowiedz zadanie TS: Wdrożenie etykiet" })
+    .click();
+  await expect(
+    review.getByRole("status", { name: "Podpowiedź zadania TS: Code review" }),
+  ).toContainText("Asystent proponuje: Code review");
+  await expect(
+    labels.getByRole("status", { name: "Podpowiedź zadania TS: Wdrożenie etykiet" }),
+  ).toContainText("Asystent proponuje: Błędy i wsparcie");
+  expect(await calls(page, "ts_task")).toBe(2);
+  expect(await busyCalls(page, "ts_task")).toBe(0);
+  await expect(page.getByRole("alert").filter({ hasText: "już trwa" })).toHaveCount(0);
+});
+
+test("„Użyj podpowiedzi” z błędem zapisu zostawia sugestię", async ({ page }) => {
+  await openPreview(page, {
+    data: twoUnmapped(),
+    settings,
+    ts: emptyTs(),
+    ai: tsReply({
+      [ids.review]: { tsTaskId: "1103", confidence: 0.9, reason: "To przegląd kodu." },
+    }),
+  });
+  await openSend(page);
+  await warnings(page)
+    .getByRole("button", { name: "Podpowiedz zadanie TS: Code review" })
+    .click();
+  const suggestion = warnings(page).getByRole("status", {
+    name: "Podpowiedź zadania TS: Code review",
+  });
+  await expect(suggestion).toContainText("Asystent proponuje: Code review");
+  // Zadanie znika z bazy w tle: zapis się nie uda.
+  await page.evaluate(
+    ([key, id]) => {
+      const data = JSON.parse(localStorage.getItem(key)!);
+      data.tasks = data.tasks.filter((t: { id: number }) => t.id !== id);
+      localStorage.setItem(key, JSON.stringify(data));
+    },
+    [PREVIEW_KEY, ids.review] as [string, number],
+  );
+  await warnings(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Code review" })
+    .getByRole("checkbox", { name: "domyślne dla projektu „Foundation”" })
+    .uncheck();
+  await warnings(page).getByRole("button", { name: "Użyj podpowiedzi: Code review" }).click();
+  await expect(
+    dialog(page).getByRole("alert").filter({ hasText: "Nie znaleziono zadania." }),
+  ).toBeVisible();
+  await expect(suggestion).toContainText("Asystent proponuje: Code review");
+  await expect(suggestion).toContainText("To przegląd kodu.");
+  expect(await calls(page, "ts_task")).toBe(1);
+});
+
+test("„Odrzuć podpowiedź” przywraca „domyślne dla projektu” i fokus w wierszu", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: twoUnmapped(),
+    settings,
+    ts: emptyTs(),
+    ai: tsReply({
+      [ids.review]: { tsTaskId: "1103", confidence: 0.9, reason: "To przegląd kodu." },
+    }),
+  });
+  await openSend(page);
+  const ask = warnings(page).getByRole("button", {
+    name: "Podpowiedz zadanie TS: Code review",
+  });
+  await ask.click();
+  const asDefault = warnings(page)
+    .getByRole("listitem")
+    .filter({ hasText: "Code review" })
+    .getByRole("checkbox", { name: "domyślne dla projektu „Foundation”" });
+  await expect(asDefault).toBeChecked();
+  await warnings(page).getByRole("button", { name: "Odrzuć podpowiedź: Code review" }).click();
+  await expect(
+    warnings(page).getByRole("status", { name: "Podpowiedź zadania TS: Code review" }),
+  ).toHaveCount(0);
+  await expect(asDefault).not.toBeChecked();
+  await expect(ask).toBeFocused();
+  // Wybór ręczny po odrzuceniu nie zmienia domyślnego zadania projektu.
+  await pick(
+    warnings(page).getByRole("combobox", { name: "Przypisz zadanie TS: Code review" }),
+    "Rozwój",
+  );
+  await expect(warnings(page)).toContainText("Bez zadania TS: 1 zadanie");
+  expect((await detailsOf(page, ids.review)).tsTaskId).toBeTruthy();
+  expect((await tsState(page)).projectMap ?? []).not.toContainEqual(
+    expect.objectContaining({ project: "Foundation" }),
+  );
+});
+
+test("„Odrzuć” w kafelku oddaje fokus przyciskowi „Podpowiedz”", async ({ page }) => {
+  await openPreview(page, {
+    settings,
+    ts: tsFixture(),
+    ai: tsReply({
+      [ids.review]: { tsTaskId: "1103", confidence: 0.85, reason: "Przegląd." },
+    }),
+  });
+  await expand(page, "Code review");
+  const field = page.getByRole("region", { name: "Zadanie TS: Code review" });
+  const ask = field.getByRole("button", { name: "Podpowiedz zadanie TS: Code review" });
+  await ask.click();
+  await field.getByRole("button", { name: "Odrzuć" }).click();
+  await expect(ask).toBeFocused();
+});
+
+test("„Pokaż, co zostanie wysłane” przy „Podpowiedz”: tekst po filtrze, bez wywołania", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: twoUnmapped(),
+    settings: { ...settings, aiHiddenNames: ["Foundation"] },
+    ts: emptyTs(),
+    ai: { claude },
+  });
+  // Kafelek.
+  await expand(page, "Code review");
+  const field = page.getByRole("region", { name: "Zadanie TS: Code review" });
+  const preview = field.locator("details.ai-preview");
+  await preview.locator("summary").click();
+  const sent = preview.getByLabel("Tekst wysyłany do modelu");
+  await expect(sent).toContainText("Code review");
+  await expect(sent).toContainText("Błędy i wsparcie");
+  await expect(sent).toContainText("Osoba 1");
+  await expect(sent).not.toContainText("Foundation");
+  // Podgląd „Wyślij do TS”: pytania o wszystkie zadania bez zadania TS.
+  await openSend(page);
+  const all = warnings(page).locator("details.ai-preview");
+  await all.locator("summary").click();
+  const both = all.getByLabel("Tekst wysyłany do modelu");
+  await expect(both).toContainText("Code review");
+  await expect(both).toContainText("Dokumentacja API");
+  await expect(both).not.toContainText("Foundation");
+  expect(await calls(page, "ts_task")).toBe(0);
 });
