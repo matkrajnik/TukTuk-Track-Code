@@ -13,6 +13,13 @@ import {
   type Task,
   type TsProject,
 } from "../store";
+import {
+  aiSuggestTsTask,
+  tsOptionsOf,
+  useAssignEnabled,
+  type TsSuggestion,
+} from "../aiassign";
+import { dayKey } from "../time";
 import { findTsTask, resolveTsTask } from "../timesheet";
 import { openView } from "../navigation";
 import { setTsProjectMap, useTsProjectMap } from "../composables/useTsProjectMap";
@@ -21,6 +28,10 @@ import { setTsProjectMap, useTsProjectMap } from "../composables/useTsProjectMap
  * „Zadanie TS” w rozwiniętym kafelku (PLAN_1.8.md, T2): jawny wybór zadania
  * Ideo TS z listy `ts_tasks(dzisiaj)` (pamięć podręczna w `store.ts`) i
  * „Ustaw jako domyślne dla projektu”. Bez połączenia pokazuje zapamiętaną nazwę.
+ * „Podpowiedz” (A4, za przełącznikiem „Podpowiedzi przypisań”) pyta asystenta o
+ * zadanie TS z tej listy i pokazuje sugestię z uzasadnieniem; zapis dopiero po
+ * „Użyj podpowiedzi”, a „Ustaw jako domyślne dla projektu” jest wtedy zaznaczone,
+ * gdy projekt nie ma jeszcze mapowania.
  */
 const props = defineProps<{ task: Task }>();
 const emit = defineEmits<{ updated: [data: Snapshot]; error: [message: string] }>();
@@ -56,6 +67,18 @@ const isDefault = computed(
 );
 const asDefault = ref(isDefault.value);
 watch(isDefault, (value) => (asDefault.value = value));
+
+// Asystent przypisań (A4): sugestia czeka na wybór, nic nie zapisuje.
+const assistEnabled = useAssignEnabled();
+const suggestion = ref<TsSuggestion | null>(null);
+const suggesting = ref(false);
+/** Pole „Ustaw jako domyślne dla projektu” w sugestii. */
+const suggestDefault = ref(false);
+const suggested = computed(() =>
+  suggestion.value?.tsTaskId
+    ? findTsTask(projects.value, suggestion.value.tsTaskId)
+    : null,
+);
 
 async function load(refresh = false) {
   loadError.value = "";
@@ -111,6 +134,44 @@ function choose(id: string) {
     );
   });
 }
+/** „Podpowiedz”: jedno pytanie do asystenta po kliknięciu. */
+async function suggest() {
+  if (busy.value || suggesting.value) return;
+  suggesting.value = true;
+  suggestion.value = null;
+  emit("error", "");
+  try {
+    suggestion.value = await aiSuggestTsTask(
+      props.task.id,
+      dayKey(Date.now()),
+      tsOptionsOf(projects.value),
+    );
+    suggestDefault.value = !!project.value && !projectDefault.value;
+  } catch (e) {
+    emit("error", String(e instanceof Error ? e.message : e));
+  } finally {
+    suggesting.value = false;
+  }
+}
+/** „Użyj podpowiedzi”: zapis w zadaniu i, gdy zaznaczone, domyślne zadanie projektu. */
+function applySuggestion() {
+  const found = suggested.value;
+  if (!found) return;
+  const makeDefault = suggestDefault.value && !!project.value;
+  void run(async () => {
+    emit(
+      "updated",
+      await saveDetails(props.task.id, {
+        ...detailsOf(props.task),
+        tsTaskId: found.id,
+        tsTaskName: found.name,
+      }),
+    );
+    if (makeDefault)
+      await setTsProjectMap(project.value, found.id, found.name);
+    suggestion.value = null;
+  });
+}
 /** Pozycje pola: „— brak —”, niedostępne zapamiętane, zadania w grupach projektów TS. */
 const options = computed<SearchOption<string>[]>(() => [
   { value: "", label: "— brak —" },
@@ -155,6 +216,17 @@ function connect() {
         <template v-if="resolved?.source === 'project'"> (z projektu)</template>
       </p>
       <button
+        v-if="assistEnabled && state === 'ready'"
+        type="button"
+        class="secondary-button"
+        :aria-label="'Podpowiedz zadanie TS: ' + task.title"
+        title="Zapytaj asystenta AI, które zadanie TS pasuje (nic nie zapisze bez Twojego wyboru)"
+        :disabled="busy || suggesting"
+        @click="suggest"
+      >
+        {{ suggesting ? "Pytam asystenta…" : "Podpowiedz" }}
+      </button>
+      <button
         v-if="state === 'ready' || state === 'error'"
         type="button"
         class="icon-button"
@@ -165,6 +237,52 @@ function connect() {
       >
         <RefreshCw :size="14" />
       </button>
+    </div>
+    <div
+      v-if="suggestion"
+      class="ts-task-suggestion"
+      role="status"
+      :aria-label="'Podpowiedź zadania TS: ' + task.title"
+    >
+      <template v-if="suggested">
+        <p>
+          <strong>Asystent proponuje: {{ suggested.name }}</strong
+          ><template v-if="suggestion.reason"> — {{ suggestion.reason }}</template>
+        </p>
+        <label v-if="project" class="inline-check">
+          <input v-model="suggestDefault" type="checkbox" :disabled="busy" />
+          Ustaw jako domyślne dla projektu „{{ project }}”
+        </label>
+        <div class="planning-actions">
+          <button
+            type="button"
+            class="primary-button"
+            :disabled="busy"
+            @click="applySuggestion"
+          >
+            Użyj podpowiedzi</button
+          ><button
+            type="button"
+            class="today-button"
+            :disabled="busy"
+            @click="suggestion = null"
+          >
+            Odrzuć
+          </button>
+        </div>
+      </template>
+      <template v-else>
+        <p>
+          {{
+            suggestion.tsTaskId
+              ? "Zadania TS z podpowiedzi nie ma już na liście. Odśwież listę."
+              : suggestion.reason
+          }}
+        </p>
+        <button type="button" class="today-button" @click="suggestion = null">
+          Zamknij
+        </button>
+      </template>
     </div>
     <p v-if="state === 'offline'" class="hint">
       <button type="button" class="text-link" @click="connect">

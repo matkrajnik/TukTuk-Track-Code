@@ -4,6 +4,7 @@ mod agents;
 mod ai;
 mod ai_chat;
 mod ai_privacy;
+mod assign;
 mod autostart;
 mod backup;
 mod browser;
@@ -490,6 +491,7 @@ fn main() {
             idle::setup(app.handle());
             agents::setup(app.handle());
             ai::setup(app.handle());
+            assign::setup(app.handle());
             mcp::setup(app.handle());
             // Po `mcp::setup`: czat używa mapy pseudonimów serwera MCP.
             ai_chat::setup(app.handle());
@@ -628,6 +630,7 @@ fn main() {
             ai::ai_calls,
             ai::ai_redact_preview,
             ai::ai_test,
+            assign::ai_suggest_ts_task,
             ai_chat::ai_chat_send,
             ai_chat::ai_chat_stop,
             ai_chat::ai_chat_reset,

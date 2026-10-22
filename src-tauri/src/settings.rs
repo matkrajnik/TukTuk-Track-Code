@@ -750,6 +750,15 @@ pub fn set_settings(app: tauri::AppHandle, patch: Value) -> Result<AppSettings, 
     if result.ai_mcp != before.ai_mcp || result.ai_engine != before.ai_engine {
         crate::mcp::sync(&app);
     }
+    // Asystent przypisań (A4): pierwszy prompt sesji zapamiętywany tylko przy
+    // włączonym przełączniku i wybranym silniku; wyłączenie czyści pamięć.
+    if result.ai_assign_suggest != before.ai_assign_suggest || result.ai_engine != before.ai_engine
+    {
+        if let Some(agents) = app.try_state::<crate::agents::State>() {
+            agents.set_keep_prompts(crate::assign::keep_prompts(&result));
+        }
+        crate::agents::rematch(&app);
+    }
     Ok(result)
 }
 

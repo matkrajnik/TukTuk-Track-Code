@@ -69,13 +69,17 @@ export interface HookAgent {
   name: string;
   cwd: string;
   since: number;
+  /** Identyfikator sesji (klucz pamięci asystenta przypisań, A4). */
+  sessionId: string;
+  /** Pierwszy prompt sesji, tylko przy `keepPrompts` (`ai_assign_suggest`). */
+  firstPrompt: string | null;
 }
 
 /** Maszyna stanów sesji (`hooks::Sessions`) zastosowana do listy zdarzeń. */
 export function foldHookEvents(
   events: PreviewHookEvent[],
   now: number,
-  /** `Sessions::keep_prompts` (A4 wiąże je z `ai_assign_suggest`). */
+  /** `Sessions::keep_prompts` (z `ai_assign_suggest` i wybranego silnika). */
   keepPrompts = false,
 ): { sessions: Session[]; recent: HookEventRow[] } {
   const map = new Map<string, Session>();
@@ -229,22 +233,24 @@ const folder = (cwd: string) =>
     .pop() ?? "";
 
 /** Pracujące sesje z hooków jako agenci kafelka (`hooks::Sessions::working`). */
-export function previewHookAgents(now: number): HookAgent[] {
+export function previewHookAgents(now: number, keepPrompts = false): HookAgent[] {
   if (!enabled()) return [];
-  return foldHookEvents(events(), now)
+  return foldHookEvents(events(), now, keepPrompts)
     .sessions.filter((s) => s.phase === "working")
     .map((s) => ({
       kind: s.agent,
       name: folder(s.cwd) || "sesja",
       cwd: s.cwd,
       since: s.since,
+      sessionId: s.sessionId,
+      firstPrompt: s.firstPrompt,
     }))
     .sort((a, b) => a.since - b.since || a.kind.localeCompare(b.kind));
 }
 
 /**
- * Pierwszy prompt sesji (pod A4), przycięty do 500 znaków; tylko w pamięci i tylko
- * przy `keepPrompts` (TODO(A4): z ustawienia `aiAssignSuggest`).
+ * Pierwszy prompt sesji (A4), przycięty do 500 znaków; tylko w pamięci i tylko
+ * przy `keepPrompts` (z ustawienia `aiAssignSuggest` i wybranego silnika).
  */
 export function previewFirstPrompt(
   agent: "claude" | "codex",

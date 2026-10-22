@@ -2442,6 +2442,27 @@ html.widget-root body {
   gap: 8px;
   margin-top: 8px;
 }
+/* Podpowiedź asystenta przypisań (A4): sugestia czeka na wybór. */
+.ts-task-suggestion {
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 8px);
+}
+.ts-task-suggestion p {
+  margin: 0 0 8px;
+}
+.ts-task-suggestion .planning-actions {
+  margin-top: 8px;
+}
+.ts-send-suggestion {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--muted);
+}
 /* Wysyłka Raportu TS do Ideo TS (1.8, T3). */
 .ts-heading-actions {
   display: flex;

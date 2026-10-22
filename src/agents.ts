@@ -19,6 +19,8 @@ import {
 } from "./store";
 import { dayKey } from "./time";
 import { previewHookAgents } from "./preview/hooks";
+import * as aiSim from "./preview/ai";
+import { ASSISTANT_SOURCE } from "./api/aiassign";
 
 /** Odpowiednik `Match` z src-tauri/src/agents.rs: zadanie, nad którym pracuje agent. */
 export interface AgentTask {
@@ -29,9 +31,10 @@ export interface AgentTask {
   key: string | null;
   /**
    * `folder` (przypisanie folderu), `task` (klucz lokalnego zadania), `jira`,
-   * `redmine` (`#1234` z rozszerzenia przeglądarki, bez zadania; R3).
+   * `redmine` (`#1234` z rozszerzenia przeglądarki, bez zadania; R3),
+   * `assistant` (podpowiedź asystenta przypisań, A4: tylko w propozycjach).
    */
-  source: "folder" | "task" | "jira" | "redmine";
+  source: "folder" | "task" | "jira" | "redmine" | "assistant";
   /** Lokalne zadanie jest ukończone: bez propozycji i przypisania przerwy. */
   done?: boolean;
 }
@@ -49,13 +52,26 @@ export interface Agent {
   /** Klucz Jiry z gałęzi, a bez niego z nazwy sesji Claude Code. */
   key?: string | null;
   task?: AgentTask | null;
+  /**
+   * Podpowiedź asystenta przypisań (A4) dla sesji bez dopasowania. Tylko w podglądzie:
+   * Rust trzyma ją poza listą agentów i używa w propozycjach (`Agent::assist`).
+   */
+  assist?: AgentTask | null;
+  /** Pierwszy prompt sesji (tylko w podglądzie, razem z `assist`; Rust trzyma go w pamięci sesji). */
+  firstPrompt?: string | null;
 }
 /**
  * Agent w podglądzie (localStorage, testy): jak `Agent`, a zamiast wyniku
  * rozpoznania podaje gałąź i nazwę sesji (`session`); klucz i zadanie liczy
  * `recognize` tak jak Rust.
  */
-type PreviewAgent = Agent & { session?: string | null };
+type PreviewAgent = Agent & {
+  session?: string | null;
+  /** Identyfikator sesji (z hooków); bez niego klucz to rodzaj, folder i początek pracy. */
+  sessionId?: string;
+  /** Pierwszy prompt sesji (z hooków przy włączonym asystencie albo z testu). */
+  firstPrompt?: string | null;
+};
 /** W podglądzie lista agentów pochodzi z localStorage (testy). */
 const key = "todo-track-preview-agents-v1";
 const eventName = "agents-changed";
@@ -123,23 +139,85 @@ async function previewAgents(): Promise<Agent[]> {
   } catch {
     list = [];
   }
+  const settings = await readSettings();
+  // Pierwszy prompt sesji tylko dla asystenta przypisań (`assign::keep_prompts`).
+  const keepPrompts =
+    (settings.aiEngine === "claude" || settings.aiEngine === "codex") &&
+    settings.aiAssignSuggest;
   // Zdarzenia hooków z fixture przechodzą przez tę samą maszynę stanów co w Rust.
-  list = [...list, ...previewHookAgents(Date.now())];
+  list = [...list, ...previewHookAgents(Date.now(), keepPrompts)];
   const data = await read();
   const bindings = previewBindings();
-  return list.map(({ session, ...agent }) => {
-    const branch = agent.branch ?? null;
-    const detached = !!agent.detached;
-    const jiraKey =
-      (detached ? null : jiraKeyIn(branch)) ?? jiraKeyIn(session ?? null);
-    return {
-      ...agent,
-      branch,
-      detached,
-      key: jiraKey,
-      task: matchAgentTask(data, bindings, agent.cwd, jiraKey),
-    };
-  });
+  return Promise.all(
+    list.map(async ({ session, sessionId, firstPrompt, ...agent }) => {
+      const branch = agent.branch ?? null;
+      const detached = !!agent.detached;
+      const jiraKey =
+        (detached ? null : jiraKeyIn(branch)) ?? jiraKeyIn(session ?? null);
+      const task = matchAgentTask(data, bindings, agent.cwd, jiraKey);
+      const assist = task
+        ? null
+        : await assistFor(
+            { ...agent, branch, detached },
+            sessionId,
+            keepPrompts || firstPrompt ? (firstPrompt ?? null) : null,
+            data,
+            settings,
+          );
+      return {
+        ...agent,
+        branch,
+        detached,
+        key: jiraKey,
+        task,
+        ...(assist ? { assist, firstPrompt: firstPrompt ?? null } : {}),
+      };
+    }),
+  );
+}
+
+/**
+ * Podpowiedź asystenta przypisań (`assign::apply`) dla sesji bez dopasowania
+ * heurystyką: sesja pracuje co najmniej `MIN_WORK`, folder nie jest wyciszony,
+ * włączone są propozycje agentów i podpowiedzi przypisań, wybrany silnik jest
+ * wykryty. Jedno wywołanie na sesję (`preview/ai.ts`); zadanie z listy otwartych
+ * przy pewności co najmniej 0,6.
+ */
+async function assistFor(
+  agent: Agent,
+  sessionId: string | undefined,
+  firstPrompt: string | null,
+  data: Snapshot,
+  settings: AppSettings,
+): Promise<AgentTask | null> {
+  if (
+    !settings.aiAssignSuggest ||
+    !settings.agentSuggest ||
+    (agent.kind !== "claude" && agent.kind !== "codex") ||
+    Date.now() - agent.since < MIN_WORK ||
+    mutedFolder(settings.agentMutedFolders, agent.cwd) ||
+    !(await aiSim.aiStatus()).active
+  )
+    return null;
+  const id = await aiSim.aiAssign(
+    `${agent.kind}|${sessionId ?? `${agent.cwd}|${agent.since}`}`,
+    {
+      folder: agent.cwd.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? "",
+      branch: agent.detached ? null : (agent.branch ?? null),
+      prompt: firstPrompt,
+    },
+    await aiSim.openAssignTasks(),
+  );
+  const task = id == null ? undefined : data.tasks.find((t) => t.id === id);
+  return task
+    ? {
+        taskId: task.id,
+        title: task.title,
+        key: issueRef(task)?.key ?? null,
+        source: ASSISTANT_SOURCE,
+        done: task.done,
+      }
+    : null;
 }
 
 export async function readAgents(): Promise<Agent[]> {
@@ -187,12 +265,22 @@ export const signalTitle = (s: Suggestion) =>
 export const signalOnly = (s: Suggestion) =>
   s.agents.length > 0 && s.agents.every((a) => isSignal(a.kind));
 
+/** Początek promptu do banera (`suggest::hint_of`): białe znaki zwinięte, do 80 znaków. */
+export function promptHint(prompt: string | null | undefined): string | null {
+  const line = (prompt ?? "").split(/\s+/).filter(Boolean).join(" ");
+  if (!line) return null;
+  const chars = [...line];
+  return chars.length > 80 ? `${chars.slice(0, 80).join("")}…` : line;
+}
+
 /** Agent w propozycji (`suggest::Worker`); sygnał z okna ma `kind` źródła. */
 export interface Worker {
   kind: Agent["kind"] | SignalKind;
   name: string;
   cwd: string;
   since: number;
+  /** Początek pierwszego promptu sesji (tylko w propozycji asystenta, A4). */
+  hint?: string;
 }
 /** Propozycja przełączenia (`suggest::Suggestion`): zadanie i pracujący nad nim agenci. */
 export interface Suggestion {
@@ -243,7 +331,8 @@ export function pendingSuggestions(
 ): Suggestion[] {
   const out: Suggestion[] = [];
   for (const agent of agents) {
-    const task = agent.task;
+    // Dopasowanie heurystyką, a bez niego podpowiedź asystenta (`suggest::goal_match`).
+    const task = agent.task ?? agent.assist;
     if (!task) continue;
     const target = suggestionTarget(task);
     // Osobne wyłączniki agentów, okna i przeglądarki (`foreground::enabled`),
@@ -265,11 +354,14 @@ export function pendingSuggestions(
       dismissed.has(pairKey(agent.kind, agent.cwd, target))
     )
       continue;
-    const worker = {
+    const hint =
+      task.source === ASSISTANT_SOURCE ? promptHint(agent.firstPrompt) : null;
+    const worker: Worker = {
       kind: agent.kind,
       name: agent.name,
       cwd: agent.cwd,
       since: agent.since,
+      ...(hint ? { hint } : {}),
     };
     const found = out.find((s) => suggestionTarget(s.task) === target);
     if (found) found.agents.push(worker);
@@ -340,9 +432,11 @@ export async function dismissSuggestion(
     });
   const target = suggestionTarget(suggestion.task);
   const dismissed = previewDismissed();
-  for (const agent of await previewAgents())
-    if (agent.task && suggestionTarget(agent.task) === target)
+  for (const agent of await previewAgents()) {
+    const goal = agent.task ?? agent.assist;
+    if (goal && suggestionTarget(goal) === target)
       dismissed.add(pairKey(agent.kind, agent.cwd, target));
+  }
   localStorage.setItem(dismissedKey, JSON.stringify([...dismissed]));
   window.dispatchEvent(new Event(suggestEvent));
   return readSuggestions();

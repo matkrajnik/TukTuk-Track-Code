@@ -6,7 +6,10 @@
  *   jest wykryte (podgląd nie pokazuje dialogu pierwszego uruchomienia, dopóki
  *   test lub deweloper nie ustawi wykrytego CLI),
  * - `script`: odpowiedzi ze skryptu według rodzaju wywołania
- *   (`{ test: { error: "login" } }`); bez wpisu wywołanie kończy się sukcesem,
+ *   (`{ test: { error: "login" } }`); bez wpisu wywołanie kończy się sukcesem.
+ *   Asystent przypisań (A4): `assign: { value: { taskId, confidence, reason } }` dla
+ *   sesji agentów, `ts_task: { value, values: { "<id zadania>": … } }` dla zadań TS
+ *   (`values` ma pierwszeństwo przed `value`),
  * - `chat.replies`: skryptowane odpowiedzi czatu (A3) `[{ match, text, tools, proposal }]`,
  *   sprawdzane przed wzorcami domyślnymi; odpowiedź idzie zdarzeniami okna jak `ai-chat-event`
  *   (`chat.stepMs` zwalnia odstęp między zdarzeniami),
@@ -17,6 +20,14 @@
 import { previewJson, previewSettingsKey } from "./storage";
 import { dayKey } from "../time";
 import { mcpPropose } from "./mcp";
+import { read } from "./snapshot";
+import {
+  MIN_CONFIDENCE,
+  OPEN_MAX,
+  TEXT_MAX,
+  type TsOption,
+  type TsSuggestion,
+} from "../api/aiassign";
 import type { McpProposal } from "../api/mcp";
 import {
   chatMessages,
@@ -120,7 +131,7 @@ export async function aiRedactPreview(text: string): Promise<string> {
 }
 
 /** Odpowiedź ze skryptu albo błąd po polsku (jak `ai::failure_message`). */
-function scripted(kind: string, chosen: string): unknown {
+function scripted(kind: string, chosen: string, key = ""): unknown {
   const script = stored().script;
   const entry =
     script && typeof script === "object"
@@ -128,6 +139,7 @@ function scripted(kind: string, chosen: string): unknown {
           | { value?: unknown; error?: string }
           | undefined)
       : undefined;
+  const keyed = (entry as { values?: Record<string, unknown> } | undefined)?.values?.[key];
   switch (entry?.error) {
     case "login":
       throw new Error(aiMessages.login(chosen));
@@ -140,7 +152,7 @@ function scripted(kind: string, chosen: string): unknown {
     case "failed":
       throw new Error(aiMessages.failed(chosen));
     default:
-      return entry?.value ?? { ok: true };
+      return keyed ?? entry?.value ?? { ok: true };
   }
 }
 
@@ -172,6 +184,8 @@ function errorCode(message: string): string {
 export async function aiAsk(
   kind: string,
   prompt: string,
+  /** Klucz odpowiedzi skryptu (`values`), np. id zadania. */
+  key = "",
 ): Promise<unknown> {
   const chosen = engine();
   if (chosen !== "claude" && chosen !== "codex") {
@@ -188,7 +202,7 @@ export async function aiAsk(
     );
   }
   try {
-    const value = scripted(kind, chosen);
+    const value = scripted(kind, chosen, key);
     await record(kind, prompt, "");
     return value;
   } catch (e) {
@@ -371,4 +385,124 @@ export async function aiChatStop(turn: number | null = null): Promise<void> {
 export async function aiChatReset(): Promise<void> {
   clearTimeout(chatTimer);
   chatRunning = false;
+}
+
+// ---------------------------------------------------------------------------
+// Asystent przypisań (A4): symulowane `assign` i `ts_task` ze skryptu.
+
+const clip = (text: string, max: number) => [...text.trim()].slice(0, max).join("");
+const confident = (value: unknown): number | null => {
+  const c = (value as { confidence?: unknown } | null)?.confidence;
+  return typeof c === "number" && c >= MIN_CONFIDENCE && c <= 1 ? c : null;
+};
+
+/** Otwarte zadanie dla modelu (jak `assign::OpenTask`). */
+export interface AssignTask {
+  id: number;
+  title: string;
+  project: string;
+  key: string;
+}
+
+/** Sesja agenta w pytaniu o przypisanie. */
+export interface AssignSession {
+  folder: string;
+  branch: string | null;
+  prompt: string | null;
+}
+
+/** Otwarte zadania podglądu: nieukończone i niezarchiwizowane, najnowsze pierwsze. */
+export async function openAssignTasks(): Promise<AssignTask[]> {
+  const data = await read();
+  return [...data.tasks]
+    .filter((t) => !t.done && !t.archived)
+    .sort((a, b) => b.id - a.id)
+    .slice(0, OPEN_MAX)
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      project: t.details?.project ?? "",
+      key: t.jiraKey ?? (t.redmineId ? `#${t.redmineId}` : ""),
+    }));
+}
+
+/** Pamięć po sesji: jedno wywołanie na sesję (także nieudane), jak `assign::Memory`. */
+const assigned = new Map<string, Promise<number | null>>();
+
+/**
+ * `ai::ask("assign", …)` dla sesji bez dopasowania: `taskId` z listy przy pewności
+ * co najmniej 0,6, inaczej `null`. Błąd wywołania to też `null`, bez ponawiania.
+ */
+export function aiAssign(
+  sessionKey: string,
+  session: AssignSession,
+  tasks: AssignTask[],
+): Promise<number | null> {
+  const known = assigned.get(sessionKey);
+  if (known) return known;
+  const run = (async () => {
+    if (!tasks.length) return null;
+    const prompt = `Dane:
+${JSON.stringify({
+      session: { ...session, prompt: clip(session.prompt ?? "", TEXT_MAX) },
+      openTasks: tasks,
+    })}`;
+    try {
+      const value = (await aiAsk("assign", prompt)) as {
+        taskId?: unknown;
+      } | null;
+      const id = value?.taskId;
+      return typeof id === "number" &&
+        confident(value) !== null &&
+        tasks.some((t) => t.id === id)
+        ? id
+        : null;
+    } catch {
+      return null;
+    }
+  })();
+  assigned.set(sessionKey, run);
+  return run;
+}
+
+/** `ai_suggest_ts_task` w podglądzie: pytanie o zadanie TS z listy `options`. */
+export async function aiSuggestTsTask(
+  taskId: number,
+  day: string,
+  options: TsOption[],
+): Promise<TsSuggestion> {
+  if (settings().aiAssignSuggest === false)
+    throw new Error("Podpowiedzi przypisań są wyłączone w Ustawieniach → Asystent AI.");
+  if (!options.length)
+    throw new Error("Brak listy zadań TS: połącz konto TS i odśwież listę.");
+  const task = (await read()).tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error("Nie znaleziono zadania.");
+  const prompt = `Dane:
+${JSON.stringify({
+    task: {
+      title: task.title,
+      project: task.details?.project ?? "",
+      key: task.jiraKey ?? (task.redmineId ? `#${task.redmineId}` : ""),
+      dayNote: clip(task.details?.notes?.[day] ?? "", TEXT_MAX),
+    },
+    tsTasks: options,
+  })}`;
+  const value = (await aiAsk("ts_task", prompt, String(taskId))) as {
+    tsTaskId?: unknown;
+    confidence?: unknown;
+    reason?: unknown;
+  } | null;
+  const reason = clip(typeof value?.reason === "string" ? value.reason : "", 300);
+  const confidence = typeof value?.confidence === "number" ? value.confidence : 0;
+  const none = (why: string): TsSuggestion => ({
+    tsTaskId: null,
+    confidence,
+    reason: reason ? `${why} ${reason}` : why,
+  });
+  const id = value?.tsTaskId;
+  if (typeof id !== "string" || confident(value) === null)
+    return none("Asystent nie znalazł pewnego dopasowania.");
+  if (!options.some((o) => o.id === id))
+    return none("Asystent wskazał zadanie spoza listy TS.");
+  return { tsTaskId: id, confidence, reason };
 }

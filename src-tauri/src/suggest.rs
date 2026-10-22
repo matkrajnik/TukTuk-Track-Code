@@ -19,6 +19,10 @@
 //! (`window_suggest`, dla przeglądarki `browser_extension`) i treść ze źródłem
 //! „Okno” albo „Przeglądarka”.
 //!
+//! Asystent przypisań (A4, `assign.rs`): sesja agenta bez dopasowania heurystyką
+//! dostaje podpowiedź modelu (`Agent::assist`, źródło `assistant`), którą ta sama
+//! reguła traktuje jak dopasowanie: 2 minuty pracy, wyciszone foldery, „Nie”.
+//!
 //! Timer nigdy nie przełącza się sam: zmienia go tylko `agent_switch` (kliknięcie).
 use crate::agents::{self, Agent, Match};
 use crate::foreground;
@@ -44,6 +48,29 @@ pub struct Worker {
     pub name: String,
     pub cwd: String,
     pub since: i64,
+    /// Początek pierwszego promptu sesji (tylko w propozycji asystenta, A4):
+    /// baner pokazuje, nad czym agent pracuje.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// Początek promptu do banera (znaki, nie bajty).
+const HINT_MAX: usize = 80;
+fn hint_of(prompt: &str) -> Option<String> {
+    let line = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if line.is_empty() {
+        return None;
+    }
+    let mut text: String = line.chars().take(HINT_MAX).collect();
+    if line.chars().count() > HINT_MAX {
+        text.push('…');
+    }
+    Some(text)
+}
+
+/// Dopasowanie agenta: heurystyka (`task`), a bez niej podpowiedź asystenta (A4).
+fn goal_match(agent: &Agent) -> Option<&Match> {
+    agent.task.as_ref().or(agent.assist.as_ref())
 }
 
 /// Propozycja przełączenia na zadanie, nad którym pracują agenci.
@@ -131,11 +158,7 @@ impl Memory {
     fn touch(&mut self, agents: &[Agent], now: i64) {
         let live: Vec<String> = agents
             .iter()
-            .filter_map(|a| {
-                a.task
-                    .as_ref()
-                    .map(|m| pair(&a.kind, &a.cwd, &target_of(m)))
-            })
+            .filter_map(|a| goal_match(a).map(|m| pair(&a.kind, &a.cwd, &target_of(m))))
             .collect();
         for map in [&mut self.dismissed, &mut self.notified] {
             for (key, at) in map.iter_mut() {
@@ -158,7 +181,7 @@ impl Memory {
         self.touch(agents, now);
         let mut out: Vec<Suggestion> = Vec::new();
         for agent in agents {
-            let Some(m) = &agent.task else {
+            let Some(m) = goal_match(agent) else {
                 continue;
             };
             let goal = target_of(m);
@@ -182,6 +205,11 @@ impl Memory {
                 name: agent.name.clone(),
                 cwd: agent.cwd.clone(),
                 since: agent.since,
+                hint: if m.source == crate::assign::SOURCE {
+                    agent.first_prompt.as_deref().and_then(hint_of)
+                } else {
+                    None
+                },
             };
             match out.iter_mut().find(|x| target_of(&x.task) == goal) {
                 Some(found) => found.agents.push(worker),
@@ -198,7 +226,7 @@ impl Memory {
     pub fn dismiss(&mut self, agents: &[Agent], goal: &str, now: i64) -> bool {
         let mut any = false;
         for agent in agents {
-            if agent.task.as_ref().map(target_of).as_deref() == Some(goal) && !goal.is_empty() {
+            if goal_match(agent).map(target_of).as_deref() == Some(goal) && !goal.is_empty() {
                 self.dismissed
                     .insert(pair(&agent.kind, &agent.cwd, goal), now);
                 any = true;
@@ -325,6 +353,14 @@ pub fn message(list: &[Suggestion]) -> Option<Message> {
                 names(one),
                 notify::short(&title(one))
             ),
+            actions: switch(one),
+            open: View::default(),
+        }),
+        // Podpowiedź asystenta przypisań (A4): pytanie o przypisanie folderu.
+        [one] if one.task.source == crate::assign::SOURCE => Some(Message {
+            key: String::new(),
+            title: "Asystent: do którego zadania należy ta sesja?".into(),
+            body: format!("{} · {}", names(one), notify::short(&title(one))),
             actions: switch(one),
             open: View::default(),
         }),

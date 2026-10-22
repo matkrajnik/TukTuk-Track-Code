@@ -49,6 +49,18 @@ pub struct Agent {
     pub key: Option<String>,
     /// Dopasowane zadanie.
     pub task: Option<Match>,
+    /// Identyfikator sesji z hooka (klucz pamięci asystenta przypisań, A4).
+    #[serde(skip)]
+    pub session_id: String,
+    /// Pierwszy prompt sesji (do 500 znaków), tylko w pamięci i tylko przy
+    /// `ai_assign_suggest`; nie trafia do interfejsu, tylko do asystenta (A4).
+    #[serde(skip)]
+    pub first_prompt: Option<String>,
+    /// Zadanie zaproponowane przez asystenta (A4, źródło `assistant`): tylko
+    /// podpowiedź dla banera. Nigdy nie zastępuje `task`, więc czas agentów i
+    /// dopasowanie nie korzystają z niej, dopóki użytkownik nie przypisze folderu.
+    #[serde(skip)]
+    pub assist: Option<Match>,
 }
 
 /// Zadanie, nad którym pracuje agent.
@@ -479,6 +491,15 @@ impl State {
             self.1.notify();
         }
     }
+    /// Zapamiętywanie pierwszego promptu sesji (A4) zgodne z `ai_assign_suggest`;
+    /// po wyłączeniu zapamiętane prompty znikają z pamięci.
+    pub fn set_keep_prompts(&self, keep: bool) {
+        if let Ok(mut w) = self.0.lock() {
+            if w.sessions.keep_prompts != keep {
+                w.sessions.set_keep_prompts(keep);
+            }
+        }
+    }
     pub fn clear_sessions(&self) {
         if let Ok(mut w) = self.0.lock() {
             w.sessions.clear();
@@ -611,6 +632,8 @@ fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
             }
         }
     }
+    // Sesje bez dopasowania heurystyką: podpowiedź asystenta przypisań (A4).
+    crate::assign::apply(app, agents);
 }
 
 /// Ponowne dopasowanie po zmianie przypisań folderów, bez czekania na pętlę.
@@ -628,6 +651,9 @@ pub(crate) fn rematch(app: &tauri::AppHandle) {
                     current.task = next.task.clone();
                     changed = true;
                 }
+                // Podpowiedź asystenta nie jest widoczna w liście agentów (nie
+                // wymaga `agents-changed`), ale propozycje liczą się od niej.
+                current.assist = next.assist.clone();
             }
         }
         changed.then(|| w.agents.clone())

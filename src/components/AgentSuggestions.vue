@@ -14,6 +14,7 @@ import {
   type Suggestion,
 } from "../agents";
 import { bindAgentFolder, type Snapshot, type Task } from "../store";
+import { ASSISTANT_SOURCE } from "../api/aiassign";
 
 /**
  * Baner propozycji przełączenia (wzór: baner bezczynności). Timer zmienia się
@@ -85,10 +86,25 @@ const dismiss = (s: Suggestion) =>
     suggestions.value = await dismissSuggestion(s);
   });
 const mute = (s: Suggestion) => run(() => muteSuggestionFolders(s));
-/** Tekst banera dla jednej propozycji: agent AI albo sygnał z okna (W3). */
+/** Podpowiedź asystenta przypisań (A4): sesja bez dopasowania heurystyką. */
+const isAssistant = (s: Suggestion) => s.task.source === ASSISTANT_SOURCE;
+/** „Agent w »api« pracuje nad »napraw eksport CSV« — to zadanie »Eksport CSV«?” */
+const assistantText = (s: Suggestion) => {
+  const folder = s.agents[0]?.name || "folderze";
+  const hint = s.agents.find((a) => a.hint)?.hint;
+  return hint
+    ? `Agent w „${folder}” pracuje nad „${hint}” — to zadanie ${label(s.task)}?`
+    : `Agent w „${folder}” pracuje nad czymś, czego nie rozpoznałem — to zadanie ${label(s.task)}?`;
+};
+/** Tekst banera dla jednej propozycji: agent AI, asystent albo sygnał z okna (W3). */
 const single = computed(() => {
   const s = visible.value[0];
   if (!s) return { title: "", text: "" };
+  if (isAssistant(s))
+    return {
+      title: "Asystent: do którego zadania należy ta sesja?",
+      text: assistantText(s),
+    };
   return signalOnly(s)
     ? {
         title: signalTitle(s),
@@ -140,8 +156,32 @@ onUnmounted(() => {
     <Bot class="infobar-icon" :size="20" aria-hidden="true" />
     <template v-if="visible.length === 1">
       <h2>{{ single.title }}</h2>
-      <p>{{ single.text }} {{ timer }} Przełączyć pomiar?</p>
-      <div class="planning-actions">
+      <p v-if="isAssistant(visible[0])">{{ single.text }} {{ timer }}</p>
+      <p v-else>{{ single.text }} {{ timer }} Przełączyć pomiar?</p>
+      <div v-if="isAssistant(visible[0])" class="planning-actions">
+        <button
+          v-if="canRemember(visible[0])"
+          class="primary-button"
+          :disabled="busy"
+          :title="folders(visible[0])"
+          @click="remember(visible[0])"
+        >
+          Przypisz folder</button
+        ><button
+          class="secondary-button"
+          :disabled="busy"
+          @click="switchTo(visible[0])"
+        >
+          Przełącz timer</button
+        ><button
+          class="today-button"
+          :disabled="busy"
+          @click="dismiss(visible[0])"
+        >
+          Nie
+        </button>
+      </div>
+      <div v-else class="planning-actions">
         <button
           class="primary-button"
           :disabled="busy"
@@ -189,9 +229,40 @@ onUnmounted(() => {
           :aria-label="`Propozycja: ${name(s.task)}`"
         >
           <span
-            ><strong>{{ label(s.task) }}</strong> · {{ who(s) }}</span
+            ><strong>{{ label(s.task) }}</strong> · {{ who(s)
+            }}<template v-if="isAssistant(s)">
+              · Asystent<template v-if="s.agents.find((a) => a.hint)">
+                („{{ s.agents.find((a) => a.hint)?.hint }}”)</template
+              ></template
+            ></span
           >
-          <span class="planning-actions">
+          <span v-if="isAssistant(s)" class="planning-actions">
+            <button
+              v-if="canRemember(s)"
+              class="secondary-button"
+              :disabled="busy"
+              :title="folders(s)"
+              :aria-label="`Przypisz folder dla: ${name(s.task)}`"
+              @click="remember(s)"
+            >
+              Przypisz folder</button
+            ><button
+              class="secondary-button"
+              :disabled="busy"
+              :aria-label="`Przełącz timer na: ${name(s.task)}`"
+              @click="switchTo(s)"
+            >
+              Przełącz timer</button
+            ><button
+              class="today-button"
+              :disabled="busy"
+              :aria-label="`Nie: ${name(s.task)}`"
+              @click="dismiss(s)"
+            >
+              Nie
+            </button>
+          </span>
+          <span v-else class="planning-actions">
             <button
               class="secondary-button"
               :disabled="busy"

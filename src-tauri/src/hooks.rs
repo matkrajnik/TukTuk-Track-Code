@@ -124,7 +124,6 @@ pub struct Session {
     pub stopped: bool,
     /// Pierwszy prompt sesji (do 500 znaków), tylko w pamięci; pod asystenta (A4),
     /// zapisywany tylko przy [`Sessions::keep_prompts`].
-    #[allow(dead_code)]
     pub first_prompt: Option<String>,
 }
 
@@ -169,9 +168,8 @@ pub struct Recent {
 pub struct Sessions {
     map: HashMap<(String, String), Session>,
     recent: VecDeque<Recent>,
-    /// Zapamiętywanie pierwszego promptu sesji. Plan wiąże je z ustawieniem
-    /// `ai_assign_suggest`, które powstaje dopiero w A4; do tego czasu wyłączone.
-    // TODO(A4): ustawiać z `ai_assign_suggest` (i czyścić `first_prompt` po wyłączeniu).
+    /// Zapamiętywanie pierwszego promptu sesji; ustawiane z `ai_assign_suggest`
+    /// (A4, [`Sessions::set_keep_prompts`]), domyślnie wyłączone.
     pub keep_prompts: bool,
 }
 
@@ -184,6 +182,17 @@ fn phase_name(phase: Phase) -> &'static str {
 }
 
 impl Sessions {
+    /// Włącza albo wyłącza zapamiętywanie pierwszego promptu; wyłączenie czyści
+    /// prompty zapamiętane w trwających sesjach.
+    pub fn set_keep_prompts(&mut self, keep: bool) {
+        self.keep_prompts = keep;
+        if !keep {
+            for s in self.map.values_mut() {
+                s.first_prompt = None;
+            }
+        }
+    }
+
     /// Stosuje zdarzenie. Zwraca `true`, gdy zmieniło się to, co widać w liście
     /// pracujących agentów (faza, folder, pojawienie się albo usunięcie sesji);
     /// wtedy pętla agentów budzi się od razu.
@@ -370,11 +379,13 @@ impl Sessions {
     pub fn working(&self) -> Vec<agents::Agent> {
         let mut list: Vec<agents::Agent> = self
             .map
-            .values()
-            .filter(|s| s.phase == Phase::Working)
-            .map(|s| {
+            .iter()
+            .filter(|(_, s)| s.phase == Phase::Working)
+            .map(|((_, session_id), s)| {
                 let name = agents::folder(&s.cwd);
                 agents::Agent {
+                    session_id: session_id.clone(),
+                    first_prompt: s.first_prompt.clone(),
                     kind: s.agent.clone(),
                     name: if name.is_empty() {
                         "sesja".into()
@@ -658,8 +669,11 @@ fn attempt(app: &tauri::AppHandle, now: i64, periodic: bool) {
 /// Zdarzenie z potoku: do maszyny stanów, o ile hooki są włączone.
 fn on_event(app: &tauri::AppHandle, body: &[u8]) -> Value {
     if let Some(ev) = parse(body) {
-        if settings::current(app).agent_hooks {
+        let settings = settings::current(app);
+        if settings.agent_hooks {
             if let Some(agents) = app.try_state::<agents::State>() {
+                // Pierwszy prompt sesji tylko dla asystenta przypisań (A4).
+                agents.set_keep_prompts(crate::assign::keep_prompts(&settings));
                 agents.apply_hook(&ev, db::now());
             }
         }

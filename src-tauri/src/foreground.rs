@@ -400,6 +400,7 @@ impl Tracker {
             detached: false,
             key: signal.key.clone(),
             task: Some(signal.task.clone()),
+            ..Agent::default()
         })
     }
 }

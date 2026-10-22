@@ -17,6 +17,12 @@ import {
   type TsProject,
 } from "../store";
 import {
+  aiSuggestTsTask,
+  tsOptionsOf,
+  useAssignEnabled,
+  type TsSuggestion,
+} from "../aiassign";
+import {
   findTsTask,
   tsCheckSaved,
   tsCleanText,
@@ -25,6 +31,7 @@ import {
   tsHundredths,
   tsOvertimeSum,
   tsOvertimeText,
+  resolveTsTask,
   tsPlural,
   type TsEntriesResult,
   type TsSendRow,
@@ -257,8 +264,71 @@ const entries = (i: number): TsEntry[] =>
 // ---------------------------------------------------------------------------
 // Przypisanie zadania TS z podglądu (B4).
 
-/** „Ustaw jako domyślne dla projektu” per zadanie (domyślnie wyłączone). */
+/**
+ * „Ustaw jako domyślne dla projektu” per zadanie (domyślnie wyłączone; po podpowiedzi
+ * asystenta zaznaczone, gdy projekt nie ma jeszcze mapowania).
+ */
 const asDefault = ref<Record<number, boolean>>({});
+
+// Asystent przypisań (A4): „Podpowiedz” i „Podpowiedz wszystkie” wypełniają
+// sugestię z uzasadnieniem; zapis dopiero po „Użyj podpowiedzi” albo wyborze z listy.
+const assistEnabled = useAssignEnabled();
+const suggestions = ref<Record<number, TsSuggestion>>({});
+const suggesting = ref<Record<number, boolean>>({});
+const suggestingAll = ref(false);
+/** Projekt zadania nie ma domyślnego zadania TS (`ts_project_map`). */
+const noProjectMap = (task: Task) =>
+  !!projectOf(task) &&
+  !resolveTsTask({ details: { ...detailsOf(task), tsTaskId: "" } }, map.value);
+/** Jedno pytanie o zadanie; błąd trafia do komunikatu dnia, kolejne pytania idą dalej. */
+async function suggestFor(task: Task, day: DayState): Promise<boolean> {
+  if (suggesting.value[task.id]) return true;
+  suggesting.value = { ...suggesting.value, [task.id]: true };
+  try {
+    const found = await aiSuggestTsTask(
+      task.id,
+      day.day,
+      tsOptionsOf(day.projects),
+    );
+    suggestions.value = { ...suggestions.value, [task.id]: found };
+    if (found.tsTaskId && noProjectMap(task)) asDefault.value[task.id] = true;
+    return true;
+  } catch (e) {
+    day.error = String(e instanceof Error ? e.message : e);
+    return false;
+  } finally {
+    suggesting.value = { ...suggesting.value, [task.id]: false };
+  }
+}
+/** „Podpowiedz wszystkie”: zadania bez zadania TS po kolei (jedno wywołanie naraz). */
+async function suggestAll() {
+  if (suggestingAll.value) return;
+  const day = cur.value;
+  suggestingAll.value = true;
+  day.error = "";
+  try {
+    for (const u of plan.value.unmapped)
+      if (!(await suggestFor(u.task, day))) break;
+  } finally {
+    suggestingAll.value = false;
+  }
+}
+const suggestedName = (task: Task) => {
+  const id = suggestions.value[task.id]?.tsTaskId;
+  return id ? findTsTask(cur.value.projects, id)?.name : undefined;
+};
+/** „Użyj podpowiedzi”: ta sama ścieżka co wybór z listy (`assign`). */
+async function applySuggestion(task: Task) {
+  const id = suggestions.value[task.id]?.tsTaskId;
+  if (!id) return;
+  await assign(task, id);
+  const { [task.id]: _used, ...rest } = suggestions.value;
+  suggestions.value = rest;
+}
+function dismissSuggestion(task: Task) {
+  const { [task.id]: _dropped, ...rest } = suggestions.value;
+  suggestions.value = rest;
+}
 const projectOf = (task: Task) => task.details?.project?.trim() ?? "";
 const tsOptions = computed<SearchOption<string>[]>(() =>
   cur.value.projects.flatMap((p) =>
@@ -661,6 +731,17 @@ const saveLabel = computed(() => {
               ({{ decimalHours(plan.unmappedMs) }} h) — ten czas nie zostanie
               wysłany.
             </p>
+            <p v-if="assistEnabled && !cur.loading && !cur.loadError && !cur.result">
+              <button
+                type="button"
+                class="secondary-button"
+                :disabled="busy || suggestingAll"
+                title="Zapytaj asystenta AI o zadanie TS dla każdego z tych zadań (nic nie zapisze bez Twojego wyboru)"
+                @click="suggestAll"
+              >
+                {{ suggestingAll ? "Pytam asystenta…" : "Podpowiedz wszystkie" }}
+              </button>
+            </p>
             <ul class="ts-send-unmapped">
               <li v-for="u in plan.unmapped" :key="u.task.id">
                 <span>
@@ -692,6 +773,60 @@ const saveLabel = computed(() => {
                       :disabled="busy"
                     />domyślne dla projektu „{{ projectOf(u.task) }}”
                   </label>
+                  <button
+                    v-if="assistEnabled"
+                    type="button"
+                    class="today-button"
+                    :aria-label="'Podpowiedz zadanie TS: ' + u.task.title"
+                    :disabled="busy || suggesting[u.task.id] || suggestingAll"
+                    @click="suggestFor(u.task, cur)"
+                  >
+                    {{ suggesting[u.task.id] ? "Pytam…" : "Podpowiedz" }}
+                  </button>
+                </span>
+                <span
+                  v-if="suggestions[u.task.id]"
+                  class="ts-send-suggestion"
+                  role="status"
+                  :aria-label="'Podpowiedź zadania TS: ' + u.task.title"
+                >
+                  <template v-if="suggestedName(u.task)">
+                    <strong>Asystent proponuje: {{ suggestedName(u.task) }}</strong
+                    ><template v-if="suggestions[u.task.id].reason">
+                      — {{ suggestions[u.task.id].reason }}</template
+                    >
+                    <button
+                      type="button"
+                      class="secondary-button"
+                      :disabled="busy"
+                      :aria-label="'Użyj podpowiedzi: ' + u.task.title"
+                      @click="applySuggestion(u.task)"
+                    >
+                      Użyj podpowiedzi</button
+                    ><button
+                      type="button"
+                      class="today-button"
+                      :aria-label="'Odrzuć podpowiedź: ' + u.task.title"
+                      @click="dismissSuggestion(u.task)"
+                    >
+                      Odrzuć
+                    </button>
+                  </template>
+                  <template v-else>
+                    {{
+                      suggestions[u.task.id].tsTaskId
+                        ? "Zadania TS z podpowiedzi nie ma na liście tego dnia."
+                        : suggestions[u.task.id].reason
+                    }}
+                    <button
+                      type="button"
+                      class="today-button"
+                      :aria-label="'Zamknij podpowiedź: ' + u.task.title"
+                      @click="dismissSuggestion(u.task)"
+                    >
+                      Zamknij
+                    </button>
+                  </template>
                 </span>
               </li>
             </ul>
