@@ -1,7 +1,7 @@
 export const meta = {
   name: 'backlog',
   description: 'Realizuje PLAN_BACKLOG.md zadanie po zadaniu (TukTuk Track 2.0: poprawki, agenci AI, nowa nazwa z migracją): implementacja, weryfikacja testami, przegląd, poprawki, commit; przygotowanie wydania 2.0.0',
-  whenToUse: 'Pełna delegacja prac nad TukTuk Track 2.0 (dawniej Todo Track) według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B12, B2, B6, B11, B13, B8, B9, A0–A6, N1, R20). args: { from?: "B7", only?: ["B3"], until?: "B9", maxFixRounds?: 3, model?: "opus" }',
+  whenToUse: 'Pełna delegacja prac nad TukTuk Track 2.0 (dawniej Todo Track) według PLAN_BACKLOG.md (B7, B10, B1, B3, B4, B5, B12, B2, B6, B11, B13, B8, B9, A0–A6, N1, R20, C1–C3, R20B). args: { from?: "B7", only?: ["B3"], until?: "B9", maxFixRounds?: 3, models?: { impl: "sonnet", verify: "opus", review: "opus", fix: "opus" }, carryNotes?: [] }',
   phases: [
     { title: 'Porządek', detail: 'B7 poprawność backendu, B10 podział store.ts i dużych komponentów' },
     { title: 'Codzienna praca', detail: 'B1 przyciski i SearchSelect, B3 pomiary, B4 wysyłka do TS z nadgodzinami, B5 raporty, B12 ręczne spotkania' },
@@ -10,6 +10,7 @@ export const meta = {
     { title: 'AI: fundamenty', detail: 'A0 filtr danych osobowych, A1 silnik CLI, A2 serwer MCP' },
     { title: 'AI: funkcje', detail: 'A3 czat, A4 asystent przypisań, A5 Zamknięcie dnia, A6 Rano i tydzień' },
     { title: 'Nazwa i wydanie 2.0', detail: 'N1 TukTuk Track z migracją z Todo Track, R20 przygotowanie wydania 2.0.0' },
+    { title: 'Dodatki 2.0', detail: 'C1 ostrzeżenie w ustawieniach TS, C2 malutki widget, C3 przypomnienia, R20B uzupełnienie README i notes.md' },
   ],
 }
 
@@ -24,9 +25,16 @@ const ROOT = 'C:\\Projekty\\Private\\to-do-track\\.claude\\worktrees\\backlog'
 const BRANCH = 'backlog'
 const PLAN = 'PLAN_BACKLOG.md'
 
-// Opcjonalny model agentów: args.model (np. 'opus'). Bez niego opcje agentów są bez zmian (cache wznowienia działa).
-const MODEL = (typeof args !== 'undefined' && args && args.model) || null
-function runAgent(prompt, o) { return agent(prompt, MODEL ? { ...o, model: MODEL } : o) }
+// Modele według roli: implementacja (i przygotowanie wydania) na sonnecie, weryfikacja, przegląd
+// i wszystkie poprawki (czerwona weryfikacja, wdrożenie uwag z przeglądu) na opusie.
+// args.models nadpisuje pojedyncze role, args.model — wszystkie naraz.
+const MODELS = (() => {
+  const a = (typeof args !== 'undefined' && args) || {}
+  const base = { impl: 'sonnet', verify: 'opus', review: 'opus', fix: 'opus' }
+  if (a.model) for (const k of Object.keys(base)) base[k] = a.model
+  return { ...base, ...(a.models || {}) }
+})()
+function runAgent(role, prompt, o) { return agent(prompt, { ...o, model: MODELS[role] }) }
 
 // ---------------------------------------------------------------------------
 // Lista zadań w kolejności z sekcji „Kolejność realizacji” planu. Kolejność jest
@@ -190,6 +198,33 @@ const TASKS = [
     scope: 'Jedno wydanie z całym planem. notes.md: najpierw nowa nazwa TukTuk Track i to, że dane, ustawienia i logowania przechodzą same z Todo Track, potem najważniejsze nowości. README: tytuł i opis TukTuk Track, „Nowości 2.0” (zmiana nazwy i migracja; pomiary i luki; wysyłka TS z nadgodzinami i wieloma dniami; raporty z nadgodzinami; ręczne spotkania także bez kalendarza Microsoft; SearchSelect i czytelne przyciski; plan dnia rano; Rozpocznij / Zakończ / Wznów dzień; hooki agentów zamiast plików sesji z zatwierdzeniem w Codexie przez /hooks; worktree Orki; Asystent AI: subskrypcja Claude Code / Codex bez klucza API, wybór przy pierwszym uruchomieniu, co wychodzi do modelu i filtr nazwisk z ograniczeniem słownika, serwer MCP z rejestracją i przykładem wpisu do CLAUDE.md z propose_note_append, czat i karty akcji, model tylko proponuje), opisy sekcji ustawień „Agenci”, „Asystent AI”, „Skróty”, ręczne spotkania w opisie kalendarza, sekcja „Przejście z Todo Track” (co się przenosi, gdzie zostaje stary katalog, rozszerzenie do przeładowania), „Wersja w repozytorium”.',
     done: '',
   },
+  {
+    id: 'C1', phase: 'Dodatki 2.0', title: 'Ostrzeżenie w ustawieniach integracji z TS',
+    section: 'C1 — Ostrzeżenie w ustawieniach integracji z TS',
+    scope: 'Oba punkty sekcji: stała ramka „Wersja niefinalna” z treścią z planu na górze Ustawienia → TS (TimesheetSettings.vue), role="note", czytelna w jasnym i ciemnym motywie, bez nowych ustawień i bez zmiany wysyłki. Kod ma już nową nazwę z N1 (TukTuk Track, tuktuk-track-*, pl.tuktuktrack.*).',
+    done: 'Playwright: ramka widoczna w Ustawienia → TS przed połączeniem i po połączeniu w podglądzie; zrzuty ustawień TS zaktualizowane, jeśli istnieją.',
+    testChanges: 'zrzuty wzorcowe Ustawienia → TS; scenariusze bez zmian',
+  },
+  {
+    id: 'C2', phase: 'Dodatki 2.0', title: 'Malutki mini-widget, powiększany po najechaniu',
+    section: 'C2 — Malutki mini-widget, powiększany po najechaniu',
+    scope: 'Wszystkie 5 punktów sekcji: ustawienie widget_compact (domyślnie false) z przełącznikiem w Ustawienia → Okna i w widgecie; widok malutki tylko z czasem (pomiar albo wyszarzona suma dnia, sygnał stanu kolorem/kropką); powiększenie po najechaniu i zwinięcie po ok. 600 ms, rozszerzanie od narożnika najbliższego krawędzi ekranu z prostokątem liczonym w Rust z work_area i skali (czysta funkcja testowalna), bez przejmowania fokusu, bez zwijania przy otwartym menu/dialogu widgetu; przeciąganie malutkiego, pozycja zapamiętana dla malutkiego; widget::apply bez zmian. Odpowiednik nowej komendy w podglądzie. Kod ma już nową nazwę z N1.',
+    done: 'Rust: prostokąt powiększenia (krawędzie, skala 100/150%, dwa monitory), domyślna wartość i zapis widget_compact. Playwright (#widget): malutki pokazuje tylko czas (z pomiarem i bez), najechanie pokazuje pełny widok z przyciskami, zjechanie po opóźnieniu wraca do malutkiego (zegar Playwright), przełącznik w Ustawieniach i w widgecie; zrzuty malutkiego i pełnego widgetu.',
+    testChanges: 'zrzuty wzorcowe Ustawienia → Okna; dotychczasowe testy widgetu bez zmian oczekiwanych wartości (domyślnie widget_compact = false)',
+  },
+  {
+    id: 'C3', phase: 'Dodatki 2.0', title: 'Przypomnienia',
+    section: 'C3 — Przypomnienia',
+    scope: 'Wszystkie 5 punktów sekcji: tabela reminders i komendy reminder_list/add/update/delete/snooze z walidacją w nowym module (nie mylić z reminder.rs); wyzwalanie w NotifyClock z kluczem rem:<id>:<at>, jednorazowe → wyłączone, powtarzalne (daily / workdays ze świętami / weekly) → następne wystąpienie, przegapione po starcie raz, akcje toastu „Odłóż 10 min” i „Pokaż” (nigdy start timera); przypomnienia przed spotkaniem z ustawieniami meeting_reminder_enabled (true) i meeting_reminder_minutes (5), klucz meet:<id>:<start>, bez całodniowych i free, ukrywanie tytułu zgodnie z ustawieniem tytułów spotkań, nadpisanie per spotkanie w tabeli meeting_reminders i komendzie meeting_reminder_set, pole „Przypomnienie” w MeetingEditor.vue i dla spotkań z Outlooka na osi dnia i w „Dzisiaj”; działa też po „Zakończ dzień”; „Moje przypomnienia” w Ustawienia → Powiadomienia, „Przypomnij…” w menu kafelka zadania i znacznik 🔔. Odpowiedniki wszystkich komend w podglądzie. Kod ma już nową nazwę z N1.',
+    done: 'Rust: walidacja komend, następne wystąpienie daily/workdays (weekend, święto)/weekly, wyzwolenie dokładnie raz (restart, klucz), przegapione po starcie, odłożenie, przypomnienie spotkania domyślne / nadpisane / wyłączone, spotkanie przesunięte, całodniowe i free pominięte, ukryty tytuł, ON DELETE SET NULL. Playwright: dodanie, edycja, wyłączenie i usunięcie w Ustawieniach, „Przypomnij…” z kafelka i znacznik 🔔, pole „Przypomnienie” w edytorze ręcznego spotkania i dla spotkania z Outlooka, ustawienia domyślne spotkań; zrzut sekcji „Moje przypomnienia”.',
+    testChanges: 'zrzuty wzorcowe Ustawienia → Powiadomienia, edytora spotkania i kafelka zadania (nowa pozycja menu); scenariusze bez zmian',
+  },
+  {
+    id: 'R20B', phase: 'Dodatki 2.0', title: 'Uzupełnienie wydania 2.0.0 o część C', release: '2.0.0', part: 'C', update: true,
+    section: 'Uzupełnienie wydania 2.0.0 (R20B)',
+    scope: 'Dopisz część C do istniejącego przygotowania wydania 2.0.0 bez przepisywania reszty.',
+    done: '',
+  },
 ]
 
 // ---------------------------------------------------------------------------
@@ -262,7 +297,7 @@ ZAKAZY BEZWZGLĘDNE:
 - Nie czytaj i nie zmieniaj ~/.claude/settings.json, ~/.claude.json, ~/.codex/* ani rejestracji MCP; nie wywołuj claude mcp / codex mcp. Testy hooków i rejestracji działają na kopiach w katalogu tymczasowym. Ta sesja sama działa w Claude Code — zmiana jego ustawień zepsułaby workflow.
 - Nie uruchamiaj aplikacji desktopowej (npm run tauri dev, todo-track.exe): przy starcie rejestruje hooki i MCP w plikach użytkownika. Wystarcza podgląd przeglądarkowy i testy.
 - Nie dotykaj bazy użytkownika w %APPDATA%\\pl.todotrack.desktop (ani %APPDATA%\\pl.tuktuktrack.desktop), Menedżera poświadczeń Windows, rejestru HKCU ani zainstalowanej aplikacji. Nie instaluj NSIS i nie uruchamiaj instalatora ani deinstalatora.
-- Aplikacja zmienia w N1 nazwę z Todo Track na TukTuk Track. Zadania przed N1 używają obecnych nazw (todo-track-*, pl.todotrack.*, TODO_TRACK_AI, serwer MCP todo-track) tak, jak opisuje je plan; nowe nazwy wprowadza dopiero N1.
+- Aplikacja zmienia w N1 nazwę z Todo Track na TukTuk Track. Zadania przed N1 używają obecnych nazw (todo-track-*, pl.todotrack.*, TODO_TRACK_AI, serwer MCP todo-track) tak, jak opisuje je plan; nowe nazwy wprowadza dopiero N1. Zadania części C (C1–C3, R20B) powstają już po N1 i używają nowych nazw (TukTuk Track, tuktuk-track-*, pl.tuktuktrack.*), nawet jeśli plan gdzieś wspomina starą.
 
 Zasady:
 - Każda nowa komenda Tauri ma odpowiednik w trybie podglądu (store.ts / src/preview/*.ts), bo testy Playwright działają bez Rusta.
@@ -300,6 +335,17 @@ Wskazówki do README, odstępstwa i uwagi z zadań:
 ${notes || '(brak zgłoszonych)'}
 3. Pełna weryfikacja: npm run build, npm test, cargo fmt --check, cargo test --locked.
 4. Commit "${task.release}: przygotowanie wydania (README, notes.md, NEXT_SESSION)" (bez stopki Co-Authored-By). Bez tagu, bez pusha. W NEXT_SESSION.md zapisz, że wydanie wymaga scalenia ${BRANCH} do master i \`npm run ship -- ${task.release}\` przez użytkownika.
+Zwróć wynik w schemacie IMPL.`
+}
+
+function releaseUpdatePrompt(task, notes) {
+  return `${COMMON}
+ZADANIE ${task.id}: ${task.title}. Sekcja planu: "${task.section}" w ${PLAN}.
+Wydanie ${task.release} jest już przygotowane na gałęzi ${BRANCH} (commit "${task.release}: przygotowanie wydania"). Dopisz do niego część ${task.part}, NIE przepisuj reszty: README (punkty w istniejącej sekcji „Nowości ${task.release.replace(/\.0$/, '')}”, opisy ustawień, zaktualizowany blok „Weryfikacja ${task.release}” z aktualnymi liczbami testów), notes.md (jedna–dwie linie), NEXT_SESSION.md (ręczne sprawdzenia części ${task.part}). Opisuj to, co faktycznie zrobiono (git log --grep "^C[0-9]:"), bez obietnic.
+NIE zmieniaj wersji w manifestach, NIE uruchamiaj npm run ship / npm run release / npm run tauri build, NIE twórz tagu, NIE pushuj.
+Wskazówki do README, odstępstwa i uwagi z zadań części ${task.part}:
+${notes || '(brak zgłoszonych)'}
+Pełna weryfikacja: npm run build, npm test, cargo fmt --check, cargo test --locked. Commit "${task.release}: uzupełnienie wydania o część ${task.part}" (bez stopki Co-Authored-By).
 Zwróć wynik w schemacie IMPL.`
 }
 
@@ -352,7 +398,7 @@ Jeśli uważasz, że któraś uwaga jest błędna, nie wdrażaj jej i napisz dla
 // ---------------------------------------------------------------------------
 async function verifyWithFixes(task, maxRounds, stageLabel) {
   for (let round = 1; round <= maxRounds + 1; round++) {
-    const v = await runAgent(verifyPrompt(task), { label: `verify:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: VERIFY, effort: 'low' })
+    const v = await runAgent('verify', verifyPrompt(task), { label: `verify:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: VERIFY, effort: 'low' })
     if (!v) return { ok: false, failures: 'weryfikator nie zwrócił wyniku' }
     if (v.ok) return v
     if (round > maxRounds) return v
@@ -363,7 +409,7 @@ async function verifyWithFixes(task, maxRounds, stageLabel) {
       v.noRealTools === false ? 'UWAGA: test uruchamia prawdziwe claude/codex/orca albo używa prawdziwych katalogów użytkownika — podstaw proces zastępczy i katalog tymczasowy.' : '',
       v.testsIntact === false ? 'UWAGA: istniejące testy zmieniły się poza dozwolonym zakresem — przywróć je i napraw kod.' : '',
     ].filter(Boolean).join('\n')
-    const fix = await runAgent(fixPrompt(task, v.failures + (extra ? `\n\n${extra}` : ''), round), { label: `fix:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: IMPL })
+    const fix = await runAgent('fix', fixPrompt(task, v.failures + (extra ? `\n\n${extra}` : ''), round), { label: `fix:${task.id}:${stageLabel}:${round}`, phase: task.phase, schema: IMPL })
     if (!fix || fix.status === 'blocked') return { ok: false, failures: fix ? fix.blocker : 'agent poprawek nie zwrócił wyniku' }
   }
   return { ok: false, failures: 'wyczerpano rundy poprawek' }
@@ -371,7 +417,7 @@ async function verifyWithFixes(task, maxRounds, stageLabel) {
 
 async function runRelease(task, maxFixRounds, notes) {
   log(`▶ ${task.id}: ${task.title}`)
-  const rel = await runAgent(releasePrompt(task, notes), { label: `release:${task.id}`, phase: task.phase, schema: IMPL })
+  const rel = await runAgent('impl', (task.update ? releaseUpdatePrompt : releasePrompt)(task, notes), { label: `release:${task.id}`, phase: task.phase, schema: IMPL })
   if (!rel) return { task: task.id, status: 'blocked', blocker: 'agent wydania nie zwrócił wyniku' }
   if (rel.status === 'blocked') return { task: task.id, status: 'blocked', blocker: rel.blocker, summary: rel.summary }
   const v = await verifyWithFixes(task, maxFixRounds, 'release')
@@ -381,7 +427,7 @@ async function runRelease(task, maxFixRounds, notes) {
 
 async function runTask(task, maxFixRounds) {
   log(`▶ ${task.id}: ${task.title}`)
-  const impl = await runAgent(implementPrompt(task), { label: `impl:${task.id}`, phase: task.phase, schema: IMPL })
+  const impl = await runAgent('impl', implementPrompt(task), { label: `impl:${task.id}`, phase: task.phase, schema: IMPL })
   if (!impl) return { task: task.id, status: 'blocked', blocker: 'implementator nie zwrócił wyniku' }
   if (impl.status === 'blocked') return { task: task.id, status: 'blocked', blocker: impl.blocker, summary: impl.summary }
 
@@ -391,13 +437,13 @@ async function runTask(task, maxFixRounds) {
   // Przegląd soczewkami równolegle (tylko odczyt, więc bez konfliktów w drzewie roboczym).
   const lenses = ['plan', 'bugs'].concat(task.ai ? ['privacy'] : [], task.migration ? ['migration'] : [])
   const reviews = (await parallel(lenses.map(lens => () =>
-    runAgent(reviewPrompt(task, lens, impl), { label: `review:${task.id}:${lens}`, phase: task.phase, schema: REVIEW })
+    runAgent('review', reviewPrompt(task, lens, impl), { label: `review:${task.id}:${lens}`, phase: task.phase, schema: REVIEW })
   ))).filter(Boolean)
   const findings = reviews.flatMap(r => r.findings).filter(f => f.severity !== 'nit')
   let reviewSummary = 'przegląd bez uwag'
   if (findings.length) {
     log(`${task.id}: przegląd zgłosił ${findings.length} uwag (${findings.filter(f => f.severity === 'must').length} must)`)
-    const applied = await runAgent(applyReviewPrompt(task, findings), { label: `apply-review:${task.id}`, phase: task.phase, schema: IMPL })
+    const applied = await runAgent('fix', applyReviewPrompt(task, findings), { label: `apply-review:${task.id}`, phase: task.phase, schema: IMPL })
     const v2 = await verifyWithFixes(task, maxFixRounds, 'review')
     if (!v2.ok) return { task: task.id, status: 'blocked', blocker: `weryfikacja po przeglądzie: ${v2.failures}`, summary: impl.summary }
     reviewSummary = `${findings.length} uwag wdrożonych; ${applied ? applied.deviations || '' : ''}`
@@ -410,7 +456,7 @@ async function runTask(task, maxFixRounds) {
 
 // ---------------------------------------------------------------------------
 // Główna pętla: ściśle sekwencyjnie, zatrzymanie na pierwszej blokadzie.
-// args: { from?: id, only?: [ids], until?: id, maxFixRounds?: number, model?: string, carryNotes?: [string] }
+// args: { from?: id, only?: [ids], until?: id, maxFixRounds?: number, model?: string, models?: { impl, verify, review, fix }, carryNotes?: [string] }
 // until: zatrzymaj się po tym zadaniu (np. "B9" — tylko część B, bez wydania).
 // carryNotes: wskazówki z wcześniejszego uruchomienia przy wznowieniu od środka części.
 // ---------------------------------------------------------------------------
@@ -426,7 +472,7 @@ if (opts.until) {
   const end = queue.findIndex(t => t.id === opts.until)
   if (end >= 0) queue = queue.slice(0, end + 1)
 }
-log(`Do wykonania: ${queue.map(t => t.id).join(', ')} (rundy poprawek: ${maxFixRounds}). Żaden agent nie łączy się z TS, Jirą ani Redmine i nie uruchamia prawdziwego claude, codex ani orca.`)
+log(`Do wykonania: ${queue.map(t => t.id).join(', ')} (rundy poprawek: ${maxFixRounds}; modele: implementacja ${MODELS.impl}, weryfikacja ${MODELS.verify}, przegląd ${MODELS.review}, poprawki ${MODELS.fix}). Żaden agent nie łączy się z TS, Jirą ani Redmine i nie uruchamia prawdziwego claude, codex ani orca.`)
 
 const results = []
 let pendingNotes = (opts.carryNotes || []).slice()
