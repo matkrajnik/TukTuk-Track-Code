@@ -1261,3 +1261,21 @@ test("zmiana symulowanego TS w innym oknie odświeża przyciski, Ustawienia i ch
   await expect(card(page, "Code review").locator(".task-ts")).toHaveCount(0);
   await other.close();
 });
+
+test("ramka „Wersja niefinalna” w Ustawienia → TS przed połączeniem i po nim", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await openSettings(page, SECTION);
+  const note = panel(page).getByRole("note", { name: "Wersja niefinalna" });
+  await expect(note).toBeVisible();
+  await expect(note).toContainText(
+    "Integracja z Ideo Timesheet nie jest wersją finalną. Korzystasz z niej na własną odpowiedzialność",
+  );
+  await expect(panel(page).getByText("Nie połączono", { exact: true })).toBeVisible();
+
+  await setTs(page, { connected: true, login: "jan" });
+  await openSettings(page, SECTION);
+  await expect(panel(page).getByText("Połączono jako jan")).toBeVisible();
+  await expect(note).toBeVisible();
+});

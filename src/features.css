@@ -2818,6 +2818,25 @@ html.widget-root body {
 .redmine-warning {
   color: var(--warning);
 }
+/* Ustawienia → TS (C1): stała ramka „Wersja niefinalna”. */
+.ts-beta-note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  max-width: 640px;
+  border: 1px solid var(--warning);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+  color: var(--text);
+}
+.ts-beta-note strong {
+  display: block;
+  color: var(--warning);
+  margin-bottom: 4px;
+}
+.ts-beta-note p {
+  margin: 0;
+}
 .redmine-tracked {
   list-style: none;
   margin: 8px 0;

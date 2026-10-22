@@ -203,6 +203,14 @@ onUnmounted(() => {
 </script>
 
 <template>
+  <aside class="ts-beta-note" role="note" aria-label="Wersja niefinalna">
+    <strong>Wersja niefinalna</strong>
+    <p>
+      Integracja z Ideo Timesheet nie jest wersją finalną. Korzystasz z niej na
+      własną odpowiedzialność: przed „Zapisz w TS” sprawdzaj podgląd, a po
+      wysyłce wpisy w TS.
+    </p>
+  </aside>
   <p class="hint">
     Raport TS dnia wysyłasz do Ideo Timesheet przyciskiem „Wyślij do TS” w
     Zamknięciu dnia i w Raporcie dnia. Każda wysyłka otwiera podgląd i czeka na
