@@ -10,6 +10,7 @@ mod backup;
 mod browser;
 mod calendar;
 mod capacity;
+mod day_assist;
 mod days;
 mod db;
 mod export;
@@ -632,6 +633,8 @@ fn main() {
             ai::ai_test,
             assign::ai_suggest_ts_task,
             assign::ai_suggest_ts_preview,
+            day_assist::ai_day_analyze,
+            day_assist::ai_day_preview,
             ai_chat::ai_chat_send,
             ai_chat::ai_chat_stop,
             ai_chat::ai_chat_reset,

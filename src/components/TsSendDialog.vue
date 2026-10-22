@@ -17,6 +17,7 @@ import {
   type TsMode,
   type TsProject,
 } from "../store";
+import type { TsDescriptionHint } from "../api/aiday";
 import {
   aiSuggestTsPreview,
   aiSuggestTsTask,
@@ -60,7 +61,16 @@ import {
  * w TS”; zapis zastępuje cały dzień, „Zachowaj pozostałe wpisy TS” dokleja
  * wpisy TS o zadaniach spoza raportu. Nie zamyka dnia.
  */
-const props = defineProps<{ data: Snapshot; days: string[]; now: number }>();
+const props = defineProps<{
+  data: Snapshot;
+  days: string[];
+  now: number;
+  /**
+   * Proponowane opisy wpisów z asystenta Zamknięcia dnia (A5, `ts_description`):
+   * pokazywane pod polem opisu jednego dnia; opis zmienia dopiero „Użyj opisu”.
+   */
+  hints?: TsDescriptionHint[];
+}>();
 const emit = defineEmits<{
   close: [];
   /** Zapis dnia przyjęty: dzień i suma wpisów raportu z pomiarów („7,50”). */
@@ -195,6 +205,25 @@ const filledCount = computed(() => {
 
 const description = (s: DayState, e: TsSendRow) =>
   s.descriptions[e.tsTaskId] ?? e.description;
+/** Podpowiedzi opisu odrzucone w tym oknie („Pomiń”), po zadaniu lokalnym. */
+const skippedHints = ref<Set<number>>(new Set());
+/**
+ * Proponowany opis wpisu (A5): tylko przy jednym dniu, przed zapisem i gdy
+ * różni się od opisu w polu.
+ */
+function hintFor(s: DayState, e: TsSendRow): TsDescriptionHint | undefined {
+  if (multi || s.result) return undefined;
+  return props.hints?.find(
+    (h) =>
+      !skippedHints.value.has(h.taskId) &&
+      e.tasks.some((t) => t.id === h.taskId) &&
+      h.text.trim() !== description(s, e).trim(),
+  );
+}
+/** „Użyj opisu”: wpisuje propozycję w pole opisu (zapis dopiero „Zapisz w TS”). */
+function applyHint(s: DayState, e: TsSendRow, h: TsDescriptionHint) {
+  s.descriptions[e.tsTaskId] = h.text;
+}
 const amounts = (s: DayState, e: TsSendRow): Amounts =>
   s.edits[e.tsTaskId] ?? { hours: e.hours, overtime: e.overtime };
 const edited = (s: DayState, e: TsSendRow) => !!s.edits[e.tsTaskId];
@@ -710,6 +739,38 @@ const saveLabel = computed(() => {
                         ).value
                       "
                     />
+                    <div
+                      v-if="hintFor(cur, e)"
+                      class="ts-send-hint"
+                      role="status"
+                      :aria-label="'Proponowany opis: ' + e.tsTaskName"
+                    >
+                      <span
+                        >Asystent proponuje opis: „{{ hintFor(cur, e)!.text }}”<template
+                          v-if="hintFor(cur, e)!.reason"
+                        >
+                          — {{ hintFor(cur, e)!.reason }}</template
+                        ></span
+                      >
+                      <span class="ts-send-hint-actions">
+                        <button
+                          type="button"
+                          class="secondary-button"
+                          :disabled="busy"
+                          :aria-label="'Użyj opisu: ' + e.tsTaskName"
+                          @click="applyHint(cur, e, hintFor(cur, e)!)"
+                        >
+                          Użyj opisu</button
+                        ><button
+                          type="button"
+                          class="today-button"
+                          :aria-label="'Pomiń opis: ' + e.tsTaskName"
+                          @click="skippedHints = new Set([...skippedHints, hintFor(cur, e)!.taskId])"
+                        >
+                          Pomiń
+                        </button>
+                      </span>
+                    </div>
                   </td>
                 </tr>
               </tbody>

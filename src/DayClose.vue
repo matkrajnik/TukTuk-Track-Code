@@ -37,6 +37,9 @@ import { useTsProjectMap } from "./composables/useTsProjectMap";
 import { tsEntries } from "./timesheet";
 import { openView } from "./navigation";
 import { openChat, useChatEnabled } from "./aichat";
+import { appendedNote } from "./aiproposals";
+import { useDayAssistEnabled, type TsDescriptionHint } from "./aiday";
+import DayAssistant from "./components/DayAssistant.vue";
 import {
   dayTarget,
   targetDiffMinutes,
@@ -79,6 +82,9 @@ const dayLine = computed(() => dayHoursLine(dayMarkOf(props.data, props.day)));
 const settings = useSettings();
 /** Czat (A3): „Zapytaj asystenta” z dniem jako kontekstem. */
 const chatEnabled = useChatEnabled();
+/** Asystent Zamknięcia dnia (A5): sekcja „Asystent” i proponowane opisy TS. */
+const assistEnabled = useDayAssistEnabled();
+const tsHints = ref<TsDescriptionHint[]>([]);
 /** Spotkania dnia: sekcja „Spotkania” i cel dnia pomniejszony o spotkania. */
 const calendar = useMeetings(() => dayBounds(props.day));
 /** Cel mierzonego czasu: cel dnia minus spotkania niepokryte pomiarem. */
@@ -209,6 +215,31 @@ async function saveNotes() {
     if (entries.length) emit("updated", await saveDayNotes(props.day, entries));
     message.value = "Zapisano notatki.";
   });
+}
+/**
+ * „Dodaj do notatki” z asystenta (A5): dopisuje zdanie do notatki dnia zadania
+ * (do pola z Zamknięcia dnia, więc razem z niezapisanymi zmianami tego pola) i
+ * zapisuje je jednym `save_day_notes`. Przy błędzie pola wracają do poprzednich
+ * wartości, a błąd trafia do karty asystenta.
+ */
+async function appendNotes(items: { taskId: number; text: string }[]) {
+  const before = { ...notes.value };
+  for (const item of items)
+    notes.value[item.taskId] = appendedNote(notes.value[item.taskId], item.text);
+  const ids = [...new Set(items.map((i) => i.taskId))];
+  try {
+    emit(
+      "updated",
+      await saveDayNotes(
+        props.day,
+        ids.map((id) => ({ id, note: notes.value[id] })),
+      ),
+    );
+    message.value = "Dopisano do notatek dnia.";
+  } catch (e) {
+    notes.value = before;
+    throw e;
+  }
 }
 /**
  * „Przenieś niedokończone” jak „Wszystkie na dziś” w Rano (B6): `planTasks`
@@ -343,6 +374,14 @@ async function move() {
         @updated="emit('updated', $event)"
       />
     </template>
+    <DayAssistant
+      v-if="assistEnabled"
+      :data="data"
+      :day="day"
+      :append-notes="appendNotes"
+      @updated="emit('updated', $event)"
+      @hints="tsHints = $event"
+    />
     <h3>Niedokończony plan</h3>
     <p>
       {{ unfinished.length }} zadań do przeniesienia na następny dzień roboczy
@@ -434,6 +473,7 @@ async function move() {
       :data="data"
       :days="[day]"
       :now="now"
+      :hints="tsHints"
       @close="tsOpen = false"
       @sent="tsMarkSent"
       @updated="emit('updated', $event)"

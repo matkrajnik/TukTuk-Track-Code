@@ -3227,3 +3227,79 @@ html.widget-root body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Zamknięcie dnia z asystentem (A5). */
+.close-assist {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 8px);
+}
+.close-assist h3 {
+  margin: 0 0 8px;
+}
+.close-assist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.assist-cards {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.assist-card {
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.assist-card header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.assist-card-kind {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.assist-card p {
+  margin: 0;
+}
+.assist-card textarea {
+  width: 100%;
+  min-height: 56px;
+  box-sizing: border-box;
+}
+.assist-card-reason {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.assist-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.assist-card-done {
+  color: var(--muted);
+}
+.ts-send-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.ts-send-hint-actions {
+  display: flex;
+  gap: 8px;
+}

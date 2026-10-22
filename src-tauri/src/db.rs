@@ -96,6 +96,10 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS redmine_issues (site TEXT NOT NULL, issue_id INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT '', status_id INTEGER NOT NULL DEFAULT 0, closed INTEGER NOT NULL DEFAULT 0, project TEXT NOT NULL DEFAULT '', tracker TEXT NOT NULL DEFAULT '', priority TEXT NOT NULL DEFAULT '', due_date TEXT NOT NULL DEFAULT '', assigned INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, issue_id));
         CREATE TABLE IF NOT EXISTS redmine_statuses (site TEXT NOT NULL, id INTEGER NOT NULL, name TEXT NOT NULL, is_closed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(site, id));
         CREATE TABLE IF NOT EXISTS task_done (task_id INTEGER PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE, done_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS status_changes (id INTEGER PRIMARY KEY AUTOINCREMENT, system TEXT NOT NULL, issue TEXT NOT NULL, from_status TEXT NOT NULL, to_status TEXT NOT NULL, at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS status_changes_at ON status_changes(at);
+        CREATE TRIGGER IF NOT EXISTS jira_status_changed AFTER UPDATE OF status ON jira_issues WHEN OLD.status<>'' AND NEW.status<>'' AND OLD.status<>NEW.status BEGIN INSERT INTO status_changes(system,issue,from_status,to_status,at) VALUES('jira',NEW.issue_key,OLD.status,NEW.status,CAST(strftime('%s','now') AS INTEGER)*1000); END;
+        CREATE TRIGGER IF NOT EXISTS redmine_status_changed AFTER UPDATE OF status ON redmine_issues WHEN OLD.status<>'' AND NEW.status<>'' AND OLD.status<>NEW.status BEGIN INSERT INTO status_changes(system,issue,from_status,to_status,at) VALUES('redmine',CAST(NEW.issue_id AS TEXT),OLD.status,NEW.status,CAST(strftime('%s','now') AS INTEGER)*1000); END;
         CREATE TABLE IF NOT EXISTS day_marks (day TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, resumed INTEGER NOT NULL DEFAULT 0);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
