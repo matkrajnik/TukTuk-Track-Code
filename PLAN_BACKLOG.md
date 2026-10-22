@@ -36,6 +36,9 @@ Realizacja: workflow `.claude/workflows/backlog.js` (zadanie po zadaniu: impleme
 | A5 | Zamknięcie dnia z asystentem: luki, czas nieprzypisany, opisy TS | L | A1, A4, B3 (luki) |
 | A6 | Rano i przegląd tygodnia: komentarz asystenta (opcjonalnie) | S | A1 |
 | N1 | Nowa nazwa TukTuk Track: interfejs, pliki, identyfikator, migracja danych, poświadczeń, rozszerzenia i instalacji | L | wszystkie zadania B i A (zmienia nazwy, które one tworzą) |
+| C1 | Ostrzeżenie „wersja niefinalna, na własną odpowiedzialność” w ustawieniach TS | S | — |
+| C2 | Malutki mini-widget (tylko czas), pełny po najechaniu | M | B11, B13 (widget) |
+| C3 | Przypomnienia: własne, powtarzalne i przed spotkaniami | L | B12 (spotkania), B1 (`SearchSelect`) |
 
 Rozmiary: S do pół dnia, M jeden do dwóch dni, L dwa do trzech dni z testami.
 
@@ -53,6 +56,7 @@ Jeden implementator naraz w jednym drzewie roboczym (zadania dotykają `store.ts
 8. **A3**, **A4**, **A5**, **A6** — czat i funkcje asystenta.
 9. **N1** — nowa nazwa TukTuk Track i migracja z Todo Track (na końcu, jednym przejściem po całym kodzie).
 10. **R20** — przygotowanie wydania 2.0.0.
+11. **C1**, **C2**, **C3** — dodatki zgłoszone 22 października 2026 (część C), potem **R20B** — uzupełnienie README, `notes.md` i `NEXT_SESSION.md` o część C.
 
 Workflow zatrzymuje się na pierwszej blokadzie i podaje, jak wznowić.
 
@@ -385,6 +389,47 @@ Stan dziś: `productName` „Todo Track”, `identifier` `pl.todotrack.desktop` 
 
 Testy: Rust dla migracji katalogu (brak starego, stary bez nowego, oba z bazą, ponowne uruchomienie), poświadczeń na zastępczym magazynie (sukces, brak wpisu, błąd zapisu, odczyt kontrolny), budowy kluczy rejestru hosta i autostartu, usuwania starych wpisów hooków i MCP, kontroli kompletności. Playwright: nazwa w tytule, nawigacji i Ustawieniach, nowe klucze `localStorage`; wszystkie dotychczasowe testy po mechanicznej zmianie nazw.
 
+# Część C — dodatki do 2.0 (22 października 2026)
+
+Zgłoszenia użytkownika po zakończeniu części B, A i N1, do tego samego wydania 2.0.0. Kod ma już nową nazwę (N1): nazwy techniczne `tuktuk-track-*`, identyfikatory `pl.tuktuktrack.*`, interfejs „TukTuk Track”. Kolejność: **C1**, **C2**, **C3**, potem **R20B** (uzupełnienie README, `notes.md` i `NEXT_SESSION.md` o część C).
+
+## C1 — Ostrzeżenie w ustawieniach integracji z TS
+
+Zgłoszenie: w ustawieniach integracji z TS ma być informacja, że to nie jest wersja finalna i używa się jej na własną odpowiedzialność.
+
+1. **Ramka ostrzeżenia** na górze Ustawienia → TS (`TimesheetSettings.vue`), nad dotychczasową podpowiedzią, widoczna zawsze (także przed połączeniem i po nim): tytuł „Wersja niefinalna”, treść „Integracja z Ideo Timesheet nie jest wersją finalną. Korzystasz z niej na własną odpowiedzialność: przed »Zapisz w TS« sprawdzaj podgląd, a po wysyłce wpisy w TS.” Styl ostrzeżenia ze wspólnych stylów (istniejący wzorzec ramki ostrzeżenia, jeśli jest; inaczej nowa klasa w stylach wspólnych), `role="note"`, czytelny w trybie jasnym i ciemnym.
+2. Bez zmiany zachowania wysyłki i bez nowych ustawień (ramki nie da się ukryć).
+
+Testy: Playwright — ramka widoczna w Ustawienia → TS bez połączenia i po połączeniu w podglądzie; zaktualizowane zrzuty ustawień TS, jeśli istnieją.
+
+## C2 — Malutki mini-widget, powiększany po najechaniu
+
+Zgłoszenie: mini-widget zawsze na wierzchu ma mieć tryb „malutki” — tylko z czasem — i dopiero po najechaniu myszą ma się powiększać. Stan kodu: `widget.rs` (okno `widget`, 320×64, `focusable: false`, `alwaysOnTop`), `WidgetWindow.vue`, Ustawienia → Okna (`WindowsSection.vue`), ustawienia `widget_enabled`, `widget_background_only`.
+
+1. **Ustawienie** `widget_compact` (bool, domyślnie `false`) w `AppSettings` z wartością domyślną; przełącznik „Malutki widget: tylko czas, pełny po najechaniu” w Ustawienia → Okna (wyłączony, gdy widget jest wyłączony) oraz szybki przełącznik w samym widgecie (mała ikona w pełnym widoku) zapisujący to samo ustawienie.
+2. **Widok malutki**: tylko czas — czas bieżącego pomiaru (format jak dziś w widgecie); bez pomiaru suma dnia wyszarzona (po zakończeniu dnia z B13 też sama suma, wyszarzona). Okno ok. 96×28 px logicznych (dobrane tak, żeby czas mieścił się w obu motywach), zaokrąglone, bez przycisków. Kolor albo kropka sygnalizuje stan: pomiar trwa / brak pomiaru.
+3. **Powiększenie po najechaniu**: wejście kursora nad okno rozszerza je do pełnego widoku (dotychczasowe 320×64 z przyciskami Start/Stop, ⇄, X i resztą), wyjście kursora wraca do malutkiego po ok. 600 ms (opóźnienie, żeby przejście do przycisków nie zwijało okna). Rozszerzanie od narożnika najbliższego krawędzi ekranu (widget przy prawej krawędzi rośnie w lewo, przy dolnej w górę), żeby okno nie wychodziło poza obszar roboczy; po zwinięciu wraca dokładnie na miejsce malutkiego. Zmiana rozmiaru w Rust (komenda np. `widget_set_expanded(expanded)`, która liczy prostokąt z `work_area` monitora i współczynnika skali); okno nadal nie przejmuje fokusu. Gdy otwarte jest menu lub dialog widgetu (np. ⇄), widget nie zwija się do jego zamknięcia.
+4. **Przeciąganie i pozycja**: malutki widget da się przeciągać jak dziś pełny; zapamiętana pozycja dotyczy widoku malutkiego (lewy górny róg); przy starcie widget pojawia się jako malutki, jeśli ustawienie jest włączone.
+5. Tryb „tylko w tle”, schowanie X i reszta logiki `widget::apply` bez zmian.
+
+Testy: Rust — wyliczenie prostokąta powiększonego okna od narożnika (krawędzie ekranu, skala 100/150%, dwa monitory przez podane `work_area`), domyślna wartość i zapis `widget_compact`. Playwright (`#widget` w podglądzie): widok malutki pokazuje tylko czas (pomiar i brak pomiaru), najechanie pokazuje pełny widok z przyciskami, zjechanie po opóźnieniu wraca do malutkiego (zegar Playwright), przełącznik w Ustawieniach i w widgecie; zrzuty malutkiego i pełnego widgetu.
+
+## C3 — Przypomnienia
+
+Zgłoszenie: „przypominajka” — ustawiam, że chcę, żeby wyskoczyło powiadomienie; przy spotkaniu możliwość ustawienia przypomnienia. Decyzje użytkownika (22 października 2026): wchodzą trzy rodzaje — własne na datę i godzinę, powtarzalne, przed spotkaniem; dla spotkań domyślne „X minut przed” w ustawieniach (wyłączalne) plus zmiana albo wyłączenie przy pojedynczym spotkaniu. Stan kodu: powiadomienia systemowe w `notify.rs` (`NotifyClock`, klucze w `notifications_sent`, toast przez `tauri-winrt-notification` z akcjami), spotkania przez `calendar::meetings_between` (Outlook + ręczne z B12).
+
+1. **Tabela** `reminders(id INTEGER PRIMARY KEY, text TEXT NOT NULL, task_id NULL → tasks ON DELETE SET NULL, at TEXT NOT NULL /* lokalna data i godzina następnego wystąpienia */, repeat TEXT NOT NULL DEFAULT 'none' /* none | daily | workdays | weekly */, weekdays TEXT NULL /* dla weekly, np. "1,3,5" */, enabled INTEGER DEFAULT 1, last_fired_at NULL, created_at, updated_at)` przez `CREATE TABLE IF NOT EXISTS`; kopia SQLite obejmuje tabelę. Komendy `reminder_list`, `reminder_add`, `reminder_update`, `reminder_delete`, `reminder_snooze(id, minutes)` z walidacją (tekst 1–200 znaków, poprawna data i godzina, dla `none` nie w przeszłości przy dodaniu, `weekly` z co najmniej jednym dniem, zadanie istniejące); odpowiedniki w podglądzie (`src/preview/`). Nazwa modułu Rust niekolidująca z istniejącym `reminder.rs` (przypomnienie o braku pomiaru), np. `reminders.rs`.
+2. **Wyzwalanie** w `NotifyClock` (czas i strefa z zewnątrz, testowalne): gdy nadejdzie `at`, toast z treścią przypomnienia (i tytułem zadania, jeśli przypięte), klucz `rem:<id>:<at>` w `notifications_sent` (bez powtórzeń po restarcie). Po wystrzeleniu: `none` → `enabled = 0` (zostaje na liście jako wykonane), powtarzalne → `at` przesuwa się na następne wystąpienie (`workdays` pomija weekendy i święta z `holidays.rs`, `weekly` według `weekdays`). Przypomnienie przegapione, gdy aplikacja nie działała: po starcie jedno powiadomienie „Przegapione przypomnienie: …” na każde (najwyżej raz), powtarzalne przechodzą na następne przyszłe wystąpienie. Akcje toastu: „Odłóż 10 min” (`reminder_snooze`) i „Pokaż” (otwiera aplikację; z zadaniem — kafelek zadania). Kliknięcie nigdy nie uruchamia timera.
+3. **Przed spotkaniem**: ustawienia `meeting_reminder_enabled` (domyślnie `true`) i `meeting_reminder_minutes` (domyślnie 5; wybór 1/5/10/15/30) w Ustawienia → Powiadomienia (`NotificationsSection.vue`). Dla każdego spotkania z `meetings_between` (bez całodniowych i bez `show_as` = `free`) toast „Za 5 min: <temat> (10:00–10:30)” z kluczem `meet:<id spotkania>:<start>`; przesunięte spotkanie dostaje nowe przypomnienie. Tytuł spotkania z Outlooka w toaście zależy od istniejącego ustawienia pokazywania tytułów spotkań (gdy wyłączone — „Za 5 min: spotkanie”). Nadpisanie dla pojedynczego spotkania: tabela `meeting_reminders(meeting_id TEXT PRIMARY KEY, minutes INTEGER NULL /* NULL = wyłączone */)` przez `CREATE TABLE IF NOT EXISTS`; komenda `meeting_reminder_set(meeting_id, minutes | null | "default")`; w `MeetingEditor.vue` (ręczne) oraz w szczegółach albo menu spotkania z Outlooka na osi dnia i w „Dzisiaj” pole „Przypomnienie: Domyślne (5 min) / 1 / 5 / 10 / 15 / 30 min / Bez przypomnienia”. Przypomnienie spotkania działa także po „Zakończ dzień” (B13 wycisza tylko przypomnienia o braku pomiaru i propozycje).
+4. **Interfejs przypomnień własnych**: lista „Moje przypomnienia” (nadchodzące według `at`, potem wyłączone i wykonane) z dodawaniem, edycją, włączaniem/wyłączaniem i usuwaniem (`ConfirmDialog`) w Ustawienia → Powiadomienia oraz szybkie „Przypomnij…” w menu kafelka zadania (`TaskCard`), które otwiera ten sam formularz z przypiętym zadaniem. Formularz: tekst, dzień, godzina (domyślnie za godzinę, zaokrąglona do 5 min), powtarzanie (Jednorazowo / Codziennie / W dni robocze / Co tydzień + dni tygodnia), opcjonalne zadanie (`SearchSelect`). Na kafelku zadania z aktywnym przypomnieniem mały znacznik 🔔 z godziną.
+5. Osobny wyłącznik przypomnień własnych nie jest potrzebny (istnieją tylko, gdy użytkownik je doda); przypomnienia o spotkaniach wyłącza `meeting_reminder_enabled`. Model AI (część A) nie tworzy przypomnień.
+
+Testy: Rust — walidacja komend, następne wystąpienie dla `daily` / `workdays` (weekend, święto) / `weekly`, wyzwolenie w `NotifyClock` dokładnie raz (restart, klucz), przegapione po starcie, odłożenie, przypomnienie spotkania z ustawienia domyślnego, z nadpisaniem i wyłączonego, spotkanie przesunięte, całodniowe i `free` pominięte, tytuł ukryty zgodnie z ustawieniem, `ON DELETE SET NULL` przy usunięciu zadania. Playwright: dodanie, edycja, wyłączenie i usunięcie przypomnienia w Ustawieniach, „Przypomnij…” z kafelka i znacznik 🔔, pole „Przypomnienie” w edytorze ręcznego spotkania i dla spotkania z Outlooka (podgląd), ustawienia domyślne spotkań; zrzut sekcji „Moje przypomnienia”.
+
+## Uzupełnienie wydania 2.0.0 (R20B)
+
+R20 przygotował już README, `notes.md` i `NEXT_SESSION.md` dla części B, A i N1 (commit „2.0.0: przygotowanie wydania”). R20B dopisuje część C bez przepisywania reszty: w README do „Nowości 2.0” punkty C1–C3 (ostrzeżenie o wersji niefinalnej integracji TS, malutki widget, przypomnienia własne, powtarzalne i przed spotkaniami), opisy ustawień (Okna → malutki widget, Powiadomienia → przypomnienia o spotkaniach i „Moje przypomnienia”, TS → ostrzeżenie) i zaktualizowany blok „Weryfikacja 2.0.0” z liczbami testów; w `notes.md` jedna–dwie linie o przypomnieniach i malutkim widgecie; w `NEXT_SESSION.md` ręczne sprawdzenia C2–C3.
+
 ## Po każdym zadaniu
 
 Zielone `npm run build`, `npm test` (Playwright), `cargo test --locked`, `cargo fmt --check`; przegląd dwiema soczewkami (zgodność z planem, poprawność), w części A także soczewką **prywatności** (czy każda ścieżka do modelu przechodzi przez A0 i czy nic nie wywołuje prawdziwego CLI), w N1 soczewką **migracji** (czy nic nie kasuje danych ani poświadczeń przed udanym przeniesieniem). Commit `B<n>: <tytuł>` / `A<n>: <tytuł>` / `N1: <tytuł>`. Zadania nie podnoszą wersji.
@@ -395,6 +440,8 @@ Jedno wydanie z całym planem. `notes.md` (krótko: nowa nazwa i że dane przech
 
 ## Do ręcznego sprawdzenia (po instalacji, przez użytkownika)
 
+- C2: malutki widget na prawdziwym Windows — najechanie myszą na okno bez fokusu (`focusable: false`) rozszerza je, zwija się po zjechaniu, przy krawędziach ekranu i na drugim monitorze z inną skalą.
+- C3: toast przypomnienia i przypomnienia spotkania z akcjami „Odłóż 10 min” i „Pokaż”, przegapione przypomnienie po uruchomieniu aplikacji, spotkanie z Outlooka przesunięte w kalendarzu.
 - B4: nazwa pola nadgodzin w prawdziwym TS, czy norma dnia jest tam stała (8 h) czy per użytkownik, i czy porównanie po zapisie uwzględnia nadgodziny.
 - B8: sesja Claude z workflow ponad 15 minut widoczna w kafelku; sesja czekająca na zgodę nie liczy się jako praca; Codex przed i po zatwierdzeniu hooka przez `/hooks`; sesja uruchomiona z Orki; restart aplikacji w trakcie pracy agenta.
 - B9: tworzenie worktree przy działającej i niedziałającej Orce.
