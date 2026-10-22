@@ -27,6 +27,8 @@ export interface AppSettings {
   dayStart: string;
   widgetEnabled: boolean;
   widgetBackgroundOnly: boolean;
+  /** Malutki widget (C2): tylko czas, pełny widok po najechaniu myszą. */
+  widgetCompact: boolean;
   autostartHidden: boolean;
   notifyDue: boolean;
   notifyLongMinutes: number;
@@ -141,6 +143,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   dayStart: "08:00",
   widgetEnabled: false,
   widgetBackgroundOnly: false,
+  widgetCompact: false,
   autostartHidden: false,
   notifyDue: true,
   notifyLongMinutes: 240,

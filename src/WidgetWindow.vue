@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { LogicalSize, getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   ArrowRightCircle,
   Bot,
   Coffee,
   GripVertical,
+  Maximize2,
+  Minimize2,
   Play,
   SkipForward,
   Square,
@@ -61,6 +62,7 @@ import { issueRef } from "./issue";
 import { clock, dayBounds, dayKey, hm, inDay, plural } from "./time";
 import { dayGoal } from "./capacity";
 import { dayTarget, useSettings } from "./target";
+import { writeSettings } from "./settings";
 import { useMeetings } from "./composables/useMeetings";
 import {
   confirmStart,
@@ -107,17 +109,6 @@ async function switchToPin(id: number, title: string) {
     busy.value = false;
   }
 }
-/** Okno 320×64, z rzędem przypiętych 320×96 (jak `.widget-card.has-pins`). */
-watch(
-  () => pins.value.length > 0,
-  (hasPins) => {
-    if (!desktop) return;
-    getCurrentWindow()
-      .setSize(new LogicalSize(320, hasPins ? 96 : 64))
-      .catch((e) => (error.value = String(e)));
-  },
-  { immediate: true },
-);
 /** Propozycje przełączenia z pracy agentów AI (bez bieżącego zadania). */
 const suggestions = ref<Suggestion[]>([]);
 const proposals = computed(() =>
@@ -231,6 +222,92 @@ async function runFocus(action: FocusAction, taskId: number | null = null) {
  */
 const settings = useSettings();
 const today = computed(() => dayKey(now.value));
+/**
+ * Malutki widget (C2): przy `widgetCompact` okno pokazuje tylko czas, a po
+ * najechaniu myszą pełny widok. Zwinięcie po 600 ms od zjechania (przejście do
+ * przycisków nie zwija okna) i nigdy przy otwartym menu albo dialogu (⇄).
+ */
+const compact = computed(() => settings.value.widgetCompact);
+const expanded = ref(false);
+const showCompact = computed(() => compact.value && !expanded.value);
+const collapseDelay = 600;
+let hovering = false;
+let collapseTimer: ReturnType<typeof setTimeout> | undefined;
+function hoverIn() {
+  hovering = true;
+  clearTimeout(collapseTimer);
+  if (compact.value) expanded.value = true;
+}
+function hoverOut() {
+  hovering = false;
+  scheduleCollapse();
+}
+function scheduleCollapse() {
+  clearTimeout(collapseTimer);
+  if (!expanded.value) return;
+  collapseTimer = setTimeout(collapse, collapseDelay);
+}
+/** Dialog albo menu widgetu (okno ⇄ w podglądzie) trzyma powiększony widok. */
+const holdsOpen = () =>
+  quickPreview.value || !!document.querySelector('[role="dialog"]');
+function collapse() {
+  if (hovering || !expanded.value) return;
+  if (holdsOpen()) return scheduleCollapse();
+  expanded.value = false;
+}
+/** Wysokość pełnego widoku: 64, z rzędem przypiętych 96 (jak `.widget-card.has-pins`). */
+const fullHeight = computed(() => (pins.value.length > 0 ? 96 : 64));
+/**
+ * Układ okna liczy Rust (`widget_set_layout`): rozmiar malutkiego, powiększenie
+ * od narożnika najbliższego krawędzi ekranu i powrót na miejsce malutkiego.
+ * W podglądzie okna nie ma: rozmiar strony ustawia przeglądarka (testy).
+ * Odpowiedź `true` przy prośbie o zwinięcie: okno ⇄ jest otwarte, zostajemy
+ * powiększeni i ponawiamy zwinięcie.
+ */
+watch(
+  [compact, expanded, fullHeight],
+  async ([isCompact, isExpanded, height]) => {
+    if (!isCompact && expanded.value) expanded.value = false;
+    if (!desktop) return;
+    try {
+      const open = await invoke<boolean>("widget_set_layout", {
+        compact: isCompact,
+        expanded: isExpanded,
+        fullHeight: height,
+      });
+      if (isCompact && !isExpanded && open && !expanded.value) {
+        expanded.value = true;
+        scheduleCollapse();
+      }
+    } catch (e) {
+      error.value = String(e);
+    }
+  },
+  { immediate: true },
+);
+async function setCompact(value: boolean) {
+  // Okno zmniejsza się pod kursorem: stan najechania liczymy od nowa.
+  if (value) hovering = false;
+  try {
+    await writeSettings({ widgetCompact: value });
+  } catch (e) {
+    error.value = String(e instanceof Error ? e.message : e);
+  }
+}
+/** Malutki widok: czas pomiaru albo wyszarzona suma dnia. */
+const compactTotal = computed(
+  () =>
+    closedToday.value +
+    (active.value ? inDay(active.value, today.value, now.value) : 0),
+);
+const compactText = computed(() =>
+  active.value ? duration(now.value - active.value.startedAt) : hm(compactTotal.value),
+);
+const compactTitle = computed(() =>
+  active.value
+    ? `${activeTask.value?.title ?? "Pomiar"} · pomiar trwa`
+    : `Brak pomiaru · suma dnia ${hm(compactTotal.value)}`,
+);
 const meetings = useMeetings(() => dayBounds(today.value));
 const closedToday = computed(() =>
   data.value.sessions.reduce(
@@ -433,6 +510,8 @@ onMounted(async () => {
       );
       unsubscribers.push(
         await listen("widget-shown", () => {
+          hovering = false;
+          expanded.value = false;
           updateTheme();
           void refresh();
         }),
@@ -456,6 +535,7 @@ onUnmounted(() => {
   setStartGuard(null);
   clearInterval(tick);
   clearTimeout(feedbackTimer);
+  clearTimeout(collapseTimer);
   window.removeEventListener("storage", updateTheme);
   unsubscribers.forEach((fn) => fn());
 });
@@ -466,10 +546,41 @@ onUnmounted(() => {
     v-if="!hidden"
     id="widget"
     class="widget-card"
-    :class="{ running: !!active, 'has-pins': pins.length > 0 }"
+    :class="{
+      running: !!active,
+      'has-pins': pins.length > 0 && !showCompact,
+      compact: showCompact,
+    }"
     aria-label="Mini-widget"
     data-tauri-drag-region
+    @mouseenter="hoverIn"
+    @mouseleave="hoverOut"
   >
+    <template v-if="showCompact">
+      <span class="widget-dot" aria-hidden="true" data-tauri-drag-region></span>
+      <span
+        class="widget-mini-time mono"
+        :class="{ idle: !active }"
+        :aria-label="active ? 'Czas bieżącego pomiaru' : 'Suma dnia'"
+        :title="compactTitle"
+        data-tauri-drag-region
+        >{{ compactText }}</span
+      >
+    </template>
+    <template v-else>
+      <button
+        class="widget-compact-toggle"
+        aria-label="Malutki widget"
+        :aria-pressed="compact"
+        :title="
+          compact
+            ? 'Malutki widget włączony: kliknij, by wrócić do pełnego'
+            : 'Malutki widget: tylko czas, pełny po najechaniu'
+        "
+        @click="setCompact(!compact)"
+      >
+        <Minimize2 :size="12" />
+      </button>
     <span class="widget-grip" title="Przeciągnij" data-tauri-drag-region
       ><GripVertical :size="16"
     /></span>
@@ -641,6 +752,7 @@ onUnmounted(() => {
         {{ pinLabel(t) }}
       </button>
     </div>
+    </template>
   </section>
   <p v-else class="widget-hidden-note">
     Mini-widget schowany do końca sesji.

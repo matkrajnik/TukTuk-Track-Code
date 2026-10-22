@@ -960,6 +960,63 @@ html.widget-root body {
 .widget-card.running {
   border-color: var(--accent);
 }
+.widget-card {
+  position: relative;
+}
+/* Malutki widget (C2): okno 96×28, tylko czas z kropką stanu. */
+.widget-card.compact {
+  justify-content: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 0 6px;
+  border-radius: 6px;
+  cursor: grab;
+}
+.widget-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.6;
+}
+.widget-card.running .widget-dot {
+  background: var(--accent);
+  opacity: 1;
+}
+.widget-mini-time {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.widget-mini-time.idle {
+  color: var(--muted);
+  font-weight: 500;
+}
+/* Przełącznik malutkiego widgetu: w rogu, widoczny po najechaniu albo fokusie. */
+.widget-compact-toggle {
+  position: absolute;
+  top: 1px;
+  right: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 14px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.widget-card:hover .widget-compact-toggle,
+.widget-compact-toggle:focus-visible {
+  opacity: 1;
+}
+.widget-compact-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
 .widget-grip {
   display: flex;
   align-items: center;

@@ -236,6 +236,8 @@ export const settingsSections = [
       "główne okno",
       "Pokazuj mini-widget zawsze na wierzchu",
       "Tylko gdy główne okno jest schowane lub bez fokusu",
+      "malutki widget",
+      "Malutki widget: tylko czas, pełny po najechaniu",
     ],
   },
   {

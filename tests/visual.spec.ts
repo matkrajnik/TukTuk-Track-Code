@@ -413,6 +413,67 @@ for (const theme of themes)
     await expect(page).toHaveScreenshot(`widget-${theme}.png`);
   });
 
+// C2: malutki widget (96×28, sam czas) i ten sam widget po najechaniu (pełny
+// widok z przełącznikiem w rogu). W aplikacji rozmiar okna zmienia Rust, w
+// podglądzie ustawiamy go w teście.
+for (const theme of themes)
+  test(`malutki widget ${theme}`, { tag: "@visual" }, async ({ page }) => {
+    await page.setViewportSize({ width: 96, height: 28 });
+    await useTheme(page, theme);
+    await openPreview(page, {
+      active: { task: ids.analysis, from: "11:00" },
+      settings: { widgetEnabled: true, widgetCompact: true },
+    });
+    await page.goto("/#widget");
+    await page.reload();
+    const widget = page.locator("#widget");
+    await expect(widget).toHaveClass(/compact/);
+    await expect(widget.getByLabel("Czas bieżącego pomiaru")).toHaveText(
+      "01:00:00",
+    );
+    await settle(page);
+    await expect(page).toHaveScreenshot(`widget-malutki-${theme}.png`);
+  });
+for (const theme of themes)
+  test(`malutki widget bez pomiaru ${theme}`, { tag: "@visual" }, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 96, height: 28 });
+    await useTheme(page, theme);
+    await openPreview(page, {
+      settings: { widgetEnabled: true, widgetCompact: true },
+    });
+    await page.goto("/#widget");
+    await page.reload();
+    const widget = page.locator("#widget");
+    await expect(widget.getByLabel("Suma dnia")).toBeVisible();
+    await settle(page);
+    await expect(page).toHaveScreenshot(`widget-malutki-suma-${theme}.png`);
+  });
+for (const theme of themes)
+  test(`malutki widget powiększony ${theme}`, { tag: "@visual" }, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 96, height: 28 });
+    await useTheme(page, theme);
+    await openPreview(page, {
+      active: { task: ids.analysis, from: "11:00" },
+      settings: { widgetEnabled: true, widgetCompact: true },
+    });
+    await page.goto("/#widget");
+    await page.reload();
+    const widget = page.locator("#widget");
+    await widget.hover();
+    await expect(widget).not.toHaveClass(/compact/);
+    await page.setViewportSize({ width: 320, height: 64 });
+    await page.evaluate(() => document.fonts.ready);
+    await page.mouse.move(160, 50);
+    await expect(
+      widget.getByRole("button", { name: "Malutki widget" }),
+    ).toBeVisible();
+    await expect(page).toHaveScreenshot(`widget-powiekszony-${theme}.png`);
+  });
+
 // B13: pasek po „Zakończ dzień” — „Dzień zakończony 16:40 · 3:30” z „Wznów dzień”.
 for (const theme of themes)
   for (const width of widths)

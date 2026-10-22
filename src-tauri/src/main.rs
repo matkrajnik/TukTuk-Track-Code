@@ -676,6 +676,7 @@ fn main() {
             widget::widget_status,
             widget::widget_dismiss,
             widget::widget_open_main,
+            widget::widget_set_layout,
             jira::jira_settings,
             jira::jira_watch_status,
             jira::jira_connect,

@@ -98,6 +98,8 @@ pub fn tracked(label: &str) -> bool {
 /// Zapisuje stan wszystkich śledzonych okien na dysk. Błąd zapisu nie może
 /// blokować chowania okna ani wyjścia z aplikacji, więc jest tylko logowany.
 pub fn save<R: Runtime>(app: &AppHandle<R>) {
+    // Zapamiętujemy miejsce malutkiego widgetu, nie powiększonego (C2).
+    crate::widget::collapse_for_save(app);
     if let Err(e) = app.save_window_state(flags()) {
         eprintln!("Nie udało się zapisać położenia okien: {e}");
     }

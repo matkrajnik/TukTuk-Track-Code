@@ -36,6 +36,8 @@ pub struct AppSettings {
     pub day_start: String,
     pub widget_enabled: bool,
     pub widget_background_only: bool,
+    /// Malutki widget (C2): tylko czas, pełny widok po najechaniu myszą.
+    pub widget_compact: bool,
     pub autostart_hidden: bool,
     pub notify_due: bool,
     pub notify_long_minutes: u32,
@@ -195,6 +197,7 @@ impl Default for AppSettings {
             day_start: "08:00".into(),
             widget_enabled: false,
             widget_background_only: false,
+            widget_compact: false,
             autostart_hidden: false,
             notify_due: true,
             notify_long_minutes: 240,
@@ -1102,6 +1105,31 @@ mod tests {
                 engine
             );
         }
+    }
+
+    /// `widget_compact` (C2): domyślnie wyłączony, zapis pod kluczem snake_case.
+    #[test]
+    fn widget_compact_defaults_off_and_saves() {
+        let mut db = db();
+        assert!(!load(&db).widget_compact);
+        assert!(!AppSettings::default().widget_compact);
+        let saved = save(&mut db, &json!({"widgetCompact": true})).unwrap();
+        assert!(saved.widget_compact);
+        assert_eq!(load(&db), saved);
+        let raw: String = db
+            .query_row(
+                "SELECT value FROM settings WHERE key='widget_compact'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "true");
+        assert!(
+            !save(&mut db, &json!({"widgetCompact": false}))
+                .unwrap()
+                .widget_compact
+        );
+        assert!(save(&mut db, &json!({"widgetCompact": "tak"})).is_err());
     }
 
     #[test]
