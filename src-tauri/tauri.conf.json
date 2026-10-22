@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Todo Track",
+  "productName": "TukTuk Track",
   "version": "1.9.0",
-  "identifier": "pl.todotrack.desktop",
+  "identifier": "pl.tuktuktrack.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -14,7 +14,7 @@
       {
         "label": "quick",
         "create": false,
-        "title": "Todo Track — szybkie przełączanie",
+        "title": "TukTuk Track — szybkie przełączanie",
         "url": "index.html#quick",
         "width": 560,
         "height": 440,
@@ -28,7 +28,7 @@
       {
         "label": "main",
         "create": false,
-        "title": "Todo Track",
+        "title": "TukTuk Track",
         "decorations": false,
         "width": 1180,
         "height": 800,
@@ -39,7 +39,7 @@
       {
         "label": "widget",
         "create": false,
-        "title": "Todo Track — mini-widget",
+        "title": "TukTuk Track — mini-widget",
         "url": "index.html#widget",
         "width": 320,
         "height": 64,
@@ -55,7 +55,7 @@
       {
         "label": "reminder",
         "create": false,
-        "title": "Todo Track — przypomnienie",
+        "title": "TukTuk Track — przypomnienie",
         "url": "index.html#reminder",
         "width": 370,
         "height": 210,
@@ -88,9 +88,9 @@
     "createUpdaterArtifacts": true,
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "resources": { "../browser-extension/": "browser-extension/" },
-    "publisher": "todotrack",
+    "publisher": "tuktuktrack",
     "shortDescription": "Zadania, plan dnia i czas pracy",
-    "copyright": "Todo Track · Twój dzień pracy",
+    "copyright": "TukTuk Track · Twój dzień pracy",
     "windows": {
       "allowDowngrades": false,
       "nsis": {

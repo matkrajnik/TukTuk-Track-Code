@@ -25,7 +25,7 @@ interface PreviewCalendar {
   events: CalendarEvent[];
   sample: CalendarEvent[];
 }
-export const calendarKey = "todo-track-preview-calendar-v1";
+export const calendarKey = "tuktuk-track-preview-calendar-v1";
 /** Konto „zalogowane” w podglądzie. */
 export const previewCalendarEmail = "jan.kowalski@firma.example";
 function previewCalendar(): PreviewCalendar {
@@ -141,7 +141,7 @@ export async function calendarEvents(
 
 // ---------- Ręczne spotkania (`meetings.rs`) ----------
 
-export const meetingsKey = "todo-track-preview-meetings-v1";
+export const meetingsKey = "tuktuk-track-preview-meetings-v1";
 interface StoredMeeting {
   id: string;
   start: number;

@@ -1,4 +1,4 @@
-// Opcje rozszerzenia: lista dozwolonych domen i stan połączenia z Todo Track.
+// Opcje rozszerzenia: lista dozwolonych domen i stan połączenia z TukTuk Track.
 import { DEFAULT_DOMAINS, parseDomains } from "./lib.js";
 
 const field = document.getElementById("domains");
@@ -7,7 +7,7 @@ const message = document.getElementById("message");
 
 function showStatus(s) {
   if (!s) {
-    status.textContent = "Jeszcze bez odpowiedzi z Todo Track.";
+    status.textContent = "Jeszcze bez odpowiedzi z TukTuk Track.";
     status.dataset.state = "";
     return;
   }

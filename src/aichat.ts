@@ -94,8 +94,8 @@ export interface ChatMessage {
   pending: boolean;
 }
 
-const OPEN_KEY = "todo-track-chat-open";
-const WIDTH_KEY = "todo-track-chat-width";
+const OPEN_KEY = "tuktuk-track-chat-open";
+const WIDTH_KEY = "tuktuk-track-chat-width";
 export const chatWidthRange = { min: 300, max: 640, initial: 380 } as const;
 
 function stored(key: string): string | null {

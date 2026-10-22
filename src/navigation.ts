@@ -362,7 +362,7 @@ export function matchingSections(query: string) {
   });
 }
 
-const SECTION_KEY = "todo-track-settings-section";
+const SECTION_KEY = "tuktuk-track-settings-section";
 
 /** Ostatnio otwarta sekcja Ustawień (pamięć przeglądarki, wygoda widoku). */
 export function readSettingsSection(): SettingsSection {

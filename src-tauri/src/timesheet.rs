@@ -21,7 +21,7 @@ use tauri::{async_runtime::Mutex, Manager};
 /// Domyślny adres API Ideo Timesheet.
 pub const DEFAULT_API: &str = "https://api.ts.ideo.pl";
 /// Nazwa urządzenia w logowaniu (`deviceName`).
-pub const DEVICE_NAME: &str = "Todo Track";
+pub const DEVICE_NAME: &str = "TukTuk Track";
 /// Odświeżenie tokenu, gdy do wygaśnięcia zostaje mniej niż minuta.
 const REFRESH_MARGIN_MS: i64 = 60_000;
 /// Ważność tokenu, gdy serwer jej nie podał.
@@ -215,10 +215,20 @@ fn save(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
     let db = state.0.lock().map_err(|e| e.to_string())?;
     write_config(&db, config)
 }
+/// Użytkownik wpisu w magazynie poświadczeń: `<adres API>|<login>`.
+fn credential_user_of(c: &Config) -> String {
+    format!("{}|{}", c.api_url, c.login)
+}
+/// Użytkownik wpisu zapisanej konfiguracji (`None`: konto niepołączone); dla migracji
+/// z poprzedniej nazwy aplikacji (`legacy.rs`).
+pub(crate) fn credential_user(db: &Connection) -> Option<String> {
+    let c = read_config(db).ok()?;
+    (!c.login.is_empty()).then(|| credential_user_of(&c))
+}
 fn entry(app: &tauri::AppHandle, c: &Config) -> Result<keyring::Entry, String> {
     keyring::Entry::new(
         &format!("{}.timesheet", app.config().identifier),
-        &format!("{}|{}", c.api_url, c.login),
+        &credential_user_of(c),
     )
     .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
 }
@@ -893,7 +903,7 @@ pub fn load_sent(db: &Connection, day: &str) -> rusqlite::Result<Option<Sent>> {
 }
 
 // ---------------------------------------------------------------------------
-// ts_project_map (T2): domyślne zadanie TS dla projektu Todo Track
+// ts_project_map (T2): domyślne zadanie TS dla projektu TukTuk Track
 
 /// Domyślne zadanie TS projektu. Nazwa projektu porównywana bez wielkości liter
 /// (`COLLATE NOCASE`, jak w SQLite: tylko litery ASCII).
@@ -1651,7 +1661,7 @@ mod tests {
         let body = &requests[0][requests[0].find("\r\n\r\n").unwrap() + 4..];
         assert_eq!(
             serde_json::from_str::<Value>(body).unwrap(),
-            json!({"login":"jan","password":"tajne-haslo","deviceId":"0123456789abcdef0123456789abcdef","deviceName":"Todo Track"})
+            json!({"login":"jan","password":"tajne-haslo","deviceId":"0123456789abcdef0123456789abcdef","deviceName":"TukTuk Track"})
         );
         assert!(requests[1].starts_with("GET /api/user/identity "));
         assert!(requests[1].contains("authorization: Bearer t1"));

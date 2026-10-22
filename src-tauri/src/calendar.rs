@@ -192,8 +192,8 @@ pub fn parse_callback(request_line: &str, expected_state: &str) -> Callback {
 
 fn respond(stream: &mut TcpStream, status: &str, message: &str) {
     let body = format!(
-        "<!doctype html><html lang=\"pl\"><meta charset=\"utf-8\"><title>Todo Track</title>\
-         <body style=\"font-family:Segoe UI,sans-serif;padding:40px\"><h1>Todo Track</h1><p>{message}</p></body></html>"
+        "<!doctype html><html lang=\"pl\"><meta charset=\"utf-8\"><title>TukTuk Track</title>\
+         <body style=\"font-family:Segoe UI,sans-serif;padding:40px\"><h1>TukTuk Track</h1><p>{message}</p></body></html>"
     );
     let _ = write!(
         stream,
@@ -253,7 +253,7 @@ pub fn wait_for_code(
                             respond(
                                 &mut stream,
                                 "200 OK",
-                                "Zalogowano. Możesz zamknąć tę kartę i wrócić do Todo Track.",
+                                "Zalogowano. Możesz zamknąć tę kartę i wrócić do TukTuk Track.",
                             );
                             return Ok(code);
                         }
@@ -347,10 +347,20 @@ pub fn valid_client_id(value: &str) -> bool {
     guid(value)
 }
 
+/// Użytkownik wpisu w magazynie poświadczeń: `<tenant>|<client id>` (małe litery).
+fn credential_user_of(c: &Config) -> String {
+    format!("{}|{}", c.tenant(), c.client_id.to_ascii_lowercase())
+}
+/// Użytkownik wpisu zapisanej konfiguracji (`None`: konto niepołączone); dla migracji
+/// z poprzedniej nazwy aplikacji (`legacy.rs`).
+pub(crate) fn credential_user(db: &Connection) -> Option<String> {
+    let c = load(db);
+    (!c.email.is_empty() && !c.client_id.is_empty()).then(|| credential_user_of(&c))
+}
 fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
     Entry::new(
         &format!("{}.calendar", app.config().identifier),
-        &format!("{}|{}", c.tenant(), c.client_id.to_ascii_lowercase()),
+        &credential_user_of(c),
     )
     .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
 }

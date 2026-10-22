@@ -30,7 +30,7 @@ const domains = [...DEFAULT_DOMAINS];
 
 test("filtr domen: wzorce, lista z opcji i dopasowanie hosta", () => {
   expect(DEFAULT_DOMAINS).toEqual(["*.atlassian.net"]);
-  expect(HOST).toBe("pl.todotrack.bridge");
+  expect(HOST).toBe("pl.tuktuktrack.bridge");
   expect(normalizePattern(" *.Atlassian.NET ")).toBe("*.atlassian.net");
   expect(normalizePattern("https://jira.firma.pl:8443/browse/X-1")).toBe(
     "jira.firma.pl",
@@ -195,11 +195,11 @@ test("stan połączenia z odpowiedzi hosta", () => {
     describeReply({ ok: true, connected: true, enabled: true, key: "WMS-45" }),
   ).toEqual({
     state: "connected",
-    text: "Połączono z Todo Track · rozpoznano WMS-45",
+    text: "Połączono z TukTuk Track · rozpoznano WMS-45",
     key: "WMS-45",
   });
   expect(describeReply({ ok: true, connected: true, enabled: true }).text).toBe(
-    "Połączono z Todo Track",
+    "Połączono z TukTuk Track",
   );
   expect(
     describeReply({ ok: false, connected: false, status: "niepołączone" })
@@ -277,7 +277,7 @@ test("Ustawienia → Czas pracy: wyłącznik i stan połączenia", async ({
   await page.evaluate(
     (data) =>
       localStorage.setItem(
-        "todo-track-preview-browser-v1",
+        "tuktuk-track-preview-browser-v1",
         JSON.stringify(data),
       ),
     { lastMessage: now - 5_000, lastKey: "WMS-45", lastKeyAt: now - 5_000 },

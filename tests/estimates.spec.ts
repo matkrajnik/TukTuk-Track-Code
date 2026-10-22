@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 
 // Środa 14 października 2026, 12:00. Okres 30 dni zaczyna się 15.09.
 const now = "2026-10-14T12:00:00+02:00";

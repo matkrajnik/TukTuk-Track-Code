@@ -702,7 +702,7 @@ export async function toggleMeasurement(): Promise<ToggleResult> {
   await change("start", task.id);
   return { action: "started", taskId: task.id, title: task.title };
 }
-const autostartKey = "todo-track-preview-autostart-v1";
+const autostartKey = "tuktuk-track-preview-autostart-v1";
 export async function readAutostart(): Promise<Autostart> {
   return {
     enabled: previewJson(autostartKey).enabled === true,
@@ -721,7 +721,7 @@ export async function writeAutostart(
   localStorage.setItem(previewSettingsKey, JSON.stringify(settings));
   return readAutostart();
 }
-const widgetDismissedKey = "todo-track-preview-widget-dismissed";
+const widgetDismissedKey = "tuktuk-track-preview-widget-dismissed";
 function previewWidgetDismissed(): boolean {
   try {
     return sessionStorage.getItem(widgetDismissedKey) === "1";
@@ -767,7 +767,7 @@ export async function exportReport(
   return { text: exportCsv(exportRows(await read(), days, Date.now())) };
 }
 /** „Wnioski” z przeglądu tygodnia w podglądzie (`week_notes`): tydzień → tekst. */
-export const weekNotesKey = "todo-track-preview-week-notes-v1";
+export const weekNotesKey = "tuktuk-track-preview-week-notes-v1";
 const WEEK_NOTE_MAX = 10_000;
 function previewWeekNotes(): Record<string, string> {
   const value = previewJson(weekNotesKey);
@@ -810,7 +810,7 @@ export async function saveWeekNote(week: string, text: string): Promise<string> 
  * Podgląd: ostatnia wiadomość rozszerzenia (`lastMessage`, `lastKey`,
  * `lastKeyAt`) w localStorage; testy ustawiają ją, żeby pokazać „połączone”.
  */
-export const browserKey = "todo-track-preview-browser-v1";
+export const browserKey = "tuktuk-track-preview-browser-v1";
 export async function browserStatus(): Promise<BrowserStatus> {
   const enabled = previewJson(previewSettingsKey).browserExtension === true;
   const data = previewJson(browserKey);

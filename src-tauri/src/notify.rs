@@ -1041,7 +1041,7 @@ pub fn toggle_feedback(app: &tauri::AppHandle, text: &str) {
             app,
             &Message {
                 key: String::new(),
-                title: "Todo Track".into(),
+                title: "TukTuk Track".into(),
                 body: text.into(),
                 actions: Vec::new(),
                 open: View::default(),

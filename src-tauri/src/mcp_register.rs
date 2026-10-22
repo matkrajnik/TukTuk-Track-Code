@@ -13,7 +13,7 @@ use std::time::Duration;
 /// Nazwa serwera w rejestracji CLI.
 pub const SERVER: &str = crate::mcp_wire::SERVER_NAME;
 /// Program serwera obok aplikacji.
-pub const EXE: &str = "todo-track-mcp.exe";
+pub const EXE: &str = "tuktuk-track-mcp.exe";
 /// Najdłuższy czas jednego polecenia CLI (`claude mcp get` sprawdza połączenie).
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -33,14 +33,18 @@ pub fn add_args(engine: Engine, exe: &Path) -> Vec<String> {
 
 /// `mcp remove`.
 pub fn remove_args(engine: Engine) -> Vec<String> {
-    let words: &[&str] = match engine {
-        Engine::Claude => &["mcp", "remove", "--scope", "user", SERVER],
-        Engine::Codex => &["mcp", "remove", SERVER],
-    };
-    words.iter().map(|s| s.to_string()).collect()
+    remove_args_named(engine, SERVER)
 }
 
-/// Polecenie odczytujące rejestrację: `claude mcp get todo-track` i `codex mcp list`.
+fn remove_args_named(engine: Engine, name: &str) -> Vec<String> {
+    let words: Vec<&str> = match engine {
+        Engine::Claude => vec!["mcp", "remove", "--scope", "user", name],
+        Engine::Codex => vec!["mcp", "remove", name],
+    };
+    words.into_iter().map(str::to_string).collect()
+}
+
+/// Polecenie odczytujące rejestrację: `claude mcp get tuktuk-track` i `codex mcp list`.
 pub fn query_args(engine: Engine) -> Vec<String> {
     let words: &[&str] = match engine {
         Engine::Claude => &["mcp", "get", SERVER],
@@ -58,7 +62,7 @@ pub enum Found {
     Registered(String),
 }
 
-/// Odczytuje polecenie z wyjścia `claude mcp get todo-track`: wiersz `Command:`.
+/// Odczytuje polecenie z wyjścia `claude mcp get tuktuk-track`: wiersz `Command:`.
 /// `None` = wyjście nie wygląda na wpis serwera.
 pub fn parse_claude_get(output: &str) -> Option<String> {
     output.lines().find_map(|line| {
@@ -73,10 +77,14 @@ pub fn parse_claude_get(output: &str) -> Option<String> {
 /// od nazwy serwera; polecenie to tekst do końca `.exe` (ścieżka może mieć
 /// spacje) albo pierwsze słowo. `None` = serwera nie ma na liście.
 pub fn parse_codex_list(output: &str) -> Option<String> {
+    parse_codex_list_named(output, SERVER)
+}
+
+fn parse_codex_list_named(output: &str, name: &str) -> Option<String> {
     output.lines().find_map(|line| {
         let line = line.trim();
-        let rest = line.strip_prefix(SERVER)?;
-        // Nazwa musi być całym pierwszym słowem (nie `todo-track-extra`).
+        let rest = line.strip_prefix(name)?;
+        // Nazwa musi być całym pierwszym słowem (nie `tuktuk-track-extra`).
         if !rest.chars().next().is_some_and(char::is_whitespace) {
             return None;
         }
@@ -267,6 +275,49 @@ pub fn sync_one(
         Ok(()) if want => entry(engine, "registered", ""),
         Ok(()) => entry(engine, "missing", ""),
     }
+}
+
+/// Czy polecenie z rejestracji to program sprzed zmiany nazwy aplikacji (N1).
+pub fn is_legacy_command(command: &str) -> bool {
+    command
+        .to_lowercase()
+        .contains(&crate::hooks_config::legacy_names::MCP_EXE.to_lowercase())
+}
+
+/// Usuwa z wykrytych CLI stary serwer MCP sprzed zmiany nazwy (N1), ale tylko wtedy,
+/// gdy wskazuje stary program (`...\<stary program>.exe`); wpis o tej nazwie
+/// z innym poleceniem zostaje. Najlepszym wysiłkiem: błąd jednego CLI nie przerywa
+/// drugiego. Zwraca silniki, z których usunięto wpis.
+pub fn remove_legacy(runner: &dyn Runner, detected: &Detected, dir: &Path) -> Vec<Engine> {
+    let name = crate::hooks_config::legacy_names::MCP_SERVER;
+    let mut removed = Vec::new();
+    for engine in [Engine::Claude, Engine::Codex] {
+        let Some(cli) = detected.get(engine) else {
+            continue;
+        };
+        let query = match engine {
+            Engine::Claude => vec!["mcp".to_string(), "get".to_string(), name.to_string()],
+            Engine::Codex => query_args(engine),
+        };
+        let Ok(output) = runner.run(&spec(cli, query, dir), TIMEOUT) else {
+            continue;
+        };
+        let text = format!(
+            "{}
+{}",
+            output.stdout, output.stderr
+        );
+        let command = match engine {
+            Engine::Claude => parse_claude_get(&text),
+            Engine::Codex => parse_codex_list_named(&text, name),
+        };
+        if command.is_some_and(|c| is_legacy_command(&c))
+            && run_step(runner, cli, remove_args_named(engine, name), dir).is_ok()
+        {
+            removed.push(engine);
+        }
+    }
+    removed
 }
 
 /// Rejestracja we wszystkich wykrytych CLI. `engine_setting` to `ai_engine`: puste

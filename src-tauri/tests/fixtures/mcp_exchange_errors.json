@@ -3,11 +3,11 @@
   "steps": [
     {
       "in": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05"}},
-      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "tuktuk-track", "version": "2.0.0-test"}}}
     },
     {
       "in": {"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"protocolVersion": "2030-01-01"}},
-      "out": {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+      "out": {"jsonrpc": "2.0", "id": 2, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "tuktuk-track", "version": "2.0.0-test"}}}
     },
     {
       "in": {"jsonrpc": "2.0", "id": 3, "method": "resources/list"},

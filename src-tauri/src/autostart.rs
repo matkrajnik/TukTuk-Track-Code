@@ -44,7 +44,7 @@ pub fn launch_args(hidden: bool) -> Vec<String> {
     }
 }
 
-/// Ścieżka exe w cudzysłowie: katalog instalacji ma spację („Todo Track”),
+/// Ścieżka exe w cudzysłowie: katalog instalacji ma spację („TukTuk Track”),
 /// a `auto-launch` skleja ścieżkę i argumenty bez cudzysłowów.
 pub fn quoted_path(path: &str) -> String {
     format!("\"{}\"", path.trim_matches('"'))
@@ -143,10 +143,10 @@ mod tests {
 
     #[test]
     fn hidden_flag_is_detected_only_as_whole_argument() {
-        assert!(started_hidden(["todo-track.exe", "--hidden"]));
-        assert!(!started_hidden(["todo-track.exe"]));
-        assert!(!started_hidden(["todo-track.exe", "--hidden-not"]));
-        assert!(!started_hidden(["todo-track.exe", "--prepare-update"]));
+        assert!(started_hidden(["tuktuk-track.exe", "--hidden"]));
+        assert!(!started_hidden(["tuktuk-track.exe"]));
+        assert!(!started_hidden(["tuktuk-track.exe", "--hidden-not"]));
+        assert!(!started_hidden(["tuktuk-track.exe", "--prepare-update"]));
     }
 
     #[test]
@@ -154,8 +154,8 @@ mod tests {
         assert_eq!(launch_args(true), vec!["--hidden".to_string()]);
         assert!(launch_args(false).is_empty());
         assert_eq!(
-            quoted_path(r"C:\Programy\Todo Track\todo-track.exe"),
-            r#""C:\Programy\Todo Track\todo-track.exe""#
+            quoted_path(r"C:\Programy\TukTuk Track\tuktuk-track.exe"),
+            r#""C:\Programy\TukTuk Track\tuktuk-track.exe""#
         );
         assert_eq!(quoted_path(r#""C:\a b\x.exe""#), r#""C:\a b\x.exe""#);
     }

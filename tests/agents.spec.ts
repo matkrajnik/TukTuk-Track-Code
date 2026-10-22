@@ -2,9 +2,9 @@ import { test, expect } from "./fixtures/test";
 import { ids, NOW, openPreview } from "./fixtures/seed";
 import { openSettings } from "./fixtures/settings";
 
-const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
+const BINDINGS_KEY = "tuktuk-track-preview-agent-bindings-v1";
 
-const key = "todo-track-preview-agents-v1";
+const key = "tuktuk-track-preview-agents-v1";
 
 test("dashboard lists working AI agents and the setting toggles agent activity", async ({
   page,
@@ -55,7 +55,7 @@ test("dashboard lists working AI agents and the setting toggles agent activity",
     .uncheck();
   await expect(agents).toBeDisabled();
   const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-settings-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-settings-v1")!),
   );
   expect(stored).toEqual({ idleAgents: false, idleEnabled: false });
 });

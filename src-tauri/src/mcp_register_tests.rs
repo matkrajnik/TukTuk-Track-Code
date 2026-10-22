@@ -8,7 +8,7 @@ const CLAUDE_GET: &str = include_str!("../tests/fixtures/mcp_claude_get.txt");
 const CLAUDE_MISSING: &str = include_str!("../tests/fixtures/mcp_claude_get_missing.txt");
 const CODEX_LIST: &str = include_str!("../tests/fixtures/mcp_codex_list.txt");
 const CODEX_OTHER: &str = include_str!("../tests/fixtures/mcp_codex_list_other.txt");
-const EXE_PATH: &str = r"C:\Users\ala\AppData\Local\Todo Track\todo-track-mcp.exe";
+const EXE_PATH: &str = r"C:\Users\ala\AppData\Local\TukTuk Track\tuktuk-track-mcp.exe";
 const DIR: &str = r"C:\dane\ai";
 
 fn exe() -> PathBuf {
@@ -110,24 +110,27 @@ fn registration_commands_match_the_plan() {
             "add",
             "--scope",
             "user",
-            "todo-track",
+            "tuktuk-track",
             "--",
             EXE_PATH
         ]
     );
     assert_eq!(
         add_args(Engine::Codex, &exe),
-        vec!["mcp", "add", "todo-track", "--", EXE_PATH]
+        vec!["mcp", "add", "tuktuk-track", "--", EXE_PATH]
     );
     assert_eq!(
         remove_args(Engine::Claude),
-        vec!["mcp", "remove", "--scope", "user", "todo-track"]
+        vec!["mcp", "remove", "--scope", "user", "tuktuk-track"]
     );
     assert_eq!(
         remove_args(Engine::Codex),
-        vec!["mcp", "remove", "todo-track"]
+        vec!["mcp", "remove", "tuktuk-track"]
     );
-    assert_eq!(query_args(Engine::Claude), vec!["mcp", "get", "todo-track"]);
+    assert_eq!(
+        query_args(Engine::Claude),
+        vec!["mcp", "get", "tuktuk-track"]
+    );
     assert_eq!(query_args(Engine::Codex), vec!["mcp", "list"]);
 }
 
@@ -144,16 +147,16 @@ fn parses_claude_mcp_get() {
 fn parses_codex_mcp_list() {
     // Ścieżka ze spacjami jest ucinana na `.exe`; inne serwery są pomijane.
     assert_eq!(parse_codex_list(CODEX_LIST).as_deref(), Some(EXE_PATH));
-    // `todo-track-x` to inna nazwa, nie nasz serwer.
+    // `tuktuk-track-x` to inna nazwa, nie nasz serwer.
     assert_eq!(parse_codex_list(CODEX_OTHER), None);
     assert_eq!(parse_codex_list(""), None);
     assert_eq!(
-        parse_codex_list("todo-track  \"C:\\Program Files\\T\\todo-track-mcp.exe\"  -  -")
+        parse_codex_list("tuktuk-track  \"C:\\Program Files\\T\\tuktuk-track-mcp.exe\"  -  -")
             .as_deref(),
-        Some(r"C:\Program Files\T\todo-track-mcp.exe")
+        Some(r"C:\Program Files\T\tuktuk-track-mcp.exe")
     );
     assert_eq!(
-        parse_codex_list("todo-track  node  server.js").as_deref(),
+        parse_codex_list("tuktuk-track  node  server.js").as_deref(),
         Some("node")
     );
 }
@@ -162,12 +165,12 @@ fn parses_codex_mcp_list() {
 fn path_comparison_ignores_case_slashes_quotes_and_prefix() {
     assert!(same_path(EXE_PATH, &EXE_PATH.to_uppercase()));
     assert!(same_path(
-        "C:/Users/ala/AppData/Local/Todo Track/todo-track-mcp.exe",
+        "C:/Users/ala/AppData/Local/TukTuk Track/tuktuk-track-mcp.exe",
         EXE_PATH
     ));
     assert!(same_path(&format!("\"{EXE_PATH}\""), EXE_PATH));
     assert!(same_path(&format!(r"\\?\{EXE_PATH}"), EXE_PATH));
-    assert!(!same_path(r"C:\Stara\todo-track-mcp.exe", EXE_PATH));
+    assert!(!same_path(r"C:\Stara\tuktuk-track-mcp.exe", EXE_PATH));
     assert!(!same_path("", ""));
 }
 
@@ -175,7 +178,7 @@ fn path_comparison_ignores_case_slashes_quotes_and_prefix() {
 fn plan_step_covers_every_case() {
     let exe = exe();
     let same = Found::Registered(EXE_PATH.into());
-    let old = Found::Registered(r"C:\Stara\todo-track-mcp.exe".into());
+    let old = Found::Registered(r"C:\Stara\tuktuk-track-mcp.exe".into());
     assert_eq!(plan_step(true, &Found::Missing, Some(&exe)), Step::Add);
     assert_eq!(plan_step(true, &same, Some(&exe)), Step::Nothing);
     assert_eq!(plan_step(true, &old, Some(&exe)), Step::Replace);
@@ -199,8 +202,8 @@ fn claude_adds_when_missing() {
     assert_eq!(
         runner.args(),
         vec![
-            "mcp get todo-track".to_string(),
-            format!("mcp add --scope user todo-track -- {EXE_PATH}"),
+            "mcp get tuktuk-track".to_string(),
+            format!("mcp add --scope user tuktuk-track -- {EXE_PATH}"),
         ]
     );
     // Katalog roboczy to katalog AI, nie katalog użytkownika.
@@ -219,12 +222,12 @@ fn claude_does_nothing_when_up_to_date() {
         dir(),
     );
     assert_eq!(entry.state, "registered");
-    assert_eq!(runner.args(), vec!["mcp get todo-track".to_string()]);
+    assert_eq!(runner.args(), vec!["mcp get tuktuk-track".to_string()]);
 }
 
 #[test]
 fn claude_replaces_a_stale_path_after_update() {
-    let moved = PathBuf::from(r"D:\Nowa\todo-track-mcp.exe");
+    let moved = PathBuf::from(r"D:\Nowa\tuktuk-track-mcp.exe");
     let runner = claude_with(CLAUDE_GET, true);
     let entry = sync_one(
         &runner,
@@ -238,9 +241,9 @@ fn claude_replaces_a_stale_path_after_update() {
     assert_eq!(
         runner.args(),
         vec![
-            "mcp get todo-track".to_string(),
-            "mcp remove --scope user todo-track".to_string(),
-            r"mcp add --scope user todo-track -- D:\Nowa\todo-track-mcp.exe".to_string(),
+            "mcp get tuktuk-track".to_string(),
+            "mcp remove --scope user tuktuk-track".to_string(),
+            r"mcp add --scope user tuktuk-track -- D:\Nowa\tuktuk-track-mcp.exe".to_string(),
         ]
     );
 }
@@ -260,8 +263,8 @@ fn disabling_removes_only_when_registered() {
     assert_eq!(
         registered.args(),
         vec![
-            "mcp get todo-track".to_string(),
-            "mcp remove --scope user todo-track".to_string()
+            "mcp get tuktuk-track".to_string(),
+            "mcp remove --scope user tuktuk-track".to_string()
         ]
     );
     let absent = claude_with(CLAUDE_MISSING, false);
@@ -274,7 +277,7 @@ fn disabling_removes_only_when_registered() {
         dir(),
     );
     assert_eq!(entry.state, "missing");
-    assert_eq!(absent.args(), vec!["mcp get todo-track".to_string()]);
+    assert_eq!(absent.args(), vec!["mcp get tuktuk-track".to_string()]);
 }
 
 #[test]
@@ -293,7 +296,7 @@ fn codex_flow_uses_mcp_list() {
         runner.args(),
         vec![
             "mcp list".to_string(),
-            format!("mcp add todo-track -- {EXE_PATH}")
+            format!("mcp add tuktuk-track -- {EXE_PATH}")
         ]
     );
     let runner = codex_with(CODEX_LIST);
@@ -319,7 +322,10 @@ fn codex_flow_uses_mcp_list() {
     assert_eq!(entry.state, "missing");
     assert_eq!(
         runner.args(),
-        vec!["mcp list".to_string(), "mcp remove todo-track".to_string()]
+        vec![
+            "mcp list".to_string(),
+            "mcp remove tuktuk-track".to_string()
+        ]
     );
 }
 
@@ -336,7 +342,7 @@ fn errors_are_reported_per_cli_in_one_line() {
         dir(),
     );
     assert_eq!(entry.state, "error");
-    assert!(entry.detail.contains("todo-track-mcp.exe"));
+    assert!(entry.detail.contains("tuktuk-track-mcp.exe"));
     assert_eq!(runner.count(), 0);
     // `get` kończy się nieznanym błędem.
     let runner = claude_with("Error: boom\nsecond line", false);
@@ -353,7 +359,7 @@ fn errors_are_reported_per_cli_in_one_line() {
     // Nieudane `add`.
     let runner = Fake::new(|spec| {
         Ok(if is(spec, "get") {
-            out(false, "", "No MCP server found with name: todo-track")
+            out(false, "", "No MCP server found with name: tuktuk-track")
         } else {
             out(false, "", "permission denied")
         })
@@ -420,4 +426,92 @@ fn sync_all_respects_engine_choice_and_detection() {
         assert!(runner.args().iter().any(|a| a.starts_with("mcp remove")));
         assert!(!runner.args().iter().any(|a| a.starts_with("mcp add")));
     }
+}
+
+// ---------------------------------------------------------------------------
+// Stary serwer sprzed zmiany nazwy aplikacji (N1)
+
+fn legacy_exe_path() -> String {
+    format!(
+        r"C:\Users\ala\AppData\Local\Stara\{}",
+        crate::hooks_config::legacy_names::MCP_EXE
+    )
+}
+
+fn detected(claude: bool, codex: bool) -> Detected {
+    Detected {
+        claude: claude.then(|| cli("claude.exe")),
+        codex: codex.then(|| cli("codex.exe")),
+    }
+}
+
+#[test]
+fn legacy_server_is_removed_from_claude_and_codex() {
+    let name = crate::hooks_config::legacy_names::MCP_SERVER;
+    let exe = legacy_exe_path();
+    let claude_text: &'static str =
+        Box::leak(format!("{name}:\n  Command: {exe}\n").into_boxed_str());
+    let codex_text: &'static str = Box::leak(
+        format!("Name  Command  Args\norca  C:\\Orca\\orca.exe  mcp\n{name}  {exe}  -\n")
+            .into_boxed_str(),
+    );
+    let claude = claude_with(claude_text, true);
+    let removed = remove_legacy(&claude, &detected(true, false), dir());
+    assert_eq!(removed, vec![Engine::Claude]);
+    assert_eq!(
+        claude.args(),
+        vec![
+            format!("mcp get {name}"),
+            format!("mcp remove --scope user {name}")
+        ]
+    );
+    let codex = codex_with(codex_text);
+    let removed = remove_legacy(&codex, &detected(false, true), dir());
+    assert_eq!(removed, vec![Engine::Codex]);
+    assert_eq!(
+        codex.args(),
+        vec!["mcp list".to_string(), format!("mcp remove {name}")]
+    );
+}
+
+#[test]
+fn legacy_cleanup_leaves_other_servers_with_the_same_name() {
+    let name = crate::hooks_config::legacy_names::MCP_SERVER;
+    // Serwer o starej nazwie, ale z innym programem, nie jest nasz.
+    let other: &'static str =
+        Box::leak(format!("{name}:\n  Command: C:\\Inne\\serwer.exe\n").into_boxed_str());
+    let claude = claude_with(other, true);
+    assert!(remove_legacy(&claude, &detected(true, false), dir()).is_empty());
+    assert_eq!(claude.count(), 1);
+    // Brak starego wpisu: tylko odczyt.
+    let missing = claude_with(CLAUDE_MISSING, false);
+    assert!(remove_legacy(&missing, &detected(true, false), dir()).is_empty());
+    assert_eq!(missing.count(), 1);
+    // Nowy serwer nie jest starym.
+    let current = codex_with(CODEX_LIST);
+    assert!(remove_legacy(&current, &detected(false, true), dir()).is_empty());
+    assert_eq!(current.count(), 1);
+}
+
+#[test]
+fn legacy_cleanup_without_clis_runs_nothing_and_survives_errors() {
+    let never = Fake::new(|_| panic!("brak CLI: nic nie powinno się uruchomić"));
+    assert!(remove_legacy(&never, &detected(false, false), dir()).is_empty());
+    // Błąd uruchomienia jednego CLI nie przerywa drugiego.
+    let name = crate::hooks_config::legacy_names::MCP_SERVER;
+    let exe = legacy_exe_path();
+    let codex_text: &'static str = Box::leak(format!("{name}  {exe}  -\n").into_boxed_str());
+    let runner = Fake::new(move |spec| {
+        if spec.program == PathBuf::from("claude.exe") {
+            Err(RunError::Timeout)
+        } else if is(spec, "list") {
+            Ok(out(true, codex_text, ""))
+        } else {
+            Ok(out(true, "", ""))
+        }
+    });
+    assert_eq!(
+        remove_legacy(&runner, &detected(true, true), dir()),
+        vec![Engine::Codex]
+    );
 }

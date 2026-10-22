@@ -3,7 +3,7 @@
   "steps": [
     {
       "in": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "claude-code", "version": "2.1.304"}}},
-      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "tuktuk-track", "version": "2.0.0-test"}}}
     },
     {
       "in": {"jsonrpc": "2.0", "method": "notifications/initialized"},
@@ -25,8 +25,8 @@
     },
     {
       "in": {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "propose_switch", "arguments": {"task": "WMS-12"}}},
-      "forward": {"tool": "propose_switch", "arguments": {"task": "WMS-12"}, "reply": {"ok": true, "text": "Propozycja czeka na akceptację użytkownika w Todo Track."}},
-      "out": {"jsonrpc": "2.0", "id": 4, "result": {"content": [{"type": "text", "text": "Propozycja czeka na akceptację użytkownika w Todo Track."}], "isError": false}}
+      "forward": {"tool": "propose_switch", "arguments": {"task": "WMS-12"}, "reply": {"ok": true, "text": "Propozycja czeka na akceptację użytkownika w TukTuk Track."}},
+      "out": {"jsonrpc": "2.0", "id": 4, "result": {"content": [{"type": "text", "text": "Propozycja czeka na akceptację użytkownika w TukTuk Track."}], "isError": false}}
     },
     {
       "in": {"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "task_get", "arguments": {"id": 999}}},

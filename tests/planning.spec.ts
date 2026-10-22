@@ -8,7 +8,7 @@ test("planning, priorities, daily notes, waiting and time reconstruction persist
   await page.goto("/");
   await page.evaluate(() =>
     localStorage.setItem(
-      "todo-track-preview-v1",
+      "tuktuk-track-preview-v1",
       JSON.stringify({
         tasks: [
           { id: 1, title: "Import WMS", done: false, createdAt: 0 },

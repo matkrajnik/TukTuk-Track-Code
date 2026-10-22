@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 
 // Środa 14 października 2026; tydzień Pon 12.10 – Nd 18.10.
 async function seed(page: Page, tasks: object[], sessions: object[] = []) {

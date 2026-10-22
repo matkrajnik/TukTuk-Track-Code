@@ -25,7 +25,7 @@ import {
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 test.describe.configure({ timeout: 60_000 });
 
-const WEEK_NOTES_KEY = "todo-track-preview-week-notes-v1";
+const WEEK_NOTES_KEY = "tuktuk-track-preview-week-notes-v1";
 const claude = { path: "C:\\Users\\ala\\.local\\bin\\claude.exe", version: "2.1.304" };
 const settings = { aiEngine: "claude" };
 

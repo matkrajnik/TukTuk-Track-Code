@@ -1,7 +1,7 @@
 //! Serwer MCP w głównym procesie (PLAN_BACKLOG.md, A2).
 //!
-//! `todo-track-mcp.exe` (agent ↔ stdio) przekazuje wywołania narzędzi nazwanym
-//! potokiem `\\.\pipe\todo-track-mcp-<użytkownik>`; tu je wykonujemy:
+//! `tuktuk-track-mcp.exe` (agent ↔ stdio) przekazuje wywołania narzędzi nazwanym
+//! potokiem `\\.\pipe\tuktuk-track-mcp-<użytkownik>`; tu je wykonujemy:
 //! - **narzędzia odczytu** (`tasks_list`, `task_get`, `day_summary`, `week_summary`,
 //!   `current_measurement`, `ts_tasks`) czytają bazę i odpowiadają od razu,
 //! - **narzędzia `propose_*`** niczego nie zmieniają: dopisują wpis do kolejki
@@ -45,10 +45,10 @@ const SESSIONS_MAX: usize = 100;
 /// Tyle ostatnich notatek dnia zwraca `task_get`.
 const NOTES_MAX: usize = 14;
 
-pub const GATE_OFF: &str = "The MCP server is turned off in Todo Track settings.";
+pub const GATE_OFF: &str = "The MCP server is turned off in TukTuk Track settings.";
 pub const GATE_NO_ENGINE: &str =
-    "The assistant is not enabled in Todo Track. Choose an engine in Settings, AI assistant.";
-pub const QUEUED: &str = "Propozycja czeka na akceptację użytkownika w Todo Track.";
+    "The assistant is not enabled in TukTuk Track. Choose an engine in Settings, AI assistant.";
+pub const QUEUED: &str = "Propozycja czeka na akceptację użytkownika w TukTuk Track.";
 
 /// Czy serwer ma odpowiadać: włączony `ai_mcp` i wybrany silnik.
 pub fn gate(settings: &AppSettings) -> Result<(), &'static str> {
@@ -679,7 +679,7 @@ fn ts_tasks(env_db: &Connection, cache: Option<Vec<Project>>) -> Result<Value, S
     let mapped = timesheet::load_project_map(env_db).map_err(|e| e.to_string())?;
     Ok(json!({
         "cached": false,
-        "note": "No Timesheet task list is in memory yet; it is loaded when the Timesheet send dialog is opened in Todo Track. Mapped projects are listed instead.",
+        "note": "No Timesheet task list is in memory yet; it is loaded when the Timesheet send dialog is opened in TukTuk Track. Mapped projects are listed instead.",
         "mappedProjects": mapped.iter().map(|m| json!({
             "project": m.project,
             "tsTaskId": m.ts_task_id,
@@ -870,7 +870,7 @@ fn reply(result: Result<String, String>) -> Value {
 }
 
 /// Folder dla `propose_link_folder`: katalog roboczy sesji, która wywołała
-/// narzędzie (`cwd` z ramki programu `todo-track-mcp`). Bez niego (albo gdy to
+/// narzędzie (`cwd` z ramki programu `tuktuk-track-mcp`). Bez niego (albo gdy to
 /// katalog asystenta) foldery pracujących agentów od najnowszego.
 fn session_folders(
     cwd: &str,
@@ -903,7 +903,7 @@ fn on_request(app: &tauri::AppHandle, body: &[u8]) -> Value {
         return reply(Err(message.into()));
     }
     let Some(state) = app.try_state::<State>() else {
-        return reply(Err("Todo Track is starting.".into()));
+        return reply(Err("TukTuk Track is starting.".into()));
     };
     let args = if request["arguments"].is_object() {
         request["arguments"].clone()
@@ -938,7 +938,7 @@ fn on_request(app: &tauri::AppHandle, body: &[u8]) -> Value {
     reply(result)
 }
 
-/// Serwer nazwanego potoku: każde połączenie programu `todo-track-mcp` to jedna
+/// Serwer nazwanego potoku: każde połączenie programu `tuktuk-track-mcp` to jedna
 /// ramka i odpowiedź (jak host rozszerzenia przeglądarki).
 pub fn start(app: &tauri::AppHandle) {
     let app = app.clone();
@@ -979,13 +979,17 @@ pub struct Status {
     pub entries: Vec<Entry>,
 }
 
-/// `todo-track-mcp.exe` obok aplikacji; `None`, gdy go nie ma.
+/// `tuktuk-track-mcp.exe` obok aplikacji; `None`, gdy go nie ma.
 pub fn exe_path() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.join(mcp_register::EXE)))
         .filter(|p| p.is_file())
 }
+
+/// Czy stary serwer MCP (przed zmianą nazwy aplikacji) był już sprawdzony w tym procesie.
+static LEGACY_MCP_CHECKED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 fn run_sync(app: &tauri::AppHandle) -> Status {
     let Some(state) = app.try_state::<State>() else {
@@ -999,6 +1003,10 @@ fn run_sync(app: &tauri::AppHandle) -> Status {
     // Puste `ai_engine` (jeszcze nie pytano) nie uruchamia żadnego procesu.
     if !settings.ai_engine.is_empty() {
         if let Some(dir) = ai::dir(app).filter(|d| std::fs::create_dir_all(d).is_ok()) {
+            // Stary serwer sprzed zmiany nazwy (N1): raz na uruchomienie aplikacji.
+            if !LEGACY_MCP_CHECKED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                mcp_register::remove_legacy(&ai::Process, &ai::detected_cached(app), &dir);
+            }
             entries = mcp_register::sync_all(
                 &ai::Process,
                 &ai::detected_cached(app),

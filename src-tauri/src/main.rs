@@ -25,6 +25,7 @@ mod jira;
 mod jira_board;
 mod jira_fields;
 mod jira_move;
+mod legacy;
 mod maintenance;
 mod mcp;
 mod mcp_register;
@@ -442,9 +443,11 @@ fn main() {
             }
         }))
         .setup(|app| {
-            let dir = app.path().app_data_dir()?;
+            // Dane z poprzedniej nazwy aplikacji (N1) przed otwarciem bazy.
+            let migrated = legacy::migrate_dirs_native(app.handle())?;
+            let dir = migrated.data_dir.clone();
             std::fs::create_dir_all(&dir)?;
-            let path = dir.join("todo-track.sqlite");
+            let path = dir.join(migrated.db_file);
             let existing = path.exists();
             let mut connection = rusqlite::Connection::open(path)?;
             maintenance::backup_before_upgrade(
@@ -457,6 +460,8 @@ fn main() {
                     .unwrap_or(env!("CARGO_PKG_VERSION")),
             )?;
             db::init(&connection)?;
+            // Poświadczenia, stary host rozszerzenia i autostart z poprzedniej nazwy (N1).
+            legacy::run_native(app.handle(), &connection, &migrated);
             // Czas agentów starszy niż 400 dni (PLAN_1.7.md, W1).
             agent_time::prune(&connection, db::now())?;
             maintenance::record_version(
@@ -647,6 +652,7 @@ fn main() {
             mcp::mcp_proposal_resolve,
             mcp::mcp_status,
             mcp::mcp_sync,
+            legacy::legacy_status,
             agents::agent_bind,
             agents::agent_unbind,
             agent_time::agent_time,
@@ -731,7 +737,7 @@ fn main() {
             timesheet::ts_set_project_map
         ])
         .build(tauri::generate_context!())
-        .expect("Nie udało się uruchomić Todo Track")
+        .expect("Nie udało się uruchomić TukTuk Track")
         .run(|app, event| {
             // Zamknięcie aplikacji kończy rozmowę czatu i jej proces CLI (A3).
             if let tauri::RunEvent::Exit = event {

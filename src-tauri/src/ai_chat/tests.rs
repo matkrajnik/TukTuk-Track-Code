@@ -107,7 +107,10 @@ fn codex_errors_are_classified_and_failed_tool_is_marked() {
 
 #[test]
 fn tool_names_lose_the_server_prefix() {
-    assert_eq!(short_tool_name("mcp__todo-track__tasks_list"), "tasks_list");
+    assert_eq!(
+        short_tool_name("mcp__tuktuk-track__tasks_list"),
+        "tasks_list"
+    );
     assert_eq!(short_tool_name("tasks_list"), "tasks_list");
 }
 
@@ -126,7 +129,7 @@ fn claude_chat_command_line_matches_plan() {
     assert_eq!(args[at("--tools") + 1], "");
     assert!(args.contains(&"--strict-mcp-config".to_string()));
     assert_eq!(args[at("--mcp-config") + 1], "C:\\ai\\chat-mcp.json");
-    assert_eq!(args[at("--allowedTools") + 1], "mcp__todo-track__*");
+    assert_eq!(args[at("--allowedTools") + 1], "mcp__tuktuk-track__*");
     assert_eq!(args[at("--permission-prompts") + 1], "none");
     assert_eq!(args[at("--setting-sources") + 1], "");
     assert!(args.contains(&"--no-session-persistence".to_string()));
@@ -140,7 +143,7 @@ fn claude_chat_command_line_matches_plan() {
 fn codex_chat_command_line_passes_the_mcp_server() {
     let args = codex_chat_args(
         Path::new("C:\\ai"),
-        Path::new("C:\\Apps\\todo-track-mcp.exe"),
+        Path::new("C:\\Apps\\tuktuk-track-mcp.exe"),
         "gpt-x",
     );
     assert_eq!(&args[..3], ["exec", "--json", "--ephemeral"]);
@@ -152,7 +155,7 @@ fn codex_chat_command_line_passes_the_mcp_server() {
     // Cała tabela serwerów MCP zastąpiona jednym wpisem: serwery użytkownika z
     // ~/.codex/config.toml (np. Jira z zapisem) nie są w czacie dostępne.
     assert!(args.contains(
-        &"mcp_servers={\"todo-track\"={command=\"C:\\\\Apps\\\\todo-track-mcp.exe\",args=[]}}"
+        &"mcp_servers={\"tuktuk-track\"={command=\"C:\\\\Apps\\\\tuktuk-track-mcp.exe\",args=[]}}"
             .to_string()
     ));
     assert!(
@@ -173,7 +176,7 @@ fn codex_mcp_override_is_a_valid_toml_inline_table() {
     // Ścieżka z cudzysłowem i odwrotnymi ukośnikami nie psuje wartości.
     let args = codex_chat_args(
         Path::new("C:\\ai"),
-        Path::new("C:\\Apps \"x\"\\todo-track-mcp.exe"),
+        Path::new("C:\\Apps \"x\"\\tuktuk-track-mcp.exe"),
         "",
     );
     let value = args
@@ -186,20 +189,20 @@ fn codex_mcp_override_is_a_valid_toml_inline_table() {
         .replace(",args=[]}", ",\"args\":[]}");
     let parsed: Value = serde_json::from_str(&json_like).unwrap();
     assert_eq!(
-        parsed["todo-track"]["command"],
-        "C:\\Apps \"x\"\\todo-track-mcp.exe"
+        parsed["tuktuk-track"]["command"],
+        "C:\\Apps \"x\"\\tuktuk-track-mcp.exe"
     );
     assert_eq!(parsed.as_object().unwrap().len(), 1);
 }
 
 #[test]
 fn mcp_config_points_to_the_server_exe() {
-    let config = mcp_config(Path::new("C:\\Apps\\todo-track-mcp.exe"));
+    let config = mcp_config(Path::new("C:\\Apps\\tuktuk-track-mcp.exe"));
     assert_eq!(
-        config["mcpServers"]["todo-track"]["command"],
-        "C:\\Apps\\todo-track-mcp.exe"
+        config["mcpServers"]["tuktuk-track"]["command"],
+        "C:\\Apps\\tuktuk-track-mcp.exe"
     );
-    assert_eq!(config["mcpServers"]["todo-track"]["args"], json!([]));
+    assert_eq!(config["mcpServers"]["tuktuk-track"]["args"], json!([]));
 }
 
 fn cli() -> Cli {
@@ -216,7 +219,7 @@ fn gate_requires_engine_chat_mcp_cli_and_server_exe() {
         claude: Some(cli()),
         codex: None,
     };
-    let exe = || Some(PathBuf::from("C:\\Apps\\todo-track-mcp.exe"));
+    let exe = || Some(PathBuf::from("C:\\Apps\\tuktuk-track-mcp.exe"));
     // Bez wyboru silnika i przy „Nie używaj” czat nie działa.
     assert_eq!(gate(&settings, &detected, exe()).unwrap_err(), ai::OFF);
     settings.ai_engine = "off".into();
@@ -350,7 +353,7 @@ fn wait_for(what: &str, condition: impl Fn() -> bool) {
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
-        "todo-track-chat-test-{}-{name}",
+        "tuktuk-track-chat-test-{}-{name}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&dir);
@@ -369,7 +372,7 @@ fn config(engine: Engine, name: &str) -> Config {
         },
         model: "m".into(),
         dir: temp_dir(name),
-        mcp_exe: PathBuf::from("C:\\Apps\\todo-track-mcp.exe"),
+        mcp_exe: PathBuf::from("C:\\Apps\\tuktuk-track-mcp.exe"),
     }
 }
 
@@ -404,10 +407,10 @@ fn claude_message_is_redacted_started_once_and_streamed_back_restored() {
     assert_eq!(spec.cwd.as_deref(), Some(cfg.dir.as_path()));
     assert!(spec
         .env
-        .contains(&("TODO_TRACK_AI".to_string(), "1".to_string())));
+        .contains(&("TUKTUK_TRACK_AI".to_string(), "1".to_string())));
     // Plik konfiguracji MCP leży w katalogu AI i wskazuje serwer.
     let file = std::fs::read_to_string(cfg.dir.join(MCP_FILE)).unwrap();
-    assert!(file.contains("todo-track-mcp.exe"));
+    assert!(file.contains("tuktuk-track-mcp.exe"));
     let handle = spawner.handle(0);
     let written = handle.written();
     assert_eq!(written.len(), 1);
@@ -648,7 +651,7 @@ fn chat_and_mcp_results_share_one_pseudonym_map() {
     // Model odpowiada o obu osobach i przekazuje pseudonim do narzędzia.
     let handle = spawner.handle(0);
     handle.feed(concat!(
-        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__todo-track__propose_note_append","input":{"task":1,"text":"pinguj Osoba 2"}}]}}"#,
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"mcp__tuktuk-track__propose_note_append","input":{"task":1,"text":"pinguj Osoba 2"}}]}}"#,
         "\n",
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"Osoba 2 ma zadanie, o które pyta Osoba 1."}]}}"#,
         "\n",

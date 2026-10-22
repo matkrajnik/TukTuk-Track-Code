@@ -5,6 +5,7 @@ import { RefreshCw } from "lucide-vue-next";
 import { checkForUpdate } from "../../updater";
 import type { AppSettings } from "../../settings";
 import { readAutostart, writeAutostart, type Autostart } from "../../store";
+import { readLegacyStatus } from "../../legacyapi";
 import { checked, message, useSettingsSection } from "./section";
 const settings = defineModel<AppSettings>("settings", { required: true });
 const { busy, error, save } = useSettingsSection(settings);
@@ -50,8 +51,15 @@ async function checkNow() {
     updateBusy.value = false;
   }
 }
+/** Wynik migracji z poprzedniej nazwy aplikacji (puste: nic do pokazania). */
+const legacyMessage = ref("");
 let alive = true;
 onMounted(async () => {
+  readLegacyStatus()
+    .then((status) => {
+      if (alive) legacyMessage.value = status?.message ?? "";
+    })
+    .catch(() => {});
   try {
     const value = await readAutostart();
     if (alive) autostart.value = value;
@@ -66,6 +74,9 @@ onUnmounted(() => {
 <template>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <h2>Uruchamianie</h2>
+  <p v-if="legacyMessage" class="hint" role="status" aria-label="Przeniesienie danych">
+    {{ legacyMessage }}
+  </p>
   <label class="inline-check"
     ><input
       :checked="autostart.enabled"

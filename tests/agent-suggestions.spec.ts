@@ -16,7 +16,7 @@ import { openSettings } from "./fixtures/settings";
 test.use({ timezoneId: "Europe/Warsaw" });
 
 const MIN = 60_000;
-const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
+const BINDINGS_KEY = "tuktuk-track-preview-agent-bindings-v1";
 const now = Date.parse(NOW);
 /** Agent nad „Analizą importu” (klucz WMS-12 z gałęzi) od 5 minut. */
 const importAgent = {

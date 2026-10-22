@@ -98,6 +98,6 @@ onUnmounted(() => {
       v-model:settings="settings"
       :version="info.version"
     />
-    <small v-if="info.version">Todo Track {{ info.version }}</small>
+    <small v-if="info.version">TukTuk Track {{ info.version }}</small>
   </section>
 </template>

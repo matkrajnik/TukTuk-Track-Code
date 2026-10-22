@@ -268,7 +268,7 @@ test("Dashboard i powiadomienie otwierają zakładkę Rano; wyłącznik w Ustawi
   await nav(page, "Zadania");
   await page.evaluate(() =>
     window.dispatchEvent(
-      new CustomEvent("todo-track-navigate", {
+      new CustomEvent("tuktuk-track-navigate", {
         detail: { view: "journal", section: "morning" },
       }),
     ),

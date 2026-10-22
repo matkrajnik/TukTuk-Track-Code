@@ -16,7 +16,7 @@ import { openSettings } from "./fixtures/settings";
  * (`focus.rs`); tu: start, odliczanie, przerwa i przerwanie przez Stop.
  */
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
-const FOCUS_KEY = "todo-track-preview-focus-v1";
+const FOCUS_KEY = "tuktuk-track-preview-focus-v1";
 const MIN = 60_000;
 
 async function open(

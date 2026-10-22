@@ -17,8 +17,8 @@ import { openSettings } from "./fixtures/settings";
  */
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 
-const FOCUS_KEY = "todo-track-preview-focus-v1";
-const WEEK_NOTES_KEY = "todo-track-preview-week-notes-v1";
+const FOCUS_KEY = "tuktuk-track-preview-focus-v1";
+const WEEK_NOTES_KEY = "tuktuk-track-preview-week-notes-v1";
 
 const nav = (page: Page, name: string) =>
   page.getByRole("button", { name, exact: true }).click();
@@ -264,7 +264,7 @@ test("powiadomienie „Przegląd tygodnia” otwiera zakładkę, a ustawienia ma
   await openPreview(page);
   await page.evaluate(() =>
     window.dispatchEvent(
-      new CustomEvent("todo-track-navigate", {
+      new CustomEvent("tuktuk-track-navigate", {
         detail: { view: "journal", section: "week-review" },
       }),
     ),

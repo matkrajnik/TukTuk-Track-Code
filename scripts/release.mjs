@@ -1,4 +1,4 @@
-// `npm run release -- --notes "..."`: wydanie Todo Track do publicznego repozytorium
+// `npm run release -- --notes "..."`: wydanie TukTuk Track do publicznego repozytorium
 // wydań (RELEASE.md). Skrypt sprawdza zgodność wersji w tauri.conf.json,
 // package.json i Cargo.toml, buduje instalator NSIS z artefaktami updatera
 // (`createUpdaterArtifacts`), składa latest.json i tworzy release w GitHubie przez

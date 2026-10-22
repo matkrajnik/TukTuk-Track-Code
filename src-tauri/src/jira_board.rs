@@ -1,4 +1,4 @@
-//! Jira z poziomu Todo Track (PLAN_1.7.md, J2): tablica według kolumn, przejścia
+//! Jira z poziomu TukTuk Track (PLAN_1.7.md, J2): tablica według kolumn, przejścia
 //! przez przeciągnięcie, przypisanie, komentarze, nazwa gałęzi i nowe zgłoszenia.
 //!
 //! Kolumny pochodzą z `GET /rest/agile/1.0/board/{id}/configuration`, a nazwy
@@ -579,7 +579,7 @@ pub struct NewIssue {
     pub description: String,
     pub assign_me: bool,
     pub create_task: bool,
-    /// Dzień planu zadania w Todo Track (`RRRR-MM-DD`, pusty = bez dnia).
+    /// Dzień planu zadania w TukTuk Track (`RRRR-MM-DD`, pusty = bez dnia).
     pub planned_day: String,
 }
 
@@ -1195,13 +1195,13 @@ pub async fn jira_issue_type_fields(
 pub struct Created {
     key: String,
     url: String,
-    /// Dane po utworzeniu zadania w Todo Track (`create_task`).
+    /// Dane po utworzeniu zadania w TukTuk Track (`create_task`).
     snapshot: Option<db::Snapshot>,
-    /// Zgłoszenie utworzone, ale zadanie w Todo Track nie powstało.
+    /// Zgłoszenie utworzone, ale zadanie w TukTuk Track nie powstało.
     warning: Option<String>,
 }
 
-/// Zadanie w Todo Track dla nowego zgłoszenia (bez startu pomiaru).
+/// Zadanie w TukTuk Track dla nowego zgłoszenia (bez startu pomiaru).
 pub fn create_linked_task(
     db: &mut Connection,
     site: &str,
@@ -1251,7 +1251,7 @@ pub fn create_linked_task(
     db::snapshot(db).map_err(|e| e.to_string())
 }
 
-/// „Nowe zgłoszenie”: `POST /rest/api/3/issue`, opcjonalnie zadanie w Todo Track.
+/// „Nowe zgłoszenie”: `POST /rest/api/3/issue`, opcjonalnie zadanie w TukTuk Track.
 #[tauri::command]
 pub async fn jira_create(app: tauri::AppHandle, issue: NewIssue) -> Result<Created, String> {
     ensure_write(&app)?;
@@ -1261,7 +1261,7 @@ pub async fn jira_create(app: tauri::AppHandle, issue: NewIssue) -> Result<Creat
     let extra = type_required(&client, &c, &secret, &issue.project, &issue.issue_type_id).await?;
     if !extra.is_empty() {
         return Err(format!(
-            "Ten typ zgłoszenia wymaga pól, których Todo Track nie wypełnia ({}). Utwórz zgłoszenie w Jirze.",
+            "Ten typ zgłoszenia wymaga pól, których TukTuk Track nie wypełnia ({}). Utwórz zgłoszenie w Jirze.",
             extra.join(", ")
         ));
     }
@@ -1299,7 +1299,7 @@ pub async fn jira_create(app: tauri::AppHandle, issue: NewIssue) -> Result<Creat
         match linked {
             Ok(s) => Some(s),
             Err(e) => {
-                warning = Some(format!("Nie utworzono zadania w Todo Track: {e}"));
+                warning = Some(format!("Nie utworzono zadania w TukTuk Track: {e}"));
                 None
             }
         }

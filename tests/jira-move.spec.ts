@@ -15,7 +15,7 @@ import { openSettings } from "./fixtures/settings";
  */
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 
-const JIRA_KEY = "todo-track-preview-jira-v1";
+const JIRA_KEY = "tuktuk-track-preview-jira-v1";
 const card = (page: Page, title: string) =>
   page.locator(".task-card", {
     has: page.getByRole("button", { name: "Przedziały: " + title, exact: true }),

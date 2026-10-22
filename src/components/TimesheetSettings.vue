@@ -31,7 +31,7 @@ import {
  * Hasło nigdy nie wraca z backendu: pole jest puste także po połączeniu.
  */
 const account = ref<TsSettings>({
-  config: { apiUrl: tsDefaultApi, login: "", deviceId: "", deviceName: "Todo Track" },
+  config: { apiUrl: tsDefaultApi, login: "", deviceId: "", deviceName: "TukTuk Track" },
   connected: false,
   sendEnabled: true,
 });

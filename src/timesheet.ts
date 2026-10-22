@@ -14,7 +14,7 @@ import { dayTarget, type TargetSettings } from "./workday";
  * wywołań backendu, testowane jednostkowo.
  */
 
-/** Zadanie TS przypisane zadaniu Todo Track i skąd pochodzi. */
+/** Zadanie TS przypisane zadaniu TukTuk Track i skąd pochodzi. */
 export interface ResolvedTsTask {
   id: string;
   name: string;
@@ -27,7 +27,7 @@ export const tsProjectKey = (project: string) =>
   project.trim().replace(/[A-Z]/g, (c) => c.toLowerCase());
 
 /**
- * Zadanie TS dla zadania Todo Track: jawne `tsTaskId` zadania → domyślne
+ * Zadanie TS dla zadania TukTuk Track: jawne `tsTaskId` zadania → domyślne
  * zadanie projektu (`ts_project_map`, nazwa projektu bez wielkości liter) →
  * brak (`null`). Mapowanie projektu nie jest kopiowane do zadania, więc jego
  * zmiana działa od razu na wszystkie zadania bez jawnego wyboru.
@@ -62,11 +62,11 @@ export function findTsTask(
   return null;
 }
 
-/** Wiersz Raportu TS do wysłania: jedno zadanie TS, scalone zadania Todo Track. */
+/** Wiersz Raportu TS do wysłania: jedno zadanie TS, scalone zadania TukTuk Track. */
 export interface TsSendRow {
   tsTaskId: string;
   tsTaskName: string;
-  /** Zadania Todo Track scalone w ten wpis, w kolejności raportu. */
+  /** Zadania TukTuk Track scalone w ten wpis, w kolejności raportu. */
   tasks: Task[];
   /** Pełny czas (ms) przed zaokrągleniem. */
   ms: number;

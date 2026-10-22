@@ -306,7 +306,7 @@ fn file_stem(name: &str) -> String {
         .collect();
     let stem = stem.trim_matches(|c: char| c == '.' || c == ' ');
     if stem.is_empty() {
-        "Todo-Track".into()
+        "TukTuk-Track".into()
     } else {
         stem.into()
     }
@@ -478,8 +478,11 @@ mod tests {
         // 7,5 minuty = 0,125 h: połówka w górę, jak w podglądzie.
         assert_eq!(hours(450_000), "0,13");
         assert_eq!(minutes(90_000), 2);
-        assert_eq!(file_stem("Todo-Track 2026-11/<x>"), "Todo-Track 2026-11x");
-        assert_eq!(file_stem("..."), "Todo-Track");
+        assert_eq!(
+            file_stem("TukTuk-Track 2026-11/<x>"),
+            "TukTuk-Track 2026-11x"
+        );
+        assert_eq!(file_stem("..."), "TukTuk-Track");
     }
 
     #[test]

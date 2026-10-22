@@ -357,11 +357,11 @@ fn commands(root: &Value, event: &str) -> Vec<String> {
 
 #[test]
 fn merge_adds_own_hooks_next_to_foreign_ones() {
-    let exe = Path::new("C:\\Program Files\\TodoTrack\\todo-track-hook.exe");
+    let exe = Path::new("C:\\Program Files\\TukTukTrack\\tuktuk-track-hook.exe");
     let command = hook_command(exe, "claude");
     assert_eq!(
         command,
-        "\"C:/Program Files/TodoTrack/todo-track-hook.exe\" claude"
+        "\"C:/Program Files/TukTukTrack/tuktuk-track-hook.exe\" claude"
     );
     let mut root = orca_settings();
     assert!(install(&mut root, &CLAUDE_EVENTS, &command).unwrap());
@@ -389,8 +389,8 @@ fn merge_adds_own_hooks_next_to_foreign_ones() {
 
 #[test]
 fn merge_updates_the_exe_path_without_duplicates() {
-    let old = hook_command(Path::new("C:\\Stare\\todo-track-hook.exe"), "claude");
-    let new = hook_command(Path::new("C:\\Nowe\\todo-track-hook.exe"), "claude");
+    let old = hook_command(Path::new("C:\\Stare\\tuktuk-track-hook.exe"), "claude");
+    let new = hook_command(Path::new("C:\\Nowe\\tuktuk-track-hook.exe"), "claude");
     let mut root = orca_settings();
     install(&mut root, &CLAUDE_EVENTS, &old).unwrap();
     assert_eq!(
@@ -414,7 +414,7 @@ fn merge_updates_the_exe_path_without_duplicates() {
 
 #[test]
 fn uninstall_removes_only_own_entries() {
-    let command = hook_command(Path::new("C:\\App\\todo-track-hook.exe"), "claude");
+    let command = hook_command(Path::new("C:\\App\\tuktuk-track-hook.exe"), "claude");
     let original = orca_settings();
     let mut root = original.clone();
     install(&mut root, &CLAUDE_EVENTS, &command).unwrap();
@@ -428,13 +428,13 @@ fn uninstall_removes_only_own_entries() {
     assert!(!uninstall(&mut root).unwrap());
     // Plik złożony tylko z naszych wpisów traci pole `hooks`.
     let mut only = json!({});
-    install(&mut only, &CODEX_EVENTS, "x/todo-track-hook.exe codex").unwrap();
+    install(&mut only, &CODEX_EVENTS, "x/tuktuk-track-hook.exe codex").unwrap();
     assert!(uninstall(&mut only).unwrap());
     assert_eq!(only, json!({}));
     // Własny wpis w tej samej grupie co obcy: obcy zostaje.
     let mut mixed = json!({"hooks": {"Stop": [{"hooks": [
         {"type": "command", "command": "orca stop"},
-        {"type": "command", "command": "C:/a/todo-track-hook.exe claude"}
+        {"type": "command", "command": "C:/a/tuktuk-track-hook.exe claude"}
     ]}]}});
     assert!(uninstall(&mut mixed).unwrap());
     assert_eq!(commands(&mixed, "Stop"), vec!["orca stop"]);
@@ -444,7 +444,12 @@ fn uninstall_removes_only_own_entries() {
 fn merge_keeps_key_order_and_rejects_odd_shapes() {
     let text = r#"{"zeta":1,"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"orca stop","timeout":3}]}]},"alfa":{"z":1,"a":2}}"#;
     let mut doc = hooks_config::Doc::parse(text).unwrap();
-    install(&mut doc.value, &CODEX_EVENTS, "a/todo-track-hook.exe codex").unwrap();
+    install(
+        &mut doc.value,
+        &CODEX_EVENTS,
+        "a/tuktuk-track-hook.exe codex",
+    )
+    .unwrap();
     let out = doc.to_text().unwrap();
     let at = |needle: &str| {
         out.find(needle)
@@ -475,7 +480,8 @@ fn merge_keeps_key_order_and_rejects_odd_shapes() {
 
 /// Katalog tymczasowy testu (czyszczony na początku).
 fn temp(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("todo-track-hooks-{name}-{}", std::process::id()));
+    let root =
+        std::env::temp_dir().join(format!("tuktuk-track-hooks-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     root
@@ -502,24 +508,24 @@ fn files_are_registered_updated_and_cleaned_in_a_temp_home() {
     )
     .unwrap();
 
-    let exe = root.join("app").join("todo-track-hook.exe");
+    let exe = root.join("app").join("tuktuk-track-hook.exe");
     let (claude, codex) = hooks_config::sync(&dirs, Some(&exe));
     assert!(claude.found && claude.changed && claude.error.is_empty());
     assert!(codex.found && codex.changed);
     // Codex: plik powstał od zera.
     let hooks: Value =
         serde_json::from_str(&std::fs::read_to_string(&codex_file).unwrap()).unwrap();
-    assert!(commands(&hooks, "Interrupt")[0].ends_with("todo-track-hook.exe codex"));
+    assert!(commands(&hooks, "Interrupt")[0].ends_with("tuktuk-track-hook.exe codex"));
     let settings: Value =
         serde_json::from_str(&std::fs::read_to_string(&claude_file).unwrap()).unwrap();
-    assert!(commands(&settings, "Notification")[0].ends_with("todo-track-hook.exe claude"));
+    assert!(commands(&settings, "Notification")[0].ends_with("tuktuk-track-hook.exe claude"));
     assert_eq!(commands(&settings, "Elicitation").len(), 1);
 
     // Status: zarejestrowane z aktualną ścieżką, potem stare po zmianie exe.
     let status = status_for(&dirs, Some(&exe), true, String::new(), Vec::new());
     assert_eq!(status.claude.registration, "current");
     assert_eq!(status.codex.registration, "current");
-    let moved = root.join("nowy").join("todo-track-hook.exe");
+    let moved = root.join("nowy").join("tuktuk-track-hook.exe");
     let status = status_for(&dirs, Some(&moved), true, String::new(), Vec::new());
     assert_eq!(status.claude.registration, "stale");
     let (claude, _) = hooks_config::sync(&dirs, Some(&moved));
@@ -550,7 +556,7 @@ fn files_are_registered_updated_and_cleaned_in_a_temp_home() {
 fn missing_agent_folder_is_skipped_and_broken_json_is_left_alone() {
     let root = temp("skip");
     let dirs = dirs(&root);
-    let exe = root.join("todo-track-hook.exe");
+    let exe = root.join("tuktuk-track-hook.exe");
     // Żaden agent nie jest zainstalowany: nic nie powstaje.
     let (claude, codex) = hooks_config::sync(&dirs, Some(&exe));
     assert!(!claude.found && !codex.found);
@@ -583,7 +589,7 @@ fn missing_exe_is_an_error_when_enabling_but_not_when_disabling() {
     std::fs::create_dir_all(root.join(".claude")).unwrap();
     assert!(apply_dirs(&dirs, None, true)
         .unwrap_err()
-        .contains("todo-track-hook.exe"));
+        .contains("tuktuk-track-hook.exe"));
     assert!(apply_dirs(&dirs, None, false).is_ok());
     assert!(!root.join(".claude").join("settings.json").exists());
     let _ = std::fs::remove_dir_all(&root);
@@ -662,7 +668,7 @@ fn status_reads_codex_trust_from_injected_config() {
     let root = temp("trust");
     let dirs = dirs(&root);
     std::fs::create_dir_all(root.join(".codex")).unwrap();
-    let exe = root.join("todo-track-hook.exe");
+    let exe = root.join("tuktuk-track-hook.exe");
     hooks_config::sync(&dirs, Some(&exe));
     let status = status_for(&dirs, Some(&exe), true, String::new(), Vec::new());
     assert!(status.exe_found && status.codex.found && !status.claude.found);
@@ -686,7 +692,7 @@ fn status_reads_codex_trust_from_injected_config() {
 #[test]
 fn event_travels_from_hook_client_to_pipe_server() {
     use std::sync::{Arc, Mutex};
-    let name = format!(r"\\.\pipe\todo-track-hooks-test-{}", std::process::id());
+    let name = format!(r"\\.\pipe\tuktuk-track-hooks-test-{}", std::process::id());
     let got: Arc<Mutex<Vec<Vec<u8>>>> = Arc::default();
     let sink = got.clone();
     std::thread::spawn(move || {
@@ -696,7 +702,7 @@ fn event_travels_from_hook_client_to_pipe_server() {
         });
     });
     fn name_for_server() -> String {
-        format!(r"\\.\pipe\todo-track-hooks-test-{}", std::process::id())
+        format!(r"\\.\pipe\tuktuk-track-hooks-test-{}", std::process::id())
     }
     let raw = serde_json::to_vec(&json!({
         "session_id": "p1", "cwd": "C:\\x", "hook_event_name": "PreToolUse"
@@ -717,7 +723,7 @@ fn event_travels_from_hook_client_to_pipe_server() {
     let ev = parse(&received[0]).unwrap();
     assert_eq!((ev.agent.as_str(), ev.session_id.as_str()), ("codex", "p1"));
     // Bez serwera hook kończy się błędem, który program połyka (cicho, bez aplikacji).
-    assert!(hook_wire::forward(r"\\.\pipe\todo-track-hooks-nie-ma", &body).is_err());
+    assert!(hook_wire::forward(r"\\.\pipe\tuktuk-track-hooks-nie-ma", &body).is_err());
 }
 
 #[test]
@@ -791,4 +797,35 @@ fn long_tool_call_keeps_the_session_working_past_silence() {
     u.apply(&sub("PreToolUse", "a9"), T0 + 2);
     u.apply(&ev("claude", "Interrupt"), T0 + 3);
     assert!(u.session("claude", "s1").unwrap().tools.is_empty());
+}
+
+#[test]
+fn legacy_hook_entries_are_replaced_and_removed_with_the_own_ones() {
+    let legacy = hooks_config::legacy_names::HOOK;
+    let old = format!("\"C:/Users/ala/AppData/Local/Stara/{legacy}.exe\" claude");
+    let new = hook_command(Path::new("C:\\App\\tuktuk-track-hook.exe"), "claude");
+    assert!(hooks_config::is_own(&old));
+    // Rejestracja zastępuje stary wpis nowym, wpisy Orki zostają.
+    let mut root = orca_settings();
+    install(&mut root, &CLAUDE_EVENTS, &old).unwrap();
+    assert_eq!(
+        registration(&root, &CLAUDE_EVENTS, &new),
+        Registration::Stale
+    );
+    assert!(install(&mut root, &CLAUDE_EVENTS, &new).unwrap());
+    for event in CLAUDE_EVENTS {
+        let own: Vec<_> = commands(&root, event)
+            .into_iter()
+            .filter(|c| hooks_config::is_own(c))
+            .collect();
+        assert_eq!(own, vec![new.clone()], "{event}");
+        assert!(!commands(&root, event).iter().any(|c| c.contains(legacy)));
+    }
+    assert_eq!(commands(&root, "Stop")[0], "node C:/orca/hook.js stop");
+    // Wyłączenie hooków usuwa też stare wpisy; wpisy Orki zostają.
+    let original = orca_settings();
+    let mut only_old = original.clone();
+    install(&mut only_old, &CLAUDE_EVENTS, &old).unwrap();
+    assert!(uninstall(&mut only_old).unwrap());
+    assert_eq!(only_old, original);
 }

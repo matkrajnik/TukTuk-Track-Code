@@ -67,7 +67,7 @@ const emit = defineEmits<{
 }>();
 
 // Tryb panelu nawigacji (Windows NavigationView): progi 641 i 1008 px.
-const PANE_KEY = "todo-track-nav-collapsed";
+const PANE_KEY = "tuktuk-track-nav-collapsed";
 const narrowQuery = window.matchMedia("(max-width: 640px)");
 const midQuery = window.matchMedia("(max-width: 1007px)");
 const narrow = ref(narrowQuery.matches);
@@ -126,7 +126,7 @@ onUnmounted(() => {
 
 const theme = ref<"dark" | "light">("dark");
 try {
-  if (localStorage.getItem("todo-track-theme") === "light")
+  if (localStorage.getItem("tuktuk-track-theme") === "light")
     theme.value = "light";
 } catch {}
 watch(
@@ -134,7 +134,7 @@ watch(
   (value) => {
     document.documentElement.dataset.theme = value;
     try {
-      localStorage.setItem("todo-track-theme", value);
+      localStorage.setItem("tuktuk-track-theme", value);
     } catch {}
   },
   { immediate: true },
@@ -240,7 +240,7 @@ async function hide() {
       </button>
       <a class="brand" href="#" @click.prevent="go('tasks')"
         ><span class="brand-icon"><BrandIcon :size="20" /></span
-        ><span class="brand-text">todo<span>track</span></span></a
+        ><span class="brand-text">tuktuk<span>track</span></span></a
       >
     </div>
     <nav aria-label="Nawigacja główna">

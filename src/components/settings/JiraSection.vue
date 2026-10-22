@@ -109,7 +109,7 @@ function moveField(index: number, delta: -1 | 1) {
     />Pozwól aplikacji zmieniać zgłoszenia w Jirze</label
   >
   <p class="hint">
-    Wyłączone blokuje każdą zmianę w Jirze z Todo Track (przesuwanie
+    Wyłączone blokuje każdą zmianę w Jirze z TukTuk Track (przesuwanie
     zgłoszeń i inne zapisy); aplikacja wtedy tylko czyta zgłoszenia.
   </p>
   <label class="inline-check"

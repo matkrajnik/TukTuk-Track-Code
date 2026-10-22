@@ -187,7 +187,7 @@ test("linki z innych widoków i navigate otwierają właściwą sekcję", async 
   await navButton(page, "Zadania").click();
   await page.evaluate(() =>
     window.dispatchEvent(
-      new CustomEvent("todo-track-navigate", {
+      new CustomEvent("tuktuk-track-navigate", {
         detail: { view: "settings", section: "notifications" },
       }),
     ),
@@ -196,7 +196,7 @@ test("linki z innych widoków i navigate otwierają właściwą sekcję", async 
   // Nieznana sekcja zostawia ostatnią.
   await page.evaluate(() =>
     window.dispatchEvent(
-      new CustomEvent("todo-track-navigate", {
+      new CustomEvent("tuktuk-track-navigate", {
         detail: { view: "settings", section: "nie-ma" },
       }),
     ),

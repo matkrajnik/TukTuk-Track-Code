@@ -1,11 +1,11 @@
-//! `todo-track-mcp.exe`: serwer MCP dla agentów (PLAN_BACKLOG.md, A2).
+//! `tuktuk-track-mcp.exe`: serwer MCP dla agentów (PLAN_BACKLOG.md, A2).
 //!
 //! Claude Code albo Codex uruchamia ten program jako serwer MCP na stdio
 //! (jedna wiadomość JSON-RPC w wierszu). Program nie ma własnej logiki:
 //! `initialize`, `ping` i `tools/list` odpowiada sam, a każde `tools/call`
 //! przekazuje do działającej aplikacji nazwanym potokiem
-//! `\.\pipe\todo-track-mcp-<użytkownik>` i odsyła agentowi odpowiedź. Gdy
-//! aplikacja nie działa, narzędzie zwraca błąd „Todo Track nie działa”.
+//! `\.\pipe\tuktuk-track-mcp-<użytkownik>` i odsyła agentowi odpowiedź. Gdy
+//! aplikacja nie działa, narzędzie zwraca błąd „TukTuk Track nie działa”.
 //! Program kończy się, gdy agent zamknie stdin.
 //!
 //! Nic nie trafia na dysk ani do logów.

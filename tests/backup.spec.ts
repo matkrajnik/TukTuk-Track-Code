@@ -24,7 +24,7 @@ const restored = {
   trashSessions: [],
 };
 const preview = {
-  name: "Todo-Track-2026-10-01.sqlite",
+  name: "TukTuk-Track-2026-10-01.sqlite",
   tasks: 1,
   sessions: 1,
   trash: 0,
@@ -53,7 +53,7 @@ test("backup restore shows a summary and requires the confirmation checkbox", as
     .getByRole("button", { name: "Wybierz kopię do przywrócenia" })
     .click();
   await expect(
-    page.getByRole("heading", { name: "Todo-Track-2026-10-01.sqlite" }),
+    page.getByRole("heading", { name: "TukTuk-Track-2026-10-01.sqlite" }),
   ).toBeVisible();
   await expect(
     page.getByText("Zadania: 1, przedziały czasu: 1, zadania w koszu: 0."),

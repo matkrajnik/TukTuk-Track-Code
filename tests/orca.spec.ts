@@ -23,7 +23,7 @@ import {
  */
 test.use({ timezoneId: "Europe/Warsaw" });
 
-const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
+const BINDINGS_KEY = "tuktuk-track-preview-agent-bindings-v1";
 const ANALYSIS = "Analiza importu";
 const IMPORT = "Import CSV zamówień";
 

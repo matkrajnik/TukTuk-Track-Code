@@ -84,7 +84,7 @@ pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
         .map_err(|_| "Nie można otworzyć kopii SQLite.")?;
     let valid:bool=source.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions')",[],|r|r.get(0)).map_err(|_|"Niepoprawny plik kopii.")?;
     if !valid {
-        return Err("To nie jest kopia Todo Track.".into());
+        return Err("To nie jest kopia TukTuk Track.".into());
     }
     let mut memory = Connection::open_in_memory().map_err(|e| e.to_string())?;
     copy(&source, &mut memory)?;
@@ -137,9 +137,9 @@ pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
 #[tauri::command]
 pub async fn export_backup(app: tauri::AppHandle) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move||{
-        let Some(file)=app.dialog().file().set_file_name(format!("Todo-Track-{}.sqlite",chrono::Local::now().format("%Y-%m-%d"))).add_filter("Kopia Todo Track", &["sqlite"]).blocking_save_file() else{return Ok(None);};
+        let Some(file)=app.dialog().file().set_file_name(format!("TukTuk-Track-{}.sqlite",chrono::Local::now().format("%Y-%m-%d"))).add_filter("Kopia TukTuk Track", &["sqlite"]).blocking_save_file() else{return Ok(None);};
         let path=file.into_path().map_err(|e|e.to_string())?;
-        let own=app.path().app_data_dir().map_err(|e|e.to_string())?.join("todo-track.sqlite");
+        let own=app.path().app_data_dir().map_err(|e|e.to_string())?.join(crate::legacy::DB_FILE);
         if path.exists() && path.canonicalize().ok()==own.canonicalize().ok() { return Err("Wybierz plik inny niż bieżąca baza.".into()); }
         let state=app.state::<Database>(); let db=state.0.lock().map_err(|e|e.to_string())?;
         let mut snapshot=Connection::open_in_memory().map_err(|e|e.to_string())?; copy(&db,&mut snapshot)?;
@@ -155,7 +155,7 @@ pub async fn inspect_backup(app: tauri::AppHandle) -> Result<Option<Preview>, St
         let Some(file) = app
             .dialog()
             .file()
-            .add_filter("Kopia Todo Track", &["sqlite"])
+            .add_filter("Kopia TukTuk Track", &["sqlite"])
             .blocking_pick_file()
         else {
             return Ok(None);
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn restore_invalidates_settings_cache() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-restore-cache-{}-{}",
+            "tuktuk-track-restore-cache-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn backup_roundtrip_keeps_trash_and_stops_exported_timer() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-roundtrip-{}-{}",
+            "tuktuk-track-roundtrip-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -311,7 +311,7 @@ mod tests {
     fn backup_carries_templates_and_restore_replaces_them() {
         use crate::templates;
         let root = std::env::temp_dir().join(format!(
-            "todo-track-templates-{}-{}",
+            "tuktuk-track-templates-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -365,7 +365,7 @@ mod tests {
     #[test]
     fn backup_carries_agent_sessions() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-agent-time-{}-{}",
+            "tuktuk-track-agent-time-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -396,7 +396,7 @@ mod tests {
     #[test]
     fn backup_carries_week_notes() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-week-notes-{}-{}",
+            "tuktuk-track-week-notes-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn backup_carries_day_marks() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-day-marks-{}-{}",
+            "tuktuk-track-day-marks-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -456,7 +456,7 @@ mod tests {
     #[test]
     fn backup_carries_manual_meetings() {
         let root = std::env::temp_dir().join(format!(
-            "todo-track-manual-meetings-{}-{}",
+            "tuktuk-track-manual-meetings-{}-{}",
             std::process::id(),
             db::now()
         ));
@@ -562,7 +562,7 @@ mod tests {
             .ok()
         };
         let root = std::env::temp_dir().join(format!(
-            "todo-track-keep-keys-{}-{}",
+            "tuktuk-track-keep-keys-{}-{}",
             std::process::id(),
             db::now()
         ));

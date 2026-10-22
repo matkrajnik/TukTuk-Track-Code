@@ -259,7 +259,7 @@ test.describe("R2 — zgłoszenie Redmine na zadaniu", () => {
     await openPreview(page);
     await page.evaluate(
       (key) => localStorage.setItem(key, JSON.stringify({ connected: false })),
-      "todo-track-preview-redmine-v1",
+      "tuktuk-track-preview-redmine-v1",
     );
     await page.reload();
     const input = page.getByLabel("Nowe zadanie", { exact: true });
@@ -498,7 +498,7 @@ test.describe("R3 — widok Redmine", () => {
     // „Otwórz w Redmine” otwiera adres zgłoszenia (w podglądzie zapisany ślad).
     await page.getByRole("button", { name: "Otwórz w Redmine: #1240" }).click();
     const opened = await page.evaluate(() =>
-      JSON.parse(localStorage.getItem("todo-track-preview-redmine-opened-v1")!),
+      JSON.parse(localStorage.getItem("tuktuk-track-preview-redmine-opened-v1")!),
     );
     expect(opened).toEqual([`${REDMINE_SITE}/issues/1240`]);
   });
@@ -514,7 +514,7 @@ test.describe("R3 — widok Redmine", () => {
       redmineUrl: `${REDMINE_SITE}/issues/1240`,
     });
     await page.evaluate(
-      (d) => localStorage.setItem("todo-track-preview-v1", JSON.stringify(d)),
+      (d) => localStorage.setItem("tuktuk-track-preview-v1", JSON.stringify(d)),
       data,
     );
     await page.reload();
@@ -849,7 +849,7 @@ test.describe("R4 — zapisy do Redmine", () => {
    * przełącznik `redmineWrite`. Żaden test nie łączy się z Redmine.
    */
 
-  const JIRA_KEY = "todo-track-preview-jira-v1";
+  const JIRA_KEY = "tuktuk-track-preview-jira-v1";
   const IMPORT = "Import CSV zamówień";
 
   const banner = (page: Page) =>
@@ -1054,7 +1054,7 @@ test.describe("R4 — zapisy do Redmine", () => {
       .poll(() =>
         page.evaluate(() =>
           JSON.parse(
-            localStorage.getItem("todo-track-preview-redmine-opened-v1") ?? "[]",
+            localStorage.getItem("tuktuk-track-preview-redmine-opened-v1") ?? "[]",
           ),
         ),
       )
@@ -1285,7 +1285,7 @@ test.describe("R4 — zapisy do Redmine", () => {
     expect(
       (
         await page.evaluate(() =>
-          JSON.parse(localStorage.getItem("todo-track-preview-settings-v1")!),
+          JSON.parse(localStorage.getItem("tuktuk-track-preview-settings-v1")!),
         )
       ).jiraWrite,
     ).toBeUndefined();
@@ -1326,7 +1326,7 @@ test.describe("R5 — Ustawienia → Redmine", () => {
    * z Redmine; adresy są przykładowe.
    */
 
-  const OPENED_KEY = "todo-track-preview-redmine-opened-v1";
+  const OPENED_KEY = "tuktuk-track-preview-redmine-opened-v1";
 
   const panel = (page: Page) => page.getByRole("tabpanel");
   const siteInput = (page: Page) => page.getByLabel("Adres Redmine", { exact: true });

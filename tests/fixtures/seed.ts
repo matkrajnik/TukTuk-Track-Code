@@ -31,19 +31,19 @@ export const JIRA_SITE = "https://asistonwms.atlassian.net";
 /** Przykładowy adres Redmine (jak `previewRedmineSite`); żaden test się z nim nie łączy. */
 export const REDMINE_SITE = "https://redmine.example.pl";
 /** Stan symulowanego Redmine w podglądzie (`previewRedmineKey`). */
-export const REDMINE_KEY = "todo-track-preview-redmine-v1";
-export const PREVIEW_KEY = "todo-track-preview-v1";
-export const SETTINGS_KEY = "todo-track-preview-settings-v1";
-export const AGENTS_KEY = "todo-track-preview-agents-v1";
+export const REDMINE_KEY = "tuktuk-track-preview-redmine-v1";
+export const PREVIEW_KEY = "tuktuk-track-preview-v1";
+export const SETTINGS_KEY = "tuktuk-track-preview-settings-v1";
+export const AGENTS_KEY = "tuktuk-track-preview-agents-v1";
 /** Zdarzenia hooków agentów w podglądzie (B8): `{ events, codexTrust?, claude?, codex? }`. */
-export const AGENT_HOOKS_KEY = "todo-track-preview-agent-hooks-v1";
-export const ORCA_KEY = "todo-track-preview-orca-v1";
+export const AGENT_HOOKS_KEY = "tuktuk-track-preview-agent-hooks-v1";
+export const ORCA_KEY = "tuktuk-track-preview-orca-v1";
 /**
  * Symulowany silnik AI w podglądzie (A1): `{ claude?, codex?, script?, calls? }`.
  * Domyślnie żadne CLI nie jest wykryte, więc dialog pierwszego uruchomienia
  * nie zasłania widoków w testach, które o nim nie wiedzą.
  */
-export const AI_KEY = "todo-track-preview-ai-v1";
+export const AI_KEY = "tuktuk-track-preview-ai-v1";
 
 /** Chwila w czasie polskim (CEST) jako znacznik ms, np. `at("2026-10-15", "11:00")`. */
 export const at = (day: string, time: string) =>
@@ -223,7 +223,7 @@ export function seed(options: SeedOptions = {}) {
 }
 export type Seed = ReturnType<typeof seed>;
 
-export const TS_KEY = "todo-track-preview-ts-v1";
+export const TS_KEY = "tuktuk-track-preview-ts-v1";
 
 /**
  * Dane do wysyłki Raportu TS (PLAN_1.8.md, T5) na bazie `seed()` (domyślny
@@ -438,7 +438,7 @@ export function redmineFixture() {
 }
 export type RedmineFixture = ReturnType<typeof redmineFixture>;
 
-export const CALENDAR_KEY = "todo-track-preview-calendar-v1";
+export const CALENDAR_KEY = "tuktuk-track-preview-calendar-v1";
 /** Identyfikator aplikacji w Entra ID używany w testach kalendarza. */
 export const CALENDAR_CLIENT_ID = "0a1b2c3d-4e5f-4789-abcd-ef0123456789";
 
@@ -508,7 +508,7 @@ export function calendarFixture(state: "connected" | "ready" = "connected") {
   };
 }
 
-export const MEETINGS_KEY = "todo-track-preview-meetings-v1";
+export const MEETINGS_KEY = "tuktuk-track-preview-meetings-v1";
 /**
  * Ręczne spotkania podglądu (B12, jak z `manual_meetings`): dziś telefon
  * 11:00–11:30 z zadaniem „Code review” (po pomiarze 8:00–10:30, przed teraz)
@@ -537,7 +537,7 @@ export function manualMeetings() {
   ];
 }
 
-export const AGENT_SESSIONS_KEY = "todo-track-preview-agent-sessions-v1";
+export const AGENT_SESSIONS_KEY = "tuktuk-track-preview-agent-sessions-v1";
 
 /**
  * Okresy pracy agentów AI (jak z `agent_time`, tabela `agent_sessions`):
@@ -569,7 +569,7 @@ export interface PreviewOptions extends SeedOptions {
   now?: string | number;
   /** Dane zamiast `seed(options)`. */
   data?: unknown;
-  /** Ustawienia podglądu (klucz `todo-track-preview-settings-v1`). */
+  /** Ustawienia podglądu (klucz `tuktuk-track-preview-settings-v1`). */
   settings?: Record<string, unknown>;
   /** Pracujący agenci AI w podglądzie. */
   agents?: unknown[];

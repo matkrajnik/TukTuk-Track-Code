@@ -227,7 +227,7 @@ test("Ustawienia: próba silnika pokazuje wynik i dopisuje wywołanie bez treśc
   await expect(calls.getByRole("listitem")).toHaveCount(1);
   await expect(calls).toContainText("test");
   await expect(calls).toContainText("ok");
-  await expect(calls).not.toContainText("Todo Track");
+  await expect(calls).not.toContainText("TukTuk Track");
   const log = (await stored(page, AI_KEY)).calls;
   expect(log).toHaveLength(1);
   expect(log[0]).toMatchObject({ kind: "test", ok: true, error: "", cached: false });
@@ -261,7 +261,7 @@ test("Ustawienia: błędy silnika po polsku trafiają do wyniku i do dziennika",
 test("Pokaż, co zostanie wysłane: tekst po filtrze nazw, bez wywołania modelu", async ({ page }) => {
   await openPreview(page, {
     ai: { claude },
-    settings: { aiEngine: "claude", aiHiddenNames: ["Todo"] },
+    settings: { aiEngine: "claude", aiHiddenNames: ["TukTuk"] },
   });
   await openSettings(page, "Asystent AI");
   const preview = page.locator("details.ai-preview");
@@ -269,10 +269,10 @@ test("Pokaż, co zostanie wysłane: tekst po filtrze nazw, bez wywołania modelu
   await preview.locator("summary").click();
   const sent = preview.getByLabel("Tekst wysyłany do modelu");
   await expect(sent).toContainText("Test połączenia z aplikacją Osoba 1 Track.");
-  await expect(sent).not.toContainText("Todo");
+  await expect(sent).not.toContainText("TukTuk");
   // Samo otwarcie podglądu nie jest wywołaniem.
   await expect(page.getByText("Jeszcze nie było wywołań.")).toBeVisible();
-  expect(aiTestPrompt).toContain("Todo Track");
+  expect(aiTestPrompt).toContain("TukTuk Track");
 });
 
 test("opisy błędów z dziennika", () => {

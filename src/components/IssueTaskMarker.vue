@@ -22,7 +22,7 @@ const warning = computed(() =>
   <span
     v-if="state?.kind === 'task'"
     class="issue-task-marker"
-    :title="'Zadanie w Todo Track: ' + state.task.title"
+    :title="'Zadanie w TukTuk Track: ' + state.task.title"
     ><ListChecks :size="12" />{{ issueTaskMarker(state) }}</span
   ><span v-else-if="warning" class="issue-task-warning" role="note"
     ><TriangleAlert :size="12" />{{ warning }}</span

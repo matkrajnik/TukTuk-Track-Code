@@ -67,6 +67,13 @@ ${StrLoc}
 !define UNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${PRODUCTNAME}"
 !define MANUKEY "Software\${MANUFACTURER}"
 !define MANUPRODUCTKEY "${MANUKEY}\${PRODUCTNAME}"
+; LEGACY-BEGIN (N1): instalacja Todo Track (klucze Uninstall i wydawcy, program)
+!define LEGACYPRODUCTNAME "Todo Track"
+!define LEGACYMAINBINARY "todo-track.exe"
+!define LEGACYUNINSTKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Todo Track"
+!define LEGACYMANUKEY "Software\todotrack"
+!define LEGACYMANUPRODUCTKEY "Software\todotrack\Todo Track"
+; LEGACY-END
 !define UNINSTALLERSIGNCOMMAND "{{uninstaller_sign_cmd}}"
 !define ESTIMATEDSIZE "{{estimated_size}}"
 !define STARTMENUFOLDER "{{start_menu_folder}}"
@@ -76,7 +83,13 @@ Var UpdateMode
 Var NoShortcutMode
 Var WixMode
 Var OldMainBinaryName
-Var TodoTrackQuickUpdate
+Var TukTukTrackQuickUpdate
+Var CheckedFile
+; LEGACY-BEGIN (N1): aktualizacja z poprzedniej nazwy aplikacji
+Var LegacyVersion
+Var LegacyUninstall
+Var LegacyDir
+; LEGACY-END
 
 Name "${PRODUCTNAME}"
 BrandingText "${COPYRIGHT}"
@@ -169,8 +182,8 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 ; Installer pages, must be ordered as they appear
 ; 1. Welcome Page
 !define MUI_WELCOMEPAGE_TITLE "Twoje zadania. Twój czas."
-!define MUI_WELCOMEPAGE_TEXT "Todo Track pomaga zaplanować dzień i zapisać wykonaną pracę.$\r$\n$\r$\nZadania, pomiary czasu, Jira i raporty w jednej aplikacji.$\r$\n$\r$\nDane są przechowywane lokalnie na tym komputerze."
-!define MUI_FINISHPAGE_TITLE "Todo Track jest gotowy"
+!define MUI_WELCOMEPAGE_TEXT "TukTuk Track pomaga zaplanować dzień i zapisać wykonaną pracę.$\r$\n$\r$\nZadania, pomiary czasu, Jira i raporty w jednej aplikacji.$\r$\n$\r$\nDane są przechowywane lokalnie na tym komputerze."
+!define MUI_FINISHPAGE_TITLE "TukTuk Track jest gotowy"
 !define MUI_FINISHPAGE_TEXT "Możesz wrócić do swoich zadań.$\r$\n$\r$\nAplikacja działa również w zasobniku systemowym."
 !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
 !insertmacro MUI_PAGE_WELCOME
@@ -529,7 +542,7 @@ Function .onInit
   !endif
 
   ; Abort downgrades if they are disabled, in the modes that skip the reinstall page choice:
-  ; Todo Track: existing installs get one confirmation and an in-place update.
+  ; TukTuk Track: existing installs get one confirmation and an in-place update.
   ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
   ${If} $R0 != ""
   ${AndIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -541,13 +554,38 @@ Function .onInit
     ${EndIf}
     ${If} $PassiveMode != 1
     ${AndIfNot} ${Silent}
-      MessageBox MB_YESNO|MB_ICONQUESTION "Zaktualizować Todo Track z wersji $R0 do ${VERSION}?$\r$\n$\r$\nZadania, historia i ustawienia zostaną zachowane. Aplikacja uruchomi się ponownie po aktualizacji." IDYES +2
+      MessageBox MB_YESNO|MB_ICONQUESTION "Zaktualizować TukTuk Track z wersji $R0 do ${VERSION}?$\r$\n$\r$\nZadania, historia i ustawienia zostaną zachowane. Aplikacja uruchomi się ponownie po aktualizacji." IDYES +2
       Abort
-      StrCpy $TodoTrackQuickUpdate 1
+      StrCpy $TukTukTrackQuickUpdate 1
     ${EndIf}
     StrCpy $UpdateMode 1
     StrCpy $PassiveMode 1
   ${EndIf}
+
+  ; LEGACY-BEGIN (N1): instalacja Todo Track: jedno pytanie, potem ciche odinstalowanie
+  ; starej wersji bez usuwania danych (sekcja Install) i uruchomienie nowej aplikacji.
+  ReadRegStr $LegacyUninstall SHCTX "${LEGACYUNINSTKEY}" "UninstallString"
+  ${If} $LegacyUninstall != ""
+    ReadRegStr $LegacyVersion SHCTX "${LEGACYUNINSTKEY}" "DisplayVersion"
+    ReadRegStr $LegacyDir SHCTX "${LEGACYUNINSTKEY}" "InstallLocation"
+    Push $LegacyDir
+    Call TrimQuotes
+    Pop $LegacyDir
+    ${If} $PassiveMode != 1
+    ${AndIfNot} ${Silent}
+      MessageBox MB_YESNO|MB_ICONQUESTION "Zaktualizować ${LEGACYPRODUCTNAME} z wersji $LegacyVersion do ${PRODUCTNAME} ${VERSION}?$\r$\n$\r$\nZadania, historia, ustawienia i logowania zostaną przeniesione." IDYES +2
+      Abort
+      StrCpy $TukTukTrackQuickUpdate 1
+    ${EndIf}
+    StrCpy $PassiveMode 1
+    ; Updater 1.9 uruchamia instalator z /UPDATE, ale nowej instalacji jeszcze nie ma:
+    ; to świeża instalacja (inny katalog i klucz), bez ścieżki „aktualizacja w miejscu”.
+    ReadRegStr $R0 SHCTX "${UNINSTKEY}" "DisplayVersion"
+    ${If} $R0 == ""
+      StrCpy $UpdateMode 0
+    ${EndIf}
+  ${EndIf}
+  ; LEGACY-END
 
   ; Abort downgrades if they are disabled, in the modes that skip the reinstall page choice:
   ; silent, passive and update
@@ -684,15 +722,61 @@ Section Install
       ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --prepare-update' $0
       Sleep 1200
     ${Else}
-      MessageBox MB_OK|MB_ICONINFORMATION "Przed aktualizacją zakończ Todo Track z menu ikony w zasobniku systemowym (Zakończ aplikację), aby zapisać bieżący pomiar." /SD IDOK
+      MessageBox MB_OK|MB_ICONINFORMATION "Przed aktualizacją zakończ TukTuk Track z menu ikony w zasobniku systemowym (Zakończ aplikację), aby zapisać bieżący pomiar." /SD IDOK
     ${EndIf}
   ${EndIf}
   ; Never force-kill a running timer during an in-place update.
   ${If} $UpdateMode = 1
-    Call TodoTrackRequireClosed
+    StrCpy $CheckedFile "$INSTDIR\${MAINBINARYNAME}.exe"
+    Call TukTukTrackRequireClosed
   ${Else}
     !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
   ${EndIf}
+
+  ; LEGACY-BEGIN (N1): usunięcie instalacji Todo Track. Stary program zapisuje pomiar
+  ; (--prepare-update) i musi być zamknięty; stary deinstalator działa cicho z /UPDATE:
+  ; /S nie pokazuje strony z polem „usuń dane”, więc %APPDATA% i %LOCALAPPDATA% zostają,
+  ; a /UPDATE zachowuje też wpis uruchamiania z Windows i wpisy hooków (przenosi je
+  ; aplikacja przy pierwszym starcie). Skróty usuwamy tu, bo /UPDATE ich nie rusza.
+  ${If} $LegacyUninstall != ""
+    DetailPrint "Usuwanie ${LEGACYPRODUCTNAME}..."
+    ${If} ${FileExists} "$LegacyDir\${LEGACYMAINBINARY}"
+      ExecWait '"$LegacyDir\${LEGACYMAINBINARY}" --prepare-update' $0
+      Sleep 1200
+      StrCpy $CheckedFile "$LegacyDir\${LEGACYMAINBINARY}"
+      Call TukTukTrackRequireClosed
+    ${EndIf}
+    ExecWait '$LegacyUninstall /S /UPDATE _?=$LegacyDir' $0
+    ${If} $0 <> 0
+      DetailPrint "Odinstalowanie ${LEGACYPRODUCTNAME} zakończyło się kodem $0; dane zostają."
+    ${EndIf}
+    Delete "$LegacyDir\uninstall.exe"
+    RMDir "$LegacyDir"
+    !insertmacro IsShortcutTarget "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+    Pop $0
+    ${If} $0 = 1
+      !insertmacro UnpinShortcut "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
+      Delete "$SMPROGRAMS\${LEGACYPRODUCTNAME}.lnk"
+    ${EndIf}
+    ${If} $AppStartMenuFolder != ""
+      !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+      Pop $0
+      ${If} $0 = 1
+        !insertmacro UnpinShortcut "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
+        Delete "$SMPROGRAMS\$AppStartMenuFolder\${LEGACYPRODUCTNAME}.lnk"
+      ${EndIf}
+    ${EndIf}
+    !insertmacro IsShortcutTarget "$DESKTOP\${LEGACYPRODUCTNAME}.lnk" "$LegacyDir\${LEGACYMAINBINARY}"
+    Pop $0
+    ${If} $0 = 1
+      !insertmacro UnpinShortcut "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
+      Delete "$DESKTOP\${LEGACYPRODUCTNAME}.lnk"
+    ${EndIf}
+    DeleteRegKey SHCTX "${LEGACYUNINSTKEY}"
+    DeleteRegKey SHCTX "${LEGACYMANUPRODUCTKEY}"
+    DeleteRegKey /ifempty SHCTX "${LEGACYMANUKEY}"
+  ${EndIf}
+  ; LEGACY-END
 
   ; Copy main executable
   File "${MAINBINARYSRCPATH}"
@@ -784,7 +868,7 @@ Section Install
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
 
-  ${If} $TodoTrackQuickUpdate = 1
+  ${If} $TukTukTrackQuickUpdate = 1
     Call RunMainBinary
   ${EndIf}
 
@@ -844,10 +928,10 @@ Section Uninstall
     Delete "$INSTDIR\\{{this.[1]}}"
   {{/each}}
 
-  ; Todo Track: wpisy hooków agentów w plikach Claude Code i Codexa (B8) znikają
+  ; TukTuk Track: wpisy hooków agentów w plikach Claude Code i Codexa (B8) znikają
   ; przy odinstalowaniu, ale nie przy aktualizacji (aplikacja dopisuje je sama).
   ${If} $UpdateMode <> 1
-    ExecWait '"$INSTDIR\todo-track-hook.exe" --uninstall'
+    ExecWait '"$INSTDIR\tuktuk-track-hook.exe" --uninstall'
   ${EndIf}
 
   ; Delete external binaries
@@ -855,11 +939,11 @@ Section Uninstall
     Delete "$INSTDIR\\{{this}}"
   {{/each}}
 
-  ; Todo Track: host native messaging rozszerzenia przeglądarki (W4) — manifest
+  ; TukTuk Track: host native messaging rozszerzenia przeglądarki (W4) — manifest
   ; zapisany przez aplikację obok exe i wpisy w rejestrze Chrome i Edge.
-  Delete "$INSTDIR\pl.todotrack.bridge.json"
-  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\pl.todotrack.bridge"
-  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\pl.todotrack.bridge"
+  Delete "$INSTDIR\pl.tuktuktrack.bridge.json"
+  DeleteRegKey HKCU "Software\Google\Chrome\NativeMessagingHosts\pl.tuktuktrack.bridge"
+  DeleteRegKey HKCU "Software\Microsoft\Edge\NativeMessagingHosts\pl.tuktuktrack.bridge"
 
   ; Delete app associations
   {{#each file_associations as |association| ~}}
@@ -966,13 +1050,30 @@ Function RestorePreviousInstallLocation
     StrCpy $INSTDIR $4
 FunctionEnd
 
-Function TodoTrackRequireClosed
+; LEGACY-BEGIN (N1): InstallLocation starej instalacji jest zapisany w cudzysłowie
+Function TrimQuotes
+  Exch $R0
+  Push $R1
+  StrCpy $R1 $R0 1
+  ${If} $R1 == "$\""
+    StrCpy $R0 $R0 "" 1
+  ${EndIf}
+  StrCpy $R1 $R0 1 -1
+  ${If} $R1 == "$\""
+    StrCpy $R0 $R0 -1
+  ${EndIf}
+  Pop $R1
+  Exch $R0
+FunctionEnd
+; LEGACY-END
+
+Function TukTukTrackRequireClosed
   retry_close:
   !insertmacro RestartManager_StartSession $R0
   ${If} $R0 == ""
     Abort "Nie można sprawdzić, czy aplikacja jest zamknięta."
   ${EndIf}
-  !insertmacro RestartManager_RegisterFile $R0 "$INSTDIR\${MAINBINARYNAME}.exe"
+  !insertmacro RestartManager_RegisterFile $R0 "$CheckedFile"
   ${If} $0 != 0
     !insertmacro RestartManager_EndSession $R0
     Abort "Nie można sprawdzić pliku aplikacji."
@@ -982,7 +1083,7 @@ Function TodoTrackRequireClosed
   !insertmacro RestartManager_EndSession $R0
   ${If} $R4 = ${ERROR_MORE_DATA}
     IfSilent cancel_close
-    MessageBox MB_RETRYCANCEL|MB_ICONINFORMATION "Todo Track nadal działa. Zakończ aplikację z menu ikony w zasobniku systemowym i wybierz Ponów próbę." IDRETRY retry_close
+    MessageBox MB_RETRYCANCEL|MB_ICONINFORMATION "TukTuk Track nadal działa. Zakończ aplikację z menu ikony w zasobniku systemowym i wybierz Ponów próbę." IDRETRY retry_close
     cancel_close:
     Abort "Aktualizacja anulowana. Dane i program pozostawiono bez zmian."
   ${ElseIf} $R4 != 0

@@ -25,8 +25,8 @@ test("holidays: 2024–2030 match the reference list shared with Rust", () => {
   expect(holidayName("2026-06-04")).toBe("Boże Ciało");
 });
 
-const key = "todo-track-preview-v1";
-const settingsKey = "todo-track-preview-settings-v1";
+const key = "tuktuk-track-preview-v1";
+const settingsKey = "tuktuk-track-preview-settings-v1";
 
 const tasks = [
   {

@@ -40,7 +40,7 @@ pub const EVENT: &str = "ai-chat-event";
 /// Plik konfiguracji MCP czatu Claude w katalogu AI.
 pub const MCP_FILE: &str = "chat-mcp.json";
 /// Prefiks nazw narzędzi serwera w Claude Code (`mcp__<serwer>__<narzędzie>`).
-const TOOL_PREFIX: &str = "mcp__todo-track__";
+const TOOL_PREFIX: &str = "mcp__tuktuk-track__";
 /// Ile ostatnich linii stderr pamiętamy do rozpoznania przyczyny błędu.
 const STDERR_TAIL: usize = 20;
 /// Najwięcej wiadomości historii dołączanej do promptu (Codex i wznowienie Claude).
@@ -51,15 +51,15 @@ pub const EMPTY: &str = "Wpisz pytanie do asystenta.";
 pub const CHAT_OFF: &str = "Czat jest wyłączony. Włącz „Czat” w Ustawieniach → Asystent AI.";
 pub const MCP_REQUIRED: &str = "Czat czyta dane przez serwer MCP. Włącz „Serwer MCP dla agentów” w Ustawieniach → Asystent AI.";
 pub const MCP_MISSING: &str =
-    "Brak programu todo-track-mcp.exe obok aplikacji. Zainstaluj aplikację ponownie.";
+    "Brak programu tuktuk-track-mcp.exe obok aplikacji. Zainstaluj aplikację ponownie.";
 pub const UNEXPECTED_EXIT: &str =
     "Asystent zakończył pracę przed końcem odpowiedzi. Zadaj pytanie ponownie.";
 
 /// Rola asystenta dodawana do promptu systemowego Claude i do pierwszej
 /// wiadomości Codexa.
-pub const ROLE: &str = "Jesteś asystentem aplikacji Todo Track (czas pracy, zadania, Jira). \
+pub const ROLE: &str = "Jesteś asystentem aplikacji TukTuk Track (czas pracy, zadania, Jira). \
 Odpowiadaj po polsku, krótko i konkretnie. Dane czytasz wyłącznie narzędziami serwera \
-todo-track; nie zgaduj ich. Zapisów nie wykonujesz: narzędzia propose_* tylko tworzą \
+tuktuk-track; nie zgaduj ich. Zapisów nie wykonujesz: narzędzia propose_* tylko tworzą \
 propozycje, które użytkownik zatwierdza w aplikacji. Nie masz dostępu do wysyłki czasu \
 do Ideo Timesheet ani do zapisów w Jirze. Osoby występują jako „Osoba N”; używaj tych \
 oznaczeń bez zmian i nie próbuj ustalać, kto za nimi stoi.";
@@ -114,7 +114,7 @@ pub enum Parsed {
     Error(Failure),
 }
 
-/// Nazwa narzędzia bez prefiksu serwera (`mcp__todo-track__day_summary` → `day_summary`).
+/// Nazwa narzędzia bez prefiksu serwera (`mcp__tuktuk-track__day_summary` → `day_summary`).
 pub fn short_tool_name(name: &str) -> String {
     name.strip_prefix(TOOL_PREFIX).unwrap_or(name).to_string()
 }
@@ -206,7 +206,7 @@ fn parse_line(engine: Engine, line: &str) -> Vec<Parsed> {
 // ---------------------------------------------------------------------------
 // Linie poleceń
 
-/// Konfiguracja MCP czatu Claude: serwer `todo-track` wskazujący program obok aplikacji.
+/// Konfiguracja MCP czatu Claude: serwer `tuktuk-track` wskazujący program obok aplikacji.
 pub fn mcp_config(exe: &Path) -> Value {
     json!({
         "mcpServers": {
@@ -219,7 +219,7 @@ pub fn mcp_config(exe: &Path) -> Value {
 }
 
 /// `claude -p --input-format stream-json --output-format stream-json --verbose
-/// --tools "" --strict-mcp-config --mcp-config <plik> --allowedTools "mcp__todo-track__*"
+/// --tools "" --strict-mcp-config --mcp-config <plik> --allowedTools "mcp__tuktuk-track__*"
 /// --permission-prompts none --setting-sources "" --no-session-persistence
 /// --append-system-prompt <rola> [--model <główny>]`.
 pub fn claude_chat_args(mcp_file: &Path, model: &str) -> Vec<String> {
@@ -236,7 +236,7 @@ pub fn claude_chat_args(mcp_file: &Path, model: &str) -> Vec<String> {
         "--mcp-config",
         &mcp_file.to_string_lossy(),
         "--allowedTools",
-        "mcp__todo-track__*",
+        "mcp__tuktuk-track__*",
         "--permission-prompts",
         "none",
         "--setting-sources",
@@ -267,7 +267,7 @@ fn toml_string(text: &str) -> String {
 pub const CODEX_DISABLED_FEATURES: [&str; 3] = ["shell_tool", "unified_exec", "web_search_request"];
 
 /// `codex exec --json --ephemeral --skip-git-repo-check -s read-only -C <katalog AI>
-/// -c mcp_servers={"todo-track"={command=<exe>,args=[]}} -c features.shell_tool=false
+/// -c mcp_servers={"tuktuk-track"={command=<exe>,args=[]}} -c features.shell_tool=false
 /// -c features.unified_exec=false -c features.web_search_request=false -c notify=[]
 /// [-m <model>]`; prompt idzie na stdin.
 ///

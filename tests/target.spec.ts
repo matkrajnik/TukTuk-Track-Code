@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
-const key = "todo-track-preview-v1";
-const settingsKey = "todo-track-preview-settings-v1";
+const key = "tuktuk-track-preview-v1";
+const settingsKey = "tuktuk-track-preview-settings-v1";
 
 // Środa 14 października 2026, 12:00 czasu lokalnego.
 test.beforeEach(async ({ page }) => {

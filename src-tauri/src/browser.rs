@@ -2,9 +2,9 @@
 //!
 //! Rozszerzenie (`browser-extension/`) wysyła adres i tytuł aktywnej karty, ale
 //! tylko dla domen z listy w jego opcjach (domyślnie `*.atlassian.net`). Wiadomości
-//! idą przez native messaging do programu `todo-track-bridge.exe`
+//! idą przez native messaging do programu `tuktuk-track-bridge.exe`
 //! (`src/bin/bridge.rs`), a ten przekazuje je tutaj nazwanym potokiem
-//! `\\.\pipe\todo-track-bridge-<użytkownik>` (ramka z `native_msg`).
+//! `\\.\pipe\tuktuk-track-bridge-<użytkownik>` (ramka z `native_msg`).
 //!
 //! Z wiadomości zostaje w pamięci tylko rozpoznany klucz Jiry i chwila odbioru
 //! (adres i tytuł nie są przechowywane, nie trafiają do bazy ani logów). Klucz
@@ -38,7 +38,7 @@ pub const CHROME_HOSTS: &str = r"Software\Google\Chrome\NativeMessagingHosts";
 /// Rejestr hostów Edge (pod `HKCU`).
 pub const EDGE_HOSTS: &str = r"Software\Microsoft\Edge\NativeMessagingHosts";
 /// Nazwa programu hosta obok exe aplikacji.
-pub const BRIDGE_EXE: &str = "todo-track-bridge.exe";
+pub const BRIDGE_EXE: &str = "tuktuk-track-bridge.exe";
 /// Domyślna domena (jak w opcjach rozszerzenia).
 pub const DEFAULT_DOMAIN: &str = "*.atlassian.net";
 /// Rozszerzenie uznajemy za połączone, gdy odezwało się w tym czasie (wysyła stan
@@ -258,7 +258,7 @@ impl Bridge {
 pub fn host_manifest(bridge: &Path) -> Value {
     json!({
         "name": HOST_NAME,
-        "description": "Todo Track — podpowiedzi z przeglądarki",
+        "description": "TukTuk Track — podpowiedzi z przeglądarki",
         "path": bridge.to_string_lossy(),
         "type": "stdio",
         "allowed_origins": [format!("chrome-extension://{EXTENSION_ID}/")],
@@ -333,7 +333,7 @@ pub fn unregister_all(bases: &[&str]) -> Result<(), String> {
 }
 
 const BASES: [&str; 2] = [CHROME_HOSTS, EDGE_HOSTS];
-const MANIFEST_FILE: &str = "pl.todotrack.bridge.json";
+const MANIFEST_FILE: &str = "pl.tuktuktrack.bridge.json";
 
 /// Co ile pętla w tle ponawia nieudaną rejestrację hosta.
 pub const RETRY: i64 = 60_000;
@@ -368,7 +368,7 @@ pub fn setup(app: &tauri::AppHandle) {
     app.manage(State::default());
 }
 
-/// Katalog exe aplikacji (tam leży `todo-track-bridge.exe`).
+/// Katalog exe aplikacji (tam leży `tuktuk-track-bridge.exe`).
 fn exe_dir() -> Option<PathBuf> {
     std::env::current_exe()
         .ok()
@@ -405,7 +405,7 @@ pub fn apply(app: &tauri::AppHandle, enabled: bool) -> Result<(), String> {
             .filter(|p| p.is_file())
             .ok_or_else(|| {
                 format!(
-                    "Brak programu {BRIDGE_EXE} obok aplikacji. Zainstaluj Todo Track ponownie."
+                    "Brak programu {BRIDGE_EXE} obok aplikacji. Zainstaluj TukTuk Track ponownie."
                 )
             })?;
         let manifest = write_manifest(app, &bridge)?;
@@ -1134,11 +1134,11 @@ mod tests {
         // Nazwa potoku z użytkownikiem.
         assert_eq!(
             native_msg::pipe_name_for("Jan Kowalski"),
-            r"\\.\pipe\todo-track-bridge-Jan_Kowalski"
+            r"\\.\pipe\tuktuk-track-bridge-Jan_Kowalski"
         );
         assert_eq!(
             native_msg::pipe_name_for(""),
-            r"\\.\pipe\todo-track-bridge-user"
+            r"\\.\pipe\tuktuk-track-bridge-user"
         );
     }
 
@@ -1229,7 +1229,7 @@ mod tests {
         // Start: jeszcze nic nie zastosowano.
         assert!(r.due(true, 1_000, false));
         assert!(r.due(true, RETRY, true));
-        // Błąd (np. brak todo-track-bridge.exe): `applied` zostaje puste. Zapis
+        // Błąd (np. brak tuktuk-track-bridge.exe): `applied` zostaje puste. Zapis
         // ustawień próbuje od razu, pętla w tle dopiero po RETRY.
         r.last_try = 1_000;
         r.applied = None;
@@ -1258,7 +1258,9 @@ mod tests {
             .collect();
         assert_eq!(id, EXTENSION_ID);
         assert_eq!(manifest["manifest_version"], 3);
-        let host = host_manifest(Path::new(r"C:\Programy\Todo Track\todo-track-bridge.exe"));
+        let host = host_manifest(Path::new(
+            r"C:\Programy\TukTuk Track\tuktuk-track-bridge.exe",
+        ));
         assert_eq!(host["name"], HOST_NAME);
         assert_eq!(host["type"], "stdio");
         assert_eq!(
@@ -1267,7 +1269,7 @@ mod tests {
         );
         assert_eq!(
             host["path"],
-            r"C:\Programy\Todo Track\todo-track-bridge.exe"
+            r"C:\Programy\TukTuk Track\tuktuk-track-bridge.exe"
         );
     }
 
@@ -1283,7 +1285,7 @@ mod tests {
                 json!({ "ok": true, "echo": msg["type"] })
             });
         });
-        // Klient jak w `todo-track-bridge`: otwarcie potoku, ramka, odpowiedź.
+        // Klient jak w `tuktuk-track-bridge`: otwarcie potoku, ramka, odpowiedź.
         let open = || {
             for _ in 0..100 {
                 if let Ok(f) = std::fs::OpenOptions::new()
@@ -1359,20 +1361,20 @@ mod tests {
     fn registers_and_removes_hosts_on_test_branch() {
         use winreg::{enums::HKEY_CURRENT_USER, RegKey};
         let root = format!(
-            r"Software\TodoTrackTest\browser-{}-{}",
+            r"Software\TukTukTrackTest\browser-{}-{}",
             std::process::id(),
             crate::db::now()
         );
         let chrome = format!(r"{root}\Google\Chrome\NativeMessagingHosts");
         let edge = format!(r"{root}\Microsoft\Edge\NativeMessagingHosts");
         let bases = [chrome.as_str(), edge.as_str()];
-        let manifest = Path::new(r"C:\Programy\Todo Track\pl.todotrack.bridge.json");
+        let manifest = Path::new(r"C:\Programy\TukTuk Track\pl.tuktuktrack.bridge.json");
         assert_eq!(registered_at(&chrome), None);
         register_all(&bases, manifest).unwrap();
         for base in bases {
             assert_eq!(
                 registered_at(base).as_deref(),
-                Some(r"C:\Programy\Todo Track\pl.todotrack.bridge.json")
+                Some(r"C:\Programy\TukTuk Track\pl.tuktuktrack.bridge.json")
             );
         }
         // Ponowna rejestracja nadpisuje ścieżkę (np. po aktualizacji).
@@ -1387,6 +1389,6 @@ mod tests {
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
         assert!(hkcu.open_subkey(&chrome).is_ok());
         hkcu.delete_subkey_all(&root).unwrap();
-        let _ = hkcu.delete_subkey(r"Software\TodoTrackTest");
+        let _ = hkcu.delete_subkey(r"Software\TukTukTrackTest");
     }
 }

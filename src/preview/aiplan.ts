@@ -3,7 +3,7 @@
  * dane z podglądu (plan dnia, spotkania, pojemność, terminy, pomiary tygodnia,
  * notatki, czas agentów), odpowiedź ze skryptu i to samo mapowanie co w Ruście.
  *
- * Skrypt w stanie symulatora AI (`todo-track-preview-ai-v1`, `script`):
+ * Skrypt w stanie symulatora AI (`tuktuk-track-preview-ai-v1`, `script`):
  * - `morning`: `{ value: { comment, moves: [{ taskId, toDay, reason }] }, error?, delayMs? }`,
  * - `week_notes`: `{ value: { notes }, error?, delayMs? }`.
  * Bez wpisu odpowiedź jest pusta (`{ ok: true }` → brak komentarza / szkicu).

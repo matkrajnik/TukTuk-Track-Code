@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Todo Track — podpowiedzi z przeglądarki",
-  "short_name": "Todo Track",
-  "description": "Podpowiada w Todo Track zadanie ze zgłoszenia Jiry otwartego w aktywnej karcie. Wysyła adres tylko dla domen z listy dozwolonych.",
+  "name": "TukTuk Track — podpowiedzi z przeglądarki",
+  "short_name": "TukTuk Track",
+  "description": "Podpowiada w TukTuk Track zadanie ze zgłoszenia Jiry otwartego w aktywnej karcie. Wysyła adres tylko dla domen z listy dozwolonych.",
   "version": "1.0.0",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzRglg5Vuc8DuS+qLnjWgybUK+tYGZidSPdNoRKEiKxdlYSp6ToC9bkNKWUAxzJ7FMCl01VorokMDaP6kkhpynKotexjlR4EoI7RhdMVs4XgfH7imEESjJW6RFIpjo8eOuCyjUULqgYXPbl4BDWcgGmpqAuF5LNKMMZ1A1L6ptPXifZ5QDtjc23Alta6yxPSxIMjmjvtwJChq8XyKJyR5ktvUIQoBEPxwypCN1xoMShD2ktQ9CpzDtEZvvqyR/bh4pbYqyUSd0qQZe7cEYz3TSEfNpmbnSn9DYQhC5M7SeNpzPBRe7N92D7/u0/WtlYxqqK7Rw2fOjLrkDrwIz0U7HwIDAQAB",
   "minimum_chrome_version": "110",
@@ -16,7 +16,7 @@
     "open_in_tab": false
   },
   "action": {
-    "default_title": "Todo Track",
+    "default_title": "TukTuk Track",
     "default_popup": "options.html"
   },
   "icons": {

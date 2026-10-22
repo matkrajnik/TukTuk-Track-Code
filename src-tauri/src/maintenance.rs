@@ -39,7 +39,7 @@ mod tests {
     #[test]
     fn backup_contains_wal_and_runs_once_per_version() {
         let dir = std::env::temp_dir().join(format!(
-            "todo-track-backup-{}-{}",
+            "tuktuk-track-backup-{}-{}",
             std::process::id(),
             crate::db::now()
         ));

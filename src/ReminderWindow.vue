@@ -8,7 +8,7 @@ const busy = ref(false),
 function updateTheme() {
   try {
     document.documentElement.dataset.theme =
-      localStorage.getItem("todo-track-theme") === "light" ? "light" : "dark";
+      localStorage.getItem("tuktuk-track-theme") === "light" ? "light" : "dark";
   } catch {}
 }
 updateTheme();
@@ -39,7 +39,7 @@ async function action(action: string) {
 <template>
   <section class="reminder-card" aria-label="Przypomnienie o zadaniu">
     <header>
-      <Bell :size="19" /><span>Todo Track</span
+      <Bell :size="19" /><span>TukTuk Track</span
       ><button
         class="icon-button"
         aria-label="Przypomnij za 5 minut"

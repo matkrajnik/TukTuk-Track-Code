@@ -198,14 +198,14 @@ export function tsSentOutcome(
  * udanej komendzie zmieniającej stan, a w podglądzie także zdarzenie `storage`
  * dla `previewTsKey` (inne okno albo test zmienia symulowany TS), jak przy Jirze.
  */
-export const tsChangedEvent = "todo-track-ts-changed";
+export const tsChangedEvent = "tuktuk-track-ts-changed";
 export function notifyTs() {
   window.dispatchEvent(new Event(tsChangedEvent));
 }
 // ---------------------------------------------------------------------------
-// Zadania TS dla zadań Todo Track (PLAN_1.8.md, T2).
+// Zadania TS dla zadań TukTuk Track (PLAN_1.8.md, T2).
 
-/** Domyślne zadanie TS projektu Todo Track (`timesheet::ProjectMap`). */
+/** Domyślne zadanie TS projektu TukTuk Track (`timesheet::ProjectMap`). */
 export interface TsProjectMapping {
   project: string;
   tsTaskId: string;

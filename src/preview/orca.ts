@@ -1,7 +1,7 @@
 /**
  * Symulowana Orka w podglądzie (`orca.rs`, B9): stan w localStorage, bez procesu.
  *
- * Klucz `todo-track-preview-orca-v1`: `{ found?, running?, repos?, worktrees?,
+ * Klucz `tuktuk-track-preview-orca-v1`: `{ found?, running?, repos?, worktrees?,
  * created? }`. Domyślnie `orca.cmd` jest znaleziony, Orca działa, a repozytoria
  * to dwa przykładowe. `orca_create` dopisuje worktree do `worktrees` i `created`
  * (testy sprawdzają, co poszło do „Orki”).
@@ -20,7 +20,7 @@ import {
   type OrcaWorktree,
 } from "../api/orca";
 
-export const orcaKey = "todo-track-preview-orca-v1";
+export const orcaKey = "tuktuk-track-preview-orca-v1";
 
 const defaultRepos: OrcaRepo[] = [
   { id: "repo-wms", name: "wms", path: "C:\\Projekty\\wms" },

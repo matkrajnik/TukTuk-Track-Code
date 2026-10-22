@@ -106,7 +106,7 @@ interface DayState {
   projects: TsProject[];
   filled: TsFilled[];
   mode: TsMode;
-  /** Opisy edytowalne w podglądzie (nie zmieniają notatek w Todo Track). */
+  /** Opisy edytowalne w podglądzie (nie zmieniają notatek w TukTuk Track). */
   descriptions: Record<string, string>;
   edits: Record<string, Amounts>;
   /** Informacja po przypisaniu zadania TS (godziny przeliczone z pomiarów). */
@@ -649,7 +649,7 @@ const saveLabel = computed(() => {
             <table class="ts-send-table" aria-label="Wpisy do wysłania">
               <thead>
                 <tr>
-                  <th>Zadania Todo Track</th>
+                  <th>Zadania TukTuk Track</th>
                   <th>Zadanie TS</th>
                   <th class="ts-send-hours">Godziny + nadgodziny</th>
                   <th>Opis</th>
@@ -1097,7 +1097,7 @@ const saveLabel = computed(() => {
         </ul>
       </section>
       <p v-else-if="!cur.result" class="hint">
-        Zapis w TS zastępuje cały dzień. Wysyłka nie zamyka dnia w Todo Track.
+        Zapis w TS zastępuje cały dzień. Wysyłka nie zamyka dnia w TukTuk Track.
       </p>
       <p
         v-if="multi && skipped.length && !busy"

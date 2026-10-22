@@ -28,7 +28,7 @@ import { clock } from "../time";
  * nadaje się do porównania: bez lokalnego wpisu (inne urządzenie, wyczyszczona
  * pamięć) znacznik pokazuje samą wysyłkę, bez uwagi o zmianie raportu.
  */
-export const sentReportKey = "todo-track-ts-sent-report-v1";
+export const sentReportKey = "tuktuk-track-ts-sent-report-v1";
 
 function readReport(): Record<string, string> {
   try {

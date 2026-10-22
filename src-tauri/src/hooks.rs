@@ -1,7 +1,7 @@
 //! Wykrywanie agentów AI przez hooki Claude Code i Codexa (PLAN_BACKLOG.md, B8).
 //!
-//! Przepływ: agent uruchamia `todo-track-hook.exe` przy każdym zdarzeniu → potok
-//! `\\.\pipe\todo-track-hooks` → wątek w tym module (`start`) → [`Sessions`] (maszyna
+//! Przepływ: agent uruchamia `tuktuk-track-hook.exe` przy każdym zdarzeniu → potok
+//! `\\.\pipe\tuktuk-track-hooks` → wątek w tym module (`start`) → [`Sessions`] (maszyna
 //! stanów sesji) w `agents::Watch` → pętla `agents::start` liczy z niej listę
 //! pracujących agentów. Stan nie jest skanowany z plików: po restarcie aplikacji
 //! lista jest pusta i zapełnia się zdarzeniami (`PreToolUse` przychodzi co kilka

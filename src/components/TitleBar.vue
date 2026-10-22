@@ -37,7 +37,7 @@ onUnmounted(() => unlisten?.());
 
 <template>
   <div class="titlebar">
-    <div data-tauri-drag-region class="titlebar-drag">Todo Track</div>
+    <div data-tauri-drag-region class="titlebar-drag">TukTuk Track</div>
     <div class="window-controls">
       <button
         aria-label="Minimalizuj okno"

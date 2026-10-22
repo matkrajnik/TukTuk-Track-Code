@@ -92,7 +92,7 @@ export const emptyJiraWatch = (): JiraWatchStatus => ({
   lastErrorAt: null,
 });
 // ---------------------------------------------------------------------------
-// J2: Jira z poziomu Todo Track (tablica, przejścia, przypisanie, komentarze,
+// J2: Jira z poziomu TukTuk Track (tablica, przejścia, przypisanie, komentarze,
 // nazwa gałęzi, nowe zgłoszenia). W aplikacji komendy z `jira.rs` i
 // `jira_board.rs`; w podglądzie symulowana Jira w localStorage
 // (`previewJiraBoardKey`) z tymi samymi regułami (`columnFor`, `decideMove`,
@@ -199,7 +199,7 @@ export interface JiraCreated {
   key: string;
   url: string;
   snapshot: Snapshot | null;
-  /** Zgłoszenie utworzone, ale zadanie w Todo Track nie powstało. */
+  /** Zgłoszenie utworzone, ale zadanie w TukTuk Track nie powstało. */
   warning?: string | null;
 }
 export type JiraScope = "mine" | "all";

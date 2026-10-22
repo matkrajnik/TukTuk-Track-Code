@@ -2,7 +2,7 @@
 
 /** Adres Jiry w podglądzie (domyślny z `jira::Config`). */
 export const previewJiraSite = "https://asistonwms.atlassian.net";
-export const previewSettingsKey = "todo-track-preview-settings-v1";
+export const previewSettingsKey = "tuktuk-track-preview-settings-v1";
 export function previewJson(name: string): Record<string, unknown> {
   try {
     const value = JSON.parse(localStorage.getItem(name) ?? "{}");

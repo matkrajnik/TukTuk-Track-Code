@@ -34,7 +34,7 @@ test("dostępna aktualizacja pokazuje baner z wersją i notatkami; „Później�
   await expect(banner(page)).toBeVisible();
   await expect(
     banner(page).getByRole("heading", {
-      name: "Dostępna jest nowa wersja Todo Track 1.8.0",
+      name: "Dostępna jest nowa wersja TukTuk Track 1.8.0",
     }),
   ).toBeVisible();
   await expect(banner(page)).toContainText("Automatyczne aktualizacje");

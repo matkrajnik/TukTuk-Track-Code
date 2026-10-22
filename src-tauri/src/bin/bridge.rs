@@ -1,11 +1,11 @@
-//! `todo-track-bridge.exe`: host native messaging dla rozszerzenia Chrome i Edge
+//! `tuktuk-track-bridge.exe`: host native messaging dla rozszerzenia Chrome i Edge
 //! (PLAN_1.7.md, W4).
 //!
 //! Przeglądarka uruchamia ten program, gdy rozszerzenie otwiera połączenie
 //! (`chrome.runtime.connectNative`), i rozmawia z nim przez stdin/stdout ramkami
 //! native messaging (4 bajty długości little-endian + JSON). Każdą wiadomość
 //! przekazujemy bez zmian do działającej aplikacji przez nazwany potok
-//! `\\.\pipe\todo-track-bridge-<użytkownik>` i odsyłamy przeglądarce odpowiedź
+//! `\\.\pipe\tuktuk-track-bridge-<użytkownik>` i odsyłamy przeglądarce odpowiedź
 //! aplikacji. Gdy aplikacja nie działa, odpowiadamy „niepołączone” i nic więcej
 //! nie robimy. Program kończy się, gdy przeglądarka zamknie stdin.
 //!

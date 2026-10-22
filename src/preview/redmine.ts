@@ -40,7 +40,7 @@ export const previewRedmineSite = "https://redmine.example.pl";
  * zgłoszeniami. Klucz API „zly” w „Połącz” daje błąd 401. Inne okno albo test
  * zmieniające ten klucz wywołują `onRedmineChanged` i `onMovePromptsChanged`.
  */
-export const previewRedmineKey = "todo-track-preview-redmine-v1";
+export const previewRedmineKey = "tuktuk-track-preview-redmine-v1";
 /**
  * Zgłoszenie symulowanego Redmine (podzbiór `redmine::Issue`). Pola widoku
  * Redmine (R3) są opcjonalne: brak projektu = projekt śledzony z przykładu,
@@ -446,7 +446,7 @@ export async function redmineBranchName(issueId: number): Promise<string> {
   );
 }
 /** Ślad linków „Otwórz w Redmine” w podglądzie (dla testów). */
-export const previewRedmineOpenedKey = "todo-track-preview-redmine-opened-v1";
+export const previewRedmineOpenedKey = "tuktuk-track-preview-redmine-opened-v1";
 const previewRedmineList = (state: PreviewRedmine) =>
   Array.isArray(state.issues) ? state.issues : previewRedmineIssues;
 const previewRedmineStatusList = (state: PreviewRedmine) =>

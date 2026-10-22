@@ -1,3 +1,3 @@
 Name        Command                                                        Args  Env  Cwd  Status   Auth
 orca        C:\Users\ala\AppData\Local\Orca\orca.exe                       mcp   -    -    enabled  Unsupported
-todo-track  C:\Users\ala\AppData\Local\Todo Track\todo-track-mcp.exe       -     -    -    enabled  Unsupported
+tuktuk-track  C:\Users\ala\AppData\Local\TukTuk Track\tuktuk-track-mcp.exe       -     -    -    enabled  Unsupported

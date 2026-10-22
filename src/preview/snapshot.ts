@@ -6,7 +6,7 @@ import { detailsOf, type Snapshot } from "../api/task";
 import { attachPreviewJiraFields } from "./jira-state";
 import { dayKey } from "../time";
 import { emptyRule, isRecurring, occurs } from "../recurrence";
-export const snapshotKey = "todo-track-preview-v1";
+export const snapshotKey = "tuktuk-track-preview-v1";
 export async function read(): Promise<Snapshot> {
   const raw = localStorage.getItem(snapshotKey);
   const data: Snapshot = raw ? JSON.parse(raw) : { tasks: [], sessions: [] };
@@ -26,7 +26,7 @@ function previewWorkSettings(): {
   try {
     stored =
       JSON.parse(
-        localStorage.getItem("todo-track-preview-settings-v1") ?? "{}",
+        localStorage.getItem("tuktuk-track-preview-settings-v1") ?? "{}",
       ) ?? {};
   } catch {
     stored = {};

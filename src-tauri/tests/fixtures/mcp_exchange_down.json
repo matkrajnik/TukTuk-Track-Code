@@ -3,12 +3,12 @@
   "steps": [
     {
       "in": {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
-      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "todo-track", "version": "2.0.0-test"}}}
+      "out": {"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-06-18", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "tuktuk-track", "version": "2.0.0-test"}}}
     },
     {
       "in": {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "day_summary", "arguments": {"day": "2026-10-15"}}},
       "forward": {"tool": "day_summary", "arguments": {"day": "2026-10-15"}, "reply": "down"},
-      "out": {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "Todo Track nie działa. Uruchom aplikację i spróbuj ponownie."}], "isError": true}}
+      "out": {"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "TukTuk Track nie działa. Uruchom aplikację i spróbuj ponownie."}], "isError": true}}
     },
     {
       "in": {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},

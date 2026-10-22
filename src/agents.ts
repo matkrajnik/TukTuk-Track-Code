@@ -73,7 +73,7 @@ type PreviewAgent = Agent & {
   firstPrompt?: string | null;
 };
 /** W podglądzie lista agentów pochodzi z localStorage (testy). */
-const key = "todo-track-preview-agents-v1";
+const key = "tuktuk-track-preview-agents-v1";
 const eventName = "agents-changed";
 
 /** Pierwszy klucz Jiry (`[A-Z][A-Z0-9]+-\d+`) jak `agents::jira_key`. */
@@ -295,7 +295,7 @@ export function previewSuggestionsChanged() {
   window.dispatchEvent(new Event(suggestEvent));
 }
 /** Odrzucone pary („Nie teraz”) w podglądzie. */
-const dismissedKey = "todo-track-preview-agent-dismissed-v1";
+const dismissedKey = "tuktuk-track-preview-agent-dismissed-v1";
 
 /** Cel propozycji jak `suggest::target`: `t:<id>` albo `k:<klucz>`. */
 export const suggestionTarget = (task: Pick<AgentTask, "taskId" | "key">) =>

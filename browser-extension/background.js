@@ -1,9 +1,9 @@
-// Service worker rozszerzenia Todo Track (Manifest V3).
+// Service worker rozszerzenia TukTuk Track (Manifest V3).
 //
 // Śledzi aktywną kartę (tabs.onActivated, tabs.onUpdated, windows.onFocusChanged)
 // i co 10 s odświeża stan. Adres i tytuł wysyła tylko dla domen z listy
 // dozwolonych (opcje, domyślnie *.atlassian.net); dla innych stron wysyła samo
-// „clear”. Wiadomości idą przez native messaging do todo-track-bridge.exe,
+// „clear”. Wiadomości idą przez native messaging do tuktuk-track-bridge.exe,
 // a ten przekazuje je do działającej aplikacji. Otwarty port native messaging
 // utrzymuje service worker przy życiu; alarm co 30 s budzi go po uśpieniu.
 import {
@@ -140,7 +140,7 @@ async function init() {
   } catch {
     focused = true;
   }
-  chrome.alarms.create("todo-track-refresh", { periodInMinutes: 0.5 });
+  chrome.alarms.create("tuktuk-track-refresh", { periodInMinutes: 0.5 });
   await send(true);
 }
 

@@ -4,7 +4,7 @@ import { backend, openDesktop } from "./fixtures/tauri";
 import { openSettings } from "./fixtures/settings";
 test.use({ timezoneId: "Europe/Warsaw" });
 
-const TEMPLATES_KEY = "todo-track-preview-templates-v1";
+const TEMPLATES_KEY = "tuktuk-track-preview-templates-v1";
 const storedTemplates = (page: Page) =>
   page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "[]"), TEMPLATES_KEY);
 

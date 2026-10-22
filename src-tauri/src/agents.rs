@@ -1,7 +1,7 @@
 //! Wykrywanie pracujących agentów AI (Claude Code i Codex) na tym komputerze.
 //!
 //! Stan agentów pochodzi z hooków (`hooks.rs`, PLAN_BACKLOG.md B8): agent uruchamia
-//! `todo-track-hook.exe` przy każdym zdarzeniu, a maszyna stanów sesji (`hooks::Sessions`)
+//! `tuktuk-track-hook.exe` przy każdym zdarzeniu, a maszyna stanów sesji (`hooks::Sessions`)
 //! wskazuje, które sesje pracują. Pliki sesji agentów nie są już skanowane.
 //!
 //! Wątek odświeża listę co 5 s (i od razu po zmianie fazy sesji), wysyła
@@ -515,7 +515,7 @@ impl State {
 }
 
 /// Usuwa agentów uruchomionych w katalogu asystenta AI (`ai::dir`): hook
-/// odrzuca je znacznikiem `TODO_TRACK_AI`, a to druga zapora (A1).
+/// odrzuca je znacznikiem `TUKTUK_TRACK_AI`, a to druga zapora (A1).
 pub(crate) fn without_ai_dir(agents: &mut Vec<Agent>, ai_dir: &Path) {
     agents.retain(|a| !crate::ai::is_ai_dir(&a.cwd, ai_dir));
 }
@@ -752,7 +752,7 @@ mod tests {
     /// Katalog tymczasowy testu (usuwany na początku, żeby powtórka była czysta).
     fn temp(name: &str) -> PathBuf {
         let root =
-            std::env::temp_dir().join(format!("todo-track-git-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(format!("tuktuk-track-git-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -1082,16 +1082,16 @@ mod tests {
     /// trafia na listę agentów, nawet gdy hook go przepuścił.
     #[test]
     fn agents_in_ai_directory_are_ignored() {
-        let ai = Path::new(r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai");
+        let ai = Path::new(r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai");
         let agent = |cwd: &str| Agent {
             kind: "claude".into(),
             cwd: cwd.into(),
             ..Agent::default()
         };
-        let notes = r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai-notes";
+        let notes = r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai-notes";
         let mut list = vec![
-            agent(r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai"),
-            agent("c:/users/ala/appdata/roaming/pl.todotrack.desktop/AI/"),
+            agent(r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai"),
+            agent("c:/users/ala/appdata/roaming/pl.tuktuktrack.desktop/AI/"),
             agent(r"C:\repo"),
             agent(notes),
         ];

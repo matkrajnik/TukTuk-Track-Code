@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
-const key = "todo-track-preview-settings-v1";
+const key = "tuktuk-track-preview-settings-v1";
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
 });
@@ -127,10 +127,10 @@ test("startup toggles save autostart state to localStorage in preview", async ({
   const read = () =>
     page.evaluate(() => ({
       autostart: JSON.parse(
-        localStorage.getItem("todo-track-preview-autostart-v1")!,
+        localStorage.getItem("tuktuk-track-preview-autostart-v1")!,
       ),
       settings: JSON.parse(
-        localStorage.getItem("todo-track-preview-settings-v1")!,
+        localStorage.getItem("tuktuk-track-preview-settings-v1")!,
       ),
     }));
   expect(await read()).toEqual({
@@ -163,7 +163,7 @@ test("failed autostart save reverts the clicked checkbox and shows the error", a
   await page.evaluate(() => {
     const original = Storage.prototype.setItem;
     Storage.prototype.setItem = function (name: string, value: string) {
-      if (name === "todo-track-preview-autostart-v1")
+      if (name === "tuktuk-track-preview-autostart-v1")
         throw new Error("Odmowa dostępu");
       return original.call(this, name, value);
     };

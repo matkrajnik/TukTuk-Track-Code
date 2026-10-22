@@ -1,12 +1,12 @@
-//! Protokół MCP między agentem, programem `todo-track-mcp` i aplikacją (A2).
+//! Protokół MCP między agentem, programem `tuktuk-track-mcp` i aplikacją (A2).
 //!
-//! Wspólny plik aplikacji (`mod mcp_wire`) i programu `todo-track-mcp`
-//! (`src/bin/todo-track-mcp.rs`, przez `#[path]`). Agent (Claude Code albo Codex)
+//! Wspólny plik aplikacji (`mod mcp_wire`) i programu `tuktuk-track-mcp`
+//! (`src/bin/tuktuk-track-mcp.rs`, przez `#[path]`). Agent (Claude Code albo Codex)
 //! uruchamia program jako serwer MCP na stdio: jedna wiadomość JSON-RPC w wierszu.
 //! Program nie ma własnej logiki: `initialize`, `ping` i `tools/list` odpowiada
 //! sam, a każde `tools/call` przekazuje ramką native messaging do działającej
-//! aplikacji nazwanym potokiem `\\.\pipe\todo-track-mcp-<użytkownik>` i odsyła
-//! agentowi odpowiedź. Bez aplikacji narzędzie zwraca błąd „Todo Track nie działa”.
+//! aplikacji nazwanym potokiem `\\.\pipe\tuktuk-track-mcp-<użytkownik>` i odsyła
+//! agentowi odpowiedź. Bez aplikacji narzędzie zwraca błąd „TukTuk Track nie działa”.
 //!
 //! Opisy narzędzi są po angielsku i krótkie; zapisy to propozycje, nie zmiany.
 //! Nic nie trafia na dysk ani do logów.
@@ -17,18 +17,18 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 /// Nazwa serwera MCP w rejestracji i w `serverInfo`.
-pub const SERVER_NAME: &str = "todo-track";
+pub const SERVER_NAME: &str = "tuktuk-track";
 /// Najnowsza wersja protokołu, którą serwer zna.
 pub const PROTOCOL_VERSION: &str = "2025-06-18";
 /// Wersje protokołu, które serwer potrafi obsłużyć (to samo `tools/*`).
 pub const SUPPORTED: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 /// Błąd narzędzia, gdy aplikacja nie działa (albo nie odpowiada na potoku).
-pub const NOT_RUNNING: &str = "Todo Track nie działa. Uruchom aplikację i spróbuj ponownie.";
+pub const NOT_RUNNING: &str = "TukTuk Track nie działa. Uruchom aplikację i spróbuj ponownie.";
 
-/// `\\.\pipe\todo-track-mcp-<użytkownik>`.
+/// `\\.\pipe\tuktuk-track-mcp-<użytkownik>`.
 pub fn pipe_name_for(user: &str) -> String {
     format!(
-        r"\\.\pipe\todo-track-mcp-{}",
+        r"\\.\pipe\tuktuk-track-mcp-{}",
         native_msg::sanitize_user(user)
     )
 }
@@ -62,7 +62,7 @@ pub fn is_tool(name: &str) -> bool {
 }
 
 const PROPOSAL_NOTE: &str =
-    "Creates a proposal the user must approve in Todo Track; changes nothing by itself.";
+    "Creates a proposal the user must approve in TukTuk Track; changes nothing by itself.";
 
 fn tool(name: &str, description: &str, properties: Value, required: &[&str]) -> Value {
     json!({
@@ -191,7 +191,7 @@ impl Reply {
         Reply {
             ok,
             text: if !ok && text.is_empty() {
-                "Todo Track odpowiedział niepoprawnie.".into()
+                "TukTuk Track odpowiedział niepoprawnie.".into()
             } else {
                 text
             },

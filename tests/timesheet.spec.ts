@@ -24,7 +24,7 @@ import { openSettings } from "./fixtures/settings";
 
 /**
  * Wysyłka Raportu TS do Ideo Timesheet (PLAN_1.8.md, T2–T5) na symulowanym TS
- * podglądu (`store.ts`, klucz `todo-track-preview-ts-v1`). Żaden test nie łączy
+ * podglądu (`store.ts`, klucz `tuktuk-track-preview-ts-v1`). Żaden test nie łączy
  * się z prawdziwym serwerem TS. Reguły samego symulowanego TS (walidacja,
  * „keep”, suma godzin) są w `timesheet-store.spec.ts`.
  *
@@ -679,7 +679,7 @@ test("Raport dnia: „Zastąp wszystko” usuwa wpisy TS, znacznik i zmiana rapo
       data.sessions.push({ id: 200, taskId: 2, startedAt: start, endedAt: end });
       localStorage.setItem(key, JSON.stringify(data));
     },
-    ["todo-track-preview-v1", at(TODAY, "07:00"), at(TODAY, "07:30")] as const,
+    ["tuktuk-track-preview-v1", at(TODAY, "07:00"), at(TODAY, "07:30")] as const,
   );
   await page.reload();
   await openReport(page);
@@ -841,7 +841,7 @@ test("wpis poniżej 0,01 h nie zastępuje wpisu TS, a znacznik bez lokalnej sumy
   // wpisów raportu. Suma z TS (4,50 h, z wpisem spoza raportu) różni się od
   // raportu (3,00 h), ale znacznik nie zgłasza zmiany raportu.
   await page.evaluate(() =>
-    localStorage.removeItem("todo-track-ts-sent-report-v1"),
+    localStorage.removeItem("tuktuk-track-ts-sent-report-v1"),
   );
   await page.reload();
   await openReport(page);
@@ -1084,7 +1084,7 @@ test("„Połącz konto TS w Ustawieniach” i navigate z sekcją timesheet otwi
   await nav(page, "Dashboard");
   await page.evaluate(() =>
     window.dispatchEvent(
-      new CustomEvent("todo-track-navigate", {
+      new CustomEvent("tuktuk-track-navigate", {
         detail: { view: "settings", section: "timesheet" },
       }),
     ),
@@ -1144,7 +1144,7 @@ test("pełna ścieżka: Ustawienia → mapowanie projektu → Zamknięcie dnia �
   await section.getByRole("button", { name: "Wyślij do TS" }).click();
   const d = dialog(page);
   await expect(rows(page)).toHaveCount(2);
-  // Dwa zadania Todo Track scalone w jeden wpis TS.
+  // Dwa zadania TukTuk Track scalone w jeden wpis TS.
   await expect(rows(page).nth(0).locator("td")).toHaveText([
     "Analiza importu, Wdrożenie etykiet",
     "Rozwój",

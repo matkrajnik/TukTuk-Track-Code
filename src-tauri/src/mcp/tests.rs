@@ -261,9 +261,12 @@ fn tool_definitions_are_english_short_and_have_no_forbidden_tools() {
 fn pipe_name_is_per_user_and_sanitized() {
     assert_eq!(
         mcp_wire::pipe_name_for("Jan Kowalski"),
-        r"\\.\pipe\todo-track-mcp-Jan_Kowalski"
+        r"\\.\pipe\tuktuk-track-mcp-Jan_Kowalski"
     );
-    assert_eq!(mcp_wire::pipe_name_for(""), r"\\.\pipe\todo-track-mcp-user");
+    assert_eq!(
+        mcp_wire::pipe_name_for(""),
+        r"\\.\pipe\tuktuk-track-mcp-user"
+    );
 }
 
 #[test]
@@ -286,7 +289,7 @@ fn reply_frames_are_parsed() {
     assert!(!broken.ok && !broken.text.is_empty());
 }
 
-/// Cała droga programu `todo-track-mcp` do aplikacji przez prawdziwy nazwany potok:
+/// Cała droga programu `tuktuk-track-mcp` do aplikacji przez prawdziwy nazwany potok:
 /// ramka z narzędziem i odpowiedź; bez serwera program zgłasza „nie działa”.
 #[cfg(windows)]
 #[test]
@@ -979,7 +982,7 @@ fn mcp_is_wired_into_startup_in_the_right_order() {
 #[test]
 fn the_mcp_program_is_declared_for_the_installer() {
     let manifest = include_str!("../../Cargo.toml");
-    assert!(manifest.contains("name = \"todo-track-mcp\""));
+    assert!(manifest.contains("name = \"tuktuk-track-mcp\""));
     assert!(manifest.contains("path = \"src/bin/mcp.rs\""));
 }
 
@@ -1065,12 +1068,12 @@ fn agent(cwd: &str, since: i64) -> crate::agents::Agent {
 
 #[test]
 fn link_folder_uses_the_calling_session_folder_with_two_agents_working() {
-    let ai_dir = std::path::Path::new(r"C:\dane\todo-track\ai");
+    let ai_dir = std::path::Path::new(r"C:\dane\tuktuk-track\ai");
     let agents = || {
         vec![
             agent(r"C:\Projekty\wms", 100),
             agent(r"C:\Projekty\api", 200),
-            agent(r"C:\dane\todo-track\ai", 300),
+            agent(r"C:\dane\tuktuk-track\ai", 300),
         ]
     };
     // Starsza sesja wywołuje narzędzie: jej folder, nie najnowszej.
@@ -1079,7 +1082,7 @@ fn link_folder_uses_the_calling_session_folder_with_two_agents_working() {
         vec![r"C:\Projekty\wms".to_string()]
     );
     // Bez `cwd`, z katalogiem asystenta albo ścieżką względną: sesje od najnowszej.
-    for cwd in ["", r"C:\dane\todo-track\ai", "wzgledna"] {
+    for cwd in ["", r"C:\dane\tuktuk-track\ai", "wzgledna"] {
         assert_eq!(
             session_folders(cwd, Some(ai_dir), agents()),
             vec![

@@ -2,8 +2,8 @@ import { test, expect, type Page } from "./fixtures/test";
 import { openSettings } from "./fixtures/settings";
 
 test.use({ timezoneId: "Europe/Warsaw" });
-const dataKey = "todo-track-preview-v1";
-const settingsKey = "todo-track-preview-settings-v1";
+const dataKey = "tuktuk-track-preview-v1";
+const settingsKey = "tuktuk-track-preview-settings-v1";
 
 async function seed(page: Page) {
   await page.clock.install({ time: new Date("2026-10-14T09:59:50+02:00") });

@@ -43,7 +43,7 @@ import { tsProjectKey } from "../timesheet";
  * podglądu a zapisem), jednorazowo. `failRead`: dni, których odczyt
  * (`ts_filled`) kończy się błędem.
  */
-export const previewTsKey = "todo-track-preview-ts-v1";
+export const previewTsKey = "tuktuk-track-preview-ts-v1";
 interface PreviewTs {
   connected?: boolean;
   login?: string;
@@ -91,7 +91,7 @@ function previewTsSettings(): TsSettings {
       apiUrl: state.apiUrl ?? tsDefaultApi,
       login: state.login ?? "",
       deviceId: state.deviceId ?? "",
-      deviceName: "Todo Track",
+      deviceName: "TukTuk Track",
     },
     connected: state.connected === true && !!state.login,
     sendEnabled: previewJson(previewSettingsKey).tsSend !== false,

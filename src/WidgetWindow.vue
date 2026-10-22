@@ -335,7 +335,7 @@ const subline = computed(
 function updateTheme() {
   try {
     document.documentElement.dataset.theme =
-      localStorage.getItem("todo-track-theme") === "light" ? "light" : "dark";
+      localStorage.getItem("tuktuk-track-theme") === "light" ? "light" : "dark";
   } catch {}
 }
 updateTheme();

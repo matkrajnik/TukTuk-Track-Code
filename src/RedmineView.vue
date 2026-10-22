@@ -59,7 +59,7 @@ const query = ref(""),
   collapsed = ref<string[]>([]);
 
 /** Zapamiętany projekt, zakres i „Tylko otwarte” (wygoda widoku). */
-const prefsKey = "todo-track-redmine-view-v1";
+const prefsKey = "tuktuk-track-redmine-view-v1";
 interface Prefs {
   projectId: number | null;
   scope: Scope;

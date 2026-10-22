@@ -48,7 +48,7 @@ test("Ctrl+Shift+S bez wcześniejszego pomiaru otwiera szybkie przełączanie", 
       localStorage.setItem(key, value);
     },
     [
-      "todo-track-preview-v1",
+      "tuktuk-track-preview-v1",
       JSON.stringify({ ...(data as object), sessions: [] }),
     ] as const,
   );

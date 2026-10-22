@@ -27,7 +27,7 @@ import {
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 test.describe.configure({ timeout: 60_000 });
 
-const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
+const BINDINGS_KEY = "tuktuk-track-preview-agent-bindings-v1";
 const claude = { path: "C:\\Users\\ala\\.local\\bin\\claude.exe", version: "2.1.304" };
 const settings = { aiEngine: "claude" };
 

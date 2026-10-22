@@ -2059,7 +2059,7 @@ html.widget-root body {
   color: var(--danger, inherit);
 }
 
-/* J2: Jira z poziomu Todo Track (tablica, akcje, nowe zgłoszenie) */
+/* J2: Jira z poziomu TukTuk Track (tablica, akcje, nowe zgłoszenie) */
 .jira-mode {
   display: inline-flex;
   border: 1px solid var(--line);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * Nowe zgłoszenie w Jirze (J2) z opcjonalnym zadaniem w Todo Track; własne
+ * Nowe zgłoszenie w Jirze (J2) z opcjonalnym zadaniem w TukTuk Track; własne
  * `busy` i błąd. Formularz pokazuje się po pobraniu projektów wybranych
  * tablic; typ z wymaganymi polami spoza formularza odsyła do Jiry.
  */
@@ -150,7 +150,7 @@ const submit = () =>
         mnie</label
       ><label class="check-label"
         ><input v-model="form.createTask" type="checkbox" />Utwórz też
-        zadanie w Todo Track</label
+        zadanie w TukTuk Track</label
       ><label v-if="form.createTask" class="check-label"
         >Dzień planu<input
           v-model="form.plannedDay"
@@ -159,7 +159,7 @@ const submit = () =>
       /></label>
     </div>
     <p v-if="extraRequired.length" class="jira-move-error" role="alert">
-      Typ „{{ typeName }}” wymaga pól, których Todo Track nie wypełnia:
+      Typ „{{ typeName }}” wymaga pól, których TukTuk Track nie wypełnia:
       {{ extraRequired.join(", ") }}.
       <button
         type="button"

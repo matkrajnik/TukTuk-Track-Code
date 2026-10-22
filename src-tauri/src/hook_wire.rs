@@ -1,11 +1,11 @@
-//! Zdarzenie hooka między programem `todo-track-hook` a aplikacją (B8).
+//! Zdarzenie hooka między programem `tuktuk-track-hook` a aplikacją (B8).
 //!
 //! Wspólny plik aplikacji (`mod hook_wire`) i programu hooka (`src/bin/hook.rs`,
 //! przez `#[path]`). Agent (Claude Code albo Codex) uruchamia hooka przy każdym
 //! zdarzeniu i podaje JSON na stdin; hook zostawia z niego tylko pola potrzebne
 //! do stanu sesji (bez narzędzi, treści plików ani transkryptu), pakuje je w
 //! kopertę `{"agent": …, "event": {…}}` i wysyła ramką native messaging do
-//! potoku `\\.\pipe\todo-track-hooks`. Gdy aplikacja nie działa, kończy się cicho.
+//! potoku `\\.\pipe\tuktuk-track-hooks`. Gdy aplikacja nie działa, kończy się cicho.
 #![allow(dead_code)]
 
 use crate::native_msg::{read_frame, write_frame, FrameError};
@@ -13,15 +13,15 @@ use serde_json::{json, Map, Value};
 use std::time::Duration;
 
 /// Nazwa potoku, na którym aplikacja nasłuchuje zdarzeń hooków.
-pub const PIPE: &str = r"\\.\pipe\todo-track-hooks";
+pub const PIPE: &str = r"\\.\pipe\tuktuk-track-hooks";
 /// Pierwszy prompt trzymany w pamięci sesji ma najwyżej tyle znaków.
 pub const PROMPT_MAX: usize = 500;
 /// Zmienna środowiskowa ustawiana przez aplikację na procesach AI uruchamianych
 /// przez nią samą (A1): ich zdarzeń nie wysyłamy, żeby nie liczyły się jako praca
 /// użytkownika.
-pub const AI_ENV: &str = "TODO_TRACK_AI";
+pub const AI_ENV: &str = "TUKTUK_TRACK_AI";
 
-/// Czy zdarzenie ma zostać odrzucone: proces uruchomiony z `TODO_TRACK_AI=1`.
+/// Czy zdarzenie ma zostać odrzucone: proces uruchomiony z `TUKTUK_TRACK_AI=1`.
 pub fn suppressed(env_value: Option<&str>) -> bool {
     env_value.map(str::trim) == Some("1")
 }

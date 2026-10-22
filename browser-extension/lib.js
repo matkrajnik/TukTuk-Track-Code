@@ -1,9 +1,9 @@
-// Czyste funkcje rozszerzenia Todo Track (bez API przeglądarki), testowane
+// Czyste funkcje rozszerzenia TukTuk Track (bez API przeglądarki), testowane
 // w Playwright jako moduł (tests/browser-extension.spec.ts). Reguły domen są
 // takie same jak w aplikacji (`browser::host_matches` w src-tauri/src/browser.rs).
 
 /** Nazwa hosta native messaging (`native_msg::HOST_NAME`). */
-export const HOST = "pl.todotrack.bridge";
+export const HOST = "pl.tuktuktrack.bridge";
 /** Domyślna lista dozwolonych domen. */
 export const DEFAULT_DOMAINS = Object.freeze(["*.atlassian.net"]);
 /** Co ile rozszerzenie odświeża stan (aplikacja uznaje dane za ważne 30 s). */
@@ -153,7 +153,7 @@ export function messageKey(msg) {
 
 /**
  * Stan połączenia dla opcji rozszerzenia z odpowiedzi hosta albo błędu portu.
- * @param {any} reply odpowiedź `todo-track-bridge` (`null`, gdy port się zamknął)
+ * @param {any} reply odpowiedź `tuktuk-track-bridge` (`null`, gdy port się zamknął)
  * @param {string} [error] `chrome.runtime.lastError.message`
  * @returns {{ state: "connected" | "app-off" | "disabled" | "no-host" | "error", text: string, key: string | null }}
  */
@@ -162,41 +162,41 @@ export function describeReply(reply, error = "") {
     if (/not found|nie znaleziono|forbidden|not allowed/i.test(error))
       return {
         state: "no-host",
-        text: "Brak połączenia z Todo Track. Włącz „Rozszerzenie przeglądarki” w Ustawieniach → Czas pracy w aplikacji.",
+        text: "Brak połączenia z TukTuk Track. Włącz „Rozszerzenie przeglądarki” w Ustawieniach → Czas pracy w aplikacji.",
         key: null,
       };
     return {
       state: "error",
       text: error
         ? `Połączenie przerwane: ${error}`
-        : "Połączenie z Todo Track przerwane.",
+        : "Połączenie z TukTuk Track przerwane.",
       key: null,
     };
   }
   if (reply.connected === false)
     return {
       state: "app-off",
-      text: "Todo Track nie działa (niepołączone). Uruchom aplikację.",
+      text: "TukTuk Track nie działa (niepołączone). Uruchom aplikację.",
       key: null,
     };
   if (reply.enabled === false)
     return {
       state: "disabled",
-      text: "Rozszerzenie jest wyłączone w Ustawieniach Todo Track.",
+      text: "Rozszerzenie jest wyłączone w Ustawieniach TukTuk Track.",
       key: null,
     };
   if (reply.ok === false)
     return {
       state: "error",
-      text: reply.error || "Todo Track odrzucił wiadomość.",
+      text: reply.error || "TukTuk Track odrzucił wiadomość.",
       key: null,
     };
   const key = typeof reply.key === "string" ? reply.key : null;
   return {
     state: "connected",
     text: key
-      ? `Połączono z Todo Track · rozpoznano ${key}`
-      : "Połączono z Todo Track",
+      ? `Połączono z TukTuk Track · rozpoznano ${key}`
+      : "Połączono z TukTuk Track",
     key,
   };
 }

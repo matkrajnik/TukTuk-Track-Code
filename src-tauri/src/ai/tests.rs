@@ -163,7 +163,7 @@ fn detect_uses_first_working_cli_and_reads_version() {
         assert_eq!(spec.cwd, Some(p(AI_DIR)));
         assert_eq!(
             spec.env,
-            vec![("TODO_TRACK_AI".to_string(), "1".to_string())]
+            vec![("TUKTUK_TRACK_AI".to_string(), "1".to_string())]
         );
         let program = spec.program.to_string_lossy().to_lowercase();
         if program.ends_with(r"tools\codex.exe") {
@@ -359,7 +359,7 @@ fn spec_is_isolated_with_marker_stdin_and_hidden_prompt() {
     assert_eq!(spec.stdin, "Pytanie");
     assert_eq!(
         spec.env,
-        vec![("TODO_TRACK_AI".to_string(), "1".to_string())]
+        vec![("TUKTUK_TRACK_AI".to_string(), "1".to_string())]
     );
     // Prompt nigdy nie jest argumentem (widać go w liście procesów).
     assert!(spec.args.iter().all(|a| !a.contains("Pytanie")));
@@ -383,7 +383,7 @@ fn spec_is_isolated_with_marker_stdin_and_hidden_prompt() {
 
 #[test]
 fn hook_marker_is_the_one_the_hook_program_rejects() {
-    assert_eq!(hook_wire::AI_ENV, "TODO_TRACK_AI");
+    assert_eq!(hook_wire::AI_ENV, "TUKTUK_TRACK_AI");
     let spec = build_spec(
         Engine::Claude,
         &cli("c"),
@@ -400,21 +400,21 @@ fn hook_marker_is_the_one_the_hook_program_rejects() {
 
 #[test]
 fn ai_directory_is_recognised_ignoring_case_and_slashes() {
-    let ai = Path::new(r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai");
+    let ai = Path::new(r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai");
     assert!(is_ai_dir(
-        r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai",
+        r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai",
         ai
     ));
     assert!(is_ai_dir(
-        r"c:/users/ala/appdata/roaming/pl.todotrack.desktop/AI/",
+        r"c:/users/ala/appdata/roaming/pl.tuktuktrack.desktop/AI/",
         ai
     ));
     assert!(!is_ai_dir(
-        r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop\ai-notes",
+        r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop\ai-notes",
         ai
     ));
     assert!(!is_ai_dir(
-        r"C:\Users\ala\AppData\Roaming\pl.todotrack.desktop",
+        r"C:\Users\ala\AppData\Roaming\pl.tuktuktrack.desktop",
         ai
     ));
     assert!(!is_ai_dir("", ai));
@@ -590,7 +590,7 @@ fn claude_run_redacts_input_restores_output_and_caches() {
     assert_eq!(spec.cwd, Some(dir.clone()));
     assert!(spec
         .env
-        .contains(&("TODO_TRACK_AI".to_string(), "1".to_string())));
+        .contains(&("TUKTUK_TRACK_AI".to_string(), "1".to_string())));
     assert!(spec.args.windows(2).any(|w| w == ["--model", "haiku"]));
     // Drugie takie samo wywołanie z pamięci podręcznej, bez procesu.
     let again = run(

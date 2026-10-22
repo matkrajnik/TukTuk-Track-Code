@@ -7,7 +7,7 @@ test("Jira status is shown on the task card and auto-import can be switched off"
   await page.goto("/");
   await page.evaluate(() => {
     localStorage.setItem(
-      "todo-track-preview-v1",
+      "tuktuk-track-preview-v1",
       JSON.stringify({
         tasks: [
           {

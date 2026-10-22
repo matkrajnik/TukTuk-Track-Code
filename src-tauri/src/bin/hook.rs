@@ -1,11 +1,11 @@
-//! `todo-track-hook.exe`: hook Claude Code i Codexa (PLAN_BACKLOG.md, B8).
+//! `tuktuk-track-hook.exe`: hook Claude Code i Codexa (PLAN_BACKLOG.md, B8).
 //!
-//! Agent uruchamia ten program przy każdym zdarzeniu (`todo-track-hook claude`
-//! albo `todo-track-hook codex`) i podaje JSON na stdin. Program przekazuje
+//! Agent uruchamia ten program przy każdym zdarzeniu (`tuktuk-track-hook claude`
+//! albo `tuktuk-track-hook codex`) i podaje JSON na stdin. Program przekazuje
 //! odchudzone zdarzenie do działającej aplikacji nazwanym potokiem
-//! `\\.\pipe\todo-track-hooks` i kończy się. Gdy aplikacja nie działa, kończy się
+//! `\\.\pipe\tuktuk-track-hooks` i kończy się. Gdy aplikacja nie działa, kończy się
 //! cicho, bez błędu i bez żadnego wyjścia (nie blokuje agenta). Procesy z
-//! `TODO_TRACK_AI=1` (agent uruchomiony przez aplikację, A1) są pomijane.
+//! `TUKTUK_TRACK_AI=1` (agent uruchomiony przez aplikację, A1) są pomijane.
 //!
 //! `--uninstall` (deinstalator) usuwa wpisy hooków z plików Claude Code i Codexa.
 //!

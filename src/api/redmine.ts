@@ -181,7 +181,7 @@ export function trackedProjectIds(
  * `previewRedmineKey` (inne okno albo test zmienia symulowany Redmine), jak
  * przy Jirze i TS.
  */
-export const redmineChangedEvent = "todo-track-redmine-changed";
+export const redmineChangedEvent = "tuktuk-track-redmine-changed";
 export function notifyRedmine() {
   window.dispatchEvent(new Event(redmineChangedEvent));
 }

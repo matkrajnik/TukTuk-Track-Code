@@ -16,13 +16,13 @@ function Write-Artwork($name, $width, $height, $sidebar) {
     $g.DrawLines($pen, [Drawing.Point[]]@((New-Object Drawing.Point(33,52)),(New-Object Drawing.Point(41,60)),(New-Object Drawing.Point(56,43))))
     $font = New-Object Drawing.Font('Segoe UI', 23, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
     $small = New-Object Drawing.Font('Segoe UI', 12, [Drawing.FontStyle]::Regular, [Drawing.GraphicsUnit]::Pixel)
-    $g.DrawString("Todo`nTrack", $font, $text, 20, 93)
+    $g.DrawString("TukTuk`nTrack", $font, $text, 20, 93)
     $g.DrawString("Zaplanuj.`nZr$([char]0xF3)b.`nZapisz.", $small, $muted, 22, 175)
     $g.FillRectangle($mint, 22, 279, 120, 3)
     $pen.Dispose(); $font.Dispose(); $small.Dispose()
   } else {
     $font = New-Object Drawing.Font('Segoe UI', 18, [Drawing.FontStyle]::Bold, [Drawing.GraphicsUnit]::Pixel)
-    $g.DrawString('Todo Track', $font, $text, 17, 15)
+    $g.DrawString('TukTuk Track', $font, $text, 17, 15)
     $g.FillRectangle($mint, 17, 44, 116, 2)
     $font.Dispose()
   }

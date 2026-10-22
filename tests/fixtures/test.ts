@@ -3,7 +3,7 @@ import { test as base } from "@playwright/test";
 export * from "@playwright/test";
 
 /** Klucz stanu „Rano pokazano dziś” (`src/morningStart.ts`). */
-export const MORNING_SHOWN_KEY = "todo-track-morning-shown-v1";
+export const MORNING_SHOWN_KEY = "tuktuk-track-morning-shown-v1";
 
 /**
  * Wspólny `test` dla specyfikacji, które startują aplikację i oczekują listy

@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 test.beforeEach(async ({ page }) => {
   await page.clock.setFixedTime(new Date("2026-10-14T17:00:00+02:00"));
   await page.goto("/");

@@ -1,6 +1,6 @@
 //! Ramka native messaging i nazwa potoku (PLAN_1.7.md, W4).
 //!
-//! Wspólny plik aplikacji (`mod native_msg`) i programu `todo-track-bridge`
+//! Wspólny plik aplikacji (`mod native_msg`) i programu `tuktuk-track-bridge`
 //! (`src/bin/bridge.rs`, przez `#[path]`), żeby oba końce czytały i pisały tę
 //! samą ramkę: 4 bajty długości (little-endian) i tyle bajtów JSON w UTF-8.
 //! Tak samo wygląda ramka między przeglądarką a hostem (stdin/stdout) i między
@@ -14,7 +14,7 @@ use std::io::{self, Read, Write};
 pub const MAX: usize = 1024 * 1024;
 
 /// Nazwa hosta native messaging (klucz rejestru i pole `name` manifestu hosta).
-pub const HOST_NAME: &str = "pl.todotrack.bridge";
+pub const HOST_NAME: &str = "pl.tuktuktrack.bridge";
 
 /// Błąd odczytu ramki.
 #[derive(Debug)]
@@ -106,9 +106,9 @@ pub fn sanitize_user(user: &str) -> String {
     }
 }
 
-/// `\\.\pipe\todo-track-bridge-<użytkownik>`.
+/// `\\.\pipe\tuktuk-track-bridge-<użytkownik>`.
 pub fn pipe_name_for(user: &str) -> String {
-    format!(r"\\.\pipe\todo-track-bridge-{}", sanitize_user(user))
+    format!(r"\\.\pipe\tuktuk-track-bridge-{}", sanitize_user(user))
 }
 
 /// Potok bieżącego użytkownika (zmienna `USERNAME`).

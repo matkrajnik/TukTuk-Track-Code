@@ -368,7 +368,7 @@ const tasks = computed(() => props.data.tasks.filter((t) => !t.archived));
       :day="day"
       :sessions="data.sessions"
       :preset="preset"
-      remember-key="todo-track-assistant-task"
+      remember-key="tuktuk-track-assistant-task"
       @updated="timeSaved"
     />
   </section>

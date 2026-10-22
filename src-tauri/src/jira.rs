@@ -219,10 +219,25 @@ pub fn valid_key(key: &str) -> bool {
                 && number.bytes().all(|c| c.is_ascii_digit())
         })
 }
+/// Użytkownik wpisu w magazynie poświadczeń: `<adres>|<e-mail>`.
+fn credential_user_of(c: &Config) -> String {
+    format!("{}|{}", c.site, c.email)
+}
+/// Użytkownik wpisu zapisanej konfiguracji (`None`: konto niepołączone); dla migracji
+/// z poprzedniej nazwy aplikacji (`legacy.rs`).
+pub(crate) fn credential_user(db: &rusqlite::Connection) -> Option<String> {
+    let raw: String = db
+        .query_row("SELECT value FROM settings WHERE key='jira'", [], |r| {
+            r.get(0)
+        })
+        .ok()?;
+    let c: Config = serde_json::from_str(&raw).ok()?;
+    (!c.email.is_empty() && !c.site.is_empty()).then(|| credential_user_of(&c))
+}
 fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
     Entry::new(
         &format!("{}.jira", app.config().identifier),
-        &format!("{}|{}", c.site, c.email),
+        &credential_user_of(c),
     )
     .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
 }

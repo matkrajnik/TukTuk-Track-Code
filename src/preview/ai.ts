@@ -1,7 +1,7 @@
 /**
  * Symulowany silnik AI w podglądzie (`ai.rs`, A1): stan w localStorage, bez procesu.
  *
- * Klucz `todo-track-preview-ai-v1`: `{ claude?, codex?, script?, chat?, calls? }`.
+ * Klucz `tuktuk-track-preview-ai-v1`: `{ claude?, codex?, script?, chat?, calls? }`.
  * - `claude` / `codex`: `{ path, version }` albo `null`; domyślnie żadne CLI nie
  *   jest wykryte (podgląd nie pokazuje dialogu pierwszego uruchomienia, dopóki
  *   test lub deweloper nie ustawi wykrytego CLI),
@@ -45,9 +45,9 @@ import {
   type AiStatus,
 } from "../api/ai";
 
-export const aiKey = "todo-track-preview-ai-v1";
-/** Katalog AI w podglądzie (jak `%APPDATA%\pl.todotrack.desktop\ai`). */
-const previewDir = "%APPDATA%\\pl.todotrack.desktop\\ai";
+export const aiKey = "tuktuk-track-preview-ai-v1";
+/** Katalog AI w podglądzie (jak `%APPDATA%\pl.tuktuktrack.desktop\ai`). */
+const previewDir = "%APPDATA%\\pl.tuktuktrack.desktop\\ai";
 
 function stored(): Record<string, unknown> {
   return previewJson(aiKey);
@@ -253,7 +253,7 @@ export async function aiTest(): Promise<string> {
 // Czat (A3): symulowany asystent ze skryptowanymi odpowiedziami i kartami.
 
 /** Zdarzenie okna z odpowiedzią czatu (odpowiednik zdarzenia Rust `ai-chat-event`). */
-export const aiChatEvent = "todo-track-ai-chat";
+export const aiChatEvent = "tuktuk-track-ai-chat";
 /** Odstęp między zdarzeniami symulowanej odpowiedzi (ms). */
 const STEP_MS = 25;
 /** `chat.stepMs` w stanie symulatora spowalnia odpowiedź (test „Zatrzymaj”). */

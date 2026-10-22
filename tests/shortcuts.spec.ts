@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
 import { openSettings as openSection } from "./fixtures/settings";
-const key = "todo-track-preview-settings-v1";
+const key = "tuktuk-track-preview-settings-v1";
 const openSettings = (page: Page) => openSection(page, "Skróty");
 const stored = (page: Page) =>
   page.evaluate((k) => JSON.parse(localStorage.getItem(k) ?? "{}"), key);

@@ -1,13 +1,13 @@
 //! Rejestracja hooków agentów w plikach Claude Code i Codexa (PLAN_BACKLOG.md, B8).
 //!
-//! Wspólny plik aplikacji (`mod hooks_config`) i programu `todo-track-hook`
+//! Wspólny plik aplikacji (`mod hooks_config`) i programu `tuktuk-track-hook`
 //! (`src/bin/hook.rs`, przez `#[path]`, dla `--uninstall` z deinstalatora). Tylko
 //! `serde_json` i `std`, bez Tauri.
 //!
 //! - Claude Code: `<~/.claude>/settings.json`, Codex: `<~/.codex>/hooks.json`; w obu
 //!   `{"hooks": {"<Zdarzenie>": [{"hooks": [{"type": "command", "command": …}]}]}}`.
 //! - Scalamy JSON: dopisujemy albo usuwamy wyłącznie własne wpisy (polecenie z nazwą
-//!   `todo-track-hook`), wpisy innych programów (np. Orki) zostają nietknięte.
+//!   `tuktuk-track-hook`), wpisy innych programów (np. Orki) zostają nietknięte.
 //! - Plik, którego nie da się sparsować (np. z komentarzami), zostaje bez zmian,
 //!   a użytkownik dostaje komunikat.
 //! - Folder agenta, którego nie ma (agent nie jest zainstalowany), jest pomijany.
@@ -17,10 +17,15 @@
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+/// Nazwy sprzed zmiany nazwy aplikacji (N1): wpisy hooków ze starą nazwą programu też
+/// są „własne” i znikają przy rejestracji i wyłączeniu.
+#[path = "legacy_names.rs"]
+pub mod legacy_names;
+
 /// Fragment polecenia wpisu hooka aplikacji; po nim rozpoznajemy własne wpisy.
-pub const OWN: &str = "todo-track-hook";
+pub const OWN: &str = "tuktuk-track-hook";
 /// Plik programu hooka obok aplikacji.
-pub const HOOK_EXE: &str = "todo-track-hook.exe";
+pub const HOOK_EXE: &str = "tuktuk-track-hook.exe";
 /// Limit czasu hooka (s); program kończy się w milisekundach.
 const TIMEOUT: u64 = 5;
 
@@ -86,7 +91,8 @@ impl Dirs {
 
 /// Czy polecenie należy do hooka aplikacji.
 pub fn is_own(command: &str) -> bool {
-    command.to_ascii_lowercase().contains(OWN)
+    let command = command.to_ascii_lowercase();
+    command.contains(OWN) || command.contains(legacy_names::HOOK)
 }
 
 /// Polecenie hooka: ścieżka exe (ukośniki `/` działają w bashu, cmd i PowerShellu,
@@ -479,7 +485,7 @@ pub fn read_json(path: &Path) -> Result<Value, String> {
 /// Zapis przez plik tymczasowy i podmianę, żeby agent nie przeczytał połowy pliku.
 pub fn write_doc(path: &Path, doc: &Doc) -> Result<(), String> {
     let text = doc.to_text()?;
-    let tmp = path.with_extension("json.todo-track-tmp");
+    let tmp = path.with_extension("json.tuktuk-track-tmp");
     std::fs::write(&tmp, text)
         .and_then(|_| std::fs::rename(&tmp, path))
         .map_err(|e| {

@@ -348,8 +348,8 @@ impl Tracker {
         self.current = Some((signal, since, now));
     }
 
-    /// Okno Todo Track na pierwszym planie (np. klik w baner): ostatni sygnał trwa,
-    /// ale czas w Todo Track nie liczy się do reguły 2 minut: `since` przesuwa się
+    /// Okno TukTuk Track na pierwszym planie (np. klik w baner): ostatni sygnał trwa,
+    /// ale czas w TukTuk Track nie liczy się do reguły 2 minut: `since` przesuwa się
     /// o tyle samo co `seen`, więc policzony czas pracy w oknie stoi w miejscu.
     pub fn keep(&mut self, now: i64) {
         if let Some((_, since, seen)) = &mut self.current {
@@ -492,7 +492,7 @@ pub fn observe(
     }
 }
 
-/// Okno na pierwszym planie i czy należy do tego procesu (Todo Track).
+/// Okno na pierwszym planie i czy należy do tego procesu (TukTuk Track).
 #[cfg(windows)]
 fn foreground(read_title: bool) -> Option<(Window, bool)> {
     type Handle = *mut std::ffi::c_void;
@@ -798,7 +798,7 @@ mod tests {
             (agent.kind.as_str(), agent.name.as_str()),
             (WINDOW, "Google Chrome")
         );
-        // Przejście na okno Todo Track nie gasi propozycji.
+        // Przejście na okno TukTuk Track nie gasi propozycji.
         t.keep(at + 20_000);
         assert_eq!(pending(&t, &mut m, &s, at + 40_000), [Some(1)]);
         // Wyłączone ustawienie: brak propozycji z okna (agenci osobno).
@@ -811,11 +811,11 @@ mod tests {
     }
 
     #[test]
-    fn time_in_todo_track_does_not_count_toward_the_two_minute_rule() {
+    fn time_in_tuktuk_track_does_not_count_toward_the_two_minute_rule() {
         let s = on();
         let mut t = Tracker::default();
         let mut m = Memory::default();
-        // 5 s w Chrome z zadaniem, potem ponad 2 min w Todo Track: bez propozycji.
+        // 5 s w Chrome z zadaniem, potem ponad 2 min w TukTuk Track: bez propozycji.
         feed(&mut t, signal(1, ""), NOW, NOW + 5_000);
         let mut at = NOW + 10_000;
         while at <= NOW + 5_000 + MIN_WORK + 10_000 {
@@ -824,7 +824,7 @@ mod tests {
             at += 5_000;
         }
         // Powrót do tego samego okna liczy dalej od 5 s (plus jeden przebieg 5 s
-        // od ostatniego `keep`), nie od czasu w Todo Track.
+        // od ostatniego `keep`), nie od czasu w TukTuk Track.
         let back = at;
         t.observe(Some(signal(1, "")), back);
         assert!(pending(&t, &mut m, &s, back).is_empty());
@@ -838,7 +838,7 @@ mod tests {
         assert!(pending(&t, &mut m, &s, back + MIN_WORK - 15_000).is_empty());
         t.observe(Some(signal(1, "")), back + MIN_WORK - 10_000);
         assert_eq!(pending(&t, &mut m, &s, back + MIN_WORK - 10_000), [Some(1)]);
-        // Gotowa propozycja nie gaśnie i nie cofa się podczas pobytu w Todo Track.
+        // Gotowa propozycja nie gaśnie i nie cofa się podczas pobytu w TukTuk Track.
         t.keep(back + MIN_WORK);
         assert_eq!(pending(&t, &mut m, &s, back + MIN_WORK + 5_000), [Some(1)]);
     }

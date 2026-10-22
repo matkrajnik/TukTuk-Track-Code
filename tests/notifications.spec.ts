@@ -12,7 +12,7 @@ test.use({ timezoneId: "Europe/Warsaw" });
 const navigatePreview = (page: Page, detail: object) =>
   page.evaluate(
     (d) =>
-      window.dispatchEvent(new CustomEvent("todo-track-navigate", { detail: d })),
+      window.dispatchEvent(new CustomEvent("tuktuk-track-navigate", { detail: d })),
     detail,
   );
 const tasksNav = (page: Page) =>
@@ -71,7 +71,7 @@ test("navigate z długiego pomiaru rozwija bieżące zadanie i otwiera Podziel",
     "true",
   );
   const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-v1")!),
   );
   expect(
     stored.sessions.find((s: { id: number }) => s.id === active.id).endedAt,

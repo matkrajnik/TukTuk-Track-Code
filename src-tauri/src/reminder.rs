@@ -77,7 +77,7 @@ pub fn start(app: &tauri::AppHandle) {
     std::thread::spawn(move || {
         let delay = 300;
         #[cfg(debug_assertions)]
-        let delay = std::env::var("TODO_TRACK_REMINDER_SECONDS")
+        let delay = std::env::var("TUKTUK_TRACK_REMINDER_SECONDS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
             .filter(|v| *v > 0)

@@ -144,7 +144,7 @@ async function refresh() {
     index.value = 0;
     error.value = "";
     document.documentElement.dataset.theme =
-      localStorage.getItem("todo-track-theme") || "dark";
+      localStorage.getItem("tuktuk-track-theme") || "dark";
     await nextTick();
     input.value?.focus();
   } catch (e) {

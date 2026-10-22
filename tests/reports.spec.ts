@@ -20,9 +20,9 @@ async function seed(
   await page.evaluate(
     ({ tasks, sessions }) => {
       const at = (s: string) => new Date(s).getTime();
-      localStorage.removeItem("todo-track-report-days-v1");
+      localStorage.removeItem("tuktuk-track-report-days-v1");
       localStorage.setItem(
-        "todo-track-preview-v1",
+        "tuktuk-track-preview-v1",
         JSON.stringify({
           tasks: tasks.map((t) => ({
             id: t.id,

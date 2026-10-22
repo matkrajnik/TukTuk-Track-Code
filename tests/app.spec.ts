@@ -17,7 +17,7 @@ async function seed(page: Page) {
   await page.evaluate(() => {
     const at = (s: string) => new Date(s).getTime();
     localStorage.setItem(
-      "todo-track-preview-v1",
+      "tuktuk-track-preview-v1",
       JSON.stringify({
         tasks: [
           {
@@ -108,7 +108,7 @@ test("task lifecycle, repeated sessions, persistence and deletion", async ({
   await page.getByLabel("Usuń: Zmieniona nazwa", { exact: true }).click();
   await page.getByRole("button", { name: "Usuń zadanie", exact: true }).click();
   const stored = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-v1")!),
   );
   expect(stored.tasks).toHaveLength(1);
   expect(stored.sessions).toHaveLength(1);
@@ -407,7 +407,7 @@ for (const [day, expected] of [
       const end = new Date(start);
       end.setDate(end.getDate() + 1);
       localStorage.setItem(
-        "todo-track-preview-v1",
+        "tuktuk-track-preview-v1",
         JSON.stringify({
           tasks: [
             { id: 1, title: "Zmiana czasu", done: true, createdAt: +start },
@@ -432,7 +432,7 @@ test("splitting onto an archived task takes it out of the archive", async ({
 }) => {
   await seed(page);
   await page.evaluate(() => {
-    const data = JSON.parse(localStorage.getItem("todo-track-preview-v1")!);
+    const data = JSON.parse(localStorage.getItem("tuktuk-track-preview-v1")!);
     data.tasks.push({
       id: 3,
       title: "Stary projekt",
@@ -440,7 +440,7 @@ test("splitting onto an archived task takes it out of the archive", async ({
       archived: true,
       createdAt: new Date("2026-10-01T08:00:00").getTime(),
     });
-    localStorage.setItem("todo-track-preview-v1", JSON.stringify(data));
+    localStorage.setItem("tuktuk-track-preview-v1", JSON.stringify(data));
   });
   await page.reload();
   await page.getByRole("button", { name: "Podziel bieżący pomiar" }).click();
@@ -457,7 +457,7 @@ test("splitting onto an archived task takes it out of the archive", async ({
   await expect(page.locator(".active-title")).toHaveText("Stary projekt");
   const archived = await page.evaluate(
     () =>
-      JSON.parse(localStorage.getItem("todo-track-preview-v1")!).tasks.find(
+      JSON.parse(localStorage.getItem("tuktuk-track-preview-v1")!).tasks.find(
         (t: { id: number }) => t.id === 3,
       ).archived,
   );

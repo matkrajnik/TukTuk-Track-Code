@@ -197,7 +197,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   aiDayClose: true,
   aiPlanAssist: true,
 });
-const key = "todo-track-preview-settings-v1";
+const key = "tuktuk-track-preview-settings-v1";
 const eventName = "settings-changed";
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
 

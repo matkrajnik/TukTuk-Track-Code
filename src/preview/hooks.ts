@@ -2,14 +2,14 @@
  * Podgląd hooków agentów (`hooks.rs`, B8): zdarzenia z localStorage przechodzą
  * przez tę samą maszynę stanów co w Rust i zasilają kafelek „Agenci AI”.
  *
- * Klucz `todo-track-preview-agent-hooks-v1`: `{ events, claude?, codex?,
+ * Klucz `tuktuk-track-preview-agent-hooks-v1`: `{ events, claude?, codex?,
  * codexTrust?, error?, exeFound? }`, gdzie `events` to zdarzenia hooków
  * (`PreviewHookEvent`) w kolejności przyjścia.
  */
 import { previewJson, previewSettingsKey } from "./storage";
 import type { AgentHooksStatus, HookEventRow } from "../api/task";
 
-export const agentHooksKey = "todo-track-preview-agent-hooks-v1";
+export const agentHooksKey = "tuktuk-track-preview-agent-hooks-v1";
 /** Sesja bez zdarzeń tak długo kończy się sama (`hooks::SILENCE`). */
 export const HOOK_SILENCE = 10 * 60_000;
 /** Limit ciszy w trakcie wywołania narzędzia (`hooks::TOOL_SILENCE`). */

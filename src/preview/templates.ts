@@ -4,7 +4,7 @@ import {
   type TaskTemplate,
   type TemplateBody,
 } from "../api/task";
-const templatesKey = "todo-track-preview-templates-v1";
+const templatesKey = "tuktuk-track-preview-templates-v1";
 const TEMPLATE_NAME = /^[\p{L}\p{N}_-]{1,60}$/u;
 export const sortTemplates = (list: TaskTemplate[]) =>
   [...list].sort((a, b) =>

@@ -13,7 +13,7 @@ import { quickText } from "../src/api/aichat";
  */
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 
-const MCP_KEY = "todo-track-preview-mcp-v1";
+const MCP_KEY = "tuktuk-track-preview-mcp-v1";
 const claude = { path: "C:\\Users\\ala\\.local\\bin\\claude.exe", version: "2.1.304" };
 
 const panel = (page: Page) => page.getByRole("complementary", { name: "Asystent AI" });

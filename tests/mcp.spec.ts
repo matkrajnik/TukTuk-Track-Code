@@ -12,9 +12,9 @@ import { openSettings } from "./fixtures/settings";
  */
 test.use({ timezoneId: "Europe/Warsaw" });
 
-const MCP_KEY = "todo-track-preview-mcp-v1";
-const BINDINGS_KEY = "todo-track-preview-agent-bindings-v1";
-const EVENT = "todo-track-mcp-proposals";
+const MCP_KEY = "tuktuk-track-preview-mcp-v1";
+const BINDINGS_KEY = "tuktuk-track-preview-agent-bindings-v1";
+const EVENT = "tuktuk-track-mcp-proposals";
 
 const base = {
   at: 0,
@@ -266,7 +266,7 @@ test("brak jednego CLI, wyłączony przełącznik i brak wyboru silnika", async 
   await expect(mcpStatus(page)).not.toContainText("zarejestrowany");
 });
 
-test("brak todo-track-mcp.exe obok aplikacji jest widoczny w Ustawieniach", async ({ page }) => {
+test("brak tuktuk-track-mcp.exe obok aplikacji jest widoczny w Ustawieniach", async ({ page }) => {
   await openPreview(page, { ai: { claude }, settings: { aiEngine: "claude" } });
   await page.evaluate(
     ([k, v]) => localStorage.setItem(k as string, JSON.stringify(v)),
@@ -274,7 +274,7 @@ test("brak todo-track-mcp.exe obok aplikacji jest widoczny w Ustawieniach", asyn
   );
   await page.reload();
   await openSettings(page, "Asystent AI");
-  await expect(mcpStatus(page)).toContainText("Brak programu todo-track-mcp.exe obok aplikacji");
+  await expect(mcpStatus(page)).toContainText("Brak programu tuktuk-track-mcp.exe obok aplikacji");
   await expect(mcpStatus(page)).toContainText("Claude Code: błąd rejestracji");
   // Stan symulowanego silnika nie jest nadpisany (ten sam klucz AI_KEY).
   expect(await page.evaluate((k) => localStorage.getItem(k), AI_KEY)).toContain("claude");

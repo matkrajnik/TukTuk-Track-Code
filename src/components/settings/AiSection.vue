@@ -316,7 +316,7 @@ async function runTest() {
         przełącznika.
       </p>
       <p v-if="mcp.enabled && !mcp.exeFound" class="error">
-        Brak programu todo-track-mcp.exe obok aplikacji. Zainstaluj aplikację
+        Brak programu tuktuk-track-mcp.exe obok aplikacji. Zainstaluj aplikację
         ponownie.
       </p>
       <p v-for="e in mcp.entries" :key="e.engine" :class="{ error: e.state === 'error' }">

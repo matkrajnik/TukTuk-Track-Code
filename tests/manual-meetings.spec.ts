@@ -95,7 +95,7 @@ test("oś dnia bez kalendarza: dodanie, edycja i usunięcie ręcznego spotkania"
   });
   await expect(changed).toHaveClass(/tentative/);
   const saved = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-meetings-v1")!),
   );
   expect(saved).toHaveLength(1);
   expect(saved[0]).toMatchObject({
@@ -152,7 +152,7 @@ test("oś dnia: klik w pusty tor Spotkania podstawia godzinę, „Cały dzień�
     }),
   ).toHaveClass(/allday/);
   const saved = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-meetings-v1")!),
   );
   expect(saved[2]).toMatchObject({
     allDay: true,
@@ -393,7 +393,7 @@ test("Zadania → Dzisiaj bez kalendarza i bez spotkań: „Dodaj spotkanie”, 
   );
   const saved = async () =>
     page.evaluate(() =>
-      JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+      JSON.parse(localStorage.getItem("tuktuk-track-preview-meetings-v1")!),
     );
   expect((await saved())[0]).toMatchObject({
     start: at(TODAY, "23:30"),
@@ -439,7 +439,7 @@ test("edycja spotkania z zadaniem w koszu: „Bez zadania” z podpowiedzią i z
   await edit.getByRole("button", { name: "Zapisz" }).click();
   await expect(edit).toHaveCount(0);
   const saved = await page.evaluate(() =>
-    JSON.parse(localStorage.getItem("todo-track-preview-meetings-v1")!),
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-meetings-v1")!),
   );
   expect(saved[0]).toMatchObject({
     taskId: null,

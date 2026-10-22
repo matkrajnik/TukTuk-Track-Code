@@ -165,7 +165,7 @@ const notesPath = join(root, options.notesFile);
 if (!existsSync(notesPath)) fail(`brak pliku notatek ${options.notesFile}.`);
 const notes = readFileSync(notesPath, "utf8").replace(/\r\n/g, "\n").trim();
 if (!notes) fail(`${options.notesFile} jest pusty: wpisz notatki wydania.`);
-if (notes.includes(`Todo Track ${current}`) && !sameVersion)
+if (notes.includes(`TukTuk Track ${current}`) && !sameVersion)
   fail(`${options.notesFile} wygląda na notatki poprzedniej wersji (${current}); nadpisz je.`);
 const readme = readFileSync(join(root, "README.md"), "utf8");
 if (!readme.includes(`Nowości ${version}`))

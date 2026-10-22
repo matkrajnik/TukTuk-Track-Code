@@ -35,7 +35,7 @@ async function useTheme(page: Page, theme: Theme) {
   // Uruchamia się przed skryptami strony przy każdym ładowaniu, także po
   // `localStorage.clear()` w openPreview i przeładowaniu.
   await page.addInitScript(
-    (t) => localStorage.setItem("todo-track-theme", t),
+    (t) => localStorage.setItem("tuktuk-track-theme", t),
     theme,
   );
 }
@@ -203,7 +203,7 @@ const views: {
     name: "ustawienia-redmine",
     open: async (page) => {
       await page.evaluate(() =>
-        localStorage.setItem("todo-track-settings-section", "redmine"),
+        localStorage.setItem("tuktuk-track-settings-section", "redmine"),
       );
       await page.reload();
       await nav(page, "Ustawienia");
@@ -225,7 +225,7 @@ const views: {
     open: async (page) => {
       await page.evaluate(() => {
         localStorage.setItem(
-          "todo-track-preview-ai-v1",
+          "tuktuk-track-preview-ai-v1",
           JSON.stringify({
             claude: {
               path: "C:\\Users\\jan\\.local\\bin\\claude.exe",
@@ -248,10 +248,10 @@ const views: {
           }),
         );
         localStorage.setItem(
-          "todo-track-preview-settings-v1",
+          "tuktuk-track-preview-settings-v1",
           JSON.stringify({ aiEngine: "claude", aiHiddenNames: ["Jan Kowalski"] }),
         );
-        localStorage.setItem("todo-track-settings-section", "ai");
+        localStorage.setItem("tuktuk-track-settings-section", "ai");
       });
       await page.reload();
       await nav(page, "Ustawienia");
@@ -272,7 +272,7 @@ const views: {
     open: async (page) => {
       await page.evaluate(() => {
         localStorage.setItem(
-          "todo-track-preview-ai-v1",
+          "tuktuk-track-preview-ai-v1",
           JSON.stringify({
             claude: {
               path: "C:\\Users\\jan\\.local\\bin\\claude.exe",
@@ -281,7 +281,7 @@ const views: {
           }),
         );
         localStorage.setItem(
-          "todo-track-preview-settings-v1",
+          "tuktuk-track-preview-settings-v1",
           JSON.stringify({ aiEngine: "claude" }),
         );
       });
@@ -306,7 +306,7 @@ const views: {
     open: async (page) => {
       await page.evaluate(() => {
         localStorage.setItem(
-          "todo-track-preview-ts-v1",
+          "tuktuk-track-preview-ts-v1",
           JSON.stringify({
             connected: true,
             login: "jan.kowalski",
@@ -317,7 +317,7 @@ const views: {
           }),
         );
         // Zapamiętana sekcja: przy 760 px lista sekcji jest polem wyboru.
-        localStorage.setItem("todo-track-settings-section", "timesheet");
+        localStorage.setItem("tuktuk-track-settings-section", "timesheet");
       });
       await page.reload();
       await nav(page, "Ustawienia");

@@ -35,7 +35,7 @@ const progressText = computed(() => {
     aria-label="Dostępna aktualizacja"
   >
     <Download class="infobar-icon" :size="20" aria-hidden="true" />
-    <h2>Dostępna jest nowa wersja Todo Track {{ available.version }}</h2>
+    <h2>Dostępna jest nowa wersja TukTuk Track {{ available.version }}</h2>
     <p v-if="available.notes" class="update-notes">{{ available.notes }}</p>
     <p v-else>
       Aktualizacja pobierze się i zainstaluje bez utraty zadań, historii i

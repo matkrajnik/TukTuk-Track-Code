@@ -21,7 +21,7 @@ const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{ open: [day: string]; updated: [data: Snapshot] }>();
 
 /** Pamięć ostatniego zaznaczenia i układu (wygoda, nie dane użytkownika). */
-const storageKey = "todo-track-report-days-v1";
+const storageKey = "tuktuk-track-report-days-v1";
 const validDay = (value: unknown): value is string =>
   typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
@@ -206,7 +206,7 @@ const running = computed(() => {
 const exportName = computed(() => {
   const first = selected.value[0] ?? "";
   const last = selected.value[selected.value.length - 1] ?? "";
-  return first === last ? `Todo-Track-${first}` : `Todo-Track-${first}_${last}`;
+  return first === last ? `TukTuk-Track-${first}` : `TukTuk-Track-${first}_${last}`;
 });
 async function copy() {
   copyStatus.value = "";

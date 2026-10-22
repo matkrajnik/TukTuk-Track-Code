@@ -38,7 +38,7 @@ const props = defineProps<{
   busy: boolean;
   /** Pokaż nazwę projektu (podprojekt albo projekt spoza śledzonych). */
   showProject: boolean;
-  /** Czas zmierzony w Todo Track i dzień planu lokalnego zadania. */
+  /** Czas zmierzony w TukTuk Track i dzień planu lokalnego zadania. */
   local?: { ms: number; planned: string };
   /** Lokalne zadanie zgłoszenia (B5): znacznik albo ostrzeżenie o koszu/archiwum. */
   taskState?: IssueTaskState;
@@ -125,7 +125,7 @@ const band = () => {
       ><span v-if="issue.dueDate" class="jira-tag redmine-due"
         >termin {{ dueChip(issue.dueDate) }}</span
       ><span v-if="running" class="task-status task-live">mierzone teraz</span
-      ><span v-if="local?.ms" class="mono" title="Czas zmierzony w Todo Track">{{
+      ><span v-if="local?.ms" class="mono" title="Czas zmierzony w TukTuk Track">{{
         duration(local.ms)
       }}</span
       ><span v-if="local?.planned" class="task-chip task-planned"

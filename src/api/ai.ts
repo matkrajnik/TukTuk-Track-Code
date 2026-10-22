@@ -56,7 +56,7 @@ export function aiEngineName(id: string): string {
 
 /** Prompt próbnego wywołania z Ustawień (`ai::TEST_PROMPT`). */
 export const aiTestPrompt =
-  'Test połączenia z aplikacją Todo Track. Odpowiedz wyłącznie obiektem JSON {"ok": true}.';
+  'Test połączenia z aplikacją TukTuk Track. Odpowiedz wyłącznie obiektem JSON {"ok": true}.';
 
 /** Wiadomości błędów jak w `ai.rs` (`failure_message`, stałe modułu). */
 export const aiMessages = {

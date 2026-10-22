@@ -93,7 +93,7 @@ const visible = computed(() => {
 });
 
 /** Zapamiętany widok: lista albo tablica, tablica i zakres. */
-const prefsKey = "todo-track-jira-view-v1";
+const prefsKey = "tuktuk-track-jira-view-v1";
 interface Prefs {
   mode: "list" | "board";
   boardId: number | null;
@@ -292,7 +292,7 @@ function toggleCreate() {
 function created(result: JiraCreated) {
   creating.value = false;
   notice.value = `Utworzono ${result.key}${
-    result.snapshot ? " i zadanie w Todo Track" : ""
+    result.snapshot ? " i zadanie w TukTuk Track" : ""
   }.`;
   error.value = result.warning
     ? `Utworzono ${result.key}. ${result.warning}`

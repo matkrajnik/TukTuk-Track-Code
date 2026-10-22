@@ -362,7 +362,7 @@ export async function jiraSelectBoards(boards: JiraBoardRef[]): Promise<void> {
  * („read”, „create”, „move”) jest na liście pod tym kluczem. Pozwala
  * sprawdzić wyścigi (np. zapis formularza w trakcie odświeżania).
  */
-export const previewJiraHoldKey = "todo-track-preview-jira-hold-v1";
+export const previewJiraHoldKey = "tuktuk-track-preview-jira-hold-v1";
 async function previewHold(name: "read" | "create" | "move") {
   const held = () => {
     try {
@@ -700,7 +700,7 @@ export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
   if (!type) throw new Error("Wybierz typ zgłoszenia.");
   if (type.required.length)
     throw new Error(
-      `Ten typ zgłoszenia wymaga pól, których Todo Track nie wypełnia (${type.required.join(", ")}). Utwórz zgłoszenie w Jirze.`,
+      `Ten typ zgłoszenia wymaga pól, których TukTuk Track nie wypełnia (${type.required.join(", ")}). Utwórz zgłoszenie w Jirze.`,
     );
   previewWrite();
   const { state, issues } = await previewBoardState();

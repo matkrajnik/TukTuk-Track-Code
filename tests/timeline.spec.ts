@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 const at = (time: string) => new Date(`2026-10-14T${time}:00+02:00`).getTime();
 const planned = (extra: object = {}) => ({
   plannedDay: "2026-10-14",

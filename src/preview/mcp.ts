@@ -2,22 +2,22 @@
  * Symulowany serwer MCP w podglądzie (`mcp.rs`, A2): kolejka propozycji w
  * localStorage, bez procesu i bez potoku.
  *
- * Klucz `todo-track-preview-mcp-v1`: `{ proposals?, exeFound? }`.
+ * Klucz `tuktuk-track-preview-mcp-v1`: `{ proposals?, exeFound? }`.
  * - `proposals`: propozycje czekające na decyzję (`McpProposal`); test dopisuje je
  *   jak agent wywołujący `propose_*` i woła `mcpProposalsEvent`,
- * - `exeFound`: `false` symuluje brak `todo-track-mcp.exe` obok aplikacji.
+ * - `exeFound`: `false` symuluje brak `tuktuk-track-mcp.exe` obok aplikacji.
  * Stan rejestracji wynika z symulowanego silnika AI (`preview/ai.ts`) i ustawień.
  */
 import { previewJson, previewSettingsKey } from "./storage";
 import { aiStatus } from "./ai";
 import type { McpEntry, McpProposal, McpStatus } from "../api/mcp";
 
-export const mcpKey = "todo-track-preview-mcp-v1";
+export const mcpKey = "tuktuk-track-preview-mcp-v1";
 /** Zdarzenie okna po zmianie kolejki (odpowiednik zdarzenia Rust `ai-proposals-changed`). */
-export const mcpProposalsEvent = "todo-track-mcp-proposals";
+export const mcpProposalsEvent = "tuktuk-track-mcp-proposals";
 /** Zdarzenie okna po synchronizacji rejestracji (odpowiednik `mcp-status-changed`). */
-export const mcpStatusEvent = "todo-track-mcp-status";
-const previewExe = "C:\\Users\\ala\\AppData\\Local\\Todo Track\\todo-track-mcp.exe";
+export const mcpStatusEvent = "tuktuk-track-mcp-status";
+const previewExe = "C:\\Users\\ala\\AppData\\Local\\TukTuk Track\\tuktuk-track-mcp.exe";
 
 function stored(): Record<string, unknown> {
   return previewJson(mcpKey);
@@ -69,7 +69,7 @@ export async function mcpStatus(): Promise<McpStatus> {
                 : "missing",
           detail:
             cli && enabled && !exeFound
-              ? "Brak programu todo-track-mcp.exe obok aplikacji. Zainstaluj aplikację ponownie."
+              ? "Brak programu tuktuk-track-mcp.exe obok aplikacji. Zainstaluj aplikację ponownie."
               : "",
         }));
   return { exe: exeFound ? previewExe : "", exeFound, enabled, entries };

@@ -286,7 +286,7 @@ function assigned(card: JiraBoardIssue, person: JiraPerson) {
           ><span
             v-if="local.get(card.key)?.ms"
             class="mono"
-            :title="'Czas zmierzony w Todo Track'"
+            :title="'Czas zmierzony w TukTuk Track'"
             >{{ duration(local.get(card.key)!.ms) }}</span
           ><span v-if="local.get(card.key)?.planned" class="task-chip task-planned"
             >zaplanowane na {{ local.get(card.key)!.planned }}</span

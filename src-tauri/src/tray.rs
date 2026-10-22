@@ -89,11 +89,11 @@ pub fn tooltip(status: &Status) -> String {
     match &status.active {
         None => match &status.day_ended {
             Some(at) => truncate(
-                &format!("Todo Track · {}", day_ended_label(at, status.today_ms)),
+                &format!("TukTuk Track · {}", day_ended_label(at, status.today_ms)),
                 TOOLTIP_LIMIT,
             ),
             None => truncate(
-                &format!("Todo Track · brak pomiaru · {today}"),
+                &format!("TukTuk Track · brak pomiaru · {today}"),
                 TOOLTIP_LIMIT,
             ),
         },
@@ -369,7 +369,7 @@ pub struct Refresher(mpsc::Receiver<()>);
 /// odświeżający uruchamia dopiero `start`, po utworzeniu okien.
 pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let current = MenuItem::with_id(app, "current", "Brak pomiaru", false, None::<&str>)?;
-    let open = MenuItem::with_id(app, "open", "Otwórz Todo Track", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Otwórz TukTuk Track", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "Szybkie przełączanie", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Zatrzymaj pomiar", true, None::<&str>)?;
     let day = MenuItem::with_id(app, "day", "Zakończ dzień", true, None::<&str>)?;
@@ -389,7 +389,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     )?;
     let idle_icon = app.default_window_icon().map(|i| i.clone().to_owned());
     let mut builder = TrayIconBuilder::with_id("main")
-        .tooltip("Todo Track")
+        .tooltip("TukTuk Track")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(tooltip(&s), "Zadanie X · 01:23:45 · dziś 5:10 / 8:00");
         assert_eq!(
             tooltip(&status(None, 0, 0, 450)),
-            "Todo Track · brak pomiaru · dziś 0:00 / 7:30"
+            "TukTuk Track · brak pomiaru · dziś 0:00 / 7:30"
         );
         // Dzień wolny: bez celu.
         assert_eq!(
@@ -586,7 +586,7 @@ mod tests {
         };
         assert_eq!(
             tooltip(&ended),
-            "Todo Track · Dzień zakończony 16:40 · 7:55"
+            "TukTuk Track · Dzień zakończony 16:40 · 7:55"
         );
         assert_eq!(day_item_label(&ended), "Wznów dzień");
         assert_eq!(day_item_label(&status(None, 0, 0, 480)), "Zakończ dzień");

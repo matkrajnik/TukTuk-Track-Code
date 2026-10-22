@@ -10,7 +10,7 @@ import { ids, openPreview, seed, stored } from "./fixtures/seed";
 import { openSettings } from "./fixtures/settings";
 
 /**
- * J2: Jira z poziomu Todo Track na symulowanej Jirze podglądu (`store.ts`).
+ * J2: Jira z poziomu TukTuk Track na symulowanej Jirze podglądu (`store.ts`).
  * Tablica WMS ma kolumny Do zrobienia, W toku, Code review i Gotowe; status
  * „Testy” nie ma kolumny i trafia do „W toku” według kategorii. „Zakończ”
  * (do Gotowe) wymaga pola Rozwiązanie, więc tylko otwiera zgłoszenie w Jirze.
@@ -21,9 +21,9 @@ test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 // Scenariusze tablicy mają wiele kroków; przy obciążonym komputerze 30 s to za mało.
 test.describe.configure({ timeout: 60_000 });
 
-const BOARD_KEY = "todo-track-preview-jira-board-v1";
-const JIRA_KEY = "todo-track-preview-jira-v1";
-const OPENED_KEY = "todo-track-preview-jira-opened-v1";
+const BOARD_KEY = "tuktuk-track-preview-jira-board-v1";
+const JIRA_KEY = "tuktuk-track-preview-jira-v1";
+const OPENED_KEY = "tuktuk-track-preview-jira-opened-v1";
 
 const column = (page: Page, name: string) =>
   page.getByRole("region", { name: "Kolumna " + name, exact: true });
@@ -282,7 +282,7 @@ test("przypisz do mnie, zmień osobę i komentarz z menu karty", async ({ page }
   );
 });
 
-test("nowe zgłoszenie tworzy zadanie w Todo Track; typ z wymaganymi polami odsyła do Jiry", async ({
+test("nowe zgłoszenie tworzy zadanie w TukTuk Track; typ z wymaganymi polami odsyła do Jiry", async ({
   page,
 }) => {
   await openBoard(page);
@@ -291,7 +291,7 @@ test("nowe zgłoszenie tworzy zadanie w Todo Track; typ z wymaganymi polami odsy
   await expect(form.getByLabel("Projekt")).toHaveAttribute("data-value", "WMS");
   await form.getByLabel("Typ zgłoszenia").selectOption({ label: "Błąd" });
   await expect(form.getByRole("alert")).toContainText(
-    "Typ „Błąd” wymaga pól, których Todo Track nie wypełnia: Środowisko.",
+    "Typ „Błąd” wymaga pól, których TukTuk Track nie wypełnia: Środowisko.",
   );
   await form.getByLabel("Tytuł zgłoszenia").fill("Raport przyjęć");
   await expect(form.getByRole("button", { name: "Utwórz zgłoszenie" })).toBeDisabled();
@@ -302,12 +302,12 @@ test("nowe zgłoszenie tworzy zadanie w Todo Track; typ z wymaganymi polami odsy
   await form.getByLabel("Typ zgłoszenia").selectOption({ label: "Zadanie" });
   await expect(form.getByRole("alert")).toHaveCount(0);
   await expect(form.getByLabel("Przypisz do mnie")).toBeChecked();
-  await expect(form.getByLabel("Utwórz też zadanie w Todo Track")).toBeChecked();
+  await expect(form.getByLabel("Utwórz też zadanie w TukTuk Track")).toBeChecked();
   await form.getByLabel("Opis zgłoszenia").fill("Zestawienie dzienne.");
   await form.getByLabel("Dzień planu zadania").fill("2026-10-16");
   await form.getByRole("button", { name: "Utwórz zgłoszenie" }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Utworzono WMS-100 i zadanie w Todo Track." }),
+    page.getByRole("status").filter({ hasText: "Utworzono WMS-100 i zadanie w TukTuk Track." }),
   ).toBeVisible();
   // Nowe zgłoszenie na tablicy („Moje”, do zrobienia) i zadanie z planem.
   await expect(card(page, "WMS-100")).toContainText("Raport przyjęć");
@@ -376,7 +376,7 @@ test("lista zgłoszeń w podglądzie działa na symulowanej Jirze", async ({ pag
 });
 
 /** Wstrzymane wywołania symulowanej Jiry (`previewJiraHoldKey`). */
-const HOLD_KEY = "todo-track-preview-jira-hold-v1";
+const HOLD_KEY = "tuktuk-track-preview-jira-hold-v1";
 const hold = (page: Page, names: string[]) =>
   page.evaluate(
     ([k, v]) => localStorage.setItem(k, JSON.stringify(v)),
@@ -397,7 +397,7 @@ test("zapis nowego zgłoszenia w trakcie odświeżania nie przepada", async ({ p
   // Jira tworzy zgłoszenie, gdy odświeżanie jeszcze trwa: wynik od razu.
   await hold(page, ["read"]);
   await expect(
-    page.getByRole("status").filter({ hasText: "Utworzono WMS-100 i zadanie w Todo Track." }),
+    page.getByRole("status").filter({ hasText: "Utworzono WMS-100 i zadanie w TukTuk Track." }),
   ).toBeVisible();
   await expect(form).toHaveCount(0);
   await hold(page, []);

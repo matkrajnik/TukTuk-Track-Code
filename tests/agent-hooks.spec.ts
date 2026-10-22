@@ -72,7 +72,7 @@ test("kafelek Agenci AI liczy pracę z hooków: praca tak, czekanie na zgodę i 
       localStorage.setItem(k, JSON.stringify(data));
     },
     [
-      "todo-track-preview-agent-hooks-v1",
+      "tuktuk-track-preview-agent-hooks-v1",
       ev(now - 5_000, "codex", "PostToolUse", "codex-api", { cwd: api }),
     ] as const,
   );
@@ -199,7 +199,7 @@ test("Ustawienia → Agenci: zatwierdzony Codex, brak agenta i błąd rejestracj
 
   // Częściowe zatwierdzenie.
   await page.evaluate(() => {
-    const k = "todo-track-preview-agent-hooks-v1";
+    const k = "tuktuk-track-preview-agent-hooks-v1";
     const data = JSON.parse(localStorage.getItem(k)!);
     data.codexTrust = "partial";
     localStorage.setItem(k, JSON.stringify(data));

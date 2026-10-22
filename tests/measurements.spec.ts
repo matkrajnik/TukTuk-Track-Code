@@ -5,7 +5,7 @@ test.use({ timezoneId: "Europe/Warsaw" });
 
 // B3: akcje przy luce w zapisie, luki krótsze niż sekunda, „Przytnij i wznów”
 // z banera bezczynności i poprawka startu trwającego pomiaru.
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 const at = (time: string) => new Date(`2026-10-14T${time}+02:00`).getTime();
 const tasks = [
   { id: 1, title: "Analiza", done: false, createdAt: 0 },

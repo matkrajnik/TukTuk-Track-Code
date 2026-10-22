@@ -2,9 +2,9 @@
 import type { AgentBinding } from "../api/task";
 import { read } from "./snapshot";
 import { agentTotals, type AgentPeriod, type AgentTime } from "../agenttime";
-const bindingsKey = "todo-track-preview-agent-bindings-v1";
+const bindingsKey = "tuktuk-track-preview-agent-bindings-v1";
 /** Zdarzenie podglądu: przypisania folderów zmieniły się, dopasuj agentów od nowa. */
-export const previewAgentsEvent = "todo-track-preview-agents";
+export const previewAgentsEvent = "tuktuk-track-preview-agents";
 /** Przypisania w podglądzie: `{ folder, taskId }` z localStorage. */
 export function previewBindings(): { folder: string; taskId: number }[] {
   try {
@@ -59,7 +59,7 @@ export async function bindAgentFolder(
   return previewBindingList();
 }
 /** Okresy pracy agentów w podglądzie (`agent_sessions`), dane z `seed.ts`. */
-export const agentSessionsKey = "todo-track-preview-agent-sessions-v1";
+export const agentSessionsKey = "tuktuk-track-preview-agent-sessions-v1";
 function previewAgentPeriods(): AgentPeriod[] {
   try {
     const value = JSON.parse(localStorage.getItem(agentSessionsKey) ?? "[]");

@@ -270,7 +270,7 @@ test("Jira watch status line shows the last check and the last error", async ({
   await page.evaluate(
     ([lastOk]) =>
       localStorage.setItem(
-        "todo-track-preview-jira-v1",
+        "tuktuk-track-preview-jira-v1",
         JSON.stringify({
           watch: { lastOk, lastError: "", lastErrorAt: null },
           watchFail: "Jira odrzuciła token API (401). Połącz konto ponownie.",
@@ -298,7 +298,7 @@ test("Jira watch status line shows the last check and the last error", async ({
 
   // Token poprawiony: kolejne sprawdzenie (po 5 min) czyści błąd.
   await page.evaluate(() => {
-    const key = "todo-track-preview-jira-v1";
+    const key = "tuktuk-track-preview-jira-v1";
     const state = JSON.parse(localStorage.getItem(key)!);
     delete state.watchFail;
     localStorage.setItem(key, JSON.stringify(state));

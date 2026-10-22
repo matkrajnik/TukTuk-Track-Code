@@ -76,7 +76,7 @@ test("navigate do Zadań zaczyna nową listę od góry", async ({
     page.evaluate(
       (d) =>
         window.dispatchEvent(
-          new CustomEvent("todo-track-navigate", { detail: d }),
+          new CustomEvent("tuktuk-track-navigate", { detail: d }),
         ),
       detail,
     );

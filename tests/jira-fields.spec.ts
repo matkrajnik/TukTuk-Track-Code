@@ -15,7 +15,7 @@ import { openSettings } from "./fixtures/settings";
 test.use({ timezoneId: "Europe/Warsaw", locale: "pl-PL" });
 test.describe.configure({ timeout: 60_000 });
 
-const BOARD_KEY = "todo-track-preview-jira-board-v1";
+const BOARD_KEY = "tuktuk-track-preview-jira-board-v1";
 const taskCard = (page: Page, title: string) =>
   page
     .locator(".task-card")

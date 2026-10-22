@@ -1,4 +1,4 @@
-//! `todo-track-mcp.exe` jako proces (A2): serwer MCP na stdio bez działającej
+//! `tuktuk-track-mcp.exe` jako proces (A2): serwer MCP na stdio bez działającej
 //! aplikacji. Uruchamia wyłącznie własny program z tej paczki (nie claude ani
 //! codex); nazwa użytkownika w środowisku jest unikalna, więc potok aplikacji
 //! (także prawdziwej, jeśli działa) nie istnieje.
@@ -9,13 +9,13 @@ use std::process::{Command, Stdio};
 #[test]
 fn stdio_server_answers_and_reports_that_the_app_is_not_running() {
     let user = format!("mcp-exe-test-{}", std::process::id());
-    let mut child = Command::new(env!("CARGO_BIN_EXE_todo-track-mcp"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_tuktuk-track-mcp"))
         .env("USERNAME", user)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .expect("nie udało się uruchomić todo-track-mcp");
+        .expect("nie udało się uruchomić tuktuk-track-mcp");
     let mut stdin = child.stdin.take().unwrap();
     let requests = [
         json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}),
@@ -34,7 +34,7 @@ fn stdio_server_answers_and_reports_that_the_app_is_not_running() {
     assert!(child.wait().unwrap().success());
     // Powiadomienie nie dostaje odpowiedzi.
     assert_eq!(replies.len(), 3);
-    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "todo-track");
+    assert_eq!(replies[0]["result"]["serverInfo"]["name"], "tuktuk-track");
     assert_eq!(
         replies[0]["result"]["serverInfo"]["version"],
         env!("CARGO_PKG_VERSION")
@@ -44,6 +44,6 @@ fn stdio_server_answers_and_reports_that_the_app_is_not_running() {
     assert_eq!(replies[2]["result"]["isError"], true);
     assert_eq!(
         replies[2]["result"]["content"][0]["text"],
-        "Todo Track nie działa. Uruchom aplikację i spróbuj ponownie."
+        "TukTuk Track nie działa. Uruchom aplikację i spróbuj ponownie."
     );
 }

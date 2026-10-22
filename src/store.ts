@@ -516,7 +516,7 @@ export interface NavigateRequest {
   dayClose?: boolean;
 }
 /** Nazwa zdarzenia okna, którym podgląd (i testy) symuluje `navigate` z backendu. */
-export const previewNavigateEvent = "todo-track-navigate";
+export const previewNavigateEvent = "tuktuk-track-navigate";
 /** Nasłuch `navigate`: zdarzenie Tauri albo zdarzenie okna w podglądzie. */
 export async function onNavigate(
   handler: (request: NavigateRequest) => void,
@@ -916,7 +916,7 @@ export async function jiraIssueTypeFields(
     return invoke("jira_issue_type_fields", { project, issueTypeId });
   return jiraSim.jiraIssueTypeFields(project, issueTypeId);
 }
-/** `jira_create`: nowe zgłoszenie i opcjonalnie zadanie w Todo Track. */
+/** `jira_create`: nowe zgłoszenie i opcjonalnie zadanie w TukTuk Track. */
 export async function jiraCreate(issue: JiraNewIssue): Promise<JiraCreated> {
   if (desktop) return invoke("jira_create", { issue });
   return jiraSim.jiraCreate(issue);

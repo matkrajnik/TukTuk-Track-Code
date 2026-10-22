@@ -266,7 +266,7 @@ export interface AgentHooksFile {
 /** Stan hooków agentów (`hooks::Status`, B8). */
 export interface AgentHooksStatus {
   enabled: boolean;
-  /** Program todo-track-hook.exe leży obok aplikacji. */
+  /** Program tuktuk-track-hook.exe leży obok aplikacji. */
   exeFound: boolean;
   error: string;
   claude: AgentHooksFile;
@@ -367,7 +367,7 @@ export interface BrowserStatus {
   /** Ostatni rozpoznany klucz zgłoszenia i kiedy przyszedł. */
   lastKey: string | null;
   lastKeyAt: number | null;
-  /** Błąd rejestracji (np. brak todo-track-bridge.exe). */
+  /** Błąd rejestracji (np. brak tuktuk-track-bridge.exe). */
   error: string;
   extensionId: string;
   /** Folder do „Załaduj rozpakowane”; `null`, gdy nie znaleziono. */

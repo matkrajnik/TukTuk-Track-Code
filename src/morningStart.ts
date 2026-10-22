@@ -9,7 +9,7 @@ import { isWorkDay } from "./workday";
  * został jeszcze zapisany. Stan „pokazano dziś” trzyma okno w `localStorage`
  * (także w aplikacji: WebView2 zachowuje go między uruchomieniami), nie baza.
  */
-export const morningShownKey = "todo-track-morning-shown-v1";
+export const morningShownKey = "tuktuk-track-morning-shown-v1";
 
 /**
  * Czy Rano pokazano już w dniu `day`. Zapisany dzień późniejszy niż `day`

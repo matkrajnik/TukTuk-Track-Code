@@ -71,9 +71,9 @@ export function countdown(ms: number): string {
 
 // --- Podgląd (localStorage), odpowiednik `focus::Focus` w Rust ---
 
-const key = "todo-track-preview-focus-v1";
+const key = "tuktuk-track-preview-focus-v1";
 /** Zdarzenie okna w podglądzie: stan skupienia się zmienił. */
-const previewEvent = "todo-track-preview-focus";
+const previewEvent = "tuktuk-track-preview-focus";
 const MIN = 60_000;
 
 interface PreviewRow {

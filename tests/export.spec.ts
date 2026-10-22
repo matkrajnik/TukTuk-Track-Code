@@ -3,7 +3,7 @@ import { BOM, exportCsv, exportRows } from "../src/export";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 
-const key = "todo-track-preview-v1";
+const key = "tuktuk-track-preview-v1";
 
 const tasks = [
   {

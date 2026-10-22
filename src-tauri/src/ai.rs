@@ -17,7 +17,7 @@
 //! odpowiedzi i nigdy nie uruchamiają `claude` ani `codex`.
 //!
 //! Izolacja: proces dostaje katalog roboczy `<dane aplikacji>\ai\` (pusty, bez
-//! CLAUDE.md i `.git`) oraz `TODO_TRACK_AI=1`. `todo-track-hook.exe` dziedziczy
+//! CLAUDE.md i `.git`) oraz `TUKTUK_TRACK_AI=1`. `tuktuk-track-hook.exe` dziedziczy
 //! środowisko i odrzuca zdarzenia z tym znacznikiem (`hook_wire::suppressed`),
 //! a `agents.rs` dodatkowo ignoruje agenta z `cwd` równym katalogowi AI.
 //! Model tylko proponuje: żadna funkcja tego modułu nie zmienia timera, TS,
@@ -1288,7 +1288,7 @@ pub async fn ai_redact_preview(app: tauri::AppHandle, text: String) -> Result<St
 
 /// Prompt próbnego wywołania z Ustawień (to samo pokazuje „Pokaż, co zostanie wysłane”).
 pub const TEST_PROMPT: &str =
-    "Test połączenia z aplikacją Todo Track. Odpowiedz wyłącznie obiektem JSON {\"ok\": true}.";
+    "Test połączenia z aplikacją TukTuk Track. Odpowiedz wyłącznie obiektem JSON {\"ok\": true}.";
 
 /// Schemat odpowiedzi próbnego wywołania.
 pub fn test_schema() -> Value {

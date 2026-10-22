@@ -464,6 +464,6 @@ test("Zamknięcie dnia: „Dodaj jako czas” otwiera ręczne dodanie z godzinam
     "Nakłada się na zapisany pomiar",
   );
   expect(
-    await page.evaluate(() => localStorage.getItem("todo-track-meeting-task")),
+    await page.evaluate(() => localStorage.getItem("tuktuk-track-meeting-task")),
   ).toBe(String(ids.review));
 });

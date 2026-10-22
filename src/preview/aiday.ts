@@ -5,7 +5,7 @@
  * (`{ value: { proposals: [...] }, error?, delayMs? }`) i to samo mapowanie
  * propozycji co w Ruście (`parse`).
  *
- * `dayData` w stanie symulatora (`todo-track-preview-ai-v1`):
+ * `dayData` w stanie symulatora (`tuktuk-track-preview-ai-v1`):
  * `{ commits: [{ repo, at, subject, taskId? }], statusChanges: [{ system, key,
  * from, to, at, taskId? }] }` (czas w ms). Nie ma tu `git`, więc commity podaje test.
  */

@@ -26,7 +26,7 @@ import type { Snapshot } from "../api/task";
  * a `watchFail` — komunikat błędu, którym kończy się kolejne sprawdzenie
  * (np. wygasły token).
  */
-export const previewJiraKey = "todo-track-preview-jira-v1";
+export const previewJiraKey = "tuktuk-track-preview-jira-v1";
 export interface PreviewJira {
   ready?: boolean;
   seen?: [number, number] | null;
@@ -95,9 +95,9 @@ export function notifyPreviewJira() {
   window.dispatchEvent(new Event(jiraMoveEvent));
 }
 /** Symulowana Jira podglądu (J2). */
-export const previewJiraBoardKey = "todo-track-preview-jira-board-v1";
+export const previewJiraBoardKey = "tuktuk-track-preview-jira-board-v1";
 /** Linki otwarte „w przeglądarce” w podglądzie (do sprawdzenia w testach). */
-export const previewJiraOpenedKey = "todo-track-preview-jira-opened-v1";
+export const previewJiraOpenedKey = "tuktuk-track-preview-jira-opened-v1";
 export interface PreviewIssue {
   key: string;
   summary: string;

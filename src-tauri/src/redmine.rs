@@ -184,10 +184,19 @@ fn save(app: &tauri::AppHandle, config: &Config) -> Result<(), String> {
 }
 /// Wpis w magazynie poświadczeń Windows: usługa `<identifier>.redmine`,
 /// użytkownik `<adres>|<login>`.
+fn credential_user_of(c: &Config) -> String {
+    format!("{}|{}", c.site, c.login)
+}
+/// Użytkownik wpisu zapisanej konfiguracji (`None`: konto niepołączone); dla migracji
+/// z poprzedniej nazwy aplikacji (`legacy.rs`).
+pub(crate) fn credential_user(db: &Connection) -> Option<String> {
+    let c = read_config(db).ok()?;
+    (!c.login.is_empty() && !c.site.is_empty()).then(|| credential_user_of(&c))
+}
 fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
     Entry::new(
         &format!("{}.redmine", app.config().identifier),
-        &format!("{}|{}", c.site, c.login),
+        &credential_user_of(c),
     )
     .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
 }

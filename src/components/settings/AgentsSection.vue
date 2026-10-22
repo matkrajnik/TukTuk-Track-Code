@@ -115,13 +115,13 @@ watch(
     />Hooki agentów (Claude Code, Codex)</label
   >
   <p class="hint">
-    Claude Code i Codex uruchamiają krótki program todo-track-hook.exe przy
+    Claude Code i Codex uruchamiają krótki program tuktuk-track-hook.exe przy
     każdym zdarzeniu (nowe polecenie, użycie narzędzia, prośba o zgodę, koniec
     pracy). Program przekazuje aplikacji tylko identyfikator sesji, folder
     roboczy i nazwę zdarzenia (pierwsze polecenie sesji zostaje w pamięci, bez
     zapisu na dysku) i kończy się cicho, gdy aplikacja nie działa. Włączenie
     dopisuje wpisy do ~/.claude/settings.json i ~/.codex/hooks.json, wyłączenie
-    usuwa tylko wpisy Todo Track; wpisy innych programów zostają.
+    usuwa tylko wpisy TukTuk Track; wpisy innych programów zostają.
   </p>
   <div role="status" aria-label="Stan hooków agentów" class="agent-hooks-status">
     <p>Claude Code: {{ registration(status.claude) }}</p>
@@ -130,7 +130,7 @@ watch(
       {{ trust }}
     </p>
     <p v-if="settings.agentHooks && !status.exeFound" class="error">
-      Brak programu todo-track-hook.exe obok aplikacji. Zainstaluj aplikację
+      Brak programu tuktuk-track-hook.exe obok aplikacji. Zainstaluj aplikację
       ponownie.
     </p>
     <p v-if="status.error" class="error">{{ status.error }}</p>

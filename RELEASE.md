@@ -1,6 +1,6 @@
 # Wydania i automatyczne aktualizacje
 
-Kod Todo Track jest w prywatnym repozytorium (`github.com/matkrajnik/todo-track-private`),
+Kod TukTuk Track jest w prywatnym repozytorium (`github.com/matkrajnik/todo-track-private`),
 a wydania idą do osobnego **publicznego** repozytorium `matkrajnik/todo-track`,
 które zawiera tylko release'y z trzema plikami: instalator `.exe`, podpis `.sig`
 i `latest.json`. Zainstalowana aplikacja pyta o `latest.json` przy starcie i raz dziennie,
@@ -31,7 +31,7 @@ aktualizację (plugin `tauri-plugin-updater`, instalator NSIS w trybie pasywnym)
   z argumentami `/P /UPDATE /R /ARGS <argumenty bieżącego procesu>` i od razu kończy proces
   przez `std::process::exit(0)`, bez zdarzeń zamknięcia okien. Instalator (własny szablon
   `src-tauri/installer/template.nsi`) w trybie pasywnym pomija pytanie „Zaktualizować…?”,
-  wywołuje `todo-track.exe --prepare-update` (nowa instancja zapisuje koniec pomiaru
+  wywołuje `tuktuk-track.exe --prepare-update` (nowa instancja zapisuje koniec pomiaru
   i kończy się), kopiuje pliki i przez `/R` uruchamia aplikację ponownie z tymi samymi
   argumentami (np. `--hidden` z autostartu). Nowa wersja przy pierwszym starcie robi
   kopię `before-<wersja>-<czas>.sqlite` jak dotąd.
@@ -183,15 +183,15 @@ pomija ten krok. Ręczne kroki poniżej robią to samo.
    - sprawdza `cargo` (dodaje `%USERPROFILE%\.cargo\bin` do PATH, jak `npm run check`),
      klucz podpisu, `gh auth status` i czy release `v<wersja>` jeszcze nie istnieje;
    - buduje `npm run tauri build -- -- --locked`;
-   - kopiuje `Todo Track_<wersja>_x64-setup.exe` i `.sig` do
+   - kopiuje `TukTuk Track_<wersja>_x64-setup.exe` i `.sig` do
      `src-tauri/target/release/bundle/updater/` pod nazwą **bez spacji**
-     `TodoTrack_<wersja>_x64-setup.exe` (GitHub zamienia spacje w nazwach plików release
+     `TukTukTrack_<wersja>_x64-setup.exe` (GitHub zamienia spacje w nazwach plików release
      na kropki, więc adres w `latest.json` musi wskazywać nazwę bez spacji), składa
      `latest.json` i zapisuje notatki do `notes.md`;
    - kopiuje instalator pod oryginalną nazwą do `releases/` i usuwa stamtąd starsze
      instalatory (folder trzyma tylko najnowszy);
    - wywołuje `gh release create v<wersja> --repo matkrajnik/todo-track
-     --title "Todo Track <wersja>" --notes-file … <exe> <sig> latest.json`.
+     --title "TukTuk Track <wersja>" --notes-file … <exe> <sig> latest.json`.
 
    Opcje: `--dry-run` robi wszystko poza publikacją (bez kopii w `releases/`) i wypisuje
    polecenie `gh`; `--skip-build` używa gotowego instalatora z `target/` (np. powtórka po
@@ -217,11 +217,11 @@ i 1.7.5 opublikowana jako release):
 - baner pojawia się po starcie (do kilku sekund) i po „Sprawdź teraz”; „Później” chowa go;
 - „Zainstaluj i uruchom ponownie”: pasek postępu, potem aplikacja znika, a instalator
   w **trybie pasywnym** (`/P /UPDATE /R`) pokazuje tylko pasek instalacji, **bez** pytania
-  „Zaktualizować Todo Track z wersji…?” (w `.onInit` szablonu pytanie jest pomijane przy
+  „Zaktualizować TukTuk Track z wersji…?” (w `.onInit` szablonu pytanie jest pomijane przy
   `$PassiveMode = 1`) i bez wyboru katalogu;
 - `--prepare-update` w `Section Install`: aplikacja została już zakończona przez plugin,
   więc polecenie uruchamia nową instancję, która kończy pomiar i wychodzi; instalator nie
-  może utknąć na `TodoTrackRequireClosed` („aplikacja nadal działa”);
+  może utknąć na `TukTukTrackRequireClosed` („aplikacja nadal działa”);
 - przy **aktywnym pomiarze** przedział kończy się w chwili aktualizacji (komenda
   `prepare_update` przed `install()` i `--prepare-update` z instalatora), nic nie ginie, powstaje kopia
   `before-<nowa wersja>-<czas>.sqlite`;
@@ -229,7 +229,7 @@ i 1.7.5 opublikowana jako release):
   z autostartu (`--hidden`) wraca schowany do traya, zwykły start pokazuje okno; pozycje
   i rozmiary okien są zachowane;
 - wpis w „Aplikacje i funkcje” ma nową wersję, skróty działają, rozszerzenie przeglądarki
-  (`todo-track-bridge.exe`) nadal jest zarejestrowane;
+  (`tuktuk-track-bridge.exe`) nadal jest zarejestrowane;
 - błędny podpis (np. podmieniony `signature` w `latest.json`) daje w banerze komunikat
   „Nie udało się zainstalować aktualizacji…”, a aplikacja działa dalej;
 - bez sieci start aplikacji jest cichy, a „Sprawdź teraz” pokazuje „Nie udało się
@@ -238,3 +238,24 @@ i 1.7.5 opublikowana jako release):
 Przy zmianie wersji Tauri CLI porównaj szablon NSIS z upstreamem (zob. README,
 „Instalacja i aktualizacje”), bo updater zależy od obsługi `/P`, `/UPDATE`, `/R` i `/ARGS`
 w `.onInit` oraz `.onInstSuccess`.
+
+## Wydanie 2.0.0: zmiana nazwy Todo Track → TukTuk Track
+
+Od 2.0 aplikacja ma nazwę **TukTuk Track** i nowy identyfikator `pl.tuktuktrack.desktop`
+(`PLAN_BACKLOG.md`, N1). Bez zmian zostają repozytoria GitHub (`matkrajnik/todo-track`
+z wydaniami, `matkrajnik/todo-track-private` z kodem), adres `latest.json`, publiczny
+klucz w `tauri.conf.json` i plik `~/.tauri/todotrack.key`, więc zainstalowana 1.9 znajduje
+aktualizację pod starym adresem. `npm run ship -- 2.0.0` działa jak dotąd; plik instalatora
+nazywa się teraz `TukTuk Track_<wersja>_x64-setup.exe` (w release: `TukTukTrack_…`).
+
+Instalator 2.0 (`src-tauri/installer/template.nsi`, bloki `LEGACY-BEGIN` … `LEGACY-END`)
+wykrywa instalację Todo Track (`Uninstall\Todo Track`), przy ręcznym uruchomieniu pyta
+„Zaktualizować Todo Track z wersji X do TukTuk Track 2.0.0?”, zapisuje pomiar starą
+aplikacją (`--prepare-update`), sprawdza, że jest zamknięta, i odinstalowuje ją po cichu
+(`uninstall.exe /S /UPDATE`): `/S` pomija stronę z polem „usuń dane”, więc `%APPDATA%` i
+`%LOCALAPPDATA%` zostają, a `/UPDATE` zachowuje wpis uruchamiania z Windows. Potem usuwa
+stare skróty, instaluje do `%LOCALAPPDATA%\TukTuk Track` i uruchamia aplikację. Dane,
+poświadczenia, rozszerzenie i autostart przenosi sama aplikacja przy pierwszym starcie
+(`src-tauri/src/legacy.rs`); stary katalog danych zostaje jako zapas z plikiem
+`PRZENIESIONO-DO-TUKTUK-TRACK.txt`. Kontrola, że w kodzie nie została stara nazwa:
+`src-tauri/tests/naming.rs` (część `cargo test`, więc też `npm run check`).

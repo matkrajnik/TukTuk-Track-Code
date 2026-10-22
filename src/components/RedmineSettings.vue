@@ -496,7 +496,7 @@ onUnmounted(() => {
     />Pozwól aplikacji zmieniać zgłoszenia w Redmine</label
   >
   <p class="hint">
-    Wyłączone blokuje każdą zmianę w Redmine z Todo Track (status,
+    Wyłączone blokuje każdą zmianę w Redmine z TukTuk Track (status,
     przypisanie, komentarz); aplikacja wtedy tylko czyta zgłoszenia.
   </p>
   <label class="inline-check"
