@@ -349,6 +349,81 @@ test("ponowny komentarz zastępuje karty nowymi i nie oznacza ich jako zastosowa
   await expect(assistant(page).getByText("Zastosowano.")).toHaveCount(0);
 });
 
+test("podczas nowego komentarza karty starego wyniku są zablokowane", async ({ page }) => {
+  await openPreview(page, {
+    data: planData(),
+    settings,
+    ai: ai({ morning: { value: answer, delayMs: 1500 } }),
+  });
+  await openMorning(page);
+  await commentButton(page).click();
+  const apply = cards(page)
+    .filter({ hasText: "Code review" })
+    .getByRole("button", { name: /^Zastosuj:/ });
+  await expect(apply).toBeEnabled({ timeout: 5_000 });
+  await commentButton(page).click();
+  await expect(assistant(page).getByRole("button", { name: "Oceniam plan…" })).toBeVisible();
+  await expect(apply).toBeDisabled();
+  await expect(
+    cards(page).first().getByRole("button", { name: /^Odrzuć propozycję:/ }),
+  ).toBeDisabled();
+  await expect(commentButton(page)).toBeEnabled({ timeout: 5_000 });
+  await expect(apply).toBeEnabled();
+  expect((await plannedDay(page, ids.review)).plannedDay).toBe(TODAY);
+});
+
+/** Plan dnia i pięć ukończonych zadań Foundation z czasem 2× szacunek: mnożnik ×2. */
+function correctionPlanData() {
+  const data = planData();
+  const review = data.tasks.find((t) => t.id === ids.review)!;
+  for (let i = 0; i < 5; i++) {
+    const id = 40 + i;
+    data.tasks.push({
+      ...review,
+      id,
+      title: `Foundation ${i}`,
+      done: true,
+      details: { ...review.details, plannedDay: "", estimateMinutes: 30 },
+    });
+    data.sessions.push({
+      id: 200 + i,
+      taskId: id,
+      startedAt: at(`2026-10-0${i + 1}`, "08:00"),
+      endedAt: at(`2026-10-0${i + 1}`, "09:00"),
+    });
+  }
+  return data;
+}
+
+test("przy „Planuj z poprawką szacunków” model dostaje szacunki po poprawce, jak pasek pojemności", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    data: correctionPlanData(),
+    settings: { ...settings, planWithCorrection: true },
+    ai: ai(morningScript(answer)),
+  });
+  await openMorning(page);
+  const preview = assistant(page).locator("details.ai-preview");
+  await preview.locator("summary").click();
+  const text = preview.getByLabel("Tekst wysyłany do modelu");
+  await expect(text).toContainText('"estimatesCorrected":true');
+  // Analiza importu 10 h i Wdrożenie etykiet 8 h z mnożnikiem ×2.
+  await expect(text).toContainText('"estimateMinutes":1200');
+  await expect(text).toContainText('"estimateMinutes":960');
+  await expect(text).not.toContainText('"estimateMinutes":600');
+
+  await openPreview(page, {
+    data: correctionPlanData(),
+    settings,
+    ai: ai(morningScript(answer)),
+  });
+  await openMorning(page);
+  await preview.locator("summary").click();
+  await expect(text).toContainText('"estimateMinutes":600');
+  await expect(text).not.toContainText("estimatesCorrected");
+});
+
 // ---------------------------------------------------------------------------
 // Przegląd tygodnia
 

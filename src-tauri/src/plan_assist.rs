@@ -23,7 +23,7 @@ use crate::settings::AppSettings;
 use crate::{agent_time, calendar, capacity, db, holidays, planner, stats, timesheet, week_notes};
 use chrono::{Datelike, Duration, NaiveDate, TimeZone};
 use rusqlite::{params, Connection};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use tauri::Manager;
@@ -136,6 +136,40 @@ pub struct MorningInput {
     /// Otwarte zadania spoza planu dnia z terminem w najbliższych dniach.
     pub deadlines: Vec<PlanTask>,
     pub upcoming: Vec<UpcomingDay>,
+    /// Szacunki (`estimate_minutes`, `planned_minutes`) są po poprawce szacunków.
+    pub corrected: bool,
+}
+
+/// Poprawka szacunków z widoku Rano („Planuj z poprawką szacunków”): mnożniki
+/// liczy interfejs (`estimates.ts`, `corrections`), tu tylko się je stosuje,
+/// żeby model widział to samo obciążenie co pasek pojemności.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EstimateCorrection {
+    /// Mnożnik dla projektów bez własnego wpisu.
+    pub all: f64,
+    /// Mnożniki według nazwy projektu z zadania (dokładnie jak w `project`).
+    #[serde(default)]
+    pub projects: BTreeMap<String, f64>,
+}
+
+impl EstimateCorrection {
+    fn factor(&self, project: &str) -> f64 {
+        let factor = self.projects.get(project).copied().unwrap_or(self.all);
+        if factor.is_finite() {
+            factor.clamp(0.5, 3.0)
+        } else {
+            1.0
+        }
+    }
+
+    /// Szacunek po poprawce w minutach (jak `plannedMs`); 0 bez szacunku.
+    pub fn minutes(&self, estimate: u32, project: &str) -> u32 {
+        if estimate == 0 {
+            return 0;
+        }
+        (f64::from(estimate) * self.factor(project)).round() as u32
+    }
 }
 
 impl MorningInput {
@@ -145,17 +179,24 @@ impl MorningInput {
     }
 }
 
-fn plan_task(t: &db::Task) -> PlanTask {
+fn plan_task(t: &db::Task, correction: Option<&EstimateCorrection>) -> PlanTask {
     PlanTask {
         id: t.id,
         title: clip(&t.title, SUBJECT_MAX),
         project: clip(&t.details.project, SUBJECT_MAX),
         key: key_of(t),
-        estimate_minutes: t.details.estimate_minutes,
+        estimate_minutes: estimate(t, correction),
         due_day: t.details.due_day.clone(),
         planned_day: t.details.planned_day.clone(),
         priority: t.details.priority,
         done: t.done,
+    }
+}
+
+fn estimate(t: &db::Task, correction: Option<&EstimateCorrection>) -> u32 {
+    match correction {
+        Some(c) => c.minutes(t.details.estimate_minutes, &t.details.project),
+        None => t.details.estimate_minutes,
     }
 }
 
@@ -172,6 +213,18 @@ pub fn collect_morning<Tz: TimeZone>(
     date: NaiveDate,
     now: i64,
 ) -> Result<MorningInput, String> {
+    collect_morning_with(db, tz, settings, date, now, None)
+}
+
+/// Jak `collect_morning`, z szacunkami po poprawce, gdy podano `correction`.
+pub fn collect_morning_with<Tz: TimeZone>(
+    db: &Connection,
+    tz: &Tz,
+    settings: &AppSettings,
+    date: NaiveDate,
+    now: i64,
+    correction: Option<&EstimateCorrection>,
+) -> Result<MorningInput, String> {
     let day = day_text(date);
     let bounds = stats::day_bounds(tz, date);
     let snapshot = db::snapshot(db).map_err(|e| e.to_string())?;
@@ -185,6 +238,7 @@ pub fn collect_morning<Tz: TimeZone>(
         capacity_ms: cap.capacity_ms,
         off: cap.off,
         tracked_ms: stats::day_total_ms_in(db, tz, date, now).map_err(|e| e.to_string())?,
+        corrected: correction.is_some(),
         ..MorningInput::default()
     };
     for e in &events {
@@ -216,7 +270,11 @@ pub fn collect_morning<Tz: TimeZone>(
             .then(a.details.order.cmp(&b.details.order))
             .then(b.id.cmp(&a.id))
     });
-    input.plan = plan.into_iter().take(PLAN_MAX).map(plan_task).collect();
+    input.plan = plan
+        .into_iter()
+        .take(PLAN_MAX)
+        .map(|t| plan_task(t, correction))
+        .collect();
     // Terminy: otwarte zadania spoza dzisiejszego planu, termin do `DEADLINE_WINDOW` dni.
     let last = day_text(date + Duration::days(DEADLINE_WINDOW));
     let mut deadlines: Vec<&db::Task> = snapshot
@@ -239,7 +297,7 @@ pub fn collect_morning<Tz: TimeZone>(
     input.deadlines = deadlines
         .into_iter()
         .take(DEADLINES_MAX)
-        .map(plan_task)
+        .map(|t| plan_task(t, correction))
         .collect();
     // Najbliższe dni robocze (bez dni wolnych, świąt i „poza biurem”).
     for offset in 1..=HORIZON_SCAN {
@@ -262,7 +320,7 @@ pub fn collect_morning<Tz: TimeZone>(
             .tasks
             .iter()
             .filter(|t| plannable(t) && !t.done && t.details.planned_day == key)
-            .map(|t| i64::from(t.details.estimate_minutes))
+            .map(|t| i64::from(estimate(t, correction)))
             .sum();
         input.upcoming.push(UpcomingDay {
             day: key,
@@ -309,6 +367,9 @@ pub fn morning_json<Tz: TimeZone>(input: &MorningInput, tz: &Tz) -> Value {
         out.insert("off".into(), json!(true));
     }
     out.insert("trackedMinutes".into(), json!(minutes(input.tracked_ms)));
+    if input.corrected {
+        out.insert("estimatesCorrected".into(), json!(true));
+    }
     out.insert(
         "meetings".into(),
         json!(input
@@ -392,6 +453,9 @@ pub fn morning_prompt<Tz: TimeZone>(input: &MorningInput, tz: &Tz) -> String {
          szacunków zadań z planu (\"plan\", pole \"estimateMinutes\"; brak oznacza nieznany czas, \
          zadania z \"done\" są już zrobione) z pojemnością dnia (\"capacityMinutes\": cel minus \
          spotkania) oraz uwzględnij terminy (\"dueDay\", także zadań z listy \"deadlines\"). \
+         Gdy w danych jest \"estimatesCorrected\": true, \"estimateMinutes\" i \"plannedMinutes\" \
+         są już szacunkami z poprawką według dotychczasowych rozjazdów (tak liczy je aplikacja) \
+         i nie należy ich dalej korygować. \
          Napisz po polsku w \"comment\" od dwóch do czterech krótkich zdań: czy plan mieści się \
          w dniu, co jest zagrożone terminem i co warto zrobić najpierw. Gdy plan jest za duży, \
          zaproponuj w \"moves\" przesunięcia otwartych zadań z planu na jeden z dni z listy \
@@ -830,6 +894,7 @@ fn gate(settings: &AppSettings) -> Result<(), String> {
 fn morning_request(
     app: &tauri::AppHandle,
     day: &str,
+    correction: Option<&EstimateCorrection>,
 ) -> Result<(MorningInput, AppSettings), String> {
     timesheet::check_date(day)?;
     let settings = crate::settings::current(app);
@@ -837,7 +902,16 @@ fn morning_request(
     let date = NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|e| e.to_string())?;
     let database = app.state::<crate::Database>();
     let conn = database.0.lock().map_err(|e| e.to_string())?;
-    let input = collect_morning(&conn, &chrono::Local, &settings, date, db::now())?;
+    // Poprawka tylko przy włączonym „Planuj z poprawką szacunków”, jak w widoku.
+    let correction = correction.filter(|_| settings.plan_with_correction);
+    let input = collect_morning_with(
+        &conn,
+        &chrono::Local,
+        &settings,
+        date,
+        db::now(),
+        correction,
+    )?;
     Ok((input, settings))
 }
 
@@ -861,9 +935,10 @@ fn week_request(app: &tauri::AppHandle, week: &str) -> Result<(WeekInput, AppSet
 pub async fn ai_morning_comment(
     app: tauri::AppHandle,
     day: String,
+    correction: Option<EstimateCorrection>,
 ) -> Result<MorningComment, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (input, _) = morning_request(&app, &day)?;
+        let (input, _) = morning_request(&app, &day, correction.as_ref())?;
         comment(
             &|kind, prompt, schema| ai::ask(&app, kind, Tier::Main, prompt, schema),
             &input,
@@ -876,9 +951,13 @@ pub async fn ai_morning_comment(
 
 /// „Pokaż, co zostanie wysłane” dla komentarza w Rano: treść po filtrze osobowym.
 #[tauri::command]
-pub async fn ai_morning_preview(app: tauri::AppHandle, day: String) -> Result<String, String> {
+pub async fn ai_morning_preview(
+    app: tauri::AppHandle,
+    day: String,
+    correction: Option<EstimateCorrection>,
+) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (input, settings) = morning_request(&app, &day)?;
+        let (input, settings) = morning_request(&app, &day, correction.as_ref())?;
         let dict = ai::dictionary(&app, &settings);
         Ok(crate::ai_privacy::redact(&morning_prompt(&input, &chrono::Local), &dict).0)
     })

@@ -1,7 +1,8 @@
 import { computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
-import { desktop } from "./store";
-import type { MorningComment, WeekDraft } from "./api/aiplan";
+import { desktop, type Snapshot } from "./store";
+import type { EstimateCorrection, MorningComment, WeekDraft } from "./api/aiplan";
+import type { CorrectionOf } from "./estimates";
 import * as aiPlanSim from "./preview/aiplan";
 import { useSettings } from "./target";
 
@@ -27,15 +28,40 @@ export function usePlanAssistEnabled() {
  * asystenta”; zwraca komentarz i propozycje przesunięć, niczego nie zapisuje.
  * W podglądzie odpowiada symulowany asystent (`preview/aiplan.ts`).
  */
-export async function aiMorningComment(day: string): Promise<MorningComment> {
-  if (desktop) return invoke("ai_morning_comment", { day });
-  return aiPlanSim.aiMorningComment(day);
+export async function aiMorningComment(
+  day: string,
+  correction: EstimateCorrection | null = null,
+): Promise<MorningComment> {
+  if (desktop) return invoke("ai_morning_comment", { day, correction });
+  return aiPlanSim.aiMorningComment(day, correction);
 }
 
 /** `ai_morning_preview`: „Pokaż, co zostanie wysłane” po filtrze osobowym. */
-export async function aiMorningPreview(day: string): Promise<string> {
-  if (desktop) return invoke("ai_morning_preview", { day });
-  return aiPlanSim.aiMorningPreview(day);
+export async function aiMorningPreview(
+  day: string,
+  correction: EstimateCorrection | null = null,
+): Promise<string> {
+  if (desktop) return invoke("ai_morning_preview", { day, correction });
+  return aiPlanSim.aiMorningPreview(day, correction);
+}
+
+/**
+ * Mnożniki poprawki szacunków (`corrections` z `estimates.ts`) jako tabela dla
+ * komendy: mnożnik ogólny i wpisy dla projektów zadań, których mnożnik jest inny.
+ * Klucz to nazwa projektu dokładnie jak w zadaniu.
+ */
+export function correctionTable(data: Snapshot, of: CorrectionOf): EstimateCorrection {
+  const all = of("").factor;
+  const projects: Record<string, number> = {};
+  const seen = new Set<string>();
+  for (const task of data.tasks) {
+    const project = task.details?.project ?? "";
+    if (!project || seen.has(project)) continue;
+    seen.add(project);
+    const factor = of(project).factor;
+    if (factor !== all) projects[project] = factor;
+  }
+  return { all, projects };
 }
 
 /**

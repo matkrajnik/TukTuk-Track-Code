@@ -192,6 +192,58 @@ fn model_input_has_minutes_hours_plan_deadlines_and_next_days_without_titles_of_
     assert!(!text.contains("Spotkanie z Janem"), "{text}");
 }
 
+#[test]
+fn estimate_correction_reaches_the_plan_deadlines_and_next_days() {
+    // Mnożnik 1,5 dla WMS, 2 dla reszty; poza zakresem 0,5–3 obcięty.
+    let correction = EstimateCorrection {
+        all: 2.0,
+        projects: BTreeMap::from([("WMS".to_string(), 1.5), ("API".to_string(), 9.0)]),
+    };
+    let input = collect_morning_with(
+        &database(),
+        &Warsaw,
+        &settings(),
+        date(DAY),
+        now(),
+        Some(&correction),
+    )
+    .unwrap();
+    assert!(input.corrected);
+    let est: Vec<(i64, u32)> = input
+        .plan
+        .iter()
+        .map(|t| (t.id, t.estimate_minutes))
+        .collect();
+    assert_eq!(est, vec![(3, 240), (2, 540), (1, 360), (4, 60)]);
+    assert_eq!(input.deadlines[0].estimate_minutes, 120);
+    assert_eq!(input.upcoming[0].planned_minutes, 180);
+    let json = morning_json(&input, &Warsaw);
+    assert_eq!(json["estimatesCorrected"], true);
+    assert_eq!(json["plan"][2]["estimateMinutes"], 360);
+    assert!(morning_prompt(&input, &Warsaw).contains("estimatesCorrected"));
+    // Bez poprawki: surowe szacunki i bez znacznika.
+    let raw = morning(&settings());
+    assert!(!raw.corrected);
+    assert!(morning_json(&raw, &Warsaw)
+        .get("estimatesCorrected")
+        .is_none());
+    // Wartość nieliczbowa nie psuje szacunku.
+    let nan = EstimateCorrection {
+        all: f64::NAN,
+        projects: BTreeMap::new(),
+    };
+    assert_eq!(nan.minutes(90, ""), 90);
+    assert_eq!(nan.minutes(0, ""), 0);
+}
+
+#[test]
+fn estimate_correction_is_read_from_the_command_arguments() {
+    let c: EstimateCorrection =
+        serde_json::from_value(json!({"all": 1.25, "projects": {"WMS": 2}})).unwrap();
+    assert_eq!(c.minutes(60, "WMS"), 120);
+    assert_eq!(c.minutes(60, "Inny"), 75);
+}
+
 // ---------------------------------------------------------------------------
 // Rano: odpowiedź modelu
 

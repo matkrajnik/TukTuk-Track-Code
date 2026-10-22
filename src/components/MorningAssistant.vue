@@ -12,15 +12,28 @@ import AiPreview from "./AiPreview.vue";
 import {
   aiMorningComment,
   aiMorningPreview,
+  correctionTable,
   type MorningComment,
   type MorningMove,
 } from "../aiplan";
 import { planTask, type Snapshot } from "../store";
 import { nextOrder } from "../review";
 import { dayText } from "../time";
+import { corrections } from "../estimates";
+import { useSettings } from "../target";
 
 const props = defineProps<{ data: Snapshot; day: string }>();
 const emit = defineEmits<{ updated: [data: Snapshot] }>();
+const settings = useSettings();
+
+/**
+ * Poprawka szacunków jak w pasku pojemności Rano: przy „Planuj z poprawką
+ * szacunków” model dostaje szacunki po poprawce, inaczej surowe.
+ */
+function correction() {
+  if (!settings.value.planWithCorrection) return null;
+  return correctionTable(props.data, corrections(props.data, Date.now()));
+}
 
 const result = ref<MorningComment | null>(null);
 const loading = ref(false);
@@ -45,15 +58,15 @@ function clearCards() {
 }
 watch(() => props.day, reset);
 
-const previewLoad = computed(() => () => aiMorningPreview(props.day));
+const previewLoad = computed(() => () => aiMorningPreview(props.day, correction()));
 
 async function ask() {
-  if (loading.value) return;
+  if (loading.value || busy.value) return;
   const id = ++request;
   loading.value = true;
   error.value = "";
   try {
-    const answer = await aiMorningComment(props.day);
+    const answer = await aiMorningComment(props.day, correction());
     if (id !== request) return;
     clearCards();
     result.value = answer;
@@ -77,7 +90,7 @@ function stillPlanned(move: MorningMove) {
 
 /** „Zastosuj”: przenosi zadanie na proponowany dzień, na koniec jego planu. */
 async function apply(move: MorningMove) {
-  if (busy.value) return;
+  if (busy.value || loading.value) return;
   delete cardError[move.id];
   if (!stillPlanned(move)) {
     cardError[move.id] =
@@ -85,7 +98,10 @@ async function apply(move: MorningMove) {
     return;
   }
   busy.value = true;
-  const id = request;
+  // Karta należy do tego wyniku; nowy komentarz (albo inny dzień) podmienia
+  // `result`, a wtedy stan karty o tym samym numerze nie może się zmienić.
+  const owner = result.value;
+  const current = () => owner !== null && result.value === owner;
   try {
     const data = await planTask(
       move.taskId,
@@ -93,10 +109,9 @@ async function apply(move: MorningMove) {
       nextOrder(props.data.tasks, move.toDay),
     );
     emit("updated", data);
-    if (id === request) applied[move.id] = true;
+    if (current()) applied[move.id] = true;
   } catch (e) {
-    if (id === request)
-      cardError[move.id] = String(e instanceof Error ? e.message : e);
+    if (current()) cardError[move.id] = String(e instanceof Error ? e.message : e);
   } finally {
     busy.value = false;
   }
@@ -150,7 +165,7 @@ async function apply(move: MorningMove) {
           <button
             type="button"
             class="secondary-button"
-            :disabled="busy"
+            :disabled="busy || loading"
             :aria-label="'Zastosuj: ' + m.taskTitle + ' na ' + dayText(m.toDay)"
             @click="apply(m)"
           >
@@ -159,7 +174,7 @@ async function apply(move: MorningMove) {
           <button
             type="button"
             class="today-button"
-            :disabled="busy"
+            :disabled="busy || loading"
             :aria-label="'Odrzuć propozycję: ' + m.taskTitle"
             @click="dismissed[m.id] = true"
           >

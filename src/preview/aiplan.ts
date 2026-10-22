@@ -31,6 +31,7 @@ import {
   REASON_MAX,
   SUBJECT_MAX,
   WEEK_TASKS_MAX,
+  type EstimateCorrection,
   type MorningComment,
   type MorningMove,
   type WeekDraft,
@@ -69,6 +70,20 @@ interface MorningInput {
   plan: PlanTask[];
   deadlines: PlanTask[];
   upcoming: UpcomingDay[];
+  /** Szacunki po poprawce (`estimatesCorrected`). */
+  corrected: boolean;
+}
+
+/** Szacunek po poprawce (`EstimateCorrection::minutes`); 0 bez szacunku. */
+function correctedEstimate(
+  minutesValue: number,
+  project: string,
+  correction: EstimateCorrection | null,
+): number {
+  if (!correction || minutesValue <= 0) return Math.max(0, minutesValue);
+  const raw = correction.projects[project] ?? correction.all;
+  const factor = Number.isFinite(raw) ? Math.min(3, Math.max(0.5, raw)) : 1;
+  return Math.round(minutesValue * factor);
 }
 
 const clip = (text: string, max: number) => [...text.trim()].slice(0, max).join("");
@@ -132,9 +147,16 @@ const sessionMs = (
   );
 
 /** Dane dnia z podglądu (odpowiednik `plan_assist::collect_morning`). */
-async function collectMorning(day: string): Promise<MorningInput> {
+async function collectMorning(
+  day: string,
+  requested: EstimateCorrection | null,
+): Promise<MorningInput> {
   const now = Date.now();
   const data = await read();
+  // Poprawka tylko przy „Planuj z poprawką szacunków”, jak `morning_request`.
+  const correction = settings().planWithCorrection === true ? requested : null;
+  const estimate = (t: (typeof data.tasks)[number]) =>
+    correctedEstimate(t.details?.estimateMinutes ?? 0, t.details?.project ?? "", correction);
   const work = workSettings();
   const [from, to] = dayBounds(day);
   const events = await calendarEvents(from, to);
@@ -149,7 +171,7 @@ async function collectMorning(day: string): Promise<MorningInput> {
     title: clip(t.title, SUBJECT_MAX),
     project: clip(t.details?.project ?? "", SUBJECT_MAX),
     key: t.jiraKey ?? (t.redmineId ? `#${t.redmineId}` : ""),
-    estimateMinutes: t.details?.estimateMinutes ?? 0,
+    estimateMinutes: estimate(t),
     dueDay: t.details?.dueDay ?? "",
     plannedDay: t.details?.plannedDay ?? "",
     priority: t.details?.priority ?? 0,
@@ -195,7 +217,7 @@ async function collectMorning(day: string): Promise<MorningInput> {
       capacityMs: Math.max(0, target - meetingsMs),
       plannedMinutes: data.tasks
         .filter((t) => plannable(t) && !t.done && t.details?.plannedDay === next)
-        .reduce((sum, t) => sum + (t.details?.estimateMinutes ?? 0), 0),
+        .reduce((sum, t) => sum + estimate(t), 0),
     });
   }
   return {
@@ -216,6 +238,7 @@ async function collectMorning(day: string): Promise<MorningInput> {
     plan,
     deadlines,
     upcoming,
+    corrected: correction !== null,
   };
 }
 
@@ -245,6 +268,7 @@ function morningJson(i: MorningInput) {
     capacityMinutes: minutes(i.capacityMs),
     ...(i.off ? { off: true } : {}),
     trackedMinutes: minutes(i.trackedMs),
+    ...(i.corrected ? { estimatesCorrected: true } : {}),
     meetings: i.meetings.map((e) => ({
       from: hhmm(e.from),
       to: hhmm(e.to),
@@ -306,15 +330,21 @@ function gate() {
 }
 
 /** `ai_morning_preview` w podglądzie: treść zapytania po uproszczonym filtrze nazw. */
-export async function aiMorningPreview(day: string): Promise<string> {
+export async function aiMorningPreview(
+  day: string,
+  correction: EstimateCorrection | null = null,
+): Promise<string> {
   gate();
-  return aiRedactPreview(morningPrompt(await collectMorning(day)));
+  return aiRedactPreview(morningPrompt(await collectMorning(day, correction)));
 }
 
 /** `ai_morning_comment` w podglądzie: bez planu i terminów model nie jest wołany. */
-export async function aiMorningComment(day: string): Promise<MorningComment> {
+export async function aiMorningComment(
+  day: string,
+  correction: EstimateCorrection | null = null,
+): Promise<MorningComment> {
   gate();
-  const input = await collectMorning(day);
+  const input = await collectMorning(day, correction);
   if (!input.plan.length && !input.deadlines.length)
     return { day, comment: "", moves: [], message: planAssistMessages.emptyMorning };
   const answer = await aiAsk(MORNING_KIND, morningPrompt(input));

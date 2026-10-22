@@ -25,6 +25,16 @@ export interface MorningComment {
   message: string;
 }
 
+/**
+ * Poprawka szacunków dla komentarza w Rano (`plan_assist::EstimateCorrection`):
+ * mnożnik ogólny i mnożniki według nazwy projektu z zadania. Wysyłana tylko przy
+ * „Planuj z poprawką szacunków”, żeby model liczył obciążenie jak pasek pojemności.
+ */
+export interface EstimateCorrection {
+  all: number;
+  projects: Record<string, number>;
+}
+
 /** Wynik „Szkic wniosków” (`plan_assist::WeekDraft`). */
 export interface WeekDraft {
   /** Poniedziałek tygodnia. */
