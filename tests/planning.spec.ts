@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures/test";
+import { test, expect, addPlanned } from "./fixtures/test";
 import { pick } from "./fixtures/searchSelect";
 test.use({ timezoneId: "Europe/Warsaw" });
 test("planning, priorities, daily notes, waiting and time reconstruction persist", async ({
@@ -117,10 +117,7 @@ test("higher priority sorts first and plan works on an empty day", async ({
 }) => {
   await page.goto("/");
   for (const title of ["Ważne", "Zwykłe"]) {
-    await page.getByLabel("Nowe zadanie", { exact: true }).fill(title);
-    await page
-      .getByRole("button", { name: "Dodaj zadanie", exact: true })
-      .click();
+    await addPlanned(page, title);
   }
   await page
     .getByRole("button", { name: "Przedziały: Ważne", exact: true })

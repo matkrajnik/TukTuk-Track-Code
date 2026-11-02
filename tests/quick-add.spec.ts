@@ -16,8 +16,8 @@ test("quick add: full syntax with chips, chip removal and Tab completion", async
 }) => {
   await openPreview(page);
   const input = page.getByLabel("Nowe zadanie", { exact: true });
-  const addButton = page.getByRole("button", {
-    name: "Dodaj zadanie",
+  const planButton = page.getByRole("button", {
+    name: "Zaplanuj",
     exact: true,
   });
   const chips = page.getByLabel("Rozpoznane pola");
@@ -49,13 +49,16 @@ test("quick add: full syntax with chips, chip removal and Tab completion", async
     chips.getByRole("button", { name: "Usuń: Szacunek: 1 h 30 min" }),
   ).toBeVisible();
 
-  await addButton.click();
+  await planButton.click();
   await expect(input).toHaveValue("");
   await expect(chips).toHaveCount(0);
   const card = page
     .locator(".task-card")
     .filter({ has: page.locator(".task-title", { hasText: "Eksport etykiet" }) });
   await expect(card).toBeVisible();
+  // „Zaplanuj” rozwija plan nowego zadania z kursorem w „Planowany dzień”.
+  await expect(card.getByLabel("Planowany dzień")).toBeFocused();
+  await expect(card.getByLabel("Planowany dzień")).toHaveValue("2026-10-16");
 
   const data = await stored(page);
   const task = data.tasks.find((t: any) => t.title === "Eksport etykiet");
@@ -70,7 +73,7 @@ test("quick add: full syntax with chips, chip removal and Tab completion", async
       project: "WMS",
     },
   });
-  // Dodanie nie uruchamia pomiaru.
+  // „Zaplanuj” nie uruchamia pomiaru.
   expect(data.sessions.filter((s: any) => s.endedAt === null)).toEqual([]);
 });
 
@@ -80,13 +83,19 @@ test("quick add: impossible date blocks adding and plain titles stay untouched",
   await openPreview(page);
   const input = page.getByLabel("Nowe zadanie", { exact: true });
   const addButton = page.getByRole("button", {
-    name: "Dodaj zadanie",
+    name: "Dodaj i rozpocznij",
+    exact: true,
+  });
+  const planButton = page.getByRole("button", {
+    name: "Zaplanuj",
     exact: true,
   });
   await input.fill("Raport @31.02");
   await expect(page.getByText("Nie ma dnia 31.02.2027.")).toBeVisible();
   await expect(addButton).toBeDisabled();
+  await expect(planButton).toBeDisabled();
   await input.press("Enter");
+  await input.press("Shift+Enter");
   expect(
     (await stored(page)).tasks.some((t: any) => t.title.startsWith("Raport")),
   ).toBe(false);
@@ -97,6 +106,9 @@ test("quick add: impossible date blocks adding and plain titles stay untouched",
   await input.fill("Spotkanie 1h z zespołem");
   await addButton.click();
   await expect(input).toHaveValue("");
+  await expect(
+    page.getByLabel("Stop: Spotkanie 1h z zespołem", { exact: true }),
+  ).toBeVisible();
   const task = (await stored(page)).tasks.find(
     (t: any) => t.title === "Spotkanie 1h z zespołem",
   );
@@ -111,7 +123,11 @@ test("quick add: unknown /template blocks adding instead of vanishing from the t
   await openPreview(page);
   const input = page.getByLabel("Nowe zadanie", { exact: true });
   const addButton = page.getByRole("button", {
-    name: "Dodaj zadanie",
+    name: "Dodaj i rozpocznij",
+    exact: true,
+  });
+  const planButton = page.getByRole("button", {
+    name: "Zaplanuj",
     exact: true,
   });
   await input.fill("/review Popraw raport");
@@ -119,6 +135,7 @@ test("quick add: unknown /template blocks adding instead of vanishing from the t
     page.getByText("Nie ma szablonu „review”.", { exact: false }),
   ).toBeVisible();
   await expect(addButton).toBeDisabled();
+  await expect(planButton).toBeDisabled();
   await input.press("Enter");
   expect(
     (await stored(page)).tasks.some((t: any) => t.title.includes("Popraw raport")),

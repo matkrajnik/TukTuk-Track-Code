@@ -235,10 +235,15 @@ export async function change(
  * `quickadd::create_linked`; w podglądzie nie ma listy zgłoszeń Jiry, więc pusty
  * tytuł z kluczem bierze tytuł z danych `jira_issues` tylko w aplikacji; temat
  * `#1234` pochodzi z symulowanego Redmine (`previewRedmineIssues`).
+ * `guarded`: wywołujący już zapytał `startAllowed` (formularz w TasksView).
  */
-export async function quickAdd(task: NewTask): Promise<Snapshot> {
+export async function quickAdd(
+  task: NewTask,
+  guarded = false,
+): Promise<Snapshot> {
   // Anulowane „Wznowić dzień?” tworzy zadanie bez startu pomiaru.
-  if (task.start && !(await startAllowed())) task = { ...task, start: false };
+  if (task.start && !guarded && !(await startAllowed()))
+    task = { ...task, start: false };
   if (desktop) return invoke("quick_add", { task });
   return tasksSim.quickAdd(task);
 }

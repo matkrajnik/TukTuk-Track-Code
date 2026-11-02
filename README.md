@@ -7,6 +7,7 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 ### Poprawki po 2.0.0
 
 - **Pomiar po wyłączeniu komputera.** Pomiar pozostawiony przy wyłączeniu komputera nie nalicza już całej nocy. Po co najmniej 10 minutach przerwy w działaniu aplikacji kończy się na ostatnim znaku życia aplikacji, a po starcie baner „Pomiar zatrzymany po przerwie” pozwala go zostawić, wznowić od teraz albo przywrócić cały czas. Ograniczenie: dokładność do ok. 30 s, a pierwszy start po aktualizacji nie ma jeszcze znaku życia, więc nic nie zatrzymuje.
+- **Dodanie zadania od razu uruchamia pomiar.** W Zadaniach przycisk „Dodaj i rozpocznij” (Enter w polu „Nowe zadanie”) dodaje zadanie i od razu mierzy jego czas; poprzedni pomiar staje. Obok „Zaplanuj” (Shift+Enter) dodaje zadanie bez pomiaru i rozwija jego kafelek z planem, z kursorem w polu „Planowany dzień” (także gdy składnia podała dzień, np. `@pt`; filtry, które ukryłyby nowe zadanie, wracają do „Do zrobienia”). Po „Zakończ dzień” start pyta „Wznowić dzień?”; „Anuluj” dodaje zadanie bez startu z komunikatem pod polem. Składnia szybkiego dodawania działa przy obu przyciskach.
 
 ### Nowości 2.0
 
@@ -269,6 +270,7 @@ Ustawienia są zapisywane w bazie SQLite (w podglądzie w localStorage), a backe
 - **Ctrl+Alt+Space** (domyślnie, konfigurowalny) — Start/Stop z dowolnego okna. Trwający pomiar zostaje zatrzymany. Bez pomiaru startuje ostatnio mierzone zadanie, które nie jest ukończone ani zarchiwizowane; gdy takiego nie ma, otwiera się szybkie przełączanie. Potwierdzenie „Stop: X · 01:23:45” albo „Start: X” pojawia się w dymku ikony traya, w widgecie, a gdy widget jest schowany, także jako powiadomienie Windows.
 - **Ctrl+Shift+S** (od 2.0, w oknie aplikacji) — Start/Stop jak skrót globalny; nie działa w otwartym oknie dialogowym.
 - **N** (od 2.0) — przejście do Zadań i pole „Nowe zadanie” (nie działa w polach tekstowych, listach i oknach dialogowych).
+- **Enter / Shift+Enter** w polu „Nowe zadanie” (od poprawek po 2.0.0) — „Dodaj i rozpocznij” / „Zaplanuj”.
 - **Ctrl+J** (od 2.0) — panel czatu asystenta AI.
 - **Alt+↑ / Alt+↓** na uchwycie ⋮⋮ — zmiana kolejności zadania.
 

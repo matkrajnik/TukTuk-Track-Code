@@ -1,12 +1,9 @@
-﻿import { test, expect, type Page } from "./fixtures/test";
+﻿import { test, expect, addPlanned, type Page } from "./fixtures/test";
 import { optionLabels, pick } from "./fixtures/searchSelect";
 
 test.use({ timezoneId: "Europe/Warsaw" });
 const add = async (page: Page, title: string) => {
-  await page.getByLabel("Nowe zadanie", { exact: true }).fill(title);
-  await page
-    .getByRole("button", { name: "Dodaj zadanie", exact: true })
-    .click();
+  await addPlanned(page, title);
   await expect(
     page.locator(".task-title").filter({ hasText: title }),
   ).toBeVisible();

@@ -155,10 +155,7 @@ test("recurrence: monthly rule chosen in the tile creates dated copies", async (
     data: { tasks: [], sessions: [] },
   });
   await page.getByLabel("Nowe zadanie", { exact: true }).fill("Faktury");
-  await page.getByRole("button", { name: "Dodaj zadanie", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Przedziały: Faktury", exact: true })
-    .click();
+  await page.getByRole("button", { name: "Zaplanuj", exact: true }).click();
   await page.getByLabel("Rodzaj cyklu").selectOption("monthDay");
   await page.getByLabel("Początek cyklu").fill("2026-01-01");
   // Reguła miesięczna nie używa dni tygodnia.

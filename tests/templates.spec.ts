@@ -87,7 +87,7 @@ test("templates: save from a tile, edit in settings and use with explicit fields
   await expect(page.getByLabel("Rozpoznane pola").getByRole("button")).toHaveText(
     ["Szablon: review", "Jira: WMS-300", "Szacunek: 1 h 30 min"],
   );
-  await page.getByRole("button", { name: "Dodaj zadanie", exact: true }).click();
+  await page.getByRole("button", { name: "Zaplanuj", exact: true }).click();
   await expect(input).toHaveValue("");
 
   const task = (await stored(page)).tasks.find(

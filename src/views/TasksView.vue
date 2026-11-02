@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
+  CalendarClock,
   CalendarPlus,
+  Play,
   Plus,
   Scissors,
   Search,
@@ -25,6 +27,7 @@ import {
   onTemplatesChanged,
   quickAdd,
   quickTask,
+  startAllowed,
   redmineConnected,
   refreshJiraConnected,
   refreshRedmineConnected,
@@ -57,7 +60,6 @@ import QuickChips from "../components/QuickChips.vue";
 import {
   blockingError,
   complete,
-  hasFields,
   parse,
   removeToken,
   type Token,
@@ -312,17 +314,13 @@ function toggle(id: number) {
   if (expanded.value.has(id)) expanded.value.delete(id);
   else expanded.value.add(id);
 }
-async function act(
-  action: string,
-  id: number | null = null,
-  title: string | null = null,
-) {
+async function act(action: string, id: number | null = null) {
   if (busy.value) return false;
   working.value = true;
   emit("error", "");
   try {
     const before = props.data.tasks.find((t) => t.id === id);
-    emit("updated", await change(action, id, title));
+    emit("updated", await change(action, id));
     // Ukończenie zadania z kluczem Jiry: propozycja przesunięcia (J1).
     if (action === "toggle" && before && !before.done)
       void offerAfterDone(before);
@@ -388,7 +386,7 @@ const parsed = computed(() =>
     redmineEnabled: redmineConnected.value,
   }),
 );
-/** Bez zapisów składni dodanie działa dokładnie jak wcześniej (`mutate add`). */
+/** Jest co dodać: tytuł, klucz Jiry, numer Redmine albo szablon, bez błędnych zapisów. */
 const canAdd = computed(
   () =>
     !blockingError(parsed.value) &&
@@ -397,30 +395,88 @@ const canAdd = computed(
       parsed.value.fields.redmineId != null ||
       !!parsed.value.fields.template),
 );
-async function add() {
+/** Oba przyciski formularza i Shift+Enter: ten sam stan blokady. */
+const submitDisabled = computed(
+  () => busy.value || props.loading || !newTitle.value.trim() || !canAdd.value,
+);
+/**
+ * Komunikat pod formularzem (aria-live): „Dodaj i rozpocznij” po
+ * „Anuluj” w „Wznowić dzień?” dodało zadanie bez startu pomiaru.
+ */
+const addNotice = ref("");
+/**
+ * Pierwsze zadanie z `data` spoza `before`: `quick_add` wstawia zadanie
+ * przed `with_recurrence` (main.rs), więc wystąpienia cykli utworzone w tej
+ * samej migawce mają wyższe id; dlatego najniższe nowe id, a nie najwyższe.
+ */
+function createdTaskId(data: Snapshot, before: Set<number>): number | null {
+  const fresh = data.tasks.map((t) => t.id).filter((id) => !before.has(id));
+  return fresh.length ? Math.min(...fresh) : null;
+}
+/**
+ * Formularz „Nowe zadanie”: `start` = „Dodaj i rozpocznij” (Enter), bez
+ * startu = „Zaplanuj” (Shift+Enter, rozwija plan nowego zadania). Oba idą
+ * przez `quick_add` (tekst bez składni też: tytuł jak w `mutate add`).
+ * Start przechodzi przez strażnika `startAllowed` (B13): „Anuluj” w „Wznowić
+ * dzień?” dodaje zadanie bez startu, jak „Utwórz i rozpocznij” w szybkim
+ * przełączaniu, ale tutaj z komunikatem, nie po cichu. Pytanie pada tutaj,
+ * a `quickAdd(…, true)` go nie powtarza: `before` liczone po odpowiedzi nie
+ * obejmuje wystąpień cykli dodanych, gdy okno czekało na użytkownika.
+ */
+async function submitNew(start: boolean) {
   const result = parsed.value;
   const blocking = blockingError(result);
   if (blocking) {
     emit("error", blocking);
     return;
   }
-  if (!hasFields(result)) {
-    const raw = result.title === newTitle.value.trim();
-    if (await act("add", null, raw ? newTitle.value : result.title))
-      newTitle.value = "";
-    return;
-  }
-  if (busy.value) return;
+  if (submitDisabled.value) return;
   working.value = true;
   emit("error", "");
+  addNotice.value = "";
+  let planId: number | null = null;
   try {
-    emit("updated", await quickAdd(quickTask(result)));
+    const allowed = start && (await startAllowed());
+    const before = new Set(props.data.tasks.map((t) => t.id));
+    const data = await quickAdd(quickTask(result, allowed), true);
+    emit("updated", data);
     newTitle.value = "";
+    const id = createdTaskId(data, before);
+    if (id == null) return;
+    if (!start) planId = id;
+    else if (!allowed) {
+      const title = data.tasks.find((t) => t.id === id)?.title ?? "";
+      addNotice.value = `Dodano „${title}” bez startu pomiaru: dzień pozostał zakończony.`;
+    }
   } catch (e) {
     emit("error", String(e));
   } finally {
     working.value = false;
   }
+  if (planId != null) await openPlanning(planId);
+}
+/**
+ * „Zaplanuj”: rozwinięty kafelek nowego zadania z fokusem w „Planowany dzień”
+ * (jak klik w blok planu na osi dnia, `JournalView.openPlan`), także gdy
+ * składnia podała już dzień (`@pt`). Filtry, które ukryłyby nowe zadanie,
+ * wracają do „Do zrobienia” bez wyszukiwania i projektu.
+ */
+async function openPlanning(id: number) {
+  expanded.value.add(id);
+  await nextTick();
+  if (!visible.value.some((t) => t.id === id)) {
+    filter.value = "active";
+    query.value = "";
+    projectFilter.value = "";
+    todayOnly.value = false;
+    await nextTick();
+  }
+  const form = document
+    .getElementById("sessions-" + id)
+    ?.querySelector<HTMLElement>(".planning-form");
+  form?.scrollIntoView?.({ block: "nearest" });
+  // Pierwsze pole daty planu to „Planowany dzień” (priorytet jest na kafelku).
+  form?.querySelector<HTMLInputElement>('input[type="date"]')?.focus();
 }
 function removeChip(token: Token) {
   newTitle.value = removeToken(newTitle.value, token);
@@ -511,21 +567,33 @@ async function priority(task: Task, e: Event) {
       <Square :size="12" />Stop
     </button>
   </div>
-  <form class="add-task" @submit.prevent="add">
+  <form class="add-task" @submit.prevent="submitNew(true)">
     <Plus :size="18" /><input
       ref="newInput"
       v-model="newTitle"
       aria-label="Nowe zadanie"
       placeholder="Nowe zadanie…"
-      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · /szablon · \ dosłownie"
+      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · /szablon · \ dosłownie · Enter: dodaj i rozpocznij · Shift+Enter: zaplanuj"
       maxlength="240"
       :disabled="loading"
+      @input="addNotice = ''"
       @keydown.tab="tab"
+      aria-keyshortcuts="Enter Shift+Enter"
+      @keydown.shift.enter.exact.prevent="submitNew(false)"
     /><button
       class="primary-button"
-      :disabled="busy || loading || !newTitle.trim() || !canAdd"
+      title="Dodaje zadanie i od razu uruchamia jego pomiar; poprzedni pomiar staje (Enter w polu)"
+      :disabled="submitDisabled"
     >
-      Dodaj zadanie
+      <Play :size="14" />Dodaj i rozpocznij</button
+    ><button
+      type="button"
+      class="secondary-button"
+      title="Dodaje zadanie bez pomiaru i otwiera jego plan (Shift+Enter w polu)"
+      :disabled="submitDisabled"
+      @click="submitNew(false)"
+    >
+      <CalendarClock :size="14" />Zaplanuj
     </button>
   </form>
   <QuickChips
@@ -533,6 +601,8 @@ async function priority(task: Task, e: Event) {
     :correction="correctionOf"
     @remove="removeChip"
   />
+  <!-- Region stale w DOM: czytniki ekranu ogłaszają zmianę treści, nie wstawienie. -->
+  <p class="hint add-notice" aria-live="polite">{{ addNotice }}</p>
   <div class="list-toolbar">
     <div class="tabs" aria-label="Filtr zadań">
       <button

@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures/test";
+import { test, expect, addPlanned } from "./fixtures/test";
 test.use({ timezoneId: "Europe/Warsaw" });
 const key = "tuktuk-track-preview-v1";
 test.beforeEach(async ({ page }) => {
@@ -9,10 +9,7 @@ test("inline priority preserves unsaved planning and reorders collapsed tasks; q
   page,
 }) => {
   for (const title of ["A", "B"]) {
-    await page.getByLabel("Nowe zadanie", { exact: true }).fill(title);
-    await page
-      .getByRole("button", { name: "Dodaj zadanie", exact: true })
-      .click();
+    await addPlanned(page, title);
   }
   await page.getByLabel("Priorytet: A", { exact: true }).selectOption("1");
   await expect(page.locator(".task-card .task-title")).toHaveText(["A", "B"]);
@@ -195,11 +192,9 @@ test("recurrence creates separate dated tasks once and resets checklist", async 
 }) => {
   await page.getByLabel("Nowe zadanie", { exact: true }).fill("Daily");
   await page
-    .getByRole("button", { name: "Dodaj zadanie", exact: true })
+    .getByRole("button", { name: "Zaplanuj", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Przedziały: Daily", exact: true })
-    .click();
+  await expect(page.getByLabel("Planowany dzień")).toBeFocused();
   await page.getByLabel("Szacowany czas (minuty)").fill("30");
   await page.getByLabel("Rodzaj cyklu").selectOption("");
   await page.getByLabel("Początek cyklu").fill("2026-10-12");

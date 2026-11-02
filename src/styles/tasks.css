@@ -58,6 +58,21 @@
   background: transparent;
   padding: 8px 0;
 }
+.add-task > button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* „Zaplanuj” tej samej wysokości co przycisk główny. */
+.add-task .secondary-button {
+  padding: 10px 14px;
+  font-size: inherit;
+}
+.add-notice {
+  margin: -12px 0 16px 16px;
+}
+.add-notice:empty {
+  margin: 0;
+}
 .add-task:focus-within {
   border-color: var(--accent);
 }
@@ -324,6 +339,9 @@
   }
 }
 @media (max-width: 600px) {
+  .add-task {
+    flex-wrap: wrap;
+  }
   .list-toolbar {
     flex-wrap: wrap;
   }

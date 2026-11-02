@@ -1,4 +1,4 @@
-import { test as base } from "@playwright/test";
+import { test as base, expect, type Page } from "@playwright/test";
 
 export * from "@playwright/test";
 
@@ -29,3 +29,21 @@ export const test = base.extend<{ morningShown: void }>({
     { auto: true },
   ],
 });
+
+/**
+ * „Zaplanuj” w formularzu „Nowe zadanie”: zadanie bez startu pomiaru. Przycisk
+ * rozwija kafelek nowego zadania z planem; helper go zwija, żeby dalsze kroki
+ * widziały listę jak po dawnym „Dodaj zadanie”. `title` = tytuł na kafelku,
+ * gdy różni się od wpisanego tekstu (składnia).
+ */
+export async function addPlanned(page: Page, text: string, title = text) {
+  await page.getByLabel("Nowe zadanie", { exact: true }).fill(text);
+  await page.getByRole("button", { name: "Zaplanuj", exact: true }).click();
+  const toggle = page.getByRole("button", {
+    name: "Przedziały: " + title,
+    exact: true,
+  });
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+}

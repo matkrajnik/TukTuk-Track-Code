@@ -197,13 +197,13 @@ test.describe("R2 — zgłoszenie Redmine na zadaniu", () => {
     await openPreview(page);
     const input = page.getByLabel("Nowe zadanie", { exact: true });
     const chips = page.getByLabel("Rozpoznane pola");
-    const addButton = page.getByRole("button", { name: "Dodaj zadanie", exact: true });
+    const addButton = page.getByRole("button", { name: "Dodaj i rozpocznij", exact: true });
 
     // Sam numer: tytuł z tematu symulowanego Redmine, chipy na kafelku.
     await input.fill("#1234");
     await expect(chips.getByRole("button")).toHaveText(["Redmine: #1234"]);
     await expect(addButton).toBeEnabled();
-    await input.press("Enter");
+    await input.press("Shift+Enter");
     const created = card(page, "Import CSV zamówień");
     await expect(created.locator(".task-redmine-key")).toHaveText("#1234");
     await expect(created.locator(".task-redmine-status")).toHaveText("New");
@@ -219,7 +219,7 @@ test.describe("R2 — zgłoszenie Redmine na zadaniu", () => {
       redmineDue: "2026-10-30",
     });
     expect(task.jiraKey).toBeUndefined();
-    // Dodanie nie uruchamia pomiaru.
+    // „Zaplanuj” (Shift+Enter) nie uruchamia pomiaru.
     expect(data.sessions.filter((s: any) => s.endedAt === null)).toEqual([]);
 
     // Ten sam numer drugi raz: błąd, bez nowego zadania.
