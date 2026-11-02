@@ -755,6 +755,7 @@ fn main() {
             meetings::meeting_add,
             meetings::meeting_update,
             meetings::meeting_delete,
+            meetings::meeting_delete_following,
             reminders::reminder_list,
             reminders::reminder_add,
             reminders::reminder_update,

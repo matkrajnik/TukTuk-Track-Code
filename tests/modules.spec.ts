@@ -8,6 +8,7 @@ import * as redmineRules from "../src/api/redmine";
 import * as tsRules from "../src/api/timesheet";
 import * as taskRules from "../src/api/task";
 import * as calendarRules from "../src/api/calendar";
+import * as calendarApi from "../src/calendarapi";
 import { previewJiraKey, previewWorkflow } from "../src/preview/jira-state";
 import { previewRedmineKey, previewRedmineIssues } from "../src/preview/redmine";
 import { previewTsKey, previewTsTasks } from "../src/preview/timesheet";
@@ -21,6 +22,15 @@ const sources = (dir: string) =>
   readdirSync(join(src, dir))
     .filter((f) => f.endsWith(".ts"))
     .map((f) => ({ file: `${dir}/${f}`, text: readFileSync(join(src, dir, f), "utf8") }));
+
+test("komendy kalendarza i spotkań (calendarapi.ts) są w store.ts pod dotychczasowymi nazwami", () => {
+  for (const [name, value] of Object.entries(calendarApi))
+    expect((store as Record<string, unknown>)[name], name).toBe(value);
+  expect(store.meetingDeleteFollowing).toBe(calendarApi.meetingDeleteFollowing);
+  const text = readFileSync(join(src, "calendarapi.ts"), "utf8");
+  expect(text).not.toMatch(/from "\.\/store"/);
+  expect(text).not.toMatch(/localStorage\./);
+});
 
 test("moduły api/ i preview/ nie importują store.ts ani Tauri", () => {
   for (const { file, text } of [...sources("api"), ...sources("preview")]) {

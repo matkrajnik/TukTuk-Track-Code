@@ -79,13 +79,15 @@ export function normalizeRule(
 export const ruleUsesWeekdays = (kind: string | undefined) => !monthly(kind);
 
 const parts = (day: string) => day.split("-").map(Number) as [number, number, number];
-const utc = (day: string) => {
+/** Północ UTC dnia RRRR-MM-DD w ms (też `meetingRepeat.ts`). */
+export const utc = (day: string) => {
   const [y, m, d] = parts(day);
   return Date.UTC(y, m - 1, d);
 };
-const keyOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+/** Klucz dnia RRRR-MM-DD z północy UTC w ms. */
+export const keyOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 /** Dzień tygodnia ISO (1 = poniedziałek). */
-const weekdayOf = (day: string) => ((new Date(utc(day)).getUTCDay() + 6) % 7) + 1;
+export const weekdayOf = (day: string) => ((new Date(utc(day)).getUTCDay() + 6) % 7) + 1;
 const monthLength = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
 
 /** Dzień roboczy jak `holidays::is_work_day`. */

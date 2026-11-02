@@ -78,7 +78,7 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS focus_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS calendar_events (id TEXT PRIMARY KEY, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, subject TEXT NOT NULL DEFAULT '', show_as TEXT NOT NULL DEFAULT 'busy', all_day INTEGER NOT NULL DEFAULT 0, cancelled INTEGER NOT NULL DEFAULT 0, response TEXT NOT NULL DEFAULT 'none', updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS calendar_events_start ON calendar_events(start);
-        CREATE TABLE IF NOT EXISTS manual_meetings (id TEXT PRIMARY KEY, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, subject TEXT NOT NULL, show_as TEXT NOT NULL DEFAULT 'busy', all_day INTEGER NOT NULL DEFAULT 0, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS manual_meetings (id TEXT PRIMARY KEY, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, subject TEXT NOT NULL, show_as TEXT NOT NULL DEFAULT 'busy', all_day INTEGER NOT NULL DEFAULT 0, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, series_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS manual_meetings_start ON manual_meetings(start);
         CREATE TABLE IF NOT EXISTS agent_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, folder TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS agent_sessions_start ON agent_sessions(start);
@@ -104,7 +104,27 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, at TEXT NOT NULL, repeat TEXT NOT NULL DEFAULT 'none', weekdays TEXT, enabled INTEGER NOT NULL DEFAULT 1, snooze_until TEXT, last_fired_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS reminders_at ON reminders(at);
         CREATE TABLE IF NOT EXISTS meeting_reminders (meeting_id TEXT PRIMARY KEY, minutes INTEGER);
-        CREATE TABLE IF NOT EXISTS app_heartbeat (id INTEGER PRIMARY KEY CHECK(id=1), at INTEGER NOT NULL);")
+        CREATE TABLE IF NOT EXISTS app_heartbeat (id INTEGER PRIMARY KEY CHECK(id=1), at INTEGER NOT NULL);")?;
+    // Cykle ręcznych spotkań (`meetings.rs`): starsze bazy i kopie dostają kolumnę tutaj.
+    ensure_column(db, "manual_meetings", "series_id", "TEXT")?;
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS manual_meetings_series ON manual_meetings(series_id);",
+    )
+}
+
+/// Dodaje kolumnę do istniejącej tabeli, gdy jej brak (bazy i kopie sprzed tej
+/// kolumny; nowe bazy dostają ją w `CREATE TABLE`). `table`, `column` i `decl`
+/// to stałe z kodu, nigdy dane użytkownika.
+fn ensure_column(db: &Connection, table: &str, column: &str, decl: &str) -> rusqlite::Result<()> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name=?2)",
+        params![table, column],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        db.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"))?;
+    }
+    Ok(())
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;
@@ -575,6 +595,36 @@ pub fn move_session(db: &mut Connection, id: i64, target: i64) -> Result<Snapsho
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn init_adds_series_id_to_old_manual_meetings() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE manual_meetings (id TEXT PRIMARY KEY, start INTEGER NOT NULL, \"end\" INTEGER NOT NULL, subject TEXT NOT NULL, show_as TEXT NOT NULL DEFAULT 'busy', all_day INTEGER NOT NULL DEFAULT 0, task_id INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+             INSERT INTO manual_meetings(id,start,\"end\",subject,show_as,all_day,task_id,created_at,updated_at) VALUES('manual:1',0,1,'Telefon','busy',0,NULL,0,0);",
+        )
+        .unwrap();
+        init(&db).unwrap();
+        init(&db).unwrap();
+        let series: Option<String> = db
+            .query_row(
+                "SELECT series_id FROM manual_meetings WHERE id='manual:1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(series, None);
+        let count = |sql: &str| -> i64 { db.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count(
+                "SELECT COUNT(*) FROM pragma_table_info('manual_meetings') WHERE name='series_id'"
+            ),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='manual_meetings_series'"),
+            1
+        );
+    }
     fn split_fixture() -> Connection {
         let mut db = Connection::open_in_memory().unwrap();
         init(&db).unwrap();

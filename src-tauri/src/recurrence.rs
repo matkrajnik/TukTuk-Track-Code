@@ -39,7 +39,8 @@ pub fn last_work_day(s: &AppSettings, year: i32, month: u32) -> Option<NaiveDate
     None
 }
 
-fn monday(date: NaiveDate) -> NaiveDate {
+/// Poniedziałek tygodnia `date` (też dla cykli ręcznych spotkań, `meetings::occurrences`).
+pub(crate) fn monday(date: NaiveDate) -> NaiveDate {
     date - Duration::days(date.weekday().num_days_from_monday() as i64)
 }
 

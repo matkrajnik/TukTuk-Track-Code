@@ -91,6 +91,10 @@ pub struct CalendarEvent {
     pub source: String,
     /// Zadanie ręcznego spotkania („Dodaj jako czas” w Zamknięciu dnia).
     pub task_id: Option<i64>,
+    /// Cykl ręcznego spotkania: identyfikator pierwszego wystąpienia, wspólny
+    /// dla wszystkich wystąpień (`manual_meetings.series_id`); brak = pojedyncze.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub series_id: Option<String>,
 }
 /// Źródło spotkań z Microsoft 365.
 pub const OUTLOOK: &str = "outlook";
@@ -585,6 +589,7 @@ pub fn parse_page<Tz: TimeZone>(
                 .to_owned(),
             source: OUTLOOK.into(),
             task_id: None,
+            series_id: None,
         });
     }
     let next = value["@odata.nextLink"].as_str().map(str::to_owned);
@@ -663,6 +668,7 @@ pub fn events_between(db: &Connection, from: i64, to: i64) -> Result<Vec<Calenda
                 response: r.get(7)?,
                 source: OUTLOOK.into(),
                 task_id: None,
+                series_id: None,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -1344,6 +1350,7 @@ mod tests {
             response: "accepted".into(),
             source: OUTLOOK.into(),
             task_id: None,
+            series_id: None,
         }
     }
 

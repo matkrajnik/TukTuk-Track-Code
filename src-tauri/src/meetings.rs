@@ -6,12 +6,21 @@
 //! (`calendar::replace_range`) ani rozłączenie konta (`calendar::forget_account`)
 //! ich nie kasują. Identyfikator ma prefiks `manual:`, zadanie jest opcjonalne
 //! (`ON DELETE SET NULL`), a kopia SQLite obejmuje tabelę, bo kopiuje całą bazę.
-//! Spotkania łączy z Outlookiem `calendar::meetings_between`. Bez cykli.
+//! Spotkania łączy z Outlookiem `calendar::meetings_between`.
+//!
+//! Cykle (np. daily w dni robocze, planning co 2 tygodnie) są materializowane:
+//! `add` z `repeat` wstawia w jednej transakcji osobny wiersz na każde
+//! wystąpienie (do `MAX_OCCURRENCES`), wszystkie z `series_id` = identyfikator
+//! pierwszego. Edycja i „Usuń tylko to” dotyczą jednego wystąpienia,
+//! `delete_following` usuwa wystąpienie i kolejne z cyklu. Dni wystąpień liczy
+//! `occurrences` (ta sama semantyka „co N tygodni” co `recurrence::occurs`).
+//! Odpowiednik w podglądzie: `src/meetingRepeat.ts` i `src/preview/calendar.ts`.
 use crate::calendar::{self, CalendarEvent};
 use crate::{db, stats, Database};
-use chrono::{Local, NaiveDate, TimeZone};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
+use std::collections::BTreeSet;
 use tauri::Emitter;
 
 /// Źródło ręcznych spotkań w `CalendarEvent::source`.
@@ -22,6 +31,23 @@ pub const PREFIX: &str = "manual:";
 pub const SHOW_AS: [&str; 4] = ["busy", "tentative", "oof", "workingElsewhere"];
 /// Najdłuższy temat (znaki).
 pub const MAX_SUBJECT: usize = 200;
+/// Najwięcej wystąpień jednego cyklu.
+pub const MAX_OCCURRENCES: usize = 200;
+/// Najdłuższy cykl: ostatni dzień najpóźniej tyle dni po pierwszym.
+pub const MAX_REPEAT_SPAN_DAYS: i64 = 366;
+/// Najdłuższy odstęp cyklu (tygodnie), jak `RULE_WEEKS` zadań cyklicznych.
+pub const MAX_REPEAT_INTERVAL: u32 = 8;
+
+/// Cykl nowego spotkania („Powtarzaj” w `MeetingEditor.vue`): dni tygodnia ISO
+/// (1 = poniedziałek), co `interval` tygodni od tygodnia pierwszego spotkania,
+/// do `until` (RRRR-MM-DD, włącznie).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct MeetingRepeat {
+    pub days: Vec<u32>,
+    pub interval: u32,
+    pub until: String,
+}
 
 /// Dane formularza `MeetingEditor.vue`; czasy w Unix ms.
 #[derive(Clone, Debug, Deserialize)]
@@ -36,6 +62,9 @@ pub struct MeetingInput {
     pub all_day: bool,
     #[serde(default)]
     pub task_id: Option<i64>,
+    /// Cykl, tylko przy dodawaniu (`add`); `update` z cyklem zwraca błąd.
+    #[serde(default)]
+    pub repeat: Option<MeetingRepeat>,
 }
 fn busy() -> String {
     "busy".into()
@@ -112,6 +141,115 @@ fn validate<Tz: TimeZone>(db: &Connection, tz: &Tz, input: &MeetingInput) -> Res
     })
 }
 
+/// Dni wystąpień cyklu: zawsze `first` (pierwsze spotkanie, niezależnie od
+/// `days`), potem każdy dzień z `(first, until]` o dniu tygodnia z `days`
+/// w tygodniu odległym od tygodnia `first` o wielokrotność `interval`
+/// (jak `RULE_WEEKS` w `recurrence::occurs`).
+fn occurrences(first: NaiveDate, until: NaiveDate, days: &[u32], interval: u32) -> Vec<NaiveDate> {
+    let start_week = crate::recurrence::monday(first);
+    let every = i64::from(interval.max(1));
+    std::iter::once(first)
+        .chain(
+            first
+                .iter_days()
+                .skip(1)
+                .take_while(|d| *d <= until)
+                .filter(|d| {
+                    let weeks = (crate::recurrence::monday(*d) - start_week)
+                        .num_days()
+                        .div_euclid(7);
+                    days.contains(&d.weekday().number_from_monday()) && weeks.rem_euclid(every) == 0
+                }),
+        )
+        .collect()
+}
+
+/// Walidacja cyklu i jego dni; komunikaty jak `meetingRepeatDays` w `src/meetingRepeat.ts`.
+fn repeat_dates(first: NaiveDate, r: &MeetingRepeat) -> Result<Vec<NaiveDate>, String> {
+    if r.days.is_empty() {
+        return Err("Wybierz co najmniej jeden dzień tygodnia.".into());
+    }
+    let unique: BTreeSet<u32> = r.days.iter().copied().collect();
+    if unique.len() != r.days.len() || r.days.iter().any(|d| !(1..=7).contains(d)) {
+        return Err("Niepoprawne dni tygodnia cyklu.".into());
+    }
+    if !(1..=MAX_REPEAT_INTERVAL).contains(&r.interval) {
+        return Err(format!(
+            "Odstęp cyklu musi wynosić od 1 do {MAX_REPEAT_INTERVAL} tygodni."
+        ));
+    }
+    let until = NaiveDate::parse_from_str(&r.until, "%Y-%m-%d")
+        .ok()
+        .filter(|d| d.format("%Y-%m-%d").to_string() == r.until)
+        .ok_or("Podaj poprawny ostatni dzień cyklu.")?;
+    if until < first {
+        return Err("Ostatni dzień cyklu nie może być przed dniem spotkania.".into());
+    }
+    if (until - first).num_days() > MAX_REPEAT_SPAN_DAYS {
+        return Err(format!(
+            "Cykl może trwać najwyżej {MAX_REPEAT_SPAN_DAYS} dni."
+        ));
+    }
+    let dates = occurrences(first, until, &r.days, r.interval);
+    if dates.len() > MAX_OCCURRENCES {
+        return Err(format!(
+            "Cykl może mieć najwyżej {MAX_OCCURRENCES} spotkań. Skróć okres albo wybierz mniej dni."
+        ));
+    }
+    Ok(dates)
+}
+
+/// Chwila lokalnej daty i godziny `at`; w luce zmiany czasu (wiosną) godzina
+/// przesuwa się o godzinę do przodu (jak `new Date(r, m, d, g, min)` w JS),
+/// przy podwójnej godzinie (jesienią) wybiera wcześniejszą.
+fn local_ms<Tz: TimeZone>(tz: &Tz, at: NaiveDateTime) -> Option<i64> {
+    tz.from_local_datetime(&at)
+        .earliest()
+        .or_else(|| {
+            tz.from_local_datetime(&(at + Duration::hours(1)))
+                .earliest()
+        })
+        .map(|d| d.timestamp_millis())
+}
+
+/// Granice wystąpienia cyklu w dniu `date`: ta sama lokalna godzina od–do co
+/// pierwsze spotkanie `v` (koniec o północy kończy dzień), całodniowe = cały
+/// lokalny dzień (`stats::day_bounds`). Gdy luka zmiany czasu zrówna koniec
+/// z początkiem, wystąpienie trwa tyle co pierwsze.
+fn occurrence_bounds<Tz: TimeZone>(
+    tz: &Tz,
+    v: &Valid,
+    date: NaiveDate,
+) -> Result<(i64, i64), String> {
+    if v.all_day {
+        return Ok(stats::day_bounds(tz, date));
+    }
+    const BAD_START: &str = "Niepoprawny początek spotkania.";
+    const BAD_END: &str = "Niepoprawny koniec spotkania.";
+    let local = |ms: i64, error: &'static str| {
+        tz.timestamp_millis_opt(ms)
+            .single()
+            .map(|d| d.naive_local())
+            .ok_or(error)
+    };
+    let (start_local, end_local) = (local(v.start, BAD_START)?, local(v.end, BAD_END)?);
+    let end_days = (end_local.date() - start_local.date()).num_days();
+    let start = local_ms(tz, date.and_time(start_local.time())).ok_or(BAD_START)?;
+    let end = local_ms(
+        tz,
+        (date + Duration::days(end_days)).and_time(end_local.time()),
+    )
+    .ok_or(BAD_END)?;
+    Ok((
+        start,
+        if end > start {
+            end
+        } else {
+            start + (v.end - v.start)
+        },
+    ))
+}
+
 fn read_only(id: &str) -> Result<(), String> {
     if id.starts_with(PREFIX) {
         Ok(())
@@ -120,7 +258,7 @@ fn read_only(id: &str) -> Result<(), String> {
     }
 }
 
-const COLUMNS: &str = "id,start,\"end\",subject,show_as,all_day,task_id";
+const COLUMNS: &str = "id,start,\"end\",subject,show_as,all_day,task_id,series_id";
 fn row(r: &rusqlite::Row) -> rusqlite::Result<CalendarEvent> {
     Ok(CalendarEvent {
         id: r.get(0)?,
@@ -133,6 +271,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<CalendarEvent> {
         response: "organizer".into(),
         source: MANUAL.into(),
         task_id: r.get(6)?,
+        series_id: r.get(7)?,
     })
 }
 
@@ -163,8 +302,41 @@ pub fn between(db: &Connection, from: i64, to: i64) -> Result<Vec<CalendarEvent>
         .map_err(|e| e.to_string())
 }
 
+/// Pierwszy wolny identyfikator `manual:<now>` (n = 1) albo `manual:<now>-<n>`;
+/// `n` rośnie między wywołaniami, więc kolejne wystąpienia cyklu dostają `-2`, `-3`…
+fn fresh_id(db: &Connection, now: i64, n: &mut u32) -> Result<String, String> {
+    loop {
+        let id = if *n == 1 {
+            format!("{PREFIX}{now}")
+        } else {
+            format!("{PREFIX}{now}-{n}")
+        };
+        if get(db, &id)?.is_none() {
+            return Ok(id);
+        }
+        *n += 1;
+    }
+}
+
+fn insert(
+    db: &Connection,
+    id: &str,
+    (start, end): (i64, i64),
+    v: &Valid,
+    series: Option<&str>,
+    now: i64,
+) -> Result<(), String> {
+    db.execute(
+        "INSERT INTO manual_meetings(id,start,\"end\",subject,show_as,all_day,task_id,series_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?9)",
+        params![id, start, end, v.subject, v.show_as, v.all_day, v.task_id, series, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Dodaje ręczne spotkanie; identyfikator `manual:<czas>` (z dopiskiem przy
-/// dwóch spotkaniach w tej samej milisekundzie).
+/// dwóch spotkaniach w tej samej milisekundzie). Z `repeat` dodaje cały cykl
+/// w jednej transakcji i zwraca pierwsze wystąpienie.
 pub fn add<Tz: TimeZone>(
     db: &Connection,
     tz: &Tz,
@@ -172,18 +344,22 @@ pub fn add<Tz: TimeZone>(
     now: i64,
 ) -> Result<CalendarEvent, String> {
     let v = validate(db, tz, input)?;
-    let mut id = format!("{PREFIX}{now}");
+    let first = local_date(tz, v.start).ok_or("Niepoprawny początek spotkania.")?;
+    let dates = match &input.repeat {
+        Some(r) => repeat_dates(first, r)?,
+        None => vec![first],
+    };
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
     let mut n = 1;
-    while get(db, &id)?.is_some() {
-        n += 1;
-        id = format!("{PREFIX}{now}-{n}");
+    let first_id = fresh_id(&tx, now, &mut n)?;
+    let series = input.repeat.as_ref().map(|_| first_id.as_str());
+    insert(&tx, &first_id, (v.start, v.end), &v, series, now)?;
+    for date in &dates[1..] {
+        let id = fresh_id(&tx, now, &mut n)?;
+        insert(&tx, &id, occurrence_bounds(tz, &v, *date)?, &v, series, now)?;
     }
-    db.execute(
-        "INSERT INTO manual_meetings(id,start,\"end\",subject,show_as,all_day,task_id,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8)",
-        params![id, v.start, v.end, v.subject, v.show_as, v.all_day, v.task_id, now],
-    )
-    .map_err(|e| e.to_string())?;
-    get(db, &id)?.ok_or_else(|| "Nie udało się zapisać spotkania.".into())
+    tx.commit().map_err(|e| e.to_string())?;
+    get(db, &first_id)?.ok_or_else(|| "Nie udało się zapisać spotkania.".into())
 }
 
 /// Zmienia ręczne spotkanie; spotkania z Outlooka są tylko do odczytu.
@@ -195,6 +371,9 @@ pub fn update<Tz: TimeZone>(
     now: i64,
 ) -> Result<CalendarEvent, String> {
     read_only(id)?;
+    if input.repeat.is_some() {
+        return Err("Cykl można ustawić tylko przy dodawaniu spotkania.".into());
+    }
     let v = validate(db, tz, input)?;
     let changed = db
         .execute(
@@ -221,6 +400,40 @@ pub fn delete(db: &Connection, id: &str) -> Result<(), String> {
     db.execute("DELETE FROM meeting_reminders WHERE meeting_id=?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// „Usuń to i kolejne”: usuwa spotkanie `id` i późniejsze (początek ≥ jego
+/// początku) z tego samego cyklu razem z nadpisaniami przypomnień (C3); bez
+/// cyklu działa jak `delete`. Zwraca liczbę usuniętych spotkań.
+pub fn delete_following(db: &Connection, id: &str) -> Result<usize, String> {
+    read_only(id)?;
+    let found: Option<(Option<String>, i64)> = db
+        .query_row(
+            "SELECT series_id,start FROM manual_meetings WHERE id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let (series, start) = found.ok_or("Nie ma takiego spotkania.")?;
+    let Some(series) = series else {
+        delete(db, id)?;
+        return Ok(1);
+    };
+    let tx = db.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "DELETE FROM meeting_reminders WHERE meeting_id IN (SELECT id FROM manual_meetings WHERE series_id=?1 AND start>=?2)",
+        params![series, start],
+    )
+    .map_err(|e| e.to_string())?;
+    let n = tx
+        .execute(
+            "DELETE FROM manual_meetings WHERE series_id=?1 AND start>=?2",
+            params![series, start],
+        )
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(n)
 }
 
 /// „Zapisz” w `MeetingEditor` dla nowego spotkania.
@@ -263,12 +476,45 @@ pub fn meeting_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// „Usuń to i kolejne” w `MeetingEditor` dla spotkania z cyklu (po potwierdzeniu).
+#[tauri::command]
+pub fn meeting_delete_following(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    {
+        let state = tauri::Manager::state::<Database>(&app);
+        let db = state.0.lock().map_err(|e| e.to_string())?;
+        delete_following(&db, &id)?;
+    }
+    let _ = app.emit(calendar::EVENT, ());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono_tz::Europe::Warsaw;
 
     const MIN: i64 = 60_000;
+
+    #[test]
+    fn occurrence_bounds_names_wrong_start_and_end_separately() {
+        let v = |start, end| Valid {
+            start,
+            end,
+            subject: "A".into(),
+            show_as: "busy".into(),
+            all_day: false,
+            task_id: None,
+        };
+        let date = NaiveDate::from_ymd_opt(2026, 10, 20).unwrap();
+        assert_eq!(
+            occurrence_bounds(&Warsaw, &v(0, i64::MAX), date).unwrap_err(),
+            "Niepoprawny koniec spotkania."
+        );
+        assert_eq!(
+            occurrence_bounds(&Warsaw, &v(i64::MAX, 0), date).unwrap_err(),
+            "Niepoprawny początek spotkania."
+        );
+    }
 
     fn db() -> Connection {
         let db = Connection::open_in_memory().unwrap();
@@ -298,6 +544,7 @@ mod tests {
             show_as: "busy".into(),
             all_day: false,
             task_id: None,
+            repeat: None,
         }
     }
     fn outlook(id: &str, start: i64, end: i64) -> CalendarEvent {
@@ -312,6 +559,7 @@ mod tests {
             response: "accepted".into(),
             source: calendar::OUTLOOK.into(),
             task_id: None,
+            series_id: None,
         }
     }
 
@@ -557,6 +805,418 @@ mod tests {
         assert_eq!(
             calendar::meetings_between(&db, range.0, range.1).unwrap(),
             [manual]
+        );
+    }
+
+    fn day(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+    fn days(list: &[&str]) -> Vec<NaiveDate> {
+        list.iter().map(|s| day(s)).collect()
+    }
+    fn repeat(days: &[u32], interval: u32, until: &str) -> MeetingRepeat {
+        MeetingRepeat {
+            days: days.to_vec(),
+            interval,
+            until: until.into(),
+        }
+    }
+    fn series_input(
+        start: &str,
+        end: &str,
+        subject: &str,
+        days: &[u32],
+        interval: u32,
+        until: &str,
+    ) -> MeetingInput {
+        MeetingInput {
+            repeat: Some(repeat(days, interval, until)),
+            ..input(start, end, subject)
+        }
+    }
+    fn all(db: &Connection) -> Vec<CalendarEvent> {
+        between(db, 0, i64::MAX).unwrap()
+    }
+
+    #[test]
+    fn occurrences_always_include_first_day_then_matching_weekdays() {
+        // Czwartek startu wchodzi mimo braku 4 w dniach.
+        assert_eq!(
+            occurrences(day("2026-10-15"), day("2026-10-26"), &[1], 1),
+            days(&["2026-10-15", "2026-10-19", "2026-10-26"])
+        );
+    }
+
+    #[test]
+    fn occurrences_every_second_week_count_from_week_of_first_day() {
+        assert_eq!(
+            occurrences(day("2026-10-15"), day("2026-11-12"), &[1, 4], 2),
+            days(&[
+                "2026-10-15",
+                "2026-10-26",
+                "2026-10-29",
+                "2026-11-09",
+                "2026-11-12"
+            ])
+        );
+    }
+
+    #[test]
+    fn occurrences_include_until_day() {
+        assert_eq!(
+            occurrences(day("2026-10-15"), day("2026-10-26"), &[1], 1).last(),
+            Some(&day("2026-10-26"))
+        );
+        assert_eq!(
+            occurrences(day("2026-10-15"), day("2026-10-15"), &[1, 4], 1),
+            days(&["2026-10-15"])
+        );
+    }
+
+    #[test]
+    fn repeat_dates_validates_days_interval_until_and_limit() {
+        let first = day("2026-10-15");
+        let err = |r: MeetingRepeat| repeat_dates(first, &r).unwrap_err();
+        let ok = repeat(&[1, 4], 2, "2026-11-12");
+        let with = |f: fn(&mut MeetingRepeat)| {
+            let mut r = ok.clone();
+            f(&mut r);
+            r
+        };
+        assert_eq!(
+            err(with(|r| r.days = vec![])),
+            "Wybierz co najmniej jeden dzień tygodnia."
+        );
+        for bad in [vec![0], vec![8], vec![1, 1]] {
+            let mut r = ok.clone();
+            r.days = bad;
+            assert_eq!(err(r), "Niepoprawne dni tygodnia cyklu.");
+        }
+        for bad in [0, 9] {
+            let mut r = ok.clone();
+            r.interval = bad;
+            assert_eq!(err(r), "Odstęp cyklu musi wynosić od 1 do 8 tygodni.");
+        }
+        for bad in ["2026-02-30", "2026-1-5", "x"] {
+            let mut r = ok.clone();
+            r.until = bad.into();
+            assert_eq!(err(r), "Podaj poprawny ostatni dzień cyklu.");
+        }
+        assert_eq!(
+            err(repeat(&[4], 1, "2026-10-14")),
+            "Ostatni dzień cyklu nie może być przed dniem spotkania."
+        );
+        assert_eq!(
+            err(repeat(&[4], 1, "2027-10-17")),
+            "Cykl może trwać najwyżej 366 dni."
+        );
+        assert_eq!(
+            repeat_dates(first, &repeat(&[4], 1, "2027-10-16"))
+                .unwrap()
+                .len(),
+            53
+        );
+        let every_day = [1, 2, 3, 4, 5, 6, 7];
+        assert_eq!(
+            err(repeat(&every_day, 1, "2027-05-03")),
+            "Cykl może mieć najwyżej 200 spotkań. Skróć okres albo wybierz mniej dni."
+        );
+        assert_eq!(
+            repeat_dates(first, &repeat(&every_day, 1, "2027-05-02"))
+                .unwrap()
+                .len(),
+            200
+        );
+    }
+
+    #[test]
+    fn add_series_keeps_local_time_across_dst_change() {
+        let db = db();
+        let now = at("2026-10-20 08:00");
+        let first = add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-23 09:00",
+                "2026-10-23 09:30",
+                "Daily",
+                &[1, 5],
+                1,
+                "2026-10-27",
+            ),
+            now,
+        )
+        .unwrap();
+        assert_eq!(first.start, at("2026-10-23 09:00"));
+        assert_eq!(first.series_id.as_deref(), Some(first.id.as_str()));
+        let list = all(&db);
+        assert_eq!(list.len(), 2);
+        let second = &list[1];
+        // 25.10.2026 zmiana czasu: dalej 9:00 lokalnie, o godzinę później w UTC.
+        assert_eq!(second.start, at("2026-10-26 09:00"));
+        assert_eq!(second.end, at("2026-10-26 09:30"));
+        assert_eq!(second.start - first.start, 3 * 24 * 60 * MIN + 60 * MIN);
+        assert_eq!(second.series_id, first.series_id);
+        assert_eq!(list[0].id, format!("manual:{now}"));
+        assert_eq!(second.id, format!("manual:{now}-2"));
+    }
+
+    #[test]
+    fn add_series_meeting_ending_at_midnight_and_all_day() {
+        let db = db();
+        let now = 1;
+        add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-24 23:30",
+                "2026-10-25 00:00",
+                "Nocne",
+                &[6, 7],
+                1,
+                "2026-10-25",
+            ),
+            now,
+        )
+        .unwrap();
+        let list = all(&db);
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1].start, at("2026-10-25 23:30"));
+        assert_eq!(list[1].end, at("2026-10-26 00:00"));
+
+        let mut oof = series_input(
+            "2026-10-24 00:00",
+            "2026-10-24 00:00",
+            "Urlop",
+            &[6, 7],
+            1,
+            "2026-10-25",
+        );
+        oof.all_day = true;
+        oof.show_as = "oof".into();
+        add(&db, &Warsaw, &oof, 2).unwrap();
+        let urlop: Vec<_> = all(&db)
+            .into_iter()
+            .filter(|e| e.subject == "Urlop")
+            .collect();
+        assert_eq!(urlop.len(), 2);
+        assert_eq!(
+            (urlop[1].start, urlop[1].end),
+            (at("2026-10-25 00:00"), at("2026-10-26 00:00"))
+        );
+        assert_eq!(urlop[1].end - urlop[1].start, 25 * 60 * MIN);
+    }
+
+    #[test]
+    fn add_series_in_spring_gap_moves_hour_forward() {
+        let db = db();
+        add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2027-03-27 02:30",
+                "2027-03-27 03:30",
+                "Wiosna",
+                &[7],
+                1,
+                "2027-03-28",
+            ),
+            1,
+        )
+        .unwrap();
+        let list = all(&db);
+        assert_eq!(list.len(), 2);
+        // 28.03.2027 02:30 nie istnieje: godzina przesuwa się na 03:30.
+        assert_eq!(list[1].start, at("2027-03-28 03:30"));
+        assert_eq!(list[1].end - list[1].start, 60 * MIN);
+    }
+
+    #[test]
+    fn add_series_continues_ids_after_taken_and_rejects_whole_series() {
+        let db = db();
+        let now = 5;
+        add(
+            &db,
+            &Warsaw,
+            &input("2026-10-19 08:00", "2026-10-19 08:30", "Jedno"),
+            now,
+        )
+        .unwrap();
+        let first = add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-19 10:00",
+                "2026-10-19 10:30",
+                "Cykl",
+                &[1, 2, 3],
+                1,
+                "2026-10-21",
+            ),
+            now,
+        )
+        .unwrap();
+        assert_eq!(first.id, "manual:5-2");
+        assert_eq!(first.series_id.as_deref(), Some("manual:5-2"));
+        let ids: Vec<String> = all(&db)
+            .into_iter()
+            .filter(|e| e.subject == "Cykl")
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(ids, ["manual:5-2", "manual:5-3", "manual:5-4"]);
+
+        let before = all(&db).len();
+        let too_many = series_input(
+            "2026-10-15 10:00",
+            "2026-10-15 10:30",
+            "Za dużo",
+            &[1, 2, 3, 4, 5, 6, 7],
+            1,
+            "2027-05-03",
+        );
+        assert!(add(&db, &Warsaw, &too_many, now)
+            .unwrap_err()
+            .contains("najwyżej 200 spotkań"));
+        assert_eq!(all(&db).len(), before);
+        // Walidacja spotkania idzie przed walidacją cyklu.
+        let empty = series_input("2026-10-15 10:00", "2026-10-15 10:30", " ", &[], 1, "x");
+        assert_eq!(
+            add(&db, &Warsaw, &empty, now).unwrap_err(),
+            "Podaj temat spotkania."
+        );
+    }
+
+    #[test]
+    fn update_with_repeat_is_rejected_and_keeps_series() {
+        let db = db();
+        let first = add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-19 10:00",
+                "2026-10-19 10:30",
+                "Cykl",
+                &[1, 2],
+                1,
+                "2026-10-20",
+            ),
+            1,
+        )
+        .unwrap();
+        let list = all(&db);
+        let second = list[1].clone();
+        let mut change = input("2026-10-20 11:00", "2026-10-20 11:45", "Zmienione");
+        change.repeat = Some(repeat(&[1], 1, "2026-10-27"));
+        assert_eq!(
+            update(&db, &Warsaw, &second.id, &change, 2).unwrap_err(),
+            "Cykl można ustawić tylko przy dodawaniu spotkania."
+        );
+        assert_eq!(get(&db, &second.id).unwrap().unwrap(), second);
+        assert_eq!(
+            update(&db, &Warsaw, "AAMkAD-outlook", &change, 2).unwrap_err(),
+            "Spotkania z Outlooka są tylko do odczytu."
+        );
+        change.repeat = None;
+        let changed = update(&db, &Warsaw, &second.id, &change, 2).unwrap();
+        assert_eq!(changed.subject, "Zmienione");
+        assert_eq!(changed.series_id, first.series_id);
+        assert_eq!(get(&db, &first.id).unwrap().unwrap(), list[0]);
+    }
+
+    #[test]
+    fn delete_following_removes_this_and_later_of_series_with_reminders() {
+        let db = db();
+        let a_all = [
+            "2026-10-19",
+            "2026-10-20",
+            "2026-10-21",
+            "2026-10-22",
+            "2026-10-23",
+        ];
+        add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-19 10:00",
+                "2026-10-19 10:30",
+                "A",
+                &[1, 2, 3, 4, 5],
+                1,
+                a_all[4],
+            ),
+            1,
+        )
+        .unwrap();
+        add(
+            &db,
+            &Warsaw,
+            &series_input(
+                "2026-10-19 11:00",
+                "2026-10-19 11:30",
+                "B",
+                &[1, 2, 3],
+                1,
+                "2026-10-21",
+            ),
+            2,
+        )
+        .unwrap();
+        add(
+            &db,
+            &Warsaw,
+            &input("2026-10-19 12:00", "2026-10-19 12:30", "C"),
+            3,
+        )
+        .unwrap();
+        let by = |subject: &str| -> Vec<CalendarEvent> {
+            all(&db)
+                .into_iter()
+                .filter(|e| e.subject == subject)
+                .collect()
+        };
+        let (a, b, c) = (by("A"), by("B"), by("C"));
+        assert_eq!((a.len(), b.len(), c.len()), (5, 3, 1));
+        for id in [&a[0].id, &a[2].id, &a[4].id, &b[2].id, &c[0].id] {
+            db.execute(
+                "INSERT INTO meeting_reminders(meeting_id,minutes) VALUES(?1,5)",
+                [id],
+            )
+            .unwrap();
+        }
+        assert_eq!(delete_following(&db, &a[2].id).unwrap(), 3);
+        assert_eq!(by("A"), a[..2].to_vec());
+        assert_eq!(by("B"), b);
+        assert_eq!(by("C"), c);
+        let mut left: Vec<String> = db
+            .prepare("SELECT meeting_id FROM meeting_reminders")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        left.sort();
+        let mut expected = vec![a[0].id.clone(), b[2].id.clone(), c[0].id.clone()];
+        expected.sort();
+        assert_eq!(left, expected);
+
+        // Bez cyklu działa jak `delete`, razem z nadpisaniem przypomnienia.
+        assert_eq!(delete_following(&db, &c[0].id).unwrap(), 1);
+        assert!(by("C").is_empty());
+        let reminders: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM meeting_reminders WHERE meeting_id=?1",
+                [&c[0].id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(reminders, 0);
+        assert_eq!(
+            delete_following(&db, "AAMkAD-outlook").unwrap_err(),
+            "Spotkania z Outlooka są tylko do odczytu."
+        );
+        assert_eq!(
+            delete_following(&db, "manual:404").unwrap_err(),
+            "Nie ma takiego spotkania."
         );
     }
 

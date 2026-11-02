@@ -31,6 +31,14 @@ export interface CalendarEvent {
   source?: "outlook" | "manual";
   /** Zadanie ręcznego spotkania („Dodaj jako czas” w Zamknięciu dnia). */
   taskId?: number | null;
+  /** Cykl ręcznego spotkania: identyfikator pierwszego wystąpienia (`series_id`); brak = pojedyncze. */
+  seriesId?: string | null;
+}
+/** Cykl nowego ręcznego spotkania (`meetings::MeetingRepeat`): dni ISO 1–7, co `interval` (1–8) tygodni, do `until` (RRRR-MM-DD, włącznie). */
+export interface MeetingRepeat {
+  days: number[];
+  interval: number;
+  until: string;
 }
 /** Dane formularza ręcznego spotkania (`meeting_add` / `meeting_update`). */
 export interface MeetingInput {
@@ -40,6 +48,8 @@ export interface MeetingInput {
   showAs: string;
   allDay: boolean;
   taskId: number | null;
+  /** Cykl, tylko przy dodawaniu (`meeting_add`); `meeting_update` z cyklem zwraca błąd. */
+  repeat?: MeetingRepeat | null;
 }
 /** Czy spotkanie jest ręczne (edycja i „Usuń”), a nie z Outlooka. */
 export const isManualMeeting = (e: CalendarEvent) => e.source === "manual";

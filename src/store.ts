@@ -7,6 +7,7 @@
  * - `src/preview/*.ts`: symulatory podglądu w localStorage (`snapshot`, `tasks`,
  *   `templates`, `agents`, `calendar`, `jira`, `jira-state`, `redmine`,
  *   `timesheet`, wspólne `storage`). Nie importują tego modułu.
+ * - `calendarapi.ts`: komendy kalendarza i ręcznych spotkań, eksportowane tu dalej.
  * - Ten moduł: cienka warstwa `desktop ? invoke : podgląd`, stan współdzielony
  *   przez widoki (`templates`, `jiraConnected`, `redmineConnected`) i nasłuch
  *   zdarzeń backendu.
@@ -38,12 +39,6 @@ import {
   type WaitingChange,
   type WidgetStatus,
 } from "./api/task";
-import {
-  calendarEvent,
-  type CalendarEvent,
-  type CalendarStatus,
-  type MeetingInput,
-} from "./api/calendar";
 import {
   jiraMoveEvent,
   jiraWatchEvent,
@@ -102,7 +97,6 @@ import * as agentsSim from "./preview/agents";
 import * as hooksSim from "./preview/hooks";
 import * as orcaSim from "./preview/orca";
 import * as aiSim from "./preview/ai";
-import * as calendarSim from "./preview/calendar";
 import * as jiraSim from "./preview/jira";
 import { previewJiraKey } from "./preview/jira-state";
 import * as timesheetSim from "./preview/timesheet";
@@ -112,6 +106,7 @@ import { previewRedmineKey, previewRedmineState } from "./preview/redmine";
 
 export * from "./api/task";
 export * from "./api/calendar";
+export * from "./calendarapi";
 export * from "./api/jira";
 export * from "./api/timesheet";
 export * from "./api/redmine";
@@ -552,65 +547,6 @@ export async function exportReport(
     return path ? { path } : null;
   }
   return tasksSim.exportReport(format, days, name);
-}
-export async function calendarStatus(): Promise<CalendarStatus> {
-  if (desktop) return invoke("calendar_status");
-  return calendarSim.calendarStatus();
-}
-/**
- * „Połącz konto Microsoft”: logowanie w przeglądarce i pierwsze pobranie.
- * Podgląd symuluje udane logowanie i „pobiera” spotkania z `sample`.
- */
-export async function calendarConnect(
-  clientId: string,
-  tenant: string,
-): Promise<CalendarStatus> {
-  if (desktop) return invoke("calendar_connect", { clientId, tenant });
-  return calendarSim.calendarConnect(clientId, tenant);
-}
-/** „Rozłącz”: usuwa token i spotkania; client ID i dzierżawca zostają. */
-export async function calendarDisconnect(): Promise<CalendarStatus> {
-  if (desktop) return invoke("calendar_disconnect");
-  return calendarSim.calendarDisconnect();
-}
-/** „Odśwież”: pobiera spotkania teraz. */
-export async function calendarRefresh(): Promise<CalendarStatus> {
-  if (desktop) return invoke("calendar_refresh");
-  return calendarSim.calendarRefresh();
-}
-/** Spotkania nakładające się na `[from, to)`, według początku. */
-export async function calendarEvents(
-  from: number,
-  to: number,
-): Promise<CalendarEvent[]> {
-  if (desktop) return invoke("calendar_events", { from, to });
-  return calendarSim.calendarEvents(from, to);
-}
-/** „Zapisz” nowego ręcznego spotkania (B12). */
-export async function meetingAdd(meeting: MeetingInput): Promise<CalendarEvent> {
-  if (desktop) return invoke("meeting_add", { meeting });
-  return calendarSim.meetingAdd(meeting);
-}
-/** „Zapisz” istniejącego ręcznego spotkania; spotkania z Outlooka są tylko do odczytu. */
-export async function meetingUpdate(
-  id: string,
-  meeting: MeetingInput,
-): Promise<CalendarEvent> {
-  if (desktop) return invoke("meeting_update", { id, meeting });
-  return calendarSim.meetingUpdate(id, meeting);
-}
-/** „Usuń” ręcznego spotkania. */
-export async function meetingDelete(id: string): Promise<void> {
-  if (desktop) return invoke("meeting_delete", { id });
-  return calendarSim.meetingDelete(id);
-}
-/** Nasłuch zmian kalendarza (pobranie, połączenie, rozłączenie, ręczne spotkania). */
-export async function onCalendarChanged(
-  handler: () => void,
-): Promise<() => void> {
-  if (desktop) return listen(calendarEvent, () => handler());
-  window.addEventListener(calendarEvent, handler);
-  return () => window.removeEventListener(calendarEvent, handler);
 }
 /**
  * Przejście w głównym oknie z innego okna (np. szybkiego przełączania):

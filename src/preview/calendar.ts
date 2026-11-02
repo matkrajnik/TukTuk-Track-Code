@@ -13,7 +13,9 @@ import {
   type CalendarStatus,
   type MeetingInput,
 } from "../api/calendar";
+import { meetingRepeatDays, occurrenceBounds } from "../meetingRepeat";
 import { dayBounds, dayKey } from "../time";
+import { forgetMeetingReminders } from "./reminders";
 import { read as readSnapshot } from "./snapshot";
 /** Dane podglądu: ustawienia, pobrane spotkania i spotkania „w chmurze” (`sample`). */
 interface PreviewCalendar {
@@ -150,6 +152,8 @@ interface StoredMeeting {
   showAs: string;
   allDay: boolean;
   taskId: number | null;
+  /** Tylko wiersze cyklu: id pierwszego wystąpienia (`series_id`). */
+  seriesId?: string;
 }
 function storedMeetings(): StoredMeeting[] {
   try {
@@ -224,23 +228,45 @@ function readOnly(id: string) {
 }
 export async function meetingAdd(input: MeetingInput): Promise<CalendarEvent> {
   const valid = await validMeeting(input);
+  // Walidacja spotkania idzie przed walidacją cyklu (jak w `meetings::add`).
+  const first = dayKey(valid.start);
+  const days = input.repeat ? meetingRepeatDays(first, input.repeat) : [first];
   const list = storedMeetings();
   const now = Date.now();
-  let id = `manual:${now}`;
-  for (let n = 2; list.some((m) => m.id === id); n++) id = `manual:${now}-${n}`;
-  saveMeetings([...list, { id, ...valid }]);
-  return toEvent(id);
+  const taken = new Set(list.map((m) => m.id));
+  let n = 1;
+  // Jak `meetings::fresh_id`: `manual:<now>`, potem `-2`, `-3`…
+  const nextId = () => {
+    for (;;) {
+      const id = n === 1 ? `manual:${now}` : `manual:${now}-${n}`;
+      if (!taken.has(id)) {
+        taken.add(id);
+        return id;
+      }
+      n++;
+    }
+  };
+  const firstId = nextId();
+  const series = input.repeat ? { seriesId: firstId } : {};
+  const added = days.map((day, i) => {
+    const [start, end] = i === 0 ? [valid.start, valid.end] : occurrenceBounds(valid, day);
+    return { id: i === 0 ? firstId : nextId(), ...valid, start, end, ...series };
+  });
+  saveMeetings([...list, ...added]);
+  return toEvent(firstId);
 }
 export async function meetingUpdate(
   id: string,
   input: MeetingInput,
 ): Promise<CalendarEvent> {
   readOnly(id);
+  if (input.repeat)
+    throw new Error("Cykl można ustawić tylko przy dodawaniu spotkania.");
   const valid = await validMeeting(input);
   const list = storedMeetings();
   const index = list.findIndex((m) => m.id === id);
   if (index < 0) throw new Error("Nie ma takiego spotkania.");
-  list[index] = { id, ...valid };
+  list[index] = { ...list[index], id, ...valid };
   saveMeetings(list);
   return toEvent(id);
 }
@@ -250,4 +276,19 @@ export async function meetingDelete(id: string): Promise<void> {
   if (!list.some((m) => m.id === id))
     throw new Error("Nie ma takiego spotkania.");
   saveMeetings(list.filter((m) => m.id !== id));
+  // Nadpisanie przypomnienia (C3) znika razem ze spotkaniem, jak w `meetings::delete`.
+  forgetMeetingReminders([id]);
+}
+/** Jak `meetings::delete_following`: to spotkanie i późniejsze z tego samego cyklu; bez cyklu jak `meetingDelete`. */
+export async function meetingDeleteFollowing(id: string): Promise<void> {
+  readOnly(id);
+  const list = storedMeetings();
+  const target = list.find((m) => m.id === id);
+  if (!target) throw new Error("Nie ma takiego spotkania.");
+  if (!target.seriesId) return meetingDelete(id);
+  const removed = list.filter(
+    (m) => m.seriesId === target.seriesId && m.start >= target.start,
+  );
+  saveMeetings(list.filter((m) => !removed.includes(m)));
+  forgetMeetingReminders(removed.map((m) => m.id));
 }

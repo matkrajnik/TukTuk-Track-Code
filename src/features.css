@@ -1220,6 +1220,10 @@ html.widget-root body {
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
+.meeting-repeat {
+  display: grid;
+  gap: 10px;
+}
 .meeting-form .meeting-type {
   width: 100%;
   padding: 11px;

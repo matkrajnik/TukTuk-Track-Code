@@ -44,6 +44,21 @@ function state(): State {
         : {},
   };
 }
+/**
+ * Jak `DELETE FROM meeting_reminders` w `meetings::delete` i
+ * `meetings::delete_following`: nadpisania usuniętych spotkań znikają.
+ */
+export function forgetMeetingReminders(meetingIds: readonly string[]): void {
+  const gone = new Set(meetingIds);
+  const s = state();
+  if (!Object.keys(s.meetings).some((id) => gone.has(id))) return;
+  save({
+    ...s,
+    meetings: Object.fromEntries(
+      Object.entries(s.meetings).filter(([id]) => !gone.has(id)),
+    ),
+  });
+}
 function save(next: State) {
   try {
     localStorage.setItem(remindersKey, JSON.stringify(next));

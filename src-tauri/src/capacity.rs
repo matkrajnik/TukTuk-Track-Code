@@ -185,6 +185,7 @@ mod tests {
             response: "accepted".into(),
             source: crate::calendar::OUTLOOK.into(),
             task_id: None,
+            series_id: None,
         }
     }
 

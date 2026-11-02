@@ -366,6 +366,291 @@ test("podgląd: walidacja komend ręcznych spotkań jak w meetings.rs", async ({
     );
   }, [at(TODAY, "09:00"), at(TODAY, "11:00")]);
   expect(sources).toEqual(["outlook:Daily WMS", `manual:${"x".repeat(200)}`]);
+
+  // Cykle: te same komunikaty i kolejność sprawdzeń co `meetings::repeat_dates`.
+  const repeat = await page.evaluate(
+    async ([start, end, to]) => {
+      const store = await import("/src/store.ts");
+      const base = {
+        start,
+        end,
+        subject: "Planning",
+        showAs: "busy",
+        allDay: false,
+        taskId: null as number | null,
+      };
+      const ok = { days: [1, 4], interval: 2, until: "2026-11-12" };
+      const error = async (p: Promise<unknown>) =>
+        p.then(
+          () => "ok",
+          (e: Error) => e.message,
+        );
+      const add = (cycle: object, extra = {}) =>
+        store.meetingAdd({ ...base, ...extra, repeat: cycle } as never);
+      const errors = [
+        await error(add({ ...ok, days: [] })),
+        await error(add({ ...ok, days: [0] })),
+        await error(add({ ...ok, days: [8] })),
+        await error(add({ ...ok, days: [1, 1] })),
+        await error(add({ ...ok, interval: 0 })),
+        await error(add({ ...ok, interval: 9 })),
+        await error(add({ ...ok, until: "2026-02-30" })),
+        await error(add({ ...ok, until: "2026-10-14" })),
+        await error(add({ ...ok, until: "2027-10-17" })),
+        await error(
+          add({ days: [1, 2, 3, 4, 5, 6, 7], interval: 1, until: "2027-05-03" }),
+        ),
+        await error(add(ok, { subject: " " })),
+        await error(store.meetingUpdate("manual:404", { ...base, repeat: ok })),
+        await error(store.meetingDeleteFollowing("m-daily")),
+        await error(store.meetingDeleteFollowing("manual:404")),
+      ];
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const local = (ms: number) => {
+        const d = new Date(ms);
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const created = await add(ok);
+      const series = async () =>
+        (await store.calendarEvents(start - 36e6, to)).filter(
+          (e) => e.seriesId === created.id,
+        );
+      const before = (await series()).map((e) => local(e.start));
+      await store.meetingDeleteFollowing((await series())[2].id);
+      const after = (await series()).map((e) => local(e.start));
+      return { errors, seriesId: created.seriesId === created.id, before, after };
+    },
+    [
+      at(TODAY, "10:00"),
+      at(TODAY, "10:30"),
+      Date.parse("2026-11-13T00:00:00+01:00"),
+    ],
+  );
+  expect(repeat.errors).toEqual([
+    "Wybierz co najmniej jeden dzień tygodnia.",
+    "Niepoprawne dni tygodnia cyklu.",
+    "Niepoprawne dni tygodnia cyklu.",
+    "Niepoprawne dni tygodnia cyklu.",
+    "Odstęp cyklu musi wynosić od 1 do 8 tygodni.",
+    "Odstęp cyklu musi wynosić od 1 do 8 tygodni.",
+    "Podaj poprawny ostatni dzień cyklu.",
+    "Ostatni dzień cyklu nie może być przed dniem spotkania.",
+    "Cykl może trwać najwyżej 366 dni.",
+    "Cykl może mieć najwyżej 200 spotkań. Skróć okres albo wybierz mniej dni.",
+    "Podaj temat spotkania.",
+    "Cykl można ustawić tylko przy dodawaniu spotkania.",
+    "Spotkania z Outlooka są tylko do odczytu.",
+    "Nie ma takiego spotkania.",
+  ]);
+  expect(repeat.seriesId).toBe(true);
+  // 26.10 po zmianie czasu: dalej 10:00 czasu lokalnego.
+  expect(repeat.before).toEqual([
+    "2026-10-15 10:00",
+    "2026-10-26 10:00",
+    "2026-10-29 10:00",
+    "2026-11-09 10:00",
+    "2026-11-12 10:00",
+  ]);
+  expect(repeat.after).toEqual(["2026-10-15 10:00", "2026-10-26 10:00"]);
+});
+
+const saved = (page: Page) =>
+  page.evaluate(() =>
+    JSON.parse(localStorage.getItem("tuktuk-track-preview-meetings-v1") ?? "[]"),
+  );
+/** Cykl „Daily zespołu” 13:00–13:30 od dziś (czw.) w dni robocze do śr. 21.10: 5 spotkań. */
+const series = () =>
+  ["2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21"].map(
+    (d, i) => ({
+      id: i ? `manual:10-${i + 1}` : "manual:10",
+      start: at(d, "13:00"),
+      end: at(d, "13:30"),
+      subject: "Daily zespołu",
+      showAs: "busy",
+      allDay: false,
+      taskId: null,
+      seriesId: "manual:10",
+    }),
+  );
+
+test("cykl: „Powtarzaj” w tablicy tygodnia tworzy spotkania w wielu dniach", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await nav(page, "Plan i historia");
+  await nav(page, "Tydzień");
+  await nav(page, "Tablica");
+  await page
+    .getByRole("button", { name: "Dodaj spotkanie: Czwartek 2026-10-15" })
+    .click();
+  const add = dialog(page, "Dodaj spotkanie");
+  await add.getByLabel("Temat", { exact: true }).fill("Daily zespołu");
+  await add.getByLabel("Od", { exact: true }).fill("13:00");
+  await add.getByLabel("Do", { exact: true }).fill("13:30");
+  await add.getByLabel("Powtarzaj", { exact: true }).check();
+
+  // Domyślnie dzień spotkania, co tydzień, do dnia + 3 miesiące.
+  await expect(add.getByLabel("czwartek", { exact: true })).toBeChecked();
+  await expect(add.getByLabel("poniedziałek", { exact: true })).not.toBeChecked();
+  await expect(add.getByLabel("Co ile tygodni")).toHaveValue("1");
+  const until = add.getByLabel("Ostatni dzień cyklu");
+  await expect(until).toHaveValue("2027-01-15");
+  const summary = add.locator(".meeting-repeat-summary");
+  await expect(summary).toHaveText("Powstanie 14 spotkań.");
+  await expect(add.getByLabel("Przypomnienie", { exact: true })).toHaveCount(0);
+
+  await until.fill("2026-10-14");
+  await expect(summary).toHaveText(
+    "Ostatni dzień cyklu nie może być przed dniem spotkania.",
+  );
+  for (const name of ["poniedziałek", "wtorek", "środa", "piątek"])
+    await add.getByLabel(name, { exact: true }).check();
+  await until.fill("2026-10-23");
+  await expect(summary).toHaveText("Powstanie 7 spotkań.");
+  // Zmiana „Dzień” nie podmienia dni, które użytkownik już wybrał.
+  await add.getByLabel("Dzień", { exact: true }).fill("2026-10-16");
+  await add.getByLabel("Dzień", { exact: true }).fill("2026-10-15");
+  await expect(add.getByLabel("poniedziałek", { exact: true })).toBeChecked();
+  await expect(summary).toHaveText("Powstanie 7 spotkań.");
+  await add.getByRole("button", { name: "Zapisz" }).click();
+  await expect(add).toHaveCount(0);
+
+  for (const day of ["Czwartek 2026-10-15", "Piątek 2026-10-16"])
+    await expect(
+      page.getByRole("progressbar", { name: `Pojemność: ${day}` }),
+    ).toHaveAttribute("title", "Cel 8:00 · spotkania 0:30 · zostaje 7:30");
+  await expect(
+    page.getByRole("progressbar", { name: "Pojemność: Środa 2026-10-14" }),
+  ).not.toHaveAttribute("title", /spotkania/);
+
+  const rows = await saved(page);
+  expect(rows.map((m: { start: number }) => m.start)).toEqual(
+    [15, 16, 19, 20, 21, 22, 23].map((d) => at(`2026-10-${d}`, "13:00")),
+  );
+  expect(
+    rows.every((m: { seriesId: string }) => m.seriesId === rows[0].id),
+  ).toBe(true);
+});
+
+test("cykl: edycja jednego wystąpienia nie zmienia innych, „Usuń to i kolejne” zostawia wcześniejsze", async ({
+  page,
+}) => {
+  await openPreview(page, { meetings: series() });
+  await openDay(page);
+  await nav(page, "Następny okres");
+  const open = (time: string) =>
+    chart(page)
+      .getByRole("button", {
+        name: `Spotkanie: Daily zespołu · ${time} · ręczne`,
+      })
+      .click();
+  await open("13:00–13:30");
+  const edit = dialog(page, "Edytuj spotkanie");
+  await expect(edit.locator(".meeting-series")).toHaveText(
+    "Spotkanie z cyklu. Zmiany dotyczą tylko tego spotkania.",
+  );
+  await expect(edit.getByLabel("Powtarzaj")).toHaveCount(0);
+  await edit.getByLabel("Od", { exact: true }).fill("13:15");
+  await edit.getByLabel("Do", { exact: true }).fill("13:45");
+  await edit.getByRole("button", { name: "Zapisz" }).click();
+  await expect(edit).toHaveCount(0);
+  const rows = await saved(page);
+  const byId = (id: string) =>
+    rows.find((m: { id: string }) => m.id === id);
+  expect(byId("manual:10-2")).toMatchObject({
+    start: at("2026-10-16", "13:15"),
+    seriesId: "manual:10",
+  });
+  expect(byId("manual:10")).toMatchObject({
+    start: at("2026-10-15", "13:00"),
+    subject: "Daily zespołu",
+  });
+  expect(byId("manual:10-3")).toMatchObject({ start: at("2026-10-19", "13:00") });
+
+  // 19.10: „Usuń to i kolejne” zostawia 15. i 16.10.
+  for (let i = 0; i < 3; i++) await nav(page, "Następny okres");
+  await open("13:00–13:30");
+  await dialog(page, "Edytuj spotkanie")
+    .getByRole("button", { name: "Usuń", exact: true })
+    .click();
+  const confirm = dialog(page, "Usunąć spotkanie?");
+  for (const name of ["Anuluj", "Usuń tylko to", "Usuń to i kolejne"])
+    await expect(confirm.getByRole("button", { name, exact: true })).toBeVisible();
+  await confirm
+    .getByRole("button", { name: "Usuń to i kolejne", exact: true })
+    .click();
+  await expect(chart(page).locator(".dtl-meeting")).toHaveCount(0);
+  expect((await saved(page)).map((m: { id: string }) => m.id)).toEqual([
+    "manual:10",
+    "manual:10-2",
+  ]);
+
+  // 16.10: „Usuń tylko to” usuwa jedno wystąpienie.
+  for (let i = 0; i < 3; i++) await nav(page, "Poprzedni okres");
+  await open("13:15–13:45");
+  await dialog(page, "Edytuj spotkanie")
+    .getByRole("button", { name: "Usuń", exact: true })
+    .click();
+  await dialog(page, "Usunąć spotkanie?")
+    .getByRole("button", { name: "Usuń tylko to", exact: true })
+    .click();
+  await expect(dialog(page, "Usunąć spotkanie?")).toHaveCount(0);
+  await expect
+    .poll(async () => (await saved(page)).map((m: { id: string }) => m.id))
+    .toEqual(["manual:10"]);
+});
+
+test("podgląd: usunięcie spotkania kasuje nadpisania przypomnień jak meetings.rs", async ({
+  page,
+}) => {
+  await openPreview(page, { meetings: series() });
+  const left = await page.evaluate(async () => {
+    const store = await import("/src/store.ts");
+    const reminders = await import("/src/remindersapi.ts");
+    for (const id of [
+      "manual:10",
+      "manual:10-2",
+      "manual:10-3",
+      "manual:10-4",
+      "manual:10-5",
+      "manual:99",
+    ])
+      await reminders.meetingReminderSet(id, 5);
+    await store.meetingDelete("manual:10-2");
+    await store.meetingDeleteFollowing("manual:10-4");
+    return (await reminders.meetingReminderList())
+      .map((o: { meetingId: string }) => o.meetingId)
+      .sort();
+  });
+  expect(left).toEqual(["manual:10", "manual:10-3", "manual:99"]);
+});
+
+test("cykl: przypomnienie wybrane przed „Powtarzaj” nie tworzy nadpisania", async ({
+  page,
+}) => {
+  await openPreview(page);
+  await nav(page, "Plan i historia");
+  await nav(page, "Tydzień");
+  await nav(page, "Tablica");
+  await page
+    .getByRole("button", { name: "Dodaj spotkanie: Czwartek 2026-10-15" })
+    .click();
+  const add = dialog(page, "Dodaj spotkanie");
+  await add.getByLabel("Temat", { exact: true }).fill("Daily zespołu");
+  await add.getByLabel("Od", { exact: true }).fill("13:00");
+  await add.getByLabel("Do", { exact: true }).fill("13:30");
+  await add.getByLabel("Przypomnienie", { exact: true }).selectOption("5");
+  await add.getByLabel("Powtarzaj", { exact: true }).check();
+  await add.getByLabel("Ostatni dzień cyklu").fill("2026-10-29");
+  await add.getByRole("button", { name: "Zapisz" }).click();
+  await expect(add).toHaveCount(0);
+  expect((await saved(page)).length).toBe(3);
+  // Spotkania z cyklu mają domyślne przypomnienie: bez nadpisań.
+  const overrides = await page.evaluate(async () => {
+    const reminders = await import("/src/remindersapi.ts");
+    return reminders.meetingReminderList();
+  });
+  expect(overrides).toEqual([]);
 });
 
 test("Zadania → Dzisiaj bez kalendarza i bez spotkań: „Dodaj spotkanie”, koniec o północy", async ({
