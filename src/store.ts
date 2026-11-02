@@ -23,6 +23,7 @@ import {
   widgetEvent,
   type AgentBinding,
   type AgentHooksStatus,
+  type ExternalApiInfo,
   type Autostart,
   type BrowserStatus,
   type ExportFormat,
@@ -580,6 +581,11 @@ export async function saveWeekNote(week: string, text: string): Promise<string> 
 export async function agentHooksStatus(): Promise<AgentHooksStatus> {
   if (desktop) return invoke("agent_hooks_status");
   return hooksSim.agentHooksStatus();
+}
+/** `external_api_info`: ścieżka tuktuk-track-ctl.exe do Ustawień (w podglądzie brak). */
+export async function externalApiInfo(): Promise<ExternalApiInfo> {
+  if (desktop) return invoke("external_api_info");
+  return hooksSim.externalApiInfo();
 }
 /** `ai_status`: wykryte CLI, wybrany silnik i czy pokazać dialog pierwszego uruchomienia (A1). */
 export async function aiStatus(): Promise<AiStatus> {

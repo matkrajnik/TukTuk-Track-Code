@@ -86,6 +86,35 @@ pub fn read_frame<R: Read>(r: &mut R) -> Result<Option<Vec<u8>>, FrameError> {
     Ok(Some(body))
 }
 
+/// Klient potoku: wysyła ramkę do aplikacji i czeka na odpowiedź. Zajęty potok
+/// (inna wiadomość w toku) próbujemy otworzyć jeszcze kilka razy.
+pub fn exchange(pipe: &str, body: &[u8]) -> Result<Vec<u8>, FrameError> {
+    const PIPE_BUSY: i32 = 231;
+    let mut attempt = 0;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true);
+    // Serwer potoku może tylko sprawdzić tożsamość klienta, nie działać w jego
+    // imieniu (obcy proces, który zajął nazwę potoku, nie dostaje tokenu).
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const SECURITY_IDENTIFICATION: u32 = 1 << 16;
+        options.security_qos_flags(SECURITY_IDENTIFICATION);
+    }
+    let mut file = loop {
+        match options.open(pipe) {
+            Ok(f) => break f,
+            Err(e) if e.raw_os_error() == Some(PIPE_BUSY) && attempt < 20 => {
+                attempt += 1;
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => return Err(FrameError::Io(e)),
+        }
+    };
+    write_frame(&mut file, body)?;
+    read_frame(&mut file)?.ok_or(FrameError::Truncated)
+}
+
 /// Nazwa użytkownika Windows w nazwie potoku: tylko litery, cyfry, `.`, `_`, `-`.
 pub fn sanitize_user(user: &str) -> String {
     let clean: String = user

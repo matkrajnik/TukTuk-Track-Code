@@ -25,6 +25,12 @@ path = "src/bin/hook.rs"
 name = "tuktuk-track-mcp"
 path = "src/bin/mcp.rs"
 
+# Sterowanie pomiarem z innych programów (zewnętrzne API, `api.rs`); instalator
+# dołącza go obok aplikacji.
+[[bin]]
+name = "tuktuk-track-ctl"
+path = "src/bin/ctl.rs"
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

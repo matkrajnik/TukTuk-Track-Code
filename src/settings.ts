@@ -17,6 +17,8 @@ export interface AppSettings {
   browserExtension: boolean;
   /** Hooki agentów (Claude Code, Codex): wpisy w ich plikach ustawień (B8). */
   agentHooks: boolean;
+  /** Zewnętrzne sterowanie pomiarem: potok dla innych programów i tuktuk-track-ctl.exe. */
+  externalApi: boolean;
   /** Ścieżka do `orca.cmd` (B9); pusta = wykrywana. */
   orcaPath: string;
   /** Uruchamiaj Orkę, gdy nie działa (B9). */
@@ -140,6 +142,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   windowSuggest: false,
   browserExtension: false,
   agentHooks: true,
+  externalApi: false,
   orcaPath: "",
   orcaAutostart: false,
   targetDayMinutes: 480,

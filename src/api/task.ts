@@ -373,5 +373,9 @@ export interface BrowserStatus {
   /** Folder do „Załaduj rozpakowane”; `null`, gdy nie znaleziono. */
   extensionFolder: string | null;
 }
+/** `api::Info`: ścieżka tuktuk-track-ctl.exe obok aplikacji (`null`, gdy go nie ma). */
+export interface ExternalApiInfo {
+  ctlPath: string | null;
+}
 /** Stały identyfikator rozszerzenia (`browser::EXTENSION_ID`). */
 export const browserExtensionId = "cecpcpkmmmkgfdklnkkkigofkcibnhbl";

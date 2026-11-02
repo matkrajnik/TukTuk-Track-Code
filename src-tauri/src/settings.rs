@@ -25,6 +25,9 @@ pub struct AppSettings {
     /// Hooki agentów (B8): wpisy w `~/.claude/settings.json` i `~/.codex/hooks.json`,
     /// z których aplikacja wie, że agent pracuje albo czeka na zgodę.
     pub agent_hooks: bool,
+    /// Zewnętrzne sterowanie pomiarem (`api.rs`): potok dla innych programów
+    /// i `tuktuk-track-ctl.exe`; domyślnie wyłączone.
+    pub external_api: bool,
     /// Ścieżka do `orca.cmd` (B9); pusta = wykrywana (katalog Programs\orca w LOCALAPPDATA).
     pub orca_path: String,
     /// Uruchamiaj Orkę, gdy nie działa (B9); domyślnie wyłączone.
@@ -193,6 +196,7 @@ impl Default for AppSettings {
             window_suggest: false,
             browser_extension: false,
             agent_hooks: true,
+            external_api: false,
             orca_path: String::new(),
             orca_autostart: false,
             target_day_minutes: 480,

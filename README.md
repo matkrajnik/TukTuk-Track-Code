@@ -463,6 +463,37 @@ Rozszerzenie z folderu `browser-extension/` podpowiada zadanie ze zgłoszenia Ji
 
 Co jest wysyłane: adres i tytuł aktywnej karty tylko dla domen z listy dozwolonych, nazwa przeglądarki (Chrome, Edge…), a dla innych stron i przeglądarki w tle samo „clear”. Aplikacja trzyma w pamięci tylko rozpoznany klucz zgłoszenia przez 30 s; nic nie trafia do bazy ani logów. Przy włączonym rozszerzeniu aplikacja co 5 s sprawdza, który program jest na pierwszym planie (nazwa procesu); tytuł okna czyta tylko przy włączonych „Podpowiedziach z aktywnego okna”.
 
+## Sterowanie pomiarem z innych programów
+
+Inny program (skrypt, narzędzie do zgłoszeń, automatyzacja) może dodać zadanie i od razu uruchomić jego pomiar (poprzedni pomiar staje), zatrzymać pomiar i odczytać, co jest teraz mierzone. Okno, tray i widget pokazują zmianę od razu.
+
+1. **Ustawienia → Agenci → „Pozwól innym programom sterować pomiarem”**: włącz (domyślnie wyłączone; wtedy każde żądanie dostaje `DISABLED`).
+2. Wywołuj `tuktuk-track-ctl.exe` z folderu instalacji (ścieżka jest w Ustawieniach) albo pisz bezpośrednio do nazwanego potoku `\\.\pipe\tuktuk-track-api-<użytkownik Windows>`.
+
+```bat
+tuktuk-track-ctl add "Przegląd PR 42" --start
+tuktuk-track-ctl add --jira WMS-123 --start
+tuktuk-track-ctl add "Na później"
+tuktuk-track-ctl status
+tuktuk-track-ctl stop
+tuktuk-track-ctl --json "{\"action\":\"add\",\"title\":\"Raport\",\"start\":true}"
+```
+
+Odpowiedź to jeden wiersz JSON na stdout (UTF-8), np. `status` w trakcie pomiaru:
+
+```json
+{"ok":true,"data":{"running":true,"task":{"id":12,"title":"Przegląd PR 42","jiraKey":null,"redmineId":null},"startedAt":"2026-11-02T09:15:00+01:00","startedAtMs":1793607300000,"elapsedSeconds":1530}}
+```
+
+- `add` zwraca `taskId`, `title`, `started`, `dayResumed` i `status`; `stop` zwraca `stopped` (`taskId`, `title`, `durationSeconds` albo `null`, gdy nic nie było mierzone) i `status`.
+- Błąd: `{"ok":false,"code":"…","error":"komunikat po polsku"}`. Kody: `DISABLED`, `BAD_REQUEST` (zły JSON, nieznana akcja albo pole), `INVALID` (np. pusty tytuł, klucz Jiry bez połączonej Jiry, zgłoszenie, które ma już zadanie), `STORAGE`, `NOT_RUNNING` (aplikacja nie działa), `UNAVAILABLE` (potok istnieje, ale połączenie się nie udało).
+- Kod wyjścia programu: `0` ok, `1` błąd z aplikacji, `2` złe wywołanie, `3` aplikacja nie działa albo nie odpowiada.
+- `--jira KLUCZ` i `--redmine NUMER` wiążą zadanie ze zgłoszeniem jak szybkie dodawanie (wymaga połączonego konta); bez tytułu tytuł pochodzi z ostatnio pobranej listy zgłoszeń.
+- Start po zakończonym dniu wznawia dzień bez pytania (`dayResumed: true`).
+- Bez programu: ramka to 4 bajty długości (little-endian) i JSON w UTF-8 (limit 1 MB), np. `{"action":"stop"}`; jedno połączenie to jedno żądanie i jedna odpowiedź, a na ramkę aplikacja czeka 5 s.
+
+Bezpieczeństwo: potok przyjmuje tylko połączenia z tego komputera, a inne konta Windows nie mogą do niego pisać. Sterować pomiarem może każdy program uruchomiony na Twoim koncie, dlatego ustawienie jest domyślnie wyłączone. Treść żądań nie trafia do logów.
+
 ## Przypomnienie w tle
 
 Gdy główne okno jest schowane lub nie ma fokusu, a żaden pomiar nie jest aktywny, backend odlicza 5 minut (sprawdzanie co 2 sekundy). Następnie pokazuje małe okno nad innymi aplikacjami, bez przejmowania fokusu. „Wpisz zadanie” przywraca główne okno i ustawia kursor w polu nowego zadania; można też rozpocząć istniejące zadanie lub zgłoszenie z Jiry. „Za 5 minut” oraz krzyżyk odkładają przypomnienie. Uruchomienie pomiaru albo powrót do głównego okna resetują odliczanie. Samo posiadanie zadań na liście nie wyłącza przypomnienia — istotny jest aktywny pomiar.

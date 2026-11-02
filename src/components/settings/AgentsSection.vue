@@ -8,6 +8,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   agentHooksStatus,
+  externalApiInfo,
   orcaStatus,
   type AgentHooksStatus,
   type OrcaStatus,
@@ -90,10 +91,21 @@ const orcaInfo = computed(() => {
   return "Nie znaleziono orca.cmd. Zainstaluj Orkę albo podaj ścieżkę.";
 });
 
+/** Ścieżka tuktuk-track-ctl.exe (zewnętrzne sterowanie pomiarem). */
+const ctlPath = ref<string | null>(null);
+async function loadCtl() {
+  try {
+    ctlPath.value = (await externalApiInfo()).ctlPath;
+  } catch {
+    ctlPath.value = null;
+  }
+}
+
 let timer: number | undefined;
 onMounted(() => {
   void load();
   void loadOrca();
+  void loadCtl();
   // Zdarzenia przychodzą co kilka sekund.
   timer = window.setInterval(() => void load(), 5_000);
 });
@@ -136,6 +148,31 @@ watch(
     <p v-if="status.error" class="error">{{ status.error }}</p>
     <p v-if="loadError" class="error" role="alert">{{ loadError }}</p>
   </div>
+  <h3>Zewnętrzne aplikacje</h3>
+  <label class="inline-check"
+    ><input
+      :checked="settings.externalApi"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ externalApi: checked($event) })"
+    />Pozwól innym programom sterować pomiarem</label
+  >
+  <p class="hint">
+    Programy uruchomione na tym koncie Windows mogą dodać zadanie (i od razu
+    uruchomić jego pomiar), zatrzymać pomiar i odczytać, co jest teraz mierzone.
+    Służy do tego program tuktuk-track-ctl.exe, np.
+    <code class="mono">tuktuk-track-ctl add "Przegląd PR" --start</code>, albo
+    nazwany potok \\.\pipe\tuktuk-track-api-&lt;użytkownik&gt;. Start po
+    zakończonym dniu wznawia dzień bez pytania. Wyłączone: każde żądanie jest
+    odrzucane.
+  </p>
+  <p class="hint" role="status" aria-label="Stan tuktuk-track-ctl.exe">
+    {{
+      ctlPath
+        ? `Program: ${ctlPath}`
+        : "Program tuktuk-track-ctl.exe jest dostępny w zainstalowanej aplikacji."
+    }}
+  </p>
   <h3>Orca</h3>
   <p class="hint">
     Akcja „Otwórz worktree w Orce” na rozwiniętym kafelku zadania ze zgłoszeniem

@@ -7,7 +7,11 @@
  * (`PreviewHookEvent`) w kolejności przyjścia.
  */
 import { previewJson, previewSettingsKey } from "./storage";
-import type { AgentHooksStatus, HookEventRow } from "../api/task";
+import type {
+  AgentHooksStatus,
+  ExternalApiInfo,
+  HookEventRow,
+} from "../api/task";
 
 export const agentHooksKey = "tuktuk-track-preview-agent-hooks-v1";
 /** Sesja bez zdarzeń tak długo kończy się sama (`hooks::SILENCE`). */
@@ -262,6 +266,11 @@ export function previewFirstPrompt(
     (s) => s.agent === agent && s.sessionId === sessionId,
   );
   return found?.firstPrompt ?? null;
+}
+
+/** `external_api_info` w podglądzie: nie ma programu tuktuk-track-ctl.exe. */
+export async function externalApiInfo(): Promise<ExternalApiInfo> {
+  return { ctlPath: null };
 }
 
 /** `agent_hooks_status` w podglądzie. */

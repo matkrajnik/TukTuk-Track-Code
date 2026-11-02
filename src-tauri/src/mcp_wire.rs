@@ -12,9 +12,8 @@
 //! Nic nie trafia na dysk ani do logów.
 #![allow(dead_code)]
 
-use crate::native_msg::{self, read_frame, write_frame, FrameError};
+use crate::native_msg::{self, FrameError};
 use serde_json::{json, Value};
-use std::time::Duration;
 
 /// Nazwa serwera MCP w rejestracji i w `serverInfo`.
 pub const SERVER_NAME: &str = "tuktuk-track";
@@ -303,27 +302,9 @@ pub fn request(tool: &str, arguments: &Value, cwd: Option<&str>) -> Vec<u8> {
     serde_json::to_vec(&frame).unwrap_or_default()
 }
 
-/// Wysyła ramkę do aplikacji i czeka na odpowiedź. Zajęty potok (inna wiadomość
-/// w toku) próbujemy otworzyć jeszcze kilka razy.
+/// Wysyła ramkę do aplikacji i czeka na odpowiedź (`native_msg::exchange`).
 pub fn forward_to(pipe: &str, body: &[u8]) -> Result<Vec<u8>, FrameError> {
-    const PIPE_BUSY: i32 = 231;
-    let mut attempt = 0;
-    let mut file = loop {
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(pipe)
-        {
-            Ok(f) => break f,
-            Err(e) if e.raw_os_error() == Some(PIPE_BUSY) && attempt < 20 => {
-                attempt += 1;
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => return Err(FrameError::Io(e)),
-        }
-    };
-    write_frame(&mut file, body)?;
-    read_frame(&mut file)?.ok_or(FrameError::Truncated)
+    native_msg::exchange(pipe, body)
 }
 
 /// Wywołanie narzędzia przez potok `pipe` z katalogu roboczego `cwd` sesji agenta.

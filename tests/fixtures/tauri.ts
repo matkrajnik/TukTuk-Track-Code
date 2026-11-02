@@ -700,6 +700,11 @@ function install(init: {
           };
         case "calendar_events":
           return [];
+        // Zewnętrzne sterowanie: program obok aplikacji; logika potoku w `api.rs`.
+        case "external_api_info":
+          return {
+            ctlPath: "C:\\Program Files\\TukTuk Track\\tuktuk-track-ctl.exe",
+          };
         // Rozszerzenie przeglądarki (W4) bez połączenia; logika w `browser.rs`.
         case "browser_status":
           return {

@@ -4,6 +4,8 @@ mod agents;
 mod ai;
 mod ai_chat;
 mod ai_privacy;
+mod api;
+mod api_wire;
 mod assign;
 mod autostart;
 mod backup;
@@ -556,6 +558,8 @@ fn main() {
             // Serwer MCP dla agentów (A2): potok z wywołaniami narzędzi i rejestracja
             // w Claude Code i Codexie zgodna z ustawieniem `ai_mcp` (ścieżka exe po aktualizacji).
             mcp::start(app.handle());
+            // Zewnętrzne sterowanie pomiarem: potok dla innych programów (`external_api`).
+            api::start(app.handle());
             mcp::sync_at_startup(app.handle());
             jira::start(app.handle());
             // Obserwacja przypisań w Redmine (R3): osobny wątek, niezależny od Jiry.
@@ -654,6 +658,7 @@ fn main() {
             gap::gap_resolve,
             agents::agents_status,
             hooks::agent_hooks_status,
+            api::external_api_info,
             browser::browser_status,
             browser::browser_open_folder,
             agents::agent_bindings,
