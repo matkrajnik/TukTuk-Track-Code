@@ -617,11 +617,11 @@ pub fn start(app: &tauri::AppHandle) {
 
 #[cfg(windows)]
 pub(crate) mod pipe {
-    use crate::native_msg::{write_frame, MAX};
+    use crate::native_msg::win::{SecurityAttributes, TimedReader, UserOnly};
+    use crate::native_msg::{read_frame, write_frame};
     use serde_json::Value;
     use std::ffi::c_void;
     use std::fs::File;
-    use std::io::Read;
     use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -645,14 +645,6 @@ pub(crate) mod pipe {
         fn FlushFileBuffers(file: Handle) -> i32;
         fn GetLastError() -> u32;
         fn CloseHandle(handle: Handle) -> i32;
-        fn PeekNamedPipe(
-            pipe: Handle,
-            buffer: *mut c_void,
-            size: u32,
-            read: *mut u32,
-            available: *mut u32,
-            left: *mut u32,
-        ) -> i32;
     }
     const PIPE_ACCESS_DUPLEX: u32 = 0x3;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x0008_0000;
@@ -660,7 +652,9 @@ pub(crate) mod pipe {
     const PIPE_UNLIMITED_INSTANCES: u32 = 255;
     const ERROR_PIPE_CONNECTED: u32 = 535;
 
-    fn create(name: &[u16], first: bool) -> Result<Handle, String> {
+    /// Instancja potoku dostępna tylko dla bieżącego użytkownika i SYSTEM.
+    fn create(name: &[u16], first: bool, security: &UserOnly) -> Result<Handle, String> {
+        let mut attributes = security.attributes();
         let flags = PIPE_ACCESS_DUPLEX
             | if first {
                 FILE_FLAG_FIRST_PIPE_INSTANCE
@@ -677,7 +671,7 @@ pub(crate) mod pipe {
                 64 * 1024,
                 64 * 1024,
                 0,
-                std::ptr::null_mut(),
+                (&mut attributes as *mut SecurityAttributes).cast(),
             )
         };
         if h.is_null() || h as isize == -1 {
@@ -694,62 +688,19 @@ pub(crate) mod pipe {
     /// Odstęp ponowień, gdy nie da się utworzyć kolejnej instancji potoku.
     const RETRY_DELAY: Duration = Duration::from_secs(1);
 
-    /// Czyta dokładnie `buf.len()` bajtów, ale tylko tyle, ile jest już w potoku
-    /// (`PeekNamedPipe`), więc odczyt nie blokuje dłużej niż do `deadline`.
-    fn read_by(file: &mut File, buf: &mut [u8], deadline: Instant) -> bool {
-        let h = file.as_raw_handle() as Handle;
-        let mut got = 0;
-        while got < buf.len() {
-            let mut avail = 0u32;
-            let ok = unsafe {
-                PeekNamedPipe(
-                    h,
-                    std::ptr::null_mut(),
-                    0,
-                    std::ptr::null_mut(),
-                    &mut avail,
-                    std::ptr::null_mut(),
-                )
-            };
-            if ok == 0 {
-                return false;
-            }
-            if avail == 0 {
-                if Instant::now() >= deadline {
-                    return false;
-                }
-                std::thread::sleep(Duration::from_millis(10));
-                continue;
-            }
-            let want = (buf.len() - got).min(avail as usize);
-            match file.read(&mut buf[got..got + want]) {
-                Ok(0) | Err(_) => return false,
-                Ok(n) => got += n,
-            }
-        }
-        true
-    }
-
     /// Jedna ramka (jak `native_msg::read_frame`) z limitem czasu.
     fn read_frame_by(file: &mut File, deadline: Instant) -> Option<Vec<u8>> {
-        let mut len = [0u8; 4];
-        if !read_by(file, &mut len, deadline) {
-            return None;
-        }
-        let size = u32::from_le_bytes(len) as usize;
-        if size > MAX {
-            return None;
-        }
-        let mut body = vec![0u8; size];
-        read_by(file, &mut body, deadline).then_some(body)
+        read_frame(&mut TimedReader::new(file, deadline))
+            .ok()
+            .flatten()
     }
 
     /// Kolejna instancja potoku; przy błędzie (np. brak zasobów) próbuje dalej co
     /// [`RETRY_DELAY`] zamiast kończyć serwer.
-    fn create_next(name: &[u16]) -> Handle {
+    fn create_next(name: &[u16], security: &UserOnly) -> Handle {
         let mut reported = false;
         loop {
-            match create(name, false) {
+            match create(name, false, security) {
                 Ok(h) => return h,
                 Err(e) => {
                     if !reported {
@@ -811,19 +762,20 @@ pub(crate) mod pipe {
         let wide: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
         let handle: Arc<dyn Fn(&[u8]) -> Value + Send + Sync> = Arc::new(handle);
         let active = Arc::new(AtomicUsize::new(0));
-        let mut pipe = create(&wide, true)?;
+        let security = UserOnly::new().map_err(|e| format!("zabezpieczenia potoku: {e}"))?;
+        let mut pipe = create(&wide, true, &security)?;
         loop {
             let ok = unsafe { ConnectNamedPipe(pipe, std::ptr::null_mut()) } != 0
                 || unsafe { GetLastError() } == ERROR_PIPE_CONNECTED;
             // Zwykle kolejna instancja powstaje przed oddaniem bieżącej; gdy się nie
             // da, bieżący klient jest obsłużony, a tworzenie ponawiane.
-            let next = create(&wide, false).ok();
+            let next = create(&wide, false, &security).ok();
             if ok {
                 dispatch(pipe, timeout, &active, &handle);
             } else {
                 unsafe { CloseHandle(pipe) };
             }
-            pipe = next.unwrap_or_else(|| create_next(&wide));
+            pipe = next.unwrap_or_else(|| create_next(&wide, &security));
         }
     }
 }
@@ -1308,6 +1260,89 @@ mod tests {
         }
         // Druga instancja serwera pod tą samą nazwą nie przejmie potoku.
         assert!(pipe::serve(&name, |_| json!({})).is_err());
+    }
+
+    /// Serwer testowy pod unikalną nazwą; zwraca nazwę, gdy potok już przyjmuje klientów.
+    #[cfg(windows)]
+    fn spawn_server(
+        prefix: &str,
+        handle: impl Fn(&[u8]) -> Value + Send + Sync + 'static,
+    ) -> String {
+        let name = native_msg::pipe_name_for(&format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            crate::db::now()
+        ));
+        let server = name.clone();
+        std::thread::spawn(move || {
+            let _ = pipe::serve(&server, handle);
+        });
+        // Otwarte i od razu zamknięte połączenie serwer po prostu pomija.
+        drop(open_pipe(&name));
+        name
+    }
+
+    /// Połączenie z potokiem testowym; ponawia, póki serwer nie wystawi instancji.
+    #[cfg(windows)]
+    fn open_pipe(name: &str) -> std::fs::File {
+        for _ in 0..100 {
+            if let Ok(f) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(name)
+            {
+                return f;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        panic!("potok niedostępny");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pipe_dacl_allows_only_current_user_and_system() {
+        let name = spawn_server("dacl", |_| json!({ "ok": true }));
+        let f = open_pipe(&name);
+        let sid = native_msg::win::current_user_string().unwrap();
+        // GA dla obiektu pliku Windows zapisuje jako FA (FILE_ALL_ACCESS).
+        assert_eq!(
+            native_msg::win::dacl_sddl(&f).unwrap(),
+            format!("D:P(A;;FA;;;{sid})(A;;FA;;;SY)")
+        );
+        // Właściciel to użytkownik: na tym opiera się sprawdzenie klienta, gdy
+        // aplikacja działa z podwyższonymi uprawnieniami.
+        assert!(native_msg::win::pipe_owner_is_current_user(&f).unwrap());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exchange_verifies_server_and_returns_reply() {
+        let name = spawn_server("exchange", |body| {
+            let msg: Value = serde_json::from_slice(body).unwrap_or_default();
+            json!({ "echo": msg["type"] })
+        });
+        let reply = native_msg::exchange(&name, br#"{"type":"page"}"#).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&reply).unwrap(),
+            json!({ "echo": "page" })
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exchange_gives_up_when_app_does_not_answer() {
+        use std::time::{Duration, Instant};
+        let name = spawn_server("stuck", |_| {
+            std::thread::sleep(Duration::from_secs(3));
+            json!({ "ok": true })
+        });
+        let started = Instant::now();
+        let err = native_msg::exchange_with(&name, b"{}", Duration::from_millis(300)).unwrap_err();
+        assert!(
+            matches!(&err, FrameError::Io(e) if e.kind() == std::io::ErrorKind::TimedOut),
+            "{err}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     #[cfg(windows)]
