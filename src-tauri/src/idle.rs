@@ -5,6 +5,9 @@ use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 /// Jak długo pamiętamy, nad czym pracowali agenci (do przypisania przerwy).
 const SEEN_KEEP: i64 = 24 * 3_600_000;
+/// Najkrótsza przerwa: bezczynność (`Clock::observe`) i przerwa w pracy
+/// aplikacji (`gap::recover`).
+pub(crate) const BREAK_MIN: i64 = 600_000;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Notice {
@@ -75,15 +78,15 @@ impl Clock {
             return false;
         };
         let idle_ms = user_idle.min(agent_idle);
-        if idle_ms >= 600_000 {
+        if i64::from(idle_ms) >= BREAK_MIN {
             if self.candidate.as_ref().map(|v| v.0) != Some(id) {
                 self.candidate = Some((id, task, (now - i64::from(idle_ms)).max(start)));
                 self.away_since = Some((now - i64::from(user_idle)).max(start));
             }
-        } else if user_idle >= 600_000 {
+        } else if i64::from(user_idle) >= BREAK_MIN {
             self.candidate = None;
         } else if let Some((old_id, task, at)) = self.candidate.take() {
-            if old_id == id && self.pending.is_none() && now - at >= 600_000 {
+            if old_id == id && self.pending.is_none() && now - at >= BREAK_MIN {
                 let since = self.away_since.unwrap_or(at).min(at);
                 self.pending = Some(Notice {
                     session_id: id,
@@ -137,63 +140,69 @@ pub fn setup(app: &tauri::AppHandle) {
 }
 
 /// Pętla co 2 s sprawdzająca bezczynność. Kończy się, gdy okno main zniknie,
-/// więc wołać po `create_windows`.
+/// więc wołać po `create_windows`. Zapisuje też puls życia aplikacji (`gap::tick`).
 pub fn start(app: &tauri::AppHandle) {
     let app = app.clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(std::time::Duration::from_secs(2));
-        let Some(_) = app.get_webview_window("main") else {
-            break;
-        };
-        let Some(settings) = app
-            .state::<Database>()
-            .0
-            .lock()
-            .ok()
-            .map(|db| crate::settings::cached(&app, &db))
-        else {
-            continue;
-        };
-        if !settings.idle_enabled {
-            if let Ok(mut state) = app.state::<State>().0.lock() {
-                *state = Clock::default();
+    std::thread::spawn(move || {
+        let mut beat = crate::gap::Beat::default();
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Some(_) = app.get_webview_window("main") else {
+                break;
+            };
+            // Puls życia (gap.rs) przed wyjściami zależnymi od ustawień bezczynności
+            // i od systemu (`idle_ms` poza Windows): niezależny od nich.
+            crate::gap::tick(&app, &mut beat, db::now());
+            let Some(settings) = app
+                .state::<Database>()
+                .0
+                .lock()
+                .ok()
+                .map(|db| crate::settings::cached(&app, &db))
+            else {
+                continue;
+            };
+            if !settings.idle_enabled {
+                if let Ok(mut state) = app.state::<State>().0.lock() {
+                    *state = Clock::default();
+                }
+                continue;
             }
-            continue;
-        }
-        let Some(idle) = idle_ms() else {
-            continue;
-        };
-        let now = db::now();
-        let agent_idle = if settings.idle_agents {
-            crate::agents::idle_ms(&app, now)
-        } else {
-            u32::MAX
-        };
-        let session = app.state::<Database>().0.lock().ok().and_then(|db| {
-            db.query_row(
-                "SELECT id,task_id,started_at FROM sessions WHERE ended_at IS NULL",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .ok()
-        });
-        // Zadania pracujących agentów: do „Przypisz przerwę do X”.
-        let working: Vec<Match> = crate::agents::current(&app)
-            .into_iter()
-            .filter_map(|a| a.task)
-            .collect();
-        let due = app
-            .state::<State>()
-            .0
-            .lock()
-            .map(|mut c| {
-                c.see(&working, session.map(|(_, task, _)| task), now);
-                c.observe(session, now, idle, agent_idle)
-            })
-            .unwrap_or(false);
-        if due {
-            let _ = app.emit("idle-notice", ());
-            crate::show(&app);
+            let Some(idle) = idle_ms() else {
+                continue;
+            };
+            let now = db::now();
+            let agent_idle = if settings.idle_agents {
+                crate::agents::idle_ms(&app, now)
+            } else {
+                u32::MAX
+            };
+            let session = app.state::<Database>().0.lock().ok().and_then(|db| {
+                db.query_row(
+                    "SELECT id,task_id,started_at FROM sessions WHERE ended_at IS NULL",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .ok()
+            });
+            // Zadania pracujących agentów: do „Przypisz przerwę do X”.
+            let working: Vec<Match> = crate::agents::current(&app)
+                .into_iter()
+                .filter_map(|a| a.task)
+                .collect();
+            let due = app
+                .state::<State>()
+                .0
+                .lock()
+                .map(|mut c| {
+                    c.see(&working, session.map(|(_, task, _)| task), now);
+                    c.observe(session, now, idle, agent_idle)
+                })
+                .unwrap_or(false);
+            if due {
+                let _ = app.emit("idle-notice", ());
+                crate::show(&app);
+            }
         }
     });
 }
@@ -354,6 +363,18 @@ mod tests {
     use super::*;
     /// Żaden agent nie pracował.
     const N: u32 = u32::MAX;
+    /// Puls życia (gap.rs) idzie w pętli przed wyjściami zależnymi od ustawień
+    /// bezczynności i od systemu; inaczej wyłączona bezczynność zatrzymałaby puls.
+    #[test]
+    fn heartbeat_runs_before_idle_early_exits() {
+        let source = include_str!("idle.rs");
+        let start = &source[source.find("pub fn start(").unwrap()..];
+        let tick = start
+            .find("crate::gap::tick(")
+            .expect("brak gap::tick w idle::start");
+        assert!(tick < start.find("if !settings.idle_enabled").unwrap());
+        assert!(tick < start.find("idle_ms() else").unwrap());
+    }
     #[test]
     fn only_prompts_after_return_without_mutating_time() {
         let mut c = Clock::default();

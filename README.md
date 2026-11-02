@@ -4,6 +4,10 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Poprawki po 2.0.0
+
+- **Pomiar po wyłączeniu komputera.** Pomiar pozostawiony przy wyłączeniu komputera nie nalicza już całej nocy. Po co najmniej 10 minutach przerwy w działaniu aplikacji kończy się na ostatnim znaku życia aplikacji, a po starcie baner „Pomiar zatrzymany po przerwie” pozwala go zostawić, wznowić od teraz albo przywrócić cały czas. Ograniczenie: dokładność do ok. 30 s, a pierwszy start po aktualizacji nie ma jeszcze znaku życia, więc nic nie zatrzymuje.
+
 ### Nowości 2.0
 
 Wydanie 2.0.0 obejmuje cały `PLAN_BACKLOG.md`: poprawki i uwagi z użytkowania (B1–B13), integrację z agentami AI (A0–A6) i **zmianę nazwy na TukTuk Track** (N1). Wszystko poniżej sprawdzono testami Rust (fragmenty z `src-tauri/tests/fixtures/`, procesy zastępcze zamiast prawdziwych CLI) i Playwright na symulatorach trybu podglądu. Nic nie łączyło się z prawdziwym TS, Jirą ani Redmine, nie uruchamiano prawdziwych `claude`, `codex` ani `orca`, a natywna aplikacja ani instalator 2.0 nie były uruchamiane. Lista do ręcznego sprawdzenia: `NEXT_SESSION.md` („Stan po 2.0.0”).
@@ -221,7 +225,7 @@ Planowanie:
 - **Plan i historia → Zamknięcie dnia**: suma pracy, notatki każdego zadania, przerwy między wpisami, raport TS, przekładanie niedokończonego planu na następny dzień i oznaczenie dnia jako sprawdzonego. Oznaczenie nie blokuje późniejszych poprawek.
 - **Historia i kopie**: wyszukiwanie po tytułach, projektach, notatkach i datach, zakres dat, archiwum, kosz oraz eksport/przywracanie kopii SQLite.
 - Archiwum ukrywa zadanie z bieżącej listy i planowania, zachowując raporty. Usunięcie przenosi zadanie wraz z czasem do kosza; przywrócenie odzyskuje historię. Przedziały z kosza pozostają zarezerwowane przy sprawdzaniu konfliktów czasu.
-- Po co najmniej 10 minutach bezczynności Windows, przy powrocie do aktywnego pomiaru, aplikacja pyta o zachowanie czasu lub zakończenie sesji na początku przerwy. Nie skraca czasu automatycznie. Opcję można wyłączyć w ustawieniach.
+- Po co najmniej 10 minutach bezczynności Windows, przy powrocie do aktywnego pomiaru, aplikacja pyta o zachowanie czasu lub zakończenie sesji na początku przerwy. Nie skraca czasu automatycznie. Opcję można wyłączyć w ustawieniach. Wyłączenie komputera lub zamknięcie aplikacji obsługuje osobny baner „Pomiar zatrzymany po przerwie” (zob. „Zapis i pomiar czasu”).
 - Praca agentów AI liczy się jako aktywność. Claude Code jest wykrywany po statusie `busy` w `~/.claude/sessions/<pid>.json` i działającym procesie (gdy `busy` trwa ponad 15 min, wymagany jest też świeży zapis transkryptu), Codex po zapisie pliku `~/.codex/sessions/**/rollout-*.jsonl` w ostatnich 90 s. Przerwa liczy się od późniejszej z chwil: ostatniego wejścia z klawiatury/myszy albo końca pracy agenta. Gdy agent zacznie pracę podczas nieobecności, przerwa jest zapominana bez pytania. Pracujących agentów pokazuje kafelek **Agenci AI** na Dashboardzie.
 - Eksport działa również podczas pomiaru i tworzy spójną kopię SQLite. Przywracanie pokazuje nazwę i liczby wpisów, wymaga potwierdzenia zastąpienia danych i najpierw zapisuje `backups/before-restore-*.sqlite`. Aktywna sesja z kopii jest kończona na moment eksportu (dla starszych kopii: modyfikacji pliku). Bieżąca konfiguracja Jiry pozostaje zachowana, token nie jest przenoszony.
 
@@ -501,7 +505,7 @@ Od 0.3.0 użyj **Historia i kopie → Kopie → Eksportuj kopię** — aplikacja
 
 Baza znajduje się w katalogu danych aplikacji, na Windows: `%APPDATA%\pl.tuktuktrack.desktop\tuktuk-track.sqlite` (do 1.9 `%APPDATA%\pl.todotrack.desktop\todo-track.sqlite`, zob. „Przejście z Todo Track”). Operacje są transakcyjne. Do kopii zapasowej zamknij aplikację przez menu traya i skopiuj cały katalog danych (SQLite może korzystać z plików WAL).
 
-Rust zapisuje początek i koniec sesji. Frontend tylko wyświetla różnicę znaczników czasu; throttling ukrytego okna nie wpływa na wynik. Pomiar obejmuje czas uśpienia komputera. Po awarii lub wymuszonym zamknięciu aktywna sesja pozostaje otwarta i nalicza czas do kolejnego Stop. Przed dłuższą przerwą zatrzymaj pomiar. Zmiana zegara systemowego może wpłynąć na wynik. Bezczynność Windows nie skraca pomiaru automatycznie; aplikacja tylko pyta po powrocie (patrz wyżej). Autostart jest wyłączony, dopóki nie włączysz go w Ustawieniach.
+Rust zapisuje początek i koniec sesji. Frontend tylko wyświetla różnicę znaczników czasu; throttling ukrytego okna nie wpływa na wynik. Pomiar obejmuje czas uśpienia komputera. Działająca aplikacja co 30 s zapisuje w bazie znak życia (tabela `app_heartbeat`). Gdy przy starcie okaże się, że nie działała co najmniej 10 minut (wyłączenie lub restart komputera, awaria, wymuszone zamknięcie), trwający pomiar kończy się na ostatnim znaku życia, a baner „Pomiar zatrzymany po przerwie” pozwala to zostawić („OK”), mierzyć to samo zadanie od teraz („Wznów pomiar”) albo przywrócić cały czas przerwy („Przywróć cały czas”; aplikacja odmówi, gdy trwa inny pomiar, po zatrzymaniu zapisano inny pomiar, zadanie jest ukończone albo w koszu). Krótszy restart nie zmienia pomiaru. Zmiana zegara systemowego może wpłynąć na wynik. Bezczynność Windows nie skraca pomiaru automatycznie; aplikacja tylko pyta po powrocie (patrz wyżej). Autostart jest wyłączony, dopóki nie włączysz go w Ustawieniach.
 
 Usunięcie zadania usuwa też jego sesje (z potwierdzeniem). Ukończenie zadania zatrzymuje jego bieżący pomiar. Dzisiejszy czas jest liczony od lokalnej północy, również dla sesji rozpoczętych poprzedniego dnia.
 

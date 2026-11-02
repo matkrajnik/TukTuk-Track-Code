@@ -6,6 +6,7 @@ import AppNav, { type View } from "./components/AppNav.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import SessionEditor, { type SessionTab } from "./components/SessionEditor.vue";
 import IdleBanner from "./components/IdleBanner.vue";
+import GapBanner from "./components/GapBanner.vue";
 import AgentSuggestions from "./components/AgentSuggestions.vue";
 import AiProposals from "./components/AiProposals.vue";
 import JiraMoveBanner from "./components/JiraMoveBanner.vue";
@@ -633,6 +634,11 @@ onUnmounted(() => {
       @error="error = $event"
     />
     <main id="main" tabindex="-1" :class="{ wide: wideLayout }">
+      <GapBanner
+        :tasks="data.tasks"
+        @updated="updated"
+        @error="error = $event"
+      />
       <IdleBanner
         :tasks="data.tasks"
         @updated="updated"

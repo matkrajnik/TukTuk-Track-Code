@@ -103,7 +103,8 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS day_marks (day TEXT PRIMARY KEY, started_at INTEGER, ended_at INTEGER, resumed INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, at TEXT NOT NULL, repeat TEXT NOT NULL DEFAULT 'none', weekdays TEXT, enabled INTEGER NOT NULL DEFAULT 1, snooze_until TEXT, last_fired_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS reminders_at ON reminders(at);
-        CREATE TABLE IF NOT EXISTS meeting_reminders (meeting_id TEXT PRIMARY KEY, minutes INTEGER);")
+        CREATE TABLE IF NOT EXISTS meeting_reminders (meeting_id TEXT PRIMARY KEY, minutes INTEGER);
+        CREATE TABLE IF NOT EXISTS app_heartbeat (id INTEGER PRIMARY KEY CHECK(id=1), at INTEGER NOT NULL);")
 }
 pub fn snapshot(db: &Connection) -> rusqlite::Result<Snapshot> {
     let mut card_fields = crate::jira_fields::card_fields_by_task(db)?;

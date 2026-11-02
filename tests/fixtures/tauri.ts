@@ -17,6 +17,8 @@ import {
  * i opisana odwołaniem do funkcji źródłowej:
  * - `idle::Clock::observe` i `idle_resolve` (`idleTick`, `idle_resolve`, z
  *   „Przytnij i wznów” jak `idle::trim_and_resume`, B3),
+ * - `gap::recover` przy starcie (opcja `heartbeat`) i `gap::resolve`
+ *   (`gap_notice`, `gap_resolve`),
  * - `jira::sync_assigned` z pierwszym sprawdzeniem tylko zapamiętującym (`jiraCheck`),
  * - `redmine::sync_assigned` tak samo, osobno od Jiry (`redmineCheck`, R3),
  * - odczyty Redmine i `redmine::start_issue` na danych `redmineFixture()`
@@ -41,6 +43,12 @@ export interface TauriOptions {
   templates?: unknown[];
   /** Propozycje przełączenia (`agent_suggestions`) na starcie. */
   suggestions?: unknown[];
+  /**
+   * Ostatni puls aplikacji (`app_heartbeat`, gap.rs): przy starcie trwający
+   * pomiar po co najmniej 10 min przerwy kończy się na pulsie i pojawia się
+   * baner „Pomiar zatrzymany po przerwie”. Domyślnie brak pulsu.
+   */
+  heartbeat?: number;
   /** Etykieta okna Tauri (`main`, `widget`); wybiera widok jak w `main.ts`. */
   window?: string;
   /**
@@ -98,6 +106,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     redmine: options.redmine ?? null,
     jiraWatch: options.jiraWatch ?? null,
     hidden: options.hidden ?? false,
+    heartbeat: options.heartbeat ?? null,
   });
   await page.goto("/");
 }
@@ -135,6 +144,7 @@ function install(init: {
   redmine: RedmineFixture | null;
   jiraWatch: { lastOk: number | null; lastError: string; lastErrorAt: number | null } | null;
   hidden: boolean;
+  heartbeat: number | null;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -183,6 +193,13 @@ function install(init: {
     snapshot.sessions.forEach((s: any) => {
       if (s.endedAt === null) s.endedAt = Math.max(now, s.startedAt);
     });
+
+  /** db::change("start"): poprzedni pomiar staje, chyba że to samo zadanie już trwa. */
+  function startTask(taskId: number, now: number) {
+    if (snapshot.sessions.some((s: any) => s.taskId === taskId && s.endedAt === null)) return;
+    stopAll(now);
+    snapshot.sessions.unshift({ id: nextSessionId(), taskId, startedAt: now, endedAt: null });
+  }
 
   // idle::Clock (z `see` i `agent_tasks` dla „Przypisz przerwę do X”)
   const idle: {
@@ -257,6 +274,18 @@ function install(init: {
     }
     if (due) emit("idle-notice");
     return due;
+  }
+
+  // gap::recover przy starcie: trwający pomiar po ≥ 10 min od pulsu kończy się
+  // na pulsie (nie wcześniej niż jego start).
+  let gap: any = null;
+  {
+    const active = snapshot.sessions.find((s: any) => s.endedAt === null);
+    const started = Date.now();
+    if (active && init.heartbeat !== null && started - init.heartbeat >= MIN10) {
+      active.endedAt = Math.max(active.startedAt, init.heartbeat);
+      gap = { sessionId: active.id, taskId: active.taskId, stoppedAt: active.endedAt, restartedAt: started };
+    }
   }
 
   // jira::sync_assigned z ustaleniem pierwszego sprawdzenia jak w watch_once.
@@ -812,6 +841,47 @@ function install(init: {
             layoutAt: Date.now(),
           };
         }
+        case "gap_notice":
+          return clone(gap);
+        case "gap_resolve": {
+          // gap::resolve: keep / restore / resume.
+          if (!gap) throw "Brak zgłoszonej przerwy w pracy aplikacji.";
+          if (args.action === "restore") {
+            const s = snapshot.sessions.find((x: any) => x.id === gap.sessionId);
+            const task = snapshot.tasks.find((t: any) => t.id === gap.taskId);
+            if (!s && !snapshot.trashSessions.some((x: any) => x.id === gap.sessionId))
+              throw "Nie znaleziono przedziału.";
+            if (!s || !task) throw "Przedział należy do zadania w koszu.";
+            if (task.done) throw "Najpierw przywróć zadanie do zrobienia.";
+            if (s.endedAt !== gap.stoppedAt)
+              throw "Przedział zmieniono po zatrzymaniu. Popraw go na osi dnia.";
+            if (snapshot.sessions.some((x: any) => x.endedAt === null))
+              throw "Trwa inny pomiar. Zatrzymaj go, aby przywrócić cały czas.";
+            if ([...snapshot.sessions, ...snapshot.trashSessions].some(
+                (x: any) => x.id !== s.id && x.endedAt > gap.stoppedAt))
+              throw "Po zatrzymaniu zapisano inny pomiar. Przywrócenie nałożyłoby czas.";
+            s.endedAt = null;
+            task.archived = false;
+            // planner::clear_waiting jak start w db::change.
+            if (task.details?.waiting)
+              Object.assign(task.details, {
+                waiting: "",
+                waitingSince: 0,
+                waitingStatus: "",
+                waitingRemindDay: "",
+                waitingDismissed: task.jiraStatus ?? "",
+              });
+          } else if (args.action === "resume") {
+            const task = snapshot.tasks.find((t: any) => t.id === gap.taskId);
+            if (!task) throw "Najpierw przywróć zadanie z kosza.";
+            if (task.done) throw "Najpierw przywróć zadanie do zrobienia.";
+            startTask(task.id, now);
+          } else if (args.action !== "keep") throw "Nieznana odpowiedź.";
+          gap = null;
+          emit("data-changed");
+          emit("gap-notice");
+          return clone(snapshot);
+        }
         case "idle_notice":
           return clone(idle.pending);
         case "idle_resolve": {
@@ -874,21 +944,8 @@ function install(init: {
         case "mutate": {
           const task = snapshot.tasks.find((t: any) => t.id === args.id);
           if (args.action === "stop") stopAll(now);
-          else if (args.action === "start" && task) {
-            if (
-              !snapshot.sessions.some(
-                (s: any) => s.taskId === task.id && s.endedAt === null,
-              )
-            ) {
-              stopAll(now);
-              snapshot.sessions.unshift({
-                id: nextSessionId(),
-                taskId: task.id,
-                startedAt: now,
-                endedAt: null,
-              });
-            }
-          } else throw "Nieobsługiwana akcja w teście: " + args.action;
+          else if (args.action === "start" && task) startTask(task.id, now);
+          else throw "Nieobsługiwana akcja w teście: " + args.action;
           emit("data-changed", ownChange);
           return clone(snapshot);
         }

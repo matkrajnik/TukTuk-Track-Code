@@ -16,6 +16,7 @@ mod db;
 mod export;
 mod focus;
 mod foreground;
+mod gap;
 mod holidays;
 mod hook_wire;
 mod hooks;
@@ -481,6 +482,22 @@ fn main() {
                 app.handle().exit(0);
                 return Ok(());
             }
+            // Pomiar trwający, gdy aplikacja nie działała (wyłączony komputer,
+            // zamknięty proces): koniec na ostatnim pulsie, pytanie w banerze
+            // (gap.rs). Błąd nie zatrzymuje startu; zgłosi go wątek cykli
+            // (`storage-error`), gdy okno już nasłuchuje.
+            let (stopped_after_gap, mut gap_error) = match gap::recover(&connection, db::now()) {
+                Ok(notice) => (notice, None),
+                Err(e) => {
+                    eprintln!("Przerwa w pracy aplikacji: {e}");
+                    (
+                        None,
+                        Some(format!(
+                            "Nie sprawdzono przerwy w pracy aplikacji ({e}). Pomiar mógł liczyć czas, gdy komputer był wyłączony; sprawdź go na osi dnia."
+                        )),
+                    )
+                }
+            };
             // Wystąpienia cykli przed pierwszą migawką; dalej wątek co minutę (B6).
             // Błąd zgłosi ten wątek (`storage-error`), start aplikacji trwa dalej.
             if let Err(e) = recurrence::generate(&mut connection, chrono::Local::now().date_naive())
@@ -501,6 +518,7 @@ fn main() {
             let widget_waker = widget::setup(app);
             reminder::setup(app.handle());
             idle::setup(app.handle());
+            gap::setup(app.handle(), stopped_after_gap);
             agents::setup(app.handle());
             ai::setup(app.handle());
             assign::setup(app.handle());
@@ -555,6 +573,11 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(60));
                 if handle.get_webview_window("main").is_none() {
                     break;
+                }
+                // Błąd gap::recover ze startu: emisja zaraz po create_windows by przepadła
+                // (strona jeszcze nie nasłuchuje), więc idzie przy pierwszym przebiegu wątku.
+                if let Some(e) = gap_error.take() {
+                    let _ = handle.emit("storage-error", e);
                 }
                 if let Ok(mut db) = handle.state::<Database>().0.lock() {
                     // Zdarzenie tylko przy zmianie (B6): nowy dzień albo zaległe wystąpienia.
@@ -627,6 +650,8 @@ fn main() {
             save_day_notes,
             idle::idle_notice,
             idle::idle_resolve,
+            gap::gap_notice,
+            gap::gap_resolve,
             agents::agents_status,
             hooks::agent_hooks_status,
             browser::browser_status,
@@ -813,6 +838,7 @@ mod tests {
             "widget::setup(",
             "reminder::setup(",
             "idle::setup(",
+            "gap::setup(",
             "agents::setup(",
             "hooks::setup(",
             "notify::setup(",
@@ -821,6 +847,38 @@ mod tests {
             assert!(
                 at < windows,
                 "{call} (manage) musi być przed create_windows"
+            );
+        }
+    }
+
+    /// Błąd `gap::recover` przy starcie trafia do okna (`storage-error`) dopiero
+    /// z wątku po `create_windows`, nie tylko do `eprintln` (niewidocznego w wydaniu).
+    #[test]
+    fn gap_recovery_error_is_reported_after_windows() {
+        let source = include_str!("main.rs");
+        let setup = &source[source.find(".setup(|app| {").unwrap()..];
+        let windows = setup.find("create_windows(app)?;").unwrap();
+        let report = setup
+            .find("gap_error.take()")
+            .expect("brak zgłoszenia błędu gap::recover");
+        assert!(report > windows);
+    }
+
+    /// Przerwa w pracy aplikacji (gap.rs): zatrzymanie pomiaru po `db::init` i po
+    /// ścieżce `--prepare-update`, a przed `manage(Database)`, czyli zanim
+    /// cokolwiek odczyta trwający pomiar.
+    #[test]
+    fn gap_recovery_runs_before_database_is_managed() {
+        let source = include_str!("main.rs");
+        let setup = &source[source.find(".setup(|app| {").unwrap()..];
+        let recover = setup.find("gap::recover(").expect("brak gap::recover");
+        assert!(recover > setup.find("db::init(&connection)?;").unwrap());
+        assert!(recover > setup.find("\"--prepare-update\"").unwrap());
+        assert!(recover < setup.find("app.manage(Database(").unwrap());
+        for command in ["gap::gap_notice", "gap::gap_resolve"] {
+            assert!(
+                source.contains(command),
+                "{command} nie jest zarejestrowana"
             );
         }
     }
