@@ -4,10 +4,14 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
-### Poprawki po 2.0.0
+### Nowości 2.1
 
+Wydanie 2.1.0 to sterowanie pomiarem z innych programów i poprawki z używania 2.0. Wszystko poniżej sprawdzono testami Rust i Playwright (zastępcze IPC, bez prawdziwych usług); natywna aplikacja i instalator 2.1 nie były uruchamiane.
+
+- **Sterowanie pomiarem z innych programów.** Skrypt, narzędzie do zgłoszeń albo automatyzacja może przez `tuktuk-track-ctl.exe` (instalowany obok aplikacji) lub nazwany potok `\\.\pipe\tuktuk-track-api-<użytkownik Windows>` dodać zadanie (także ze zgłoszenia Jiry lub Redmine) i od razu uruchomić jego pomiar, zatrzymać pomiar i odczytać, co jest teraz mierzone. Odpowiedź to jeden wiersz JSON. Domyślnie wyłączone: Ustawienia → Agenci → „Pozwól innym programom sterować pomiarem”. Potok przyjmuje tylko połączenia z tego komputera i z Twojego konta Windows. Szczegóły i kody błędów: sekcja „Sterowanie pomiarem z innych programów” niżej.
 - **Pomiar po wyłączeniu komputera.** Pomiar pozostawiony przy wyłączeniu komputera nie nalicza już całej nocy. Po co najmniej 10 minutach przerwy w działaniu aplikacji kończy się na ostatnim znaku życia aplikacji, a po starcie baner „Pomiar zatrzymany po przerwie” pozwala go zostawić, wznowić od teraz albo przywrócić cały czas. Ograniczenie: dokładność do ok. 30 s, a pierwszy start po aktualizacji nie ma jeszcze znaku życia, więc nic nie zatrzymuje.
 - **Dodanie zadania od razu uruchamia pomiar.** W Zadaniach przycisk „Dodaj i rozpocznij” (Enter w polu „Nowe zadanie”) dodaje zadanie i od razu mierzy jego czas; poprzedni pomiar staje. Obok „Zaplanuj” (Shift+Enter) dodaje zadanie bez pomiaru i rozwija jego kafelek z planem, z kursorem w polu „Planowany dzień” (także gdy składnia podała dzień, np. `@pt`; filtry, które ukryłyby nowe zadanie, wracają do „Do zrobienia”). Po „Zakończ dzień” start pyta „Wznowić dzień?”; „Anuluj” dodaje zadanie bez startu z komunikatem pod polem. Składnia szybkiego dodawania działa przy obu przyciskach.
+- **Ręczne spotkania cykliczne.** Przy dodawaniu ręcznego spotkania „Powtarzaj” tworzy cykl: dni tygodnia, co 1–8 tygodni, do wybranego dnia (najwyżej rok i 200 spotkań). Wystąpienia edytuje się pojedynczo, a usuwa jedno albo „to i kolejne”. Starsze bazy i kopie dostają kolumnę `series_id` przy starcie. Opis formularza: „Ręczne spotkania” w „Nowościach 2.0”.
 
 ### Nowości 2.0
 
