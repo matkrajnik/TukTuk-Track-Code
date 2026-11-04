@@ -77,6 +77,37 @@ pub struct HookEvent {
     pub tool_name: Option<String>,
     /// Komunikat powiadomienia agenta (`Notification`).
     pub message: Option<String>,
+    /// Źródło sesji (`hook_wire::HOSTS`): Orca, Claude/Codex Desktop, VS Code, terminal.
+    pub host: Option<String>,
+    /// Identyfikator sesji w źródle: uchwyt terminala Orki albo `local_…` Claude Desktop.
+    pub host_ref: Option<String>,
+}
+
+/// Źródło i identyfikator z koperty; nieznane źródło, źródło innego agenta
+/// (Claude Desktop dla Codexa i odwrotnie) i niepoprawny identyfikator odpadają
+/// (potok może zapisać każdy proces tego użytkownika).
+fn host_of(
+    agent: &str,
+    host: Option<&str>,
+    host_ref: Option<&str>,
+) -> (Option<String>, Option<String>) {
+    let fits = |h: &&str| match *h {
+        hook_wire::HOST_CLAUDE_DESKTOP => agent == "claude",
+        hook_wire::HOST_CODEX_DESKTOP => agent == "codex",
+        other => hook_wire::HOSTS.contains(&other),
+    };
+    let Some(host) = host.filter(fits) else {
+        return (None, None);
+    };
+    let valid = |id: &&str| match host {
+        hook_wire::HOST_ORCA => hook_wire::valid_orca_handle(id),
+        hook_wire::HOST_CLAUDE_DESKTOP => hook_wire::valid_claude_session(id),
+        _ => false,
+    };
+    (
+        Some(host.into()),
+        host_ref.filter(valid).map(str::to_string),
+    )
 }
 
 /// Koperta z potoku → zdarzenie. `None` dla niepoprawnej koperty, nieznanego agenta
@@ -97,6 +128,7 @@ pub fn parse(body: &[u8]) -> Option<HookEvent> {
     };
     let session_id = text("session_id")?;
     let name = text("hook_event_name")?;
+    let (host, host_ref) = host_of(agent, text("host"), text("host_ref"));
     if session_id.chars().count() > 200 || name.chars().count() > 64 {
         return None;
     }
@@ -116,6 +148,8 @@ pub fn parse(body: &[u8]) -> Option<HookEvent> {
             let line = m.split_whitespace().collect::<Vec<_>>().join(" ");
             hook_wire::clip(&line, hook_wire::MESSAGE_MAX)
         }),
+        host,
+        host_ref,
     })
 }
 
@@ -163,6 +197,10 @@ pub struct BoardSession {
     pub reason: Option<String>,
     /// Pracujący subagenci.
     pub subagents: usize,
+    /// Źródło sesji (`hook_wire::HOSTS`); puste, gdy hook go nie podał (starszy hook).
+    pub host: String,
+    /// Identyfikator w źródle (uchwyt terminala Orki, `local_…` Claude Desktop).
+    pub host_ref: Option<String>,
 }
 
 impl BoardSession {
@@ -198,6 +236,9 @@ pub struct Session {
     pub seen: bool,
     /// Na co czeka sesja (zgoda na narzędzie, pytanie) albo [`TIMEOUT_REASON`].
     pub reason: Option<String>,
+    /// Źródło sesji z ostatniego zdarzenia, które je podało.
+    pub host: String,
+    pub host_ref: Option<String>,
 }
 
 impl Session {
@@ -319,10 +360,16 @@ impl Sessions {
                 // Nowa sesja bez tury nie ma czego przeglądać.
                 seen: true,
                 reason: None,
+                host: String::new(),
+                host_ref: None,
             });
             s.last = now;
             if !ev.cwd.is_empty() {
                 s.cwd = ev.cwd.clone();
+            }
+            if let Some(host) = &ev.host {
+                s.host = host.clone();
+                s.host_ref = ev.host_ref.clone();
             }
             Self::transition(s, ev, now, keep_prompts);
             if detail.is_empty() {
@@ -554,6 +601,8 @@ impl Sessions {
                 seen: s.seen,
                 reason: s.reason.clone(),
                 subagents: s.subagents.len(),
+                host: s.host.clone(),
+                host_ref: s.host_ref.clone(),
             })
             .collect();
         list.sort_by(|a, b| {

@@ -1093,6 +1093,141 @@ fn board_lists_waiting_first_then_working_then_finished() {
 }
 
 #[test]
+fn host_is_detected_from_the_agent_environment() {
+    let env = |pairs: &'static [(&'static str, &'static str)]| {
+        move |key: &str| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    };
+    let host = |agent: &str, pairs: &'static [(&'static str, &'static str)]| {
+        let (h, r) = hook_wire::host(agent, &env(pairs));
+        (h, r)
+    };
+    assert_eq!(host("claude", &[]), ("terminal", None));
+    assert_eq!(
+        host(
+            "claude",
+            &[
+                ("CLAUDE_CODE_ENTRYPOINT", "claude-desktop"),
+                ("CLAUDE_CODE_HOST_SESSION_ID", "local_7056bec6-1bba")
+            ]
+        ),
+        ("claude-desktop", Some("local_7056bec6-1bba".into()))
+    );
+    // Niepoprawny identyfikator: źródło zostaje, identyfikator odpada.
+    assert_eq!(
+        host(
+            "claude",
+            &[
+                ("CLAUDE_CODE_ENTRYPOINT", "claude-desktop"),
+                ("CLAUDE_CODE_HOST_SESSION_ID", "local_x&y")
+            ]
+        ),
+        ("claude-desktop", None)
+    );
+    assert_eq!(
+        host("claude", &[("CLAUDE_CODE_ENTRYPOINT", "claude-vscode")]),
+        ("vscode", None)
+    );
+    assert_eq!(
+        host(
+            "codex",
+            &[("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "Codex Desktop")]
+        ),
+        ("codex-desktop", None)
+    );
+    assert_eq!(
+        host(
+            "codex",
+            &[("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "codex_work_desktop")]
+        ),
+        ("codex-desktop", None)
+    );
+    assert_eq!(
+        host(
+            "codex",
+            &[("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "codex_vscode")]
+        ),
+        ("vscode", None)
+    );
+    // Znacznik Claude Desktop nie dotyczy Codexa.
+    assert_eq!(
+        host("codex", &[("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")]),
+        ("terminal", None)
+    );
+    assert_eq!(
+        host("codex", &[("TERM_PROGRAM", "vscode")]),
+        ("vscode", None)
+    );
+    // Agent w terminalu Orki wygrywa z resztą.
+    assert_eq!(
+        host(
+            "claude",
+            &[
+                ("ORCA_TERMINAL_HANDLE", "term_abc123"),
+                ("CLAUDE_CODE_ENTRYPOINT", "cli"),
+                ("TERM_PROGRAM", "vscode")
+            ]
+        ),
+        ("orca", Some("term_abc123".into()))
+    );
+    assert_eq!(
+        host("claude", &[("ORCA_TERMINAL_HANDLE", "term abc; calc")]),
+        ("terminal", None)
+    );
+}
+
+#[test]
+fn envelope_carries_host_and_parser_validates_it() {
+    let raw = serde_json::to_vec(&json!({"session_id": "s", "hook_event_name": "Stop"})).unwrap();
+    let env = |key: &str| (key == "ORCA_TERMINAL_HANDLE").then(|| "term_abc123".to_string());
+    let ev = parse(&hook_wire::envelope_from("claude", &raw, &env).unwrap()).unwrap();
+    assert_eq!(ev.host.as_deref(), Some("orca"));
+    assert_eq!(ev.host_ref.as_deref(), Some("term_abc123"));
+    // Bez środowiska (starszy hook): bez źródła.
+    let ev = parse(&hook_wire::envelope("claude", &raw).unwrap()).unwrap();
+    assert_eq!((ev.host, ev.host_ref), (None, None));
+    // Aplikacja nie ufa kopercie: nieznane źródło i zły identyfikator odpadają.
+    let forged = |host: &str, id: &str| {
+        let body = json!({"agent": "claude", "event": {
+            "session_id": "s", "hook_event_name": "Stop", "host": host, "host_ref": id
+        }});
+        parse(&serde_json::to_vec(&body).unwrap()).unwrap()
+    };
+    let ev = forged("evil", "term_1");
+    assert_eq!((ev.host, ev.host_ref), (None, None));
+    let ev = forged("orca", "term 1 & calc");
+    assert_eq!((ev.host.as_deref(), ev.host_ref), (Some("orca"), None));
+    let ev = forged("terminal", "local_abc");
+    assert_eq!((ev.host.as_deref(), ev.host_ref), (Some("terminal"), None));
+    // Źródło innego agenta (Codex Desktop przy sesji Claude) odpada.
+    let ev = forged("codex-desktop", "");
+    assert_eq!((ev.host, ev.host_ref), (None, None));
+    // Uchwyt zaczynający się od `-` mógłby zostać wzięty za flagę CLI Orki.
+    let ev = forged("orca", "--help");
+    assert_eq!((ev.host.as_deref(), ev.host_ref), (Some("orca"), None));
+}
+
+#[test]
+fn session_keeps_the_last_reported_host() {
+    let mut s = Sessions::default();
+    let with = |event: &str, host: Option<&str>| HookEvent {
+        host: host.map(str::to_string),
+        host_ref: host.map(|_| "local_1".to_string()),
+        ..ev("claude", event)
+    };
+    s.apply(&with("UserPromptSubmit", Some("claude-desktop")), T0);
+    // Zdarzenie bez źródła (np. starszy hook) go nie kasuje.
+    s.apply(&with("Stop", None), T0 + 1);
+    let b = entry(&s);
+    assert_eq!(b.host, "claude-desktop");
+    assert_eq!(b.host_ref.as_deref(), Some("local_1"));
+}
+
+#[test]
 fn board_state_reports_phase_and_seen() {
     let mut s = Sessions::default();
     assert_eq!(s.board_state("claude", "s1"), None);

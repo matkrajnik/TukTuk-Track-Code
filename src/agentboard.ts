@@ -21,6 +21,7 @@ import {
   previewAgentWaitTime,
   previewHookBoard,
   previewMarkBoardSeen,
+  type HookHost,
   type HookPhase,
   type WaitTime,
 } from "./preview/hooks";
@@ -44,10 +45,58 @@ export interface BoardEntry extends Agent {
   timedOut: boolean;
   /** Folder sesji to worktree Orki: „Przejdź” może wyciągnąć Orkę na wierzch. */
   orca: boolean;
+  /** Gdzie działa sesja (`hook_wire::HOSTS`); puste, gdy hook go nie podał. */
+  host: HookHost | "";
 }
 
 /** Dokąd prowadzi „Przejdź” (`agent_board::Target`). */
-export type OpenTarget = "orca" | "code" | "folder";
+export type OpenTarget = "app" | "code" | "folder";
+
+/** Nazwa źródła sesji na tablicy. */
+export const hostLabels: Record<HookHost, string> = {
+  orca: "Orca",
+  "claude-desktop": "Claude Desktop",
+  "codex-desktop": "Codex Desktop",
+  vscode: "VS Code",
+  terminal: "terminal",
+};
+
+/**
+ * Aplikacja, do której prowadzi „Przejdź” (`agent_board::app_link`): Orca,
+ * Claude albo Codex; `null`, gdy sesji nie da się otworzyć w jej aplikacji.
+ */
+export function appName(entry: Pick<BoardEntry, "host" | "orca">): string | null {
+  if (entry.host === "claude-desktop") return "Claude";
+  if (entry.host === "codex-desktop") return "Codex";
+  if (entry.host === "orca" || entry.orca) return "Orca";
+  return null;
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Podgląd `agent_board::app_link`: adres albo polecenie Orki, które by poszło. */
+function previewAppLink(
+  entry: BoardEntry,
+  hostRef: string | null,
+): string {
+  switch (entry.host) {
+    case "claude-desktop":
+      return hostRef && /^local_[A-Za-z0-9-]{1,64}$/.test(hostRef)
+        ? `claude://code/continue?session=${hostRef}`
+        : "claude://code/needs-input";
+    case "codex-desktop":
+      if (!UUID.test(entry.id))
+        throw new Error("Codex nie podał identyfikatora wątku.");
+      return `codex://threads/${entry.id}`;
+    case "orca":
+      return hostRef && /^[A-Za-z0-9_][A-Za-z0-9_:.-]{0,127}$/.test(hostRef)
+        ? `orca terminal switch --terminal ${hostRef}`
+        : "orca open";
+  }
+  if (entry.orca) return "orca open";
+  throw new Error(
+    "Ta sesja nie działa w Orce, Claude Desktop ani Codex Desktop.",
+  );
+}
 
 /** Czekanie sesji na użytkownika w zakresie (`agent_wait::WaitTime`). */
 export type { WaitTime } from "./preview/hooks";
@@ -125,8 +174,18 @@ async function previewBoard(): Promise<BoardEntry[]> {
       subagents: s.subagents,
       timedOut: s.timedOut,
       orca: inWorktrees(worktrees, s.cwd),
+      host: s.host,
     };
   });
+}
+
+/** Identyfikator w źródle (w Rust zostaje po stronie aplikacji, tu z symulatora). */
+function previewHostRef(entry: Pick<BoardEntry, "kind" | "id">): string | null {
+  return (
+    previewHookBoard(Date.now()).find(
+      (s) => s.agent === entry.kind && s.sessionId === entry.id,
+    )?.hostRef ?? null
+  );
 }
 
 /**
@@ -147,12 +206,18 @@ export async function openAgentSession(
     (e) => e.kind === entry.kind && e.id === entry.id,
   );
   if (!found) throw new Error("Tej sesji nie ma już na tablicy.");
-  if (target === "orca" && !found.orca)
-    throw new Error("Folder sesji nie jest worktree Orki.");
+  const link =
+    target === "app" ? previewAppLink(found, previewHostRef(entry)) : null;
   try {
     localStorage.setItem(
       agentOpenKey,
-      JSON.stringify({ kind: entry.kind, id: entry.id, target, cwd: found.cwd }),
+      JSON.stringify({
+        kind: entry.kind,
+        id: entry.id,
+        target,
+        cwd: found.cwd,
+        ...(link ? { link } : {}),
+      }),
     );
   } catch {
     // Zapis żądania służy tylko testom; brak miejsca niczego nie psuje.

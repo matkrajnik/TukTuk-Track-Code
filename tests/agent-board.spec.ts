@@ -195,6 +195,76 @@ test("„Przejdź” otwiera folder sesji (Orca tylko dla worktree) i oznacza j�
   await expect(done.getByRole("listitem")).toHaveCount(1);
 });
 
+test("źródło sesji: Orca, Claude Desktop i Codex Desktop otwierają konkretną sesję", async ({
+  page,
+}) => {
+  const thread = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+  await openPreview(page, {
+    agentHooks: {
+      events: [
+        ev(now - 6 * min, "claude", "UserPromptSubmit", "desk", {
+          cwd: dir("app"),
+          host: "claude-desktop",
+          hostRef: "local_7056bec6-1bba",
+        }),
+        ev(now - 5 * min, "claude", "PermissionRequest", "desk", {
+          cwd: dir("app"),
+          host: "claude-desktop",
+          hostRef: "local_7056bec6-1bba",
+        }),
+        ev(now - 4 * min, "codex", "UserPromptSubmit", thread, {
+          cwd: dir("api"),
+          host: "codex-desktop",
+        }),
+        ev(now - 3 * min, "claude", "UserPromptSubmit", "orca-1", {
+          cwd: dir("wms"),
+          host: "orca",
+          hostRef: "term_abc123",
+        }),
+        ev(now - 2 * min, "codex", "UserPromptSubmit", "cli", {
+          cwd: dir("docs"),
+          host: "terminal",
+        }),
+      ],
+    },
+  });
+  await navButton(page).click();
+  const item = (name: string) =>
+    page.getByRole("listitem").filter({ hasText: name });
+  await expect(item("Claude · app")).toContainText("Claude Desktop");
+  await expect(item("Codex · api")).toContainText("Codex Desktop");
+  await expect(item("Claude · wms")).toContainText("Orca");
+  await expect(item("Codex · docs")).toContainText("terminal");
+  // Sesja w zwykłym terminalu nie ma aplikacji do otwarcia.
+  await expect(
+    item("Codex · docs").getByRole("button", { name: /^Przejdź do .*: (Orca|Claude|Codex)$/ }),
+  ).toHaveCount(0);
+
+  const opened = () =>
+    page.evaluate(
+      () =>
+        JSON.parse(
+          localStorage.getItem("tuktuk-track-preview-agent-open-v1") ?? "null",
+        )?.link,
+    );
+  await page
+    .getByRole("button", { name: "Przejdź do Claude · app: Claude" })
+    .click();
+  await expect
+    .poll(opened)
+    .toBe("claude://code/continue?session=local_7056bec6-1bba");
+  await page
+    .getByRole("button", { name: "Przejdź do Codex · api: Codex" })
+    .click();
+  await expect.poll(opened).toBe(`codex://threads/${thread}`);
+  await page
+    .getByRole("button", { name: "Przejdź do Claude · wms: Orca" })
+    .click();
+  await expect
+    .poll(opened)
+    .toBe("orca terminal switch --terminal term_abc123");
+});
+
 test("statystyka pokazuje, ile sesje czekały na Ciebie dziś i w 7 dniach", async ({
   page,
 }) => {

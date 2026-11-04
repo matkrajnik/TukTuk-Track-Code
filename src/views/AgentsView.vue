@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Check, CheckCheck, Code2, FolderOpen, Workflow } from "lucide-vue-next";
+import { AppWindow, Check, CheckCheck, Code2, FolderOpen } from "lucide-vue-next";
 import { agentTaskLabel } from "../agents";
 import {
   boardCounts,
   markAgentSeen,
   markAllAgentsSeen,
   onAgentBoardChanged,
+  appName,
+  hostLabels,
   openAgentSession,
   readAgentBoard,
   readAgentWaitTime,
@@ -93,14 +95,17 @@ async function run(action: () => Promise<BoardEntry[]>): Promise<boolean> {
     return false;
   }
 }
-// „Przejdź”: folder sesji w Orce, VS Code albo Eksploratorze (potem przejrzana).
-const targets: { id: OpenTarget; label: string }[] = [
-  { id: "orca", label: "Orca" },
-  { id: "code", label: "VS Code" },
-  { id: "folder", label: "Folder" },
-];
-const targetsFor = (entry: BoardEntry) =>
-  targets.filter((t) => t.id !== "orca" || entry.orca);
+// „Przejdź”: sesja w jej aplikacji (Orca, Claude, Codex), folder w VS Code albo
+// w Eksploratorze (potem przejrzana).
+type Action = { id: OpenTarget; label: string };
+function targetsFor(entry: BoardEntry): Action[] {
+  const app = appName(entry);
+  return [
+    ...(app ? [{ id: "app" as const, label: app }] : []),
+    { id: "code", label: "VS Code" },
+    { id: "folder", label: "Folder" },
+  ];
+}
 /** Trwa „Przejdź” (bez `disabled`, które zabrałoby fokus wciśniętemu przyciskowi). */
 const opening = ref(false);
 async function open(entry: BoardEntry, target: OpenTarget) {
@@ -111,7 +116,8 @@ async function open(entry: BoardEntry, target: OpenTarget) {
     // Zakończona nieprzejrzana sesja po otwarciu znika razem z przyciskiem.
     const leaves = entry.phase === "done" && !entry.seen;
     if (await run(() => openAgentSession(entry, target))) {
-      const where = targets.find((t) => t.id === target)?.label ?? "";
+      const where =
+        targetsFor(entry).find((t) => t.id === target)?.label ?? "";
       await announce(`Otwarto ${name} (${where})`);
       if (leaves) await focusSection(entry.phase);
     }
@@ -280,6 +286,9 @@ onUnmounted(() => {
                 :class="`board-mark-${entry.phase}`"
                 aria-hidden="true"
               />{{ kinds[entry.kind] }} · {{ entry.name }}
+              <span v-if="entry.host" class="board-host">{{
+                hostLabels[entry.host]
+              }}</span>
             </span>
             <span class="board-time mono">{{ timing(entry) }}</span>
           </div>
@@ -306,7 +315,7 @@ onUnmounted(() => {
               :aria-label="`Przejdź do ${kinds[entry.kind]} · ${entry.name}: ${target.label}`"
               @click="open(entry, target.id)"
             >
-              <Workflow v-if="target.id === 'orca'" :size="14" aria-hidden="true" />
+              <AppWindow v-if="target.id === 'app'" :size="14" aria-hidden="true" />
               <Code2 v-else-if="target.id === 'code'" :size="14" aria-hidden="true" />
               <FolderOpen v-else :size="14" aria-hidden="true" />{{
                 target.label
@@ -400,6 +409,17 @@ onUnmounted(() => {
   min-width: 0;
   overflow-wrap: anywhere;
   font-weight: 600;
+}
+/* Źródło sesji (Orca, Claude Desktop…): mała etykieta za nazwą. */
+.board-host {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  white-space: nowrap;
 }
 .board-time {
   flex: none;

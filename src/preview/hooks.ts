@@ -42,7 +42,23 @@ export interface PreviewHookEvent {
   toolName?: string;
   /** Komunikat powiadomienia agenta (`Notification`). */
   message?: string;
+  /** Źródło sesji (`hook_wire::host`): orca, claude-desktop, codex-desktop, vscode, terminal. */
+  host?: string;
+  /** Uchwyt terminala Orki albo `local_…` Claude Desktop. */
+  hostRef?: string;
 }
+
+/** Znane źródła sesji (`hook_wire::HOSTS`). */
+export const HOOK_HOSTS = [
+  "orca",
+  "claude-desktop",
+  "codex-desktop",
+  "vscode",
+  "terminal",
+] as const;
+export type HookHost = (typeof HOOK_HOSTS)[number];
+const isHost = (host: string | undefined): host is HookHost =>
+  (HOOK_HOSTS as readonly string[]).includes(host ?? "");
 
 export type HookPhase = "working" | "waiting" | "done";
 type Phase = HookPhase;
@@ -72,6 +88,9 @@ interface Session {
    * wyjścia z czekania wprost ze zdarzeń.
    */
   waits: [number, number][];
+  /** Źródło sesji z ostatniego zdarzenia, które je podało (`Session::host`). */
+  host: HookHost | "";
+  hostRef: string | null;
 }
 
 /** Czekanie sesji na użytkownika (`agent_waits`). */
@@ -172,10 +191,20 @@ export function foldHookEvents(
         seen: true,
         reason: null,
         waits: [],
+        host: "",
+        hostRef: null,
       };
       map.set(key, s);
       s.last = ev.at;
       if (ev.cwd) s.cwd = ev.cwd;
+      // Jak `hooks::host_of`: źródło desktopowe tylko dla „swojego” agenta.
+      const foreign =
+        (ev.host === "claude-desktop" && ev.agent !== "claude") ||
+        (ev.host === "codex-desktop" && ev.agent !== "codex");
+      if (isHost(ev.host) && !foreign) {
+        s.host = ev.host;
+        s.hostRef = ev.hostRef ?? null;
+      }
       const work = () => {
         if (s.phase !== "working") s.since = ev.at;
         enter(s, "working", ev.at);
@@ -425,6 +454,9 @@ export interface HookBoardSession {
   reason: string | null;
   subagents: number;
   timedOut: boolean;
+  host: HookHost | "";
+  /** Identyfikator w źródle; tylko do „Przejdź” (w Rust nie trafia do okna). */
+  hostRef: string | null;
 }
 
 /** Wszystkie sesje z oznaczeniem „przejrzane” z localStorage. */
@@ -442,6 +474,8 @@ function boardSessions(now: number): HookBoardSession[] {
     reason: s.reason,
     subagents: s.subagents.size,
     timedOut: s.phase === "done" && s.reason === HOOK_TIMEOUT_REASON,
+    host: s.host,
+    hostRef: s.hostRef,
   }));
 }
 

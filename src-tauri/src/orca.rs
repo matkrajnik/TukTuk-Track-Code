@@ -673,10 +673,36 @@ pub fn is_worktree(app: &tauri::AppHandle, cwd: &str) -> bool {
 }
 
 /// Wyciąga okno Orki na wierzch (`orca open`, to samo polecenie co przy
-/// uruchamianiu); konkretnego worktree CLI nie aktywuje.
+/// uruchamianiu); konkretnego worktree nie aktywuje.
 pub fn bring_to_front(app: &tauri::AppHandle) -> Result<(), String> {
     let program = program(app)?;
     run_json(&Process, &program, &args_open(), LONG).map(|_| ())
+}
+
+/// `terminal switch`: karta terminala na wierzch w oknie Orki (`terminal focus`
+/// to jego alias). Uchwyt to `ORCA_TERMINAL_HANDLE` z terminala sesji.
+pub fn args_switch(handle: &str) -> Vec<String> {
+    vec![
+        "terminal".into(),
+        "switch".into(),
+        "--terminal".into(),
+        handle.into(),
+        "--json".into(),
+    ]
+}
+
+/// Przełącza Orkę na terminal sesji; gdy się nie da (Orka zamknięta, uchwyt
+/// nieaktualny po restarcie Orki), wyciąga samo okno (`orca open`).
+pub fn focus(runner: &dyn Runner, program: &Path, handle: &str) -> Result<(), String> {
+    match run_json(runner, program, &args_switch(handle), SHORT) {
+        Ok(_) => Ok(()),
+        Err(_) => run_json(runner, program, &args_open(), LONG).map(|_| ()),
+    }
+}
+
+pub fn focus_terminal(app: &tauri::AppHandle, handle: &str) -> Result<(), String> {
+    let program = program(app)?;
+    focus(&Process, &program, handle)
 }
 
 /// Klucz zgłoszenia worktree, w którym pracuje agent (ostatni odczyt `worktree list`).

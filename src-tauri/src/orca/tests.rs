@@ -393,6 +393,32 @@ fn resolve_path_needs_an_existing_file() {
 }
 
 #[test]
+fn focus_switches_to_the_session_terminal_and_falls_back_to_the_window() {
+    assert_eq!(
+        args_switch("term_abc123"),
+        ["terminal", "switch", "--terminal", "term_abc123", "--json"]
+    );
+    // Uchwyt aktualny: tylko `terminal switch`.
+    let fake = Fake::new(vec![("terminal", vec![ok(STATUS)])]);
+    assert!(focus(&fake, &prog(), "term_abc123").is_ok());
+    assert_eq!(fake.called("terminal"), 1);
+    assert_eq!(fake.called("open"), 0);
+    // Nieaktualny uchwyt (np. po restarcie Orki): samo okno Orki.
+    let fake = Fake::new(vec![
+        ("terminal", vec![failed(FAILED, "")]),
+        ("open", vec![ok(STATUS)]),
+    ]);
+    assert!(focus(&fake, &prog(), "term_stary").is_ok());
+    assert_eq!(fake.called("open"), 1);
+    // Orka nie wstaje: błąd `open` trafia do okna.
+    let fake = Fake::new(vec![
+        ("terminal", vec![Err("brak".into())]),
+        ("open", vec![Err("Orca nie działa".into())]),
+    ]);
+    assert!(focus(&fake, &prog(), "term_x").is_err());
+}
+
+#[test]
 fn worktree_folders_match_with_subfolders_and_ignore_case() {
     let folders = vec![norm_folder(r"C:\orca\wms-200"), String::new()];
     assert!(in_worktrees(&folders, r"c:\ORCA\wms-200\"));

@@ -195,7 +195,55 @@ fn entry(id: &str, phase: &'static str, reason: Option<&str>) -> Entry {
         subagents: 0,
         timed_out: false,
         orca: false,
+        host: String::new(),
+        host_ref: None,
     }
+}
+
+#[test]
+fn app_link_opens_the_session_where_it_runs() {
+    let with = |host: &str, host_ref: Option<&str>, id: &str| Entry {
+        id: id.into(),
+        host: host.into(),
+        host_ref: host_ref.map(str::to_string),
+        ..entry("x", "waiting", None)
+    };
+    let uuid = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
+    assert_eq!(
+        app_link(&with("claude-desktop", Some("local_7056bec6-1bba"), "s")),
+        Ok(AppLink::Url(
+            "claude://code/continue?session=local_7056bec6-1bba".into()
+        ))
+    );
+    // Bez identyfikatora: widok sesji czekających w Claude Desktop.
+    assert_eq!(
+        app_link(&with("claude-desktop", None, "s")),
+        Ok(AppLink::Url("claude://code/needs-input".into()))
+    );
+    assert_eq!(
+        app_link(&with("codex-desktop", None, uuid)),
+        Ok(AppLink::Url(format!("codex://threads/{uuid}")))
+    );
+    assert!(app_link(&with("codex-desktop", None, "nie-uuid&x=1")).is_err());
+    assert_eq!(
+        app_link(&with("orca", Some("term_abc123"), "s")),
+        Ok(AppLink::OrcaTerminal("term_abc123".into()))
+    );
+    assert_eq!(app_link(&with("orca", None, "s")), Ok(AppLink::OrcaWindow));
+    // Starszy hook bez źródła, ale folder w worktree Orki: okno Orki.
+    let worktree = Entry {
+        orca: true,
+        ..with("", None, "s")
+    };
+    assert_eq!(app_link(&worktree), Ok(AppLink::OrcaWindow));
+    for host in ["terminal", "vscode", ""] {
+        assert!(app_link(&with(host, None, uuid)).is_err(), "{host}");
+    }
+    // Niepoprawny identyfikator nie trafia do adresu.
+    assert_eq!(
+        app_link(&with("claude-desktop", Some("local_x&evil=1"), "s")),
+        Ok(AppLink::Url("claude://code/needs-input".into()))
+    );
 }
 
 #[test]
@@ -257,7 +305,8 @@ fn code_is_looked_up_in_user_then_system_install_then_path() {
 #[test]
 fn open_targets_come_from_lowercase_names() {
     let parse = |s: &str| serde_json::from_value::<Target>(serde_json::json!(s));
-    assert_eq!(parse("orca").unwrap(), Target::Orca);
+    assert_eq!(parse("app").unwrap(), Target::App);
+    assert!(parse("orca").is_err());
     assert_eq!(parse("code").unwrap(), Target::Code);
     assert_eq!(parse("folder").unwrap(), Target::Folder);
     assert!(parse("cmd").is_err());

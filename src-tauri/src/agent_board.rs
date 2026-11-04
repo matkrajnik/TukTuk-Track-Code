@@ -46,6 +46,12 @@ pub struct Entry {
     pub timed_out: bool,
     /// Folder sesji to worktree Orki (ostatni odczyt `worktree list`): „Przejdź” do Orki.
     pub orca: bool,
+    /// Źródło sesji (`orca`, `claude-desktop`, `codex-desktop`, `vscode`, `terminal`;
+    /// puste, gdy hook go nie podał).
+    pub host: String,
+    /// Identyfikator w źródle; tylko dla „Przejdź”, nie trafia do okna ani MCP.
+    #[serde(skip)]
+    pub host_ref: Option<String>,
 }
 
 impl Entry {
@@ -85,6 +91,8 @@ pub fn entries(board: Vec<BoardSession>) -> Vec<Entry> {
                 subagents: b.subagents,
                 timed_out,
                 orca: false,
+                host: b.host,
+                host_ref: b.host_ref,
             }
         })
         .collect()
@@ -360,6 +368,10 @@ pub fn mcp_json(
             m.insert("agent".into(), json!(e.agent.kind));
             m.insert("folder".into(), json!(e.agent.name));
             m.insert("phase".into(), json!(e.phase));
+            if !e.host.is_empty() {
+                // Sama nazwa źródła; identyfikator (`host_ref`) nie wychodzi.
+                m.insert("host".into(), json!(e.host));
+            }
             m.insert("since".into(), json!(hm(e.phase_at)));
             m.insert("minutes".into(), json!((now - e.phase_at).max(0) / 60_000));
             if let Some(reason) = &e.reason {
@@ -398,14 +410,16 @@ pub fn current(app: &tauri::AppHandle) -> Vec<Entry> {
 }
 
 // ---------------------------------------------------------------------------
-// „Przejdź”: folder sesji w Orce, VS Code albo Eksploratorze
+// „Przejdź”: sesja w jej aplikacji (Orca, Claude/Codex Desktop), folder w VS Code
+// albo w Eksploratorze
 
 /// Dokąd prowadzi „Przejdź”.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Target {
-    /// Okno Orki na wierzch (`orca open`); tylko dla worktree Orki.
-    Orca,
+    /// Aplikacja, w której działa sesja ([`app_link`]): terminal Orki, sesja
+    /// Claude Desktop albo wątek Codex Desktop.
+    App,
     /// `Code.exe <folder>`: VS Code otwiera folder albo przełącza na jego okno.
     Code,
     /// Folder w Eksploratorze.
@@ -480,7 +494,72 @@ fn open_in_code(folder: &Path) -> Result<(), String> {
         .map_err(|e| format!("Nie udało się uruchomić VS Code: {e}"))
 }
 
+/// Jak dotrzeć do sesji w aplikacji, w której działa.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AppLink {
+    /// `claude://…` albo `codex://…` (protokoły zarejestrowane przez te aplikacje).
+    Url(String),
+    /// `orca terminal switch --terminal <uchwyt>`.
+    OrcaTerminal(String),
+    /// `orca open`: samo okno Orki (sesja w worktree Orki bez uchwytu terminala).
+    OrcaWindow,
+}
+
+/// UUID w zapisie z myślnikami (identyfikator wątku Codexa).
+fn is_uuid(text: &str) -> bool {
+    let parts: Vec<&str> = text.split('-').collect();
+    parts.len() == 5
+        && parts
+            .iter()
+            .zip([8, 4, 4, 4, 12])
+            .all(|(p, len)| p.len() == len && p.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// Adres sesji w jej aplikacji. Claude Desktop: `claude://code/continue?session=local_…`
+/// (bez identyfikatora widok „Sessions Waiting for You”, `claude://code/needs-input`);
+/// Codex Desktop: `codex://threads/<id wątku>` (= `session_id` z hooka); Orca:
+/// terminal sesji, a bez uchwytu samo okno.
+pub fn app_link(entry: &Entry) -> Result<AppLink, String> {
+    use crate::hook_wire as w;
+    let host = entry.host.as_str();
+    let id = entry.host_ref.as_deref();
+    match host {
+        w::HOST_CLAUDE_DESKTOP => Ok(AppLink::Url(
+            match id.filter(|i| w::valid_claude_session(i)) {
+                Some(id) => format!("claude://code/continue?session={id}"),
+                None => "claude://code/needs-input".into(),
+            },
+        )),
+        w::HOST_CODEX_DESKTOP if is_uuid(&entry.id) => {
+            Ok(AppLink::Url(format!("codex://threads/{}", entry.id)))
+        }
+        w::HOST_CODEX_DESKTOP => Err("Codex nie podał identyfikatora wątku.".into()),
+        w::HOST_ORCA => Ok(match id.filter(|h| w::valid_orca_handle(h)) {
+            Some(handle) => AppLink::OrcaTerminal(handle.into()),
+            None => AppLink::OrcaWindow,
+        }),
+        _ if entry.orca => Ok(AppLink::OrcaWindow),
+        _ => Err("Ta sesja nie działa w Orce, Claude Desktop ani Codex Desktop.".into()),
+    }
+}
+
+fn open_app(app: &tauri::AppHandle, entry: &Entry) -> Result<(), String> {
+    match app_link(entry)? {
+        AppLink::Url(url) => {
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_url(&url, None::<&str>)
+                .map_err(|e| format!("Nie udało się otworzyć aplikacji: {e}"))
+        }
+        AppLink::OrcaTerminal(handle) => crate::orca::focus_terminal(app, &handle),
+        AppLink::OrcaWindow => crate::orca::bring_to_front(app),
+    }
+}
+
 fn open_target(app: &tauri::AppHandle, entry: &Entry, target: Target) -> Result<(), String> {
+    if target == Target::App {
+        return open_app(app, entry);
+    }
     let folder = check_folder(&entry.agent.cwd, Path::is_dir)?;
     match target {
         Target::Folder => {
@@ -490,8 +569,7 @@ fn open_target(app: &tauri::AppHandle, entry: &Entry, target: Target) -> Result<
                 .map_err(|e| format!("Nie udało się otworzyć folderu: {e}"))
         }
         Target::Code => open_in_code(&folder),
-        Target::Orca if entry.orca => crate::orca::bring_to_front(app),
-        Target::Orca => Err("Folder sesji nie jest worktree Orki.".into()),
+        Target::App => open_app(app, entry),
     }
 }
 

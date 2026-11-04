@@ -34,7 +34,9 @@ fn main() {
         .lock()
         .take(native_msg::MAX as u64)
         .read_to_end(&mut raw);
-    if let Some(body) = hook_wire::envelope(&first, &raw) {
+    // Źródło sesji (Orca, Claude/Codex Desktop, VS Code) ze środowiska agenta.
+    let env = |key: &str| std::env::var(key).ok();
+    if let Some(body) = hook_wire::envelope_from(&first, &raw, &env) {
         let _ = hook_wire::forward(hook_wire::PIPE, &body);
     }
 }
