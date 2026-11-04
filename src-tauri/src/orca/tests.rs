@@ -398,24 +398,37 @@ fn focus_switches_to_the_session_terminal_and_falls_back_to_the_window() {
         args_switch("term_abc123"),
         ["terminal", "switch", "--terminal", "term_abc123", "--json"]
     );
-    // Uchwyt aktualny: tylko `terminal switch`.
+    let raised = std::cell::Cell::new(0);
+    let window = |found: bool| {
+        let raised = &raised;
+        move || {
+            raised.set(raised.get() + 1);
+            found
+        }
+    };
+    // Uchwyt aktualny: `terminal switch`, potem okno Orki na wierzch (bez `open`).
     let fake = Fake::new(vec![("terminal", vec![ok(STATUS)])]);
-    assert!(focus(&fake, &prog(), "term_abc123").is_ok());
+    assert!(focus(&fake, &prog(), "term_abc123", &window(true)).is_ok());
     assert_eq!(fake.called("terminal"), 1);
     assert_eq!(fake.called("open"), 0);
-    // Nieaktualny uchwyt (np. po restarcie Orki): samo okno Orki.
+    assert_eq!(raised.get(), 1);
+    // Nieaktualny uchwyt (np. po restarcie Orki): przynajmniej okno Orki.
+    let fake = Fake::new(vec![("terminal", vec![failed(FAILED, "")])]);
+    assert!(focus(&fake, &prog(), "term_stary", &window(true)).is_ok());
+    assert_eq!(fake.called("open"), 0);
+    // Okna nie ma (Orka zamknięta albo Windows odmówił): `orca open`.
     let fake = Fake::new(vec![
         ("terminal", vec![failed(FAILED, "")]),
         ("open", vec![ok(STATUS)]),
     ]);
-    assert!(focus(&fake, &prog(), "term_stary").is_ok());
+    assert!(focus(&fake, &prog(), "term_x", &window(false)).is_ok());
     assert_eq!(fake.called("open"), 1);
     // Orka nie wstaje: błąd `open` trafia do okna.
     let fake = Fake::new(vec![
         ("terminal", vec![Err("brak".into())]),
         ("open", vec![Err("Orca nie działa".into())]),
     ]);
-    assert!(focus(&fake, &prog(), "term_x").is_err());
+    assert!(focus(&fake, &prog(), "term_x", &window(false)).is_err());
 }
 
 #[test]

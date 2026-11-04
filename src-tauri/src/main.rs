@@ -55,6 +55,7 @@ mod timesheet;
 mod tray;
 mod week_notes;
 mod widget;
+mod window_focus;
 mod window_state;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
