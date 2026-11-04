@@ -11,16 +11,20 @@ import { jiraKeyIn, matchAgentTask, type Agent } from "./agents";
 import {
   agentHooksKey,
   desktop,
+  orcaKey,
   previewAgentsEvent,
   previewBindings,
   read,
 } from "./store";
 import {
   agentBoardSeenKey,
+  previewAgentWaitTime,
   previewHookBoard,
   previewMarkBoardSeen,
   type HookPhase,
+  type WaitTime,
 } from "./preview/hooks";
+import { previewJson } from "./preview/storage";
 
 export type BoardPhase = HookPhase;
 
@@ -38,7 +42,39 @@ export interface BoardEntry extends Agent {
   subagents: number;
   /** Koniec z braku zdarzeń (ubity proces), nie po zakończonej turze. */
   timedOut: boolean;
+  /** Folder sesji to worktree Orki: „Przejdź” może wyciągnąć Orkę na wierzch. */
+  orca: boolean;
 }
+
+/** Dokąd prowadzi „Przejdź” (`agent_board::Target`). */
+export type OpenTarget = "orca" | "code" | "folder";
+
+/** Czekanie sesji na użytkownika w zakresie (`agent_wait::WaitTime`). */
+export type { WaitTime } from "./preview/hooks";
+
+/**
+ * Podgląd: ostatnie „Przejdź” (nic nie uruchamia; testy sprawdzają, co poszłoby
+ * do aplikacji).
+ */
+export const agentOpenKey = "tuktuk-track-preview-agent-open-v1";
+
+const norm = (folder: string) =>
+  folder.trim().replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+/** Worktree z podglądu Orki (`orca::in_worktrees`). */
+function previewOrcaFolders(): string[] {
+  const worktrees = previewJson(orcaKey).worktrees;
+  return Array.isArray(worktrees)
+    ? worktrees
+        .map((w) => norm(String((w as { path?: unknown })?.path ?? "")))
+        .filter(Boolean)
+    : [];
+}
+const inWorktrees = (folders: string[], cwd: string) => {
+  const folder = norm(cwd);
+  return (
+    !!folder && folders.some((w) => folder === w || folder.startsWith(`${w}/`))
+  );
+};
 
 /** Nieprzejrzane czekające i zakończone (`agent_board::counts`). */
 export interface BoardCounts {
@@ -68,6 +104,7 @@ async function previewBoard(): Promise<BoardEntry[]> {
   if (!sessions.length) return [];
   const data = await read();
   const bindings = previewBindings();
+  const worktrees = previewOrcaFolders();
   return sessions.map((s) => {
     // Podgląd nie czyta gałęzi git: klucz tylko z nazwy folderu (jak worktree).
     const key = jiraKeyIn(s.name);
@@ -87,8 +124,49 @@ async function previewBoard(): Promise<BoardEntry[]> {
       reason: s.reason,
       subagents: s.subagents,
       timedOut: s.timedOut,
+      orca: inWorktrees(worktrees, s.cwd),
     };
   });
+}
+
+/**
+ * „Przejdź”: folder sesji w Orce, VS Code albo Eksploratorze; potem sesja jest
+ * przejrzana. W podglądzie nic nie uruchamia, tylko zapisuje żądanie.
+ */
+export async function openAgentSession(
+  entry: Pick<BoardEntry, "kind" | "id">,
+  target: OpenTarget,
+): Promise<BoardEntry[]> {
+  if (desktop)
+    return invoke("agent_board_open", {
+      kind: entry.kind,
+      id: entry.id,
+      target,
+    });
+  const found = (await previewBoard()).find(
+    (e) => e.kind === entry.kind && e.id === entry.id,
+  );
+  if (!found) throw new Error("Tej sesji nie ma już na tablicy.");
+  if (target === "orca" && !found.orca)
+    throw new Error("Folder sesji nie jest worktree Orki.");
+  try {
+    localStorage.setItem(
+      agentOpenKey,
+      JSON.stringify({ kind: entry.kind, id: entry.id, target, cwd: found.cwd }),
+    );
+  } catch {
+    // Zapis żądania służy tylko testom; brak miejsca niczego nie psuje.
+  }
+  return markAgentSeen(entry);
+}
+
+/** Czas czekania sesji na użytkownika w `[from, to)` (`agent_wait_time`). */
+export async function readAgentWaitTime(
+  from: number,
+  to: number,
+): Promise<WaitTime> {
+  if (desktop) return invoke("agent_wait_time", { from, to });
+  return previewAgentWaitTime(from, to, Date.now());
 }
 
 export async function readAgentBoard(): Promise<BoardEntry[]> {

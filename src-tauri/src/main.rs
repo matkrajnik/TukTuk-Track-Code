@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod agent_board;
 mod agent_time;
+mod agent_wait;
 mod agents;
 mod ai;
 mod ai_chat;
@@ -473,6 +474,8 @@ fn main() {
             legacy::run_native(app.handle(), &connection, &migrated);
             // Czas agentów starszy niż 400 dni (PLAN_1.7.md, W1).
             agent_time::prune(&connection, db::now())?;
+            // Czekanie sesji agentów na użytkownika: ten sam okres przechowywania.
+            agent_wait::prune(&connection, db::now())?;
             maintenance::record_version(
                 &connection,
                 app.config()
@@ -696,6 +699,8 @@ fn main() {
             agents::agent_bind,
             agents::agent_unbind,
             agent_time::agent_time,
+            agent_wait::agent_wait_time,
+            agent_board::agent_board_open,
             suggest::agent_suggestions,
             suggest::agent_switch,
             suggest::agent_dismiss,

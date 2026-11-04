@@ -103,6 +103,8 @@ export function toolLabel(
       return "przeczytał: bieżący pomiar";
     case "ts_tasks":
       return "przeczytał: zadania TS";
+    case "agent_sessions":
+      return "przeczytał: sesje agentów";
     case "propose_task_create":
       return `zaproponował: zadanie „${arg(input, "title")}”`;
     case "propose_note_append":

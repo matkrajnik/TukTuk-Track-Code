@@ -595,9 +595,17 @@ pub fn start(app: &tauri::AppHandle) {
                     branches.recognize(&mut list, now, git_branch);
                     match_plain(&app, &mut list);
                     for (entry, agent) in board.iter_mut().zip(list) {
+                        entry.orca = crate::orca::is_worktree(&app, &agent.cwd);
                         entry.agent = agent;
                     }
                 }
+                // Czas czekania na użytkownika (etap 3 tablicy sesji).
+                crate::agent_wait::observe(&app, &board, now);
+                // Tylko trwające sesje (czekanie, praca): zakończone nie
+                // uruchamiają odczytu Orki co 2 minuty.
+                let board_outside_orca = board
+                    .iter()
+                    .any(|e| !e.orca && e.phase != crate::hooks::Phase::Done.as_str());
                 crate::agent_board::publish(&app, board);
                 if let Some(ai_dir) = &ai_dir {
                     without_ai_dir(&mut found, ai_dir);
@@ -607,7 +615,8 @@ pub fn start(app: &tauri::AppHandle) {
                 branches.recognize(&mut found, now, git_branch);
                 // Mapowanie folderów worktree Orki odświeża się w tle tylko wtedy,
                 // gdy ktoś nie ma jeszcze klucza (B9); Orki nie uruchamia.
-                if found.iter().any(|a| a.key.is_none()) {
+                // Tablica sesji też potrzebuje listy worktree (przycisk „Orca”).
+                if found.iter().any(|a| a.key.is_none()) || board_outside_orca {
                     crate::orca::refresh_if_due(&app, now);
                 }
                 match_tasks(&app, &mut found);

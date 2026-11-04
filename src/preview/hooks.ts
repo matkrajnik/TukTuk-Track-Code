@@ -66,11 +66,32 @@ interface Session {
   seen: boolean;
   /** Na co czeka sesja albo `HOOK_TIMEOUT_REASON` (`Session::reason`). */
   reason: string | null;
+  /**
+   * Zakończone czekania `[początek, koniec]`. W aplikacji zapisuje je pętla
+   * agentów (`agent_wait.rs`, koniec = ostatnia obserwacja); tu znamy chwilę
+   * wyjścia z czekania wprost ze zdarzeń.
+   */
+  waits: [number, number][];
+}
+
+/** Czekanie sesji na użytkownika (`agent_waits`). */
+export interface HookWait {
+  agent: "claude" | "codex";
+  sessionId: string;
+  start: number;
+  end: number;
 }
 
 /** `Session::enter`: nowa faza, chwila wejścia, czekanie i koniec nieprzejrzane. */
-function enter(s: Session, phase: Phase, at: number) {
+function enter(
+  s: Session,
+  phase: Phase,
+  at: number,
+  /** Koniec czekania, gdy inny niż `at` (wygaśnięcie z ciszy). */
+  waitEnd = at,
+) {
   if (s.phase === phase) return;
+  if (s.phase === "waiting") s.waits.push([s.phaseAt, waitEnd]);
   s.phase = phase;
   s.phaseAt = at;
   s.seen = phase === "working";
@@ -119,15 +140,23 @@ export function foldHookEvents(
   now: number,
   /** `Sessions::keep_prompts` (z `ai_assign_suggest` i wybranego silnika). */
   keepPrompts = false,
-): { sessions: Session[]; recent: HookEventRow[] } {
+): { sessions: Session[]; recent: HookEventRow[]; waits: HookWait[] } {
   const map = new Map<string, Session>();
   const recent: HookEventRow[] = [];
+  /** Czekania sesji zakończonych `SessionEnd` (sesja znika z mapy). */
+  const ended: HookWait[] = [];
   const sorted = [...events].sort((a, b) => a.at - b.at);
   for (const ev of sorted) {
     const key = `${ev.agent}|${ev.sessionId}`;
     let detail = ev.notificationType ?? ev.agentId ?? "";
-    if (ev.event === "SessionEnd") map.delete(key);
-    else {
+    if (ev.event === "SessionEnd") {
+      const gone = map.get(key);
+      if (gone) {
+        enter(gone, "done", ev.at);
+        ended.push(...waitsOf(gone, ev.at));
+      }
+      map.delete(key);
+    } else {
       const s: Session = map.get(key) ?? {
         agent: ev.agent,
         sessionId: ev.sessionId,
@@ -142,6 +171,7 @@ export function foldHookEvents(
         phaseAt: ev.at,
         seen: true,
         reason: null,
+        waits: [],
       };
       map.set(key, s);
       s.last = ev.at;
@@ -257,20 +287,80 @@ export function foldHookEvents(
       }
       if (silent || orphaned) {
         // Koniec od ostatniego zdarzenia, nie od chwili wykrycia ciszy.
-        enter(s, "done", Math.min(s.last, now));
+        // Pętla aplikacji widzi czekanie aż do wygaśnięcia (`last + limit`),
+        // więc tam kończy się zapisane czekanie (`agent_waits`).
+        enter(s, "done", Math.min(s.last, now), Math.min(now, s.last + limit));
         if (silent && !orphaned) s.reason = HOOK_TIMEOUT_REASON;
         s.subagents.clear();
         s.tools.clear();
         s.stopped = false;
       }
     }
-    if (s.phase === "done" && (now < s.last || now - s.last > FORGET))
+    if (s.phase === "done" && (now < s.last || now - s.last > FORGET)) {
+      // Zapomniana sesja: jej czekania zostają (w aplikacji leżą w bazie).
+      ended.push(...waitsOf(s, now));
       map.delete(key);
+    }
   }
   return {
     sessions: [...map.values()],
     recent: recent.slice(-RECENT).reverse(),
+    waits: [...ended, ...[...map.values()].flatMap((s) => waitsOf(s, now))],
   };
+}
+
+/** Czekania sesji: zakończone i trwające (do `now`). */
+function waitsOf(s: Session, now: number): HookWait[] {
+  const spans: [number, number][] =
+    s.phase === "waiting" ? [...s.waits, [s.phaseAt, now]] : s.waits;
+  return spans.map(([start, end]) => ({
+    agent: s.agent,
+    sessionId: s.sessionId,
+    start,
+    end: Math.max(start, end),
+  }));
+}
+
+/** Czekanie w `[from, to)` (`agent_wait::summarize`): bez liczenia dwa razy. */
+export interface WaitTime {
+  totalMs: number;
+  count: number;
+  longestMs: number;
+}
+export function summarizeWaits(
+  waits: readonly { start: number; end: number }[],
+  from: number,
+  to: number,
+): WaitTime {
+  const clipped = waits
+    .map((w) => [Math.max(w.start, from), Math.min(w.end, to)] as const)
+    .filter(([a, b]) => b > a);
+  const sorted = [...clipped].sort((x, y) => x[0] - y[0] || x[1] - y[1]);
+  const union: [number, number][] = [];
+  for (const [a, b] of sorted) {
+    const last = union[union.length - 1];
+    if (last && a <= last[1]) last[1] = Math.max(last[1], b);
+    else union.push([a, b]);
+  }
+  return {
+    totalMs: union.reduce((sum, [a, b]) => sum + b - a, 0),
+    count: clipped.length,
+    longestMs: clipped.reduce((max, [a, b]) => Math.max(max, b - a), 0),
+  };
+}
+
+/**
+ * `agent_wait_time` w podglądzie: czekania liczone ze zdarzeń hooków. W aplikacji
+ * do bazy trafia tylko czekanie widziane, gdy aplikacja działa i hooki są
+ * włączone; podgląd liczy całą historię zdarzeń.
+ */
+export function previewAgentWaitTime(
+  from: number,
+  to: number,
+  now: number,
+): WaitTime {
+  if (!enabled()) return { totalMs: 0, count: 0, longestMs: 0 };
+  return summarizeWaits(foldHookEvents(events(), now).waits, from, to);
 }
 
 function stored(): Record<string, unknown> {

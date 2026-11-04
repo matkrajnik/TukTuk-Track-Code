@@ -391,3 +391,14 @@ fn resolve_path_needs_an_existing_file() {
     assert_eq!(resolve_path(&format!("  {}  ", file.display())), Some(file));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn worktree_folders_match_with_subfolders_and_ignore_case() {
+    let folders = vec![norm_folder(r"C:\orca\wms-200"), String::new()];
+    assert!(in_worktrees(&folders, r"c:\ORCA\wms-200\"));
+    assert!(in_worktrees(&folders, r"C:\orca\wms-200\src"));
+    assert!(!in_worktrees(&folders, r"C:\orca\wms-2000"));
+    assert!(!in_worktrees(&folders, ""));
+    // Pusty wpis nie obejmuje wszystkiego.
+    assert!(!in_worktrees(&[String::new()], r"C:\x"));
+}

@@ -651,6 +651,32 @@ struct Cache {
     at: Option<i64>,
     busy: bool,
     map: Vec<(String, String)>,
+    /// Foldery wszystkich worktree z ostatniego `worktree list` (po `norm_folder`),
+    /// także bez podpiętych zgłoszeń: tablica sesji pokazuje przy nich „Orca”.
+    folders: Vec<String>,
+}
+
+/// Czy folder (albo jego folder nadrzędny) to worktree z ostatniego odczytu Orki.
+pub fn in_worktrees(folders: &[String], cwd: &str) -> bool {
+    let folder = norm_folder(cwd);
+    !folder.is_empty()
+        && folders
+            .iter()
+            .any(|w| !w.is_empty() && (folder == *w || folder.starts_with(&format!("{w}/"))))
+}
+
+/// Czy sesja agenta pracuje w worktree Orki (ostatni odczyt `worktree list`).
+pub fn is_worktree(app: &tauri::AppHandle, cwd: &str) -> bool {
+    app.try_state::<State>()
+        .and_then(|s| s.0.lock().ok().map(|c| in_worktrees(&c.folders, cwd)))
+        .unwrap_or(false)
+}
+
+/// Wyciąga okno Orki na wierzch (`orca open`, to samo polecenie co przy
+/// uruchamianiu); konkretnego worktree CLI nie aktywuje.
+pub fn bring_to_front(app: &tauri::AppHandle) -> Result<(), String> {
+    let program = program(app)?;
+    run_json(&Process, &program, &args_open(), LONG).map(|_| ())
 }
 
 /// Klucz zgłoszenia worktree, w którym pracuje agent (ostatni odczyt `worktree list`).
@@ -693,6 +719,11 @@ pub fn refresh_if_due(app: &tauri::AppHandle, now: i64) {
             .and_then(|state| {
                 let mut cache = state.0.lock().ok()?;
                 let map = found.as_deref().map(folder_keys).unwrap_or_default();
+                // Nieudany odczyt (Orka zamknięta, limit czasu) zostawia
+                // poprzednią listę: przycisk „Orca” nie miga.
+                if let Some(worktrees) = found.as_deref() {
+                    cache.folders = worktrees.iter().map(|w| norm_folder(&w.path)).collect();
+                }
                 cache.busy = false;
                 let changed = cache.map != map;
                 cache.map = map;

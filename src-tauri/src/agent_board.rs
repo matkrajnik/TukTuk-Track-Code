@@ -14,8 +14,9 @@ use crate::agents::{self, Agent};
 use crate::hooks::{BoardSession, Phase};
 use crate::notify::{self, Message, View};
 use crate::settings::AppSettings;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -43,6 +44,8 @@ pub struct Entry {
     pub subagents: usize,
     /// Koniec z braku zdarzeń (ubity proces), nie po `Stop`.
     pub timed_out: bool,
+    /// Folder sesji to worktree Orki (ostatni odczyt `worktree list`): „Przejdź” do Orki.
+    pub orca: bool,
 }
 
 impl Entry {
@@ -81,6 +84,7 @@ pub fn entries(board: Vec<BoardSession>) -> Vec<Entry> {
                 reason: b.reason,
                 subagents: b.subagents,
                 timed_out,
+                orca: false,
             }
         })
         .collect()
@@ -334,6 +338,182 @@ pub fn agent_board_seen(app: tauri::AppHandle, kind: String, id: String) -> Vec<
 #[tauri::command]
 pub fn agent_board_seen_all(app: tauri::AppHandle) -> Vec<Entry> {
     mark(&app, "", None)
+}
+
+// ---------------------------------------------------------------------------
+// Narzędzie MCP `agent_sessions`
+
+/// Tablica dla agenta (MCP): sama nazwa folderu (bez ścieżki), faza, od kiedy,
+/// powód czekania, zadanie i gałąź. Wynik przechodzi potem przez
+/// `ai_privacy::redact` jak każde narzędzie MCP.
+pub fn mcp_json(
+    list: &[Entry],
+    now: i64,
+    hm: impl Fn(i64) -> String,
+    waited_today_ms: i64,
+) -> serde_json::Value {
+    use serde_json::{json, Map, Value};
+    let sessions: Vec<Value> = list
+        .iter()
+        .map(|e| {
+            let mut m = Map::new();
+            m.insert("agent".into(), json!(e.agent.kind));
+            m.insert("folder".into(), json!(e.agent.name));
+            m.insert("phase".into(), json!(e.phase));
+            m.insert("since".into(), json!(hm(e.phase_at)));
+            m.insert("minutes".into(), json!((now - e.phase_at).max(0) / 60_000));
+            if let Some(reason) = &e.reason {
+                m.insert("reason".into(), json!(reason));
+            }
+            if e.phase != Phase::Working.as_str() {
+                m.insert("seen".into(), json!(e.seen));
+            }
+            if e.subagents > 0 {
+                m.insert("subagents".into(), json!(e.subagents));
+            }
+            if let Some(branch) = e.agent.branch.as_ref().filter(|_| !e.agent.detached) {
+                m.insert("branch".into(), json!(branch));
+            }
+            if let Some(task) = &e.agent.task {
+                m.insert(
+                    "task".into(),
+                    json!({"taskId": task.task_id, "title": task.title, "key": task.key}),
+                );
+            }
+            Value::Object(m)
+        })
+        .collect();
+    let c = counts(list);
+    json!({
+        "sessions": sessions,
+        "waitingUnseen": c.waiting,
+        "doneUnseen": c.done,
+        "waitedForUserTodayMinutes": waited_today_ms / 60_000,
+    })
+}
+
+/// Ostatnia tablica (do narzędzia MCP).
+pub fn current(app: &tauri::AppHandle) -> Vec<Entry> {
+    snapshot(app)
+}
+
+// ---------------------------------------------------------------------------
+// „Przejdź”: folder sesji w Orce, VS Code albo Eksploratorze
+
+/// Dokąd prowadzi „Przejdź”.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Target {
+    /// Okno Orki na wierzch (`orca open`); tylko dla worktree Orki.
+    Orca,
+    /// `Code.exe <folder>`: VS Code otwiera folder albo przełącza na jego okno.
+    Code,
+    /// Folder w Eksploratorze.
+    Folder,
+}
+
+/// Znaki, których w ścieżce folderu nie przyjmujemy (cudzysłów, zmienne,
+/// znaki sterujące): folder pochodzi z hooka agenta.
+const UNSAFE: [char; 7] = ['"', '%', '!', '^', '\n', '\r', '\0'];
+
+/// Folder sesji do otwarcia: bezwzględna ścieżka lokalnego, istniejącego
+/// katalogu z literą dysku. Ścieżki sieciowe (`\\serwer\…`) odpadają przed
+/// sprawdzeniem katalogu, żeby nie łączyć się z cudzym serwerem.
+pub fn check_folder(cwd: &str, is_dir: impl Fn(&Path) -> bool) -> Result<PathBuf, String> {
+    let cwd = cwd.trim();
+    if cwd.is_empty() {
+        return Err("Sesja nie podała folderu roboczego.".into());
+    }
+    let drive = cwd.as_bytes();
+    let local = drive.len() >= 3
+        && drive[0].is_ascii_alphabetic()
+        && drive[1] == b':'
+        && matches!(drive[2], b'\\' | b'/');
+    if cwd.contains(UNSAFE) || !local {
+        return Err("Ścieżki folderu nie da się bezpiecznie otworzyć.".into());
+    }
+    let path = PathBuf::from(cwd);
+    if !is_dir(&path) {
+        return Err(format!("Folder {cwd} nie istnieje."));
+    }
+    Ok(path)
+}
+
+/// Miejsca `Code.exe` (bez pliku wsadowego `code.cmd`): instalacja użytkownika,
+/// instalacja systemowa, potem katalog nad `bin` z PATH (tam leży `code.cmd`).
+pub fn code_candidates(env: impl Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let exe = |root: PathBuf| root.join("Microsoft VS Code").join("Code.exe");
+    let mut out = Vec::new();
+    if let Some(local) = env("LOCALAPPDATA") {
+        out.push(exe(PathBuf::from(local).join("Programs")));
+    }
+    if let Some(program_files) = env("ProgramFiles") {
+        out.push(exe(PathBuf::from(program_files)));
+    }
+    if let Some(path) = env("PATH") {
+        out.extend(
+            std::env::split_paths(&path)
+                .filter(|dir| {
+                    dir.file_name()
+                        .is_some_and(|n| n.eq_ignore_ascii_case("bin"))
+                })
+                .filter_map(|dir| dir.parent().map(|p| p.join("Code.exe"))),
+        );
+    }
+    out
+}
+
+fn open_in_code(folder: &Path) -> Result<(), String> {
+    let code = code_candidates(|key| std::env::var(key).ok())
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or("Nie znaleziono VS Code (Code.exe).")?;
+    let mut command = std::process::Command::new(code);
+    command
+        .arg(folder)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Nie udało się uruchomić VS Code: {e}"))
+}
+
+fn open_target(app: &tauri::AppHandle, entry: &Entry, target: Target) -> Result<(), String> {
+    let folder = check_folder(&entry.agent.cwd, Path::is_dir)?;
+    match target {
+        Target::Folder => {
+            use tauri_plugin_opener::OpenerExt;
+            app.opener()
+                .open_path(folder.to_string_lossy(), None::<&str>)
+                .map_err(|e| format!("Nie udało się otworzyć folderu: {e}"))
+        }
+        Target::Code => open_in_code(&folder),
+        Target::Orca if entry.orca => crate::orca::bring_to_front(app),
+        Target::Orca => Err("Folder sesji nie jest worktree Orki.".into()),
+    }
+}
+
+/// „Przejdź”: otwiera folder sesji (folder z tablicy, nie od okna) i oznacza
+/// sesję jako przejrzaną. Orka może startować do 90 s, więc poza wątkiem okna.
+#[tauri::command]
+pub async fn agent_board_open(
+    app: tauri::AppHandle,
+    kind: String,
+    id: String,
+    target: Target,
+) -> Result<Vec<Entry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let entry = snapshot(&app)
+            .into_iter()
+            .find(|e| e.agent.kind == kind && e.id == id)
+            .ok_or("Tej sesji nie ma już na tablicy.")?;
+        open_target(&app, &entry, target)?;
+        Ok(mark(&app, &kind, Some(&id)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[cfg(test)]

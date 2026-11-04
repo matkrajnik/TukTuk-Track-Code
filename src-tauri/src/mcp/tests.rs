@@ -103,6 +103,7 @@ struct Fixture {
     db: Connection,
     settings: AppSettings,
     folders: Vec<String>,
+    board: Vec<crate::agent_board::Entry>,
     dict: Dictionary,
     state: State,
 }
@@ -116,6 +117,7 @@ impl Fixture {
             db,
             settings,
             folders: vec![r"C:\Projekty\wms".into(), r"C:\Starsze".into()],
+            board: Vec::new(),
             dict,
             state: State::default(),
         }
@@ -127,6 +129,7 @@ impl Fixture {
             settings: &self.settings,
             now: now(),
             folders: &self.folders,
+            board: &self.board,
         };
         call::<Tz>(&env, &self.state, &self.dict, tool, &args)
     }
@@ -220,7 +223,7 @@ fn batch_requests_get_a_batch_answer() {
 fn tool_definitions_are_english_short_and_have_no_forbidden_tools() {
     let tools = mcp_wire::tools();
     let tools = tools.as_array().unwrap();
-    assert_eq!(tools.len(), 11);
+    assert_eq!(tools.len(), 12);
     for tool in tools {
         let name = tool["name"].as_str().unwrap();
         let description = tool["description"].as_str().unwrap();
@@ -1092,6 +1095,48 @@ fn link_folder_uses_the_calling_session_folder_with_two_agents_working() {
             "{cwd}"
         );
     }
+}
+
+#[test]
+fn agent_sessions_lists_board_with_folder_names_and_todays_waiting() {
+    use crate::hooks::{HookEvent, Sessions};
+    let mut f = Fixture::new();
+    let start = now() - 30 * 60_000;
+    let ev = |id: &str, event: &str, tool: Option<&str>| HookEvent {
+        agent: "claude".into(),
+        session_id: id.into(),
+        cwd: format!(r"C:\Projekty\{id}"),
+        event: event.into(),
+        tool_name: tool.map(str::to_string),
+        ..HookEvent::default()
+    };
+    let mut s = Sessions::default();
+    s.apply(&ev("wms", "UserPromptSubmit", None), start);
+    s.apply(&ev("api", "UserPromptSubmit", None), start);
+    s.apply(
+        &ev("wms", "PermissionRequest", Some("Bash")),
+        now() - 4 * 60_000,
+    );
+    f.board = crate::agent_board::entries(s.board());
+    crate::agent_wait::record(&f.db, &crate::agent_wait::Wait::from_board(&f.board), now())
+        .unwrap();
+    let out = f.json("agent_sessions", json!({}));
+    let sessions = out["sessions"].as_array().unwrap();
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0]["folder"], "wms");
+    assert_eq!(sessions[0]["phase"], "waiting");
+    assert_eq!(sessions[0]["reason"], "zgoda: Bash");
+    assert_eq!(sessions[0]["minutes"], 4);
+    assert_eq!(sessions[0]["seen"], false);
+    assert_eq!(sessions[1]["phase"], "working");
+    assert!(sessions[1].get("seen").is_none());
+    assert_eq!(out["waitingUnseen"], 1);
+    assert_eq!(out["waitedForUserTodayMinutes"], 4);
+    // Pełna ścieżka folderu nie trafia do modelu.
+    assert!(!out.to_string().contains("Projekty"));
+    // Czas czekania jest też w podsumowaniu dnia.
+    let day = f.json("day_summary", json!({}));
+    assert_eq!(day["agentTime"]["waitedForUserMinutes"], 4);
 }
 
 #[test]

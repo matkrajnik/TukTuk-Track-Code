@@ -38,13 +38,14 @@ pub fn pipe_name() -> String {
 }
 
 /// Narzędzia tylko do odczytu: wykonywane od razu.
-pub const READ_TOOLS: [&str; 6] = [
+pub const READ_TOOLS: [&str; 7] = [
     "tasks_list",
     "task_get",
     "day_summary",
     "week_summary",
     "current_measurement",
     "ts_tasks",
+    "agent_sessions",
 ];
 /// Narzędzia zapisu: tworzą propozycje czekające na „Zastosuj” w aplikacji.
 pub const PROPOSE_TOOLS: [&str; 5] = [
@@ -127,6 +128,12 @@ pub fn tools() -> Value {
         tool(
             "ts_tasks",
             "Timesheet tasks from the app's cache. Does not contact Timesheet.",
+            json!({}),
+            &[],
+        ),
+        tool(
+            "agent_sessions",
+            "Claude Code and Codex sessions on this computer: waiting for the user (with the reason), working, or finished and not yet reviewed, plus today's time spent waiting for the user.",
             json!({}),
             &[],
         ),

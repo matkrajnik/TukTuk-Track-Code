@@ -12,7 +12,7 @@
     },
     {
       "in": {"jsonrpc": "2.0", "id": 3, "method": "tools/list"},
-      "toolNames": ["tasks_list", "task_get", "day_summary", "week_summary", "current_measurement", "ts_tasks", "propose_task_create", "propose_note_append", "propose_link_folder", "propose_switch", "propose_plan"]
+      "toolNames": ["tasks_list", "task_get", "day_summary", "week_summary", "current_measurement", "ts_tasks", "agent_sessions", "propose_task_create", "propose_note_append", "propose_link_folder", "propose_switch", "propose_plan"]
     }
   ]
 }

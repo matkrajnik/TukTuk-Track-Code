@@ -186,6 +186,8 @@ pub struct Env<'a, Tz: TimeZone> {
     pub now: i64,
     /// Foldery robocze pracujących sesji agentów, od najnowszej (`propose_link_folder`).
     pub folders: &'a [String],
+    /// Tablica sesji agentów (`agent_sessions`).
+    pub board: &'a [crate::agent_board::Entry],
 }
 
 fn text_arg(args: &Value, key: &str) -> String {
@@ -575,6 +577,9 @@ fn day_summary<Tz: TimeZone>(env: &Env<Tz>, tasks: &[Task], args: &Value) -> Res
                 "parallelMinutes": minutes(t.parallel_ms),
             })).collect::<Vec<_>>(),
             "unmatchedMinutes": minutes(agents.unmatched_ms),
+            "waitedForUserMinutes": minutes(
+                crate::agent_wait::query(env.db, from, to).map_err(|e| e.to_string())?.total_ms
+            ),
         }),
     );
     let notes: Vec<Value> = tasks
@@ -664,6 +669,18 @@ fn current_measurement<Tz: TimeZone>(env: &Env<Tz>, tasks: &[Task]) -> Result<Va
     m.insert("since".into(), json!(local_hm(env.tz, started)));
     m.insert("elapsedMinutes".into(), json!(minutes(env.now - started)));
     Ok(Value::Object(m))
+}
+
+/// Sesje agentów z tablicy (czeka / pracuje / skończone) i dzisiejsze czekanie.
+fn agent_sessions<Tz: TimeZone>(env: &Env<Tz>) -> Result<Value, String> {
+    let (from, _) = stats::day_bounds(env.tz, today(env));
+    let waited = crate::agent_wait::query(env.db, from, env.now).map_err(|e| e.to_string())?;
+    Ok(crate::agent_board::mcp_json(
+        env.board,
+        env.now,
+        |ms| local_hm(env.tz, ms),
+        waited.total_ms,
+    ))
 }
 
 fn ts_tasks(env_db: &Connection, cache: Option<Vec<Project>>) -> Result<Value, String> {
@@ -820,6 +837,9 @@ fn run<Tz: TimeZone>(
     if tool == "ts_tasks" {
         return ts_tasks(env.db, state.ts());
     }
+    if tool == "agent_sessions" {
+        return agent_sessions(env);
+    }
     let tasks = db::snapshot(env.db).map_err(|e| e.to_string())?.tasks;
     match tool {
         "tasks_list" => tasks_list(env, &tasks, args, ps),
@@ -917,6 +937,7 @@ fn on_request(app: &tauri::AppHandle, body: &[u8]) -> Value {
         ai::dir(app).as_deref(),
         crate::agents::current(app),
     );
+    let board = crate::agent_board::current(app);
     let before = state.proposals().len();
     let result = {
         let database = app.state::<crate::Database>();
@@ -929,6 +950,7 @@ fn on_request(app: &tauri::AppHandle, body: &[u8]) -> Value {
             settings: &settings,
             now: db::now(),
             folders: &folders,
+            board: &board,
         };
         call(&env, &state, &dict, tool, &args)
     };

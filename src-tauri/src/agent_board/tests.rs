@@ -194,7 +194,73 @@ fn entry(id: &str, phase: &'static str, reason: Option<&str>) -> Entry {
         reason: reason.map(str::to_string),
         subagents: 0,
         timed_out: false,
+        orca: false,
     }
+}
+
+#[test]
+fn open_accepts_only_existing_absolute_folders_without_cmd_metacharacters() {
+    let dir = |_: &Path| true;
+    assert_eq!(
+        check_folder(r" C:\Projekty\app ", dir).unwrap(),
+        PathBuf::from(r"C:\Projekty\app")
+    );
+    // Nawiasy, spacje i & są dozwolone (Rust cytuje argumenty pliku .cmd).
+    assert!(check_folder(r"C:\Projekty\R&D (stare)", dir).is_ok());
+    for bad in [
+        "",
+        "   ",
+        r"Projekty\app",
+        r#"C:\a" & calc"#,
+        r"C:\%PATH%",
+        r"C:\a!PATH!",
+        r"C:\a^b",
+        "C:\\a\nb",
+        r"\\serwer\udzial\repo",
+        r"\Projekty\app",
+        r"C:Projekty",
+    ] {
+        assert!(check_folder(bad, dir).is_err(), "{bad:?}");
+    }
+    // Ścieżka sieciowa odpada bez sprawdzania katalogu (bez połączenia SMB).
+    let touched = std::cell::Cell::new(false);
+    let _ = check_folder(r"\\serwer\x", |_| {
+        touched.set(true);
+        true
+    });
+    assert!(!touched.get());
+    let err = check_folder(r"C:\nie-ma", |_| false).unwrap_err();
+    assert_eq!(err, r"Folder C:\nie-ma nie istnieje.");
+}
+
+#[test]
+fn code_is_looked_up_in_user_then_system_install_then_path() {
+    let env = |key: &str| match key {
+        "LOCALAPPDATA" => Some(r"C:\Users\jan\AppData\Local".to_string()),
+        "ProgramFiles" => Some(r"C:\Program Files".to_string()),
+        "PATH" => Some(r"D:\VSCode\bin;;C:\tools;C:\x\BIN".to_string()),
+        _ => None,
+    };
+    // Code.exe wprost (bez pliku wsadowego code.cmd); z PATH katalog nad `bin`.
+    assert_eq!(
+        code_candidates(env),
+        [
+            PathBuf::from(r"C:\Users\jan\AppData\Local\Programs\Microsoft VS Code\Code.exe"),
+            PathBuf::from(r"C:\Program Files\Microsoft VS Code\Code.exe"),
+            PathBuf::from(r"D:\VSCode\Code.exe"),
+            PathBuf::from(r"C:\x\Code.exe"),
+        ]
+    );
+    assert!(code_candidates(|_| None).is_empty());
+}
+
+#[test]
+fn open_targets_come_from_lowercase_names() {
+    let parse = |s: &str| serde_json::from_value::<Target>(serde_json::json!(s));
+    assert_eq!(parse("orca").unwrap(), Target::Orca);
+    assert_eq!(parse("code").unwrap(), Target::Code);
+    assert_eq!(parse("folder").unwrap(), Target::Folder);
+    assert!(parse("cmd").is_err());
 }
 
 #[test]

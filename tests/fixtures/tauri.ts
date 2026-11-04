@@ -636,6 +636,12 @@ function install(init: {
         case "agent_board_seen":
         case "agent_board_seen_all":
           return [];
+        // „Przejdź” wymaga sesji z tablicy, a tablica w fixture jest pusta.
+        case "agent_board_open":
+          throw "Tej sesji nie ma już na tablicy.";
+        // Czas czekania (`agent_wait.rs`): bez zdarzeń hooków zero.
+        case "agent_wait_time":
+          return { totalMs: 0, count: 0, longestMs: 0 };
         // Asystent AI (A1): logika w `ai.rs`, e2e na podglądzie; tu bez wykrytych CLI.
         case "ai_status":
           return {

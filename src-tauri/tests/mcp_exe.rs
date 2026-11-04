@@ -39,7 +39,7 @@ fn stdio_server_answers_and_reports_that_the_app_is_not_running() {
         replies[0]["result"]["serverInfo"]["version"],
         env!("CARGO_PKG_VERSION")
     );
-    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 11);
+    assert_eq!(replies[1]["result"]["tools"].as_array().unwrap().len(), 12);
     assert_eq!(replies[2]["id"], 3);
     assert_eq!(replies[2]["result"]["isError"], true);
     assert_eq!(

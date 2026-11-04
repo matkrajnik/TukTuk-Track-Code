@@ -146,6 +146,85 @@ test("tablica pokazuje, co czeka, co pracuje i co się skończyło, a „Przejrz
   );
 });
 
+test("„Przejdź” otwiera folder sesji (Orca tylko dla worktree) i oznacza ją jako przejrzaną", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    agentHooks: { events },
+    orca: {
+      found: true,
+      running: true,
+      worktrees: [{ path: dir("api"), name: "api", references: [] }],
+    },
+  });
+  await navButton(page).click();
+  const waiting = page.getByRole("region", { name: /Czeka na Ciebie/ });
+  const ask = waiting.getByRole("listitem").nth(0);
+  const perm = waiting.getByRole("listitem").nth(1);
+  // Orca tylko przy sesji w worktree Orki.
+  await expect(
+    ask.getByRole("button", { name: /: Orca$/ }),
+  ).toHaveCount(0);
+  await expect(
+    perm.getByRole("button", { name: "Przejdź do Codex · api: Orca" }),
+  ).toBeVisible();
+
+  await ask
+    .getByRole("button", { name: "Przejdź do Claude · app: VS Code" })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        JSON.parse(
+          localStorage.getItem("tuktuk-track-preview-agent-open-v1") ?? "null",
+        ),
+      ),
+    )
+    .toEqual({ kind: "claude", id: "ask", target: "code", cwd: dir("app") });
+  // Otwarta sesja jest przejrzana, ale nadal czeka.
+  await expect(ask).toContainText("przejrzane, nadal czeka");
+  await expect(page.getByRole("status")).toHaveText(
+    "Otwarto Claude · app (VS Code)",
+  );
+
+  // Folder zakończonej sesji: po otwarciu znika z „Skończone”.
+  const done = page.getByRole("region", { name: /Skończone, nieprzejrzane/ });
+  await done
+    .getByRole("button", { name: "Przejdź do Claude · docs: Folder" })
+    .click();
+  await expect(done.getByRole("listitem")).toHaveCount(1);
+});
+
+test("statystyka pokazuje, ile sesje czekały na Ciebie dziś i w 7 dniach", async ({
+  page,
+}) => {
+  await openPreview(page, {
+    agentHooks: {
+      events: [
+        ...events,
+        // Wczoraj: 30 minut czekania na zgodę, potem praca i koniec.
+        ev(now - 26 * 60 * min, "codex", "UserPromptSubmit", "old", {
+          cwd: dir("api"),
+        }),
+        ev(now - 25 * 60 * min, "codex", "PermissionRequest", "old", {
+          cwd: dir("api"),
+        }),
+        ev(now - 25 * 60 * min + 30 * min, "codex", "PostToolUse", "old", {
+          cwd: dir("api"),
+        }),
+        ev(now - 25 * 60 * min + 31 * min, "codex", "Stop", "old", {
+          cwd: dir("api"),
+        }),
+      ],
+    },
+  });
+  await navButton(page).click();
+  // Dziś: „app” czeka 4 min, „api” 2 min, nakładają się 2 min → 4 min razem.
+  await expect(page.locator(".board-stat")).toHaveText(
+    "Dziś sesje agentów czekały na Ciebie 4 min (2 razy, najdłużej 4 min). Ostatnie 7 dni: 34 min, średnio 5 min dziennie.",
+  );
+});
+
 test("bez hooków tablica jest pusta i wyjaśnia, skąd biorą się sesje", async ({
   page,
 }) => {

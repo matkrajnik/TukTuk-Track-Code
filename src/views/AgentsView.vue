@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
-import { Check, CheckCheck } from "lucide-vue-next";
+import { Check, CheckCheck, Code2, FolderOpen, Workflow } from "lucide-vue-next";
 import { agentTaskLabel } from "../agents";
 import {
   boardCounts,
   markAgentSeen,
   markAllAgentsSeen,
   onAgentBoardChanged,
+  openAgentSession,
   readAgentBoard,
+  readAgentWaitTime,
   type BoardEntry,
   type BoardPhase,
+  type OpenTarget,
+  type WaitTime,
 } from "../agentboard";
 import { duration } from "../store";
 
@@ -89,6 +93,90 @@ async function run(action: () => Promise<BoardEntry[]>): Promise<boolean> {
     return false;
   }
 }
+// „Przejdź”: folder sesji w Orce, VS Code albo Eksploratorze (potem przejrzana).
+const targets: { id: OpenTarget; label: string }[] = [
+  { id: "orca", label: "Orca" },
+  { id: "code", label: "VS Code" },
+  { id: "folder", label: "Folder" },
+];
+const targetsFor = (entry: BoardEntry) =>
+  targets.filter((t) => t.id !== "orca" || entry.orca);
+/** Trwa „Przejdź” (bez `disabled`, które zabrałoby fokus wciśniętemu przyciskowi). */
+const opening = ref(false);
+async function open(entry: BoardEntry, target: OpenTarget) {
+  if (opening.value) return;
+  opening.value = true;
+  try {
+    const name = `${kinds[entry.kind]} · ${entry.name}`;
+    // Zakończona nieprzejrzana sesja po otwarciu znika razem z przyciskiem.
+    const leaves = entry.phase === "done" && !entry.seen;
+    if (await run(() => openAgentSession(entry, target))) {
+      const where = targets.find((t) => t.id === target)?.label ?? "";
+      await announce(`Otwarto ${name} (${where})`);
+      if (leaves) await focusSection(entry.phase);
+    }
+  } finally {
+    opening.value = false;
+  }
+}
+/** Komunikat dla czytnika; ten sam tekst drugi raz też zostaje odczytany. */
+async function announce(text: string) {
+  status.value = "";
+  await nextTick();
+  status.value = text;
+}
+
+// Ile sesje czekały na Ciebie: dziś i w ostatnich 7 dniach (od północy).
+const today = ref<WaitTime | null>(null);
+const week = ref<WaitTime | null>(null);
+const DAY = 86_400_000;
+function midnight(daysAgo: number): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  return d.getTime();
+}
+/** Numer ostatniego odczytu: starsza odpowiedź nie nadpisuje nowszej. */
+let waitRead = 0;
+async function loadWaits() {
+  const mine = ++waitRead;
+  try {
+    const now = Date.now();
+    const [day, days] = await Promise.all([
+      readAgentWaitTime(midnight(0), now),
+      readAgentWaitTime(midnight(6), now),
+    ]);
+    if (mine !== waitRead || !alive) return;
+    today.value = day;
+    week.value = days;
+  } catch (e) {
+    // Statystyka jest pomocnicza: tablica działa bez niej.
+    console.warn("Nie udało się odczytać czasu czekania agentów:", e);
+  }
+}
+/** „23 min”, „2 h 10 min”; poniżej minuty „< 1 min”. */
+function minutes(ms: number): string {
+  const total = Math.round(ms / 60_000);
+  if (ms > 0 && total === 0) return "< 1 min";
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return h ? `${h} h${m ? ` ${m} min` : ""}` : `${m} min`;
+}
+const times = (n: number) => (n === 1 ? "1 raz" : `${n} razy`);
+const waitSummary = computed(() => {
+  if (!today.value || !week.value) return "";
+  const t = today.value;
+  const first = t.count
+    ? `Dziś sesje agentów czekały na Ciebie ${minutes(t.totalMs)} (${times(t.count)}, najdłużej ${minutes(t.longestMs)}).`
+    : "Dziś żadna sesja agenta nie czekała na Ciebie.";
+  const w = week.value;
+  const second = w.count
+    ? ` Ostatnie 7 dni: ${minutes(w.totalMs)}, średnio ${minutes(w.totalMs / 7)} dziennie.`
+    : "";
+  return first + second;
+});
+let waitTimer: ReturnType<typeof setInterval> | undefined;
+
 /** Po zniknięciu klikniętego przycisku fokus wraca na nagłówek sekcji (WCAG 2.4.3). */
 async function focusSection(phase: BoardPhase) {
   await nextTick();
@@ -96,13 +184,15 @@ async function focusSection(phase: BoardPhase) {
 }
 async function seen(entry: BoardEntry) {
   if (await run(() => markAgentSeen(entry))) {
-    status.value = `Oznaczono jako przejrzane: ${kinds[entry.kind]} · ${entry.name}`;
+    await announce(
+      `Oznaczono jako przejrzane: ${kinds[entry.kind]} · ${entry.name}`,
+    );
     await focusSection(entry.phase);
   }
 }
 async function seenAll() {
   if (await run(markAllAgentsSeen)) {
-    status.value = "Oznaczono wszystkie sesje jako przejrzane";
+    await announce("Oznaczono wszystkie sesje jako przejrzane");
     await focusSection("waiting");
   }
 }
@@ -114,6 +204,7 @@ onMounted(async () => {
     const stop = await onAgentBoardChanged((next) => {
       version++;
       list.value = next;
+      void loadWaits();
     });
     if (!alive) return stop();
     unlisten = stop;
@@ -123,10 +214,16 @@ onMounted(async () => {
   } finally {
     loaded.value = true;
   }
+  if (!alive) return;
+  // Trwające czekanie rośnie także bez zmian na tablicy. Timer przed `await`:
+  // `onUnmounted` w trakcie odczytu zawsze go zatrzyma.
+  waitTimer = setInterval(() => void loadWaits(), 60_000);
+  await loadWaits();
 });
 onUnmounted(() => {
   alive = false;
   unlisten?.();
+  clearInterval(waitTimer);
 });
 </script>
 
@@ -146,6 +243,7 @@ onUnmounted(() => {
   </div>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <p class="sr-only" role="status">{{ status }}</p>
+  <p v-if="waitSummary" class="board-stat">{{ waitSummary }}</p>
   <p v-if="loaded && !list.length" class="report-note board-empty">
     Brak sesji do pokazania. Tablica zapełnia się zdarzeniami hooków Claude
     Code i Codexa (Ustawienia → Agenci) i jest pusta po uruchomieniu aplikacji.
@@ -199,17 +297,33 @@ onUnmounted(() => {
             }}</span>
           </p>
           <p class="board-folder mono" :title="entry.cwd">{{ entry.cwd }}</p>
-          <button
-            v-if="entry.phase !== 'working' && !entry.seen"
-            class="text-link board-seen-button"
-            :aria-label="`Oznacz jako przejrzane: ${kinds[entry.kind]} · ${entry.name}`"
-            @click="seen(entry)"
-          >
-            <Check :size="14" aria-hidden="true" />Przejrzane
-          </button>
-          <span v-else-if="entry.phase === 'waiting'" class="board-note"
-            >przejrzane, nadal czeka</span
-          >
+          <div class="board-actions">
+            <button
+              v-for="target in targetsFor(entry)"
+              :key="target.id"
+              class="text-link board-open"
+              :aria-disabled="opening || undefined"
+              :aria-label="`Przejdź do ${kinds[entry.kind]} · ${entry.name}: ${target.label}`"
+              @click="open(entry, target.id)"
+            >
+              <Workflow v-if="target.id === 'orca'" :size="14" aria-hidden="true" />
+              <Code2 v-else-if="target.id === 'code'" :size="14" aria-hidden="true" />
+              <FolderOpen v-else :size="14" aria-hidden="true" />{{
+                target.label
+              }}
+            </button>
+            <button
+              v-if="entry.phase !== 'working' && !entry.seen"
+              class="text-link board-seen-button"
+              :aria-label="`Oznacz jako przejrzane: ${kinds[entry.kind]} · ${entry.name}`"
+              @click="seen(entry)"
+            >
+              <Check :size="14" aria-hidden="true" />Przejrzane
+            </button>
+            <span v-else-if="entry.phase === 'waiting'" class="board-note"
+              >przejrzane, nadal czeka</span
+            >
+          </div>
         </li>
       </ul>
       <p v-else class="report-note">{{ section.empty }}</p>
@@ -324,11 +438,25 @@ onUnmounted(() => {
 .board-item .agent-work {
   margin: 0;
 }
+.board-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+.board-open,
 .board-seen-button {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  align-self: flex-start;
+}
+.board-seen-button {
+  margin-left: auto;
+}
+.board-stat {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: var(--fs-sm);
 }
 .board-note {
   color: var(--muted);
