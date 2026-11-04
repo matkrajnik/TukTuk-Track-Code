@@ -55,6 +55,27 @@ const { busy, error, save } = useSettingsSection(settings);
   >
   <label class="inline-check"
     ><input
+      :checked="settings.agentNotifyWaiting"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ agentNotifyWaiting: checked($event) })"
+    />Powiadom, gdy sesja agenta AI czeka na odpowiedź lub zgodę</label
+  >
+  <label class="inline-check"
+    ><input
+      :checked="settings.agentNotifyDone"
+      type="checkbox"
+      :disabled="busy"
+      @change="save({ agentNotifyDone: checked($event) })"
+    />Powiadom, gdy sesja agenta AI skończy pracę</label
+  >
+  <p class="hint">
+    Dotyczy sesji Claude Code i Codexa z hooków (Ustawienia → Agenci). Gdy okno
+    aplikacji jest na wierzchu, zamiast powiadomienia widać licznik przy
+    „Sesje agentów”.
+  </p>
+  <label class="inline-check"
+    ><input
       :checked="settings.notifyMorningReview"
       type="checkbox"
       :disabled="busy"

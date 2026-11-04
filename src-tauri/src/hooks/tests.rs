@@ -266,9 +266,12 @@ fn silence_ends_working_and_waiting_sessions_then_forgets_them() {
     assert!(s.expire(T0 + 2 * SILENCE + 1));
     assert_eq!(phase(&s), Phase::Done);
     assert!(s.working().is_empty());
+    // Czekanie na użytkownika trwa dłużej (WAIT_SILENCE), potem też koniec.
+    assert_eq!(s.session("codex", "w").unwrap().phase, Phase::Waiting);
+    s.expire(T0 + WAIT_SILENCE + 1);
     assert_eq!(s.session("codex", "w").unwrap().phase, Phase::Done);
     // Zakończone sesje są po długim czasie zapominane.
-    s.expire(T0 + 2 * SILENCE + FORGET + 10);
+    s.expire(T0 + WAIT_SILENCE + FORGET + 10);
     assert_eq!(s.len(), 0);
 }
 
@@ -828,4 +831,273 @@ fn legacy_hook_entries_are_replaced_and_removed_with_the_own_ones() {
     install(&mut only_old, &CLAUDE_EVENTS, &old).unwrap();
     assert!(uninstall(&mut only_old).unwrap());
     assert_eq!(only_old, original);
+}
+
+// --- tablica sesji: czeka / pracuje / skończona, przejrzane, powód ---
+
+fn tool(event: &str, name: &str) -> HookEvent {
+    HookEvent {
+        tool_name: Some(name.into()),
+        ..ev("claude", event)
+    }
+}
+
+fn note(kind: &str, message: Option<&str>) -> HookEvent {
+    HookEvent {
+        notification_type: Some(kind.into()),
+        message: message.map(str::to_string),
+        ..ev("claude", "Notification")
+    }
+}
+
+fn entry(s: &Sessions) -> BoardSession {
+    s.board()
+        .into_iter()
+        .find(|b| b.session_id == "s1")
+        .expect("sesja na tablicy")
+}
+
+#[test]
+fn envelope_keeps_tool_name_and_notification_message_only_where_needed() {
+    let raw = |event: &str| {
+        serde_json::to_vec(&json!({
+            "session_id": "s", "hook_event_name": event, "tool_name": "Bash",
+            "message": "Claude needs your permission to use Bash",
+            "tool_input": { "command": "tajne" }
+        }))
+        .unwrap()
+    };
+    let pre = parse(&hook_wire::envelope("claude", &raw("PreToolUse")).unwrap()).unwrap();
+    assert_eq!(pre.tool_name.as_deref(), Some("Bash"));
+    assert_eq!(pre.message, None);
+    let note = parse(&hook_wire::envelope("claude", &raw("Notification")).unwrap()).unwrap();
+    assert_eq!(
+        note.message.as_deref(),
+        Some("Claude needs your permission to use Bash")
+    );
+    assert_eq!(note.tool_name, None);
+    let stop = hook_wire::envelope("claude", &raw("Stop")).unwrap();
+    let text = String::from_utf8(stop).unwrap();
+    assert!(!text.contains("Bash") && !text.contains("tajne"));
+    // Długi komunikat jest przycinany.
+    let long = serde_json::to_vec(&json!({
+        "session_id": "s", "hook_event_name": "Notification", "message": "x".repeat(900)
+    }))
+    .unwrap();
+    let parsed = parse(&hook_wire::envelope("claude", &long).unwrap()).unwrap();
+    assert_eq!(
+        parsed.message.unwrap().chars().count(),
+        hook_wire::MESSAGE_MAX
+    );
+    // Wiele linii zwija się do jednej.
+    let lines = serde_json::to_vec(&json!({
+        "session_id": "s", "hook_event_name": "Notification",
+        "message": "Claude needs\n\n your   permission"
+    }))
+    .unwrap();
+    let parsed = parse(&hook_wire::envelope("claude", &lines).unwrap()).unwrap();
+    assert_eq!(
+        parsed.message.as_deref(),
+        Some("Claude needs your permission")
+    );
+}
+
+#[test]
+fn new_idle_session_is_not_on_the_board() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "SessionStart"), T0);
+    assert!(s.board().is_empty());
+}
+
+#[test]
+fn board_shows_work_then_waiting_with_reason_then_unseen_end() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    let b = entry(&s);
+    assert_eq!(
+        (b.phase, b.phase_at, b.reason.clone()),
+        (Phase::Working, T0, None)
+    );
+
+    s.apply(&tool("PreToolUse", "Bash"), T0 + 1_000);
+    s.apply(&tool("PermissionRequest", "Bash"), T0 + 2_000);
+    let b = entry(&s);
+    assert_eq!(b.phase, Phase::Waiting);
+    assert_eq!(b.phase_at, T0 + 2_000);
+    assert!(!b.seen);
+    assert_eq!(b.reason.as_deref(), Some("zgoda: Bash"));
+    // Powiadomienie o tej samej zgodzie nie nadpisuje powodu ani chwili.
+    s.apply(
+        &note("permission_prompt", Some("Claude needs…")),
+        T0 + 3_000,
+    );
+    let b = entry(&s);
+    assert_eq!(
+        (b.phase_at, b.reason.as_deref()),
+        (T0 + 2_000, Some("zgoda: Bash"))
+    );
+
+    // Zgoda udzielona: znów praca, powód znika.
+    s.apply(&tool("PostToolUse", "Bash"), T0 + 4_000);
+    let b = entry(&s);
+    assert_eq!((b.phase, b.reason.clone()), (Phase::Working, None));
+
+    s.apply(&ev("claude", "Stop"), T0 + 5_000);
+    let b = entry(&s);
+    assert_eq!(
+        (b.phase, b.phase_at, b.seen),
+        (Phase::Done, T0 + 5_000, false)
+    );
+    assert_eq!(b.reason, None);
+}
+
+#[test]
+fn notification_message_is_the_reason_when_nothing_better_is_known() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(
+        &note(
+            "permission_prompt",
+            Some("Claude needs your permission to use Write"),
+        ),
+        T0 + 1_000,
+    );
+    assert_eq!(
+        entry(&s).reason.as_deref(),
+        Some("Claude needs your permission to use Write")
+    );
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&note("elicitation_dialog", None), T0 + 1_000);
+    assert_eq!(entry(&s).reason.as_deref(), Some("pytanie"));
+}
+
+#[test]
+fn ask_user_question_and_plan_approval_wait_for_the_user() {
+    for (name, reason) in [
+        ("AskUserQuestion", "pytanie"),
+        ("ExitPlanMode", "plan do akceptacji"),
+    ] {
+        let mut s = Sessions::default();
+        s.apply(&ev("claude", "UserPromptSubmit"), T0);
+        s.apply(&tool("PreToolUse", name), T0 + 1_000);
+        let b = entry(&s);
+        assert_eq!(b.phase, Phase::Waiting, "{name}");
+        assert_eq!(b.reason.as_deref(), Some(reason));
+        // Nie jest to praca: lista pracujących jej nie zawiera.
+        assert!(s.working().is_empty());
+        s.apply(&tool("PostToolUse", name), T0 + 60_000);
+        assert_eq!(entry(&s).phase, Phase::Working);
+    }
+    // Subagent nie pyta użytkownika: jego narzędzie to praca.
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(
+        &HookEvent {
+            agent_id: Some("a1".into()),
+            ..tool("PreToolUse", "AskUserQuestion")
+        },
+        T0 + 1_000,
+    );
+    assert_eq!(entry(&s).phase, Phase::Working);
+}
+
+#[test]
+fn seen_hides_finished_session_and_resets_on_the_next_end() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    // Pracującej sesji nie da się oznaczyć.
+    assert!(!s.mark_seen("claude", "s1"));
+    s.apply(&ev("claude", "Stop"), T0 + 1_000);
+    assert!(s.mark_seen("claude", "s1"));
+    assert!(!s.mark_seen("claude", "s1"));
+    assert!(s.board().is_empty());
+    // Kolejna tura i koniec: znowu nieprzejrzana.
+    s.apply(&ev("claude", "UserPromptSubmit"), T0 + 2_000);
+    s.apply(&ev("claude", "Stop"), T0 + 3_000);
+    assert!(!entry(&s).seen);
+    assert!(!s.mark_seen("claude", "nie-ma"));
+}
+
+#[test]
+fn seen_waiting_session_stays_on_the_board() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&ev("claude", "PermissionRequest"), T0 + 1_000);
+    assert!(s.mark_seen("claude", "s1"));
+    let b = entry(&s);
+    assert_eq!((b.phase, b.seen), (Phase::Waiting, true));
+}
+
+#[test]
+fn mark_all_seen_marks_waiting_and_finished_sessions() {
+    let mut s = Sessions::default();
+    let working = HookEvent {
+        session_id: "s2".into(),
+        ..ev("claude", "UserPromptSubmit")
+    };
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&ev("codex", "UserPromptSubmit"), T0);
+    s.apply(&working, T0);
+    s.apply(&ev("claude", "Stop"), T0 + 1_000);
+    s.apply(&ev("codex", "PermissionRequest"), T0 + 1_000);
+    assert!(s.mark_all_seen());
+    assert!(!s.mark_all_seen());
+    let board = s.board();
+    assert_eq!(board.len(), 2, "{board:?}");
+    assert!(board.iter().all(|b| b.phase != Phase::Done));
+}
+
+#[test]
+fn interrupt_ends_the_session_as_seen() {
+    let mut s = Sessions::default();
+    s.apply(&ev("codex", "UserPromptSubmit"), T0);
+    s.apply(&ev("codex", "Interrupt"), T0 + 1_000);
+    assert!(s.board().is_empty());
+}
+
+#[test]
+fn waiting_lasts_longer_than_work_silence_and_timeout_is_marked() {
+    let mut s = Sessions::default();
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    s.apply(&ev("claude", "PermissionRequest"), T0 + 1_000);
+    s.expire(T0 + 1_000 + SILENCE + 1);
+    assert_eq!(entry(&s).phase, Phase::Waiting);
+    s.expire(T0 + 1_000 + WAIT_SILENCE + 1);
+    let b = entry(&s);
+    assert_eq!(b.phase, Phase::Done);
+    // Koniec od ostatniego zdarzenia, nie od wykrycia ciszy.
+    assert_eq!(b.phase_at, T0 + 1_000);
+    assert!(!b.seen);
+    assert_eq!(b.reason.as_deref(), Some(TIMEOUT_REASON));
+    assert!(b.timed_out());
+}
+
+#[test]
+fn board_lists_waiting_first_then_working_then_finished() {
+    let mut s = Sessions::default();
+    let at = |id: &str, event: &str| HookEvent {
+        session_id: id.into(),
+        ..ev("claude", event)
+    };
+    // Zdarzenia w kolejności czasu (jak z potoku).
+    s.apply(&at("done", "UserPromptSubmit"), T0);
+    s.apply(&at("wait-new", "UserPromptSubmit"), T0);
+    s.apply(&at("wait-old", "UserPromptSubmit"), T0);
+    s.apply(&at("done", "Stop"), T0 + 1_000);
+    s.apply(&at("work", "UserPromptSubmit"), T0 + 2_000);
+    s.apply(&at("wait-old", "PermissionRequest"), T0 + 3_000);
+    s.apply(&at("wait-new", "PermissionRequest"), T0 + 5_000);
+    let ids: Vec<_> = s.board().into_iter().map(|b| b.session_id).collect();
+    assert_eq!(ids, ["wait-old", "wait-new", "work", "done"]);
+}
+
+#[test]
+fn board_state_reports_phase_and_seen() {
+    let mut s = Sessions::default();
+    assert_eq!(s.board_state("claude", "s1"), None);
+    s.apply(&ev("claude", "UserPromptSubmit"), T0);
+    assert_eq!(s.board_state("claude", "s1"), Some((Phase::Working, true)));
+    s.apply(&ev("claude", "Stop"), T0 + 1);
+    assert_eq!(s.board_state("claude", "s1"), Some((Phase::Done, false)));
 }

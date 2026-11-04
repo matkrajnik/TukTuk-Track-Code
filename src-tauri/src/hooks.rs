@@ -9,15 +9,22 @@
 //!
 //! Maszyna stanów sesji (klucz: agent + `session_id`):
 //! - `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `SubagentStart` = praca;
-//! - `PermissionRequest` i `Notification` (`permission_prompt`, `agent_needs_input`,
-//!   `idle_prompt` w trakcie pracy) = czekanie na użytkownika, nie praca;
+//! - `PermissionRequest`, `Notification` (`permission_prompt`, `agent_needs_input`,
+//!   `idle_prompt` w trakcie pracy) i `PreToolUse` agenta głównego z
+//!   `AskUserQuestion` albo `ExitPlanMode` = czekanie na użytkownika, nie praca;
+//!   powód (nazwa narzędzia albo komunikat agenta) trafia do tablicy sesji;
 //! - `Stop` = koniec tury, ale dopóki trwają subagenci, sesja nadal pracuje;
 //!   `Interrupt` = koniec; `SessionEnd` usuwa sesję;
 //! - zdarzenia z `agent_id` to subagenci, liczeni do sesji nadrzędnej; subagent
 //!   bez zdarzeń przez [`SUBAGENT_SILENCE`] przestaje się liczyć (zgubiony
 //!   `SubagentStop`);
 //! - sesja bez zdarzeń przez [`SILENCE`] kończy się sama (ubity proces); w trakcie
-//!   wywołania narzędzia (`PreToolUse` bez `PostToolUse`) dopiero po [`TOOL_SILENCE`].
+//!   wywołania narzędzia (`PreToolUse` bez `PostToolUse`) dopiero po [`TOOL_SILENCE`],
+//!   a czekająca na użytkownika po [`WAIT_SILENCE`].
+//!
+//! Tablica sesji (`agent_board`, [`Sessions::board`]): każda zmiana fazy zapisuje
+//! chwilę wejścia; czekanie i koniec są nieprzejrzane, dopóki użytkownik ich nie
+//! oznaczy albo sesja nie wróci do pracy.
 //!
 //! Rejestracja hooków (`hooks_config`) jest zgodna z ustawieniem `agent_hooks`:
 //! przy starcie i co minutę (po aktualizacji instalatorem ścieżka exe się zmienia),
@@ -39,6 +46,12 @@ pub const TOOL_SILENCE: i64 = 60 * 60_000;
 /// Subagent bez zdarzeń tak długo przestaje trzymać sesję w pracy (zgubiony
 /// `SubagentStop`: przerwanie, zalany potok); w trakcie narzędzia [`TOOL_SILENCE`].
 pub const SUBAGENT_SILENCE: i64 = 3 * 60_000;
+/// Sesja czekająca na użytkownika kończy się sama dopiero po takim czasie bez
+/// zdarzeń: agent nie wysyła nic, dopóki ktoś nie odpowie, a tablica sesji ma
+/// pokazywać czekanie, nie „koniec”.
+pub const WAIT_SILENCE: i64 = 2 * 3_600_000;
+/// Powód zakończenia sesji przez brak zdarzeń (ubity proces, zgubione zdarzenie).
+pub const TIMEOUT_REASON: &str = "brak zdarzeń";
 /// Zakończona sesja jest zapominana po takim czasie bez zdarzeń.
 pub const FORGET: i64 = 12 * 3_600_000;
 /// Najwięcej pamiętanych sesji (ochrona pamięci przed zalewem zdarzeń).
@@ -60,6 +73,10 @@ pub struct HookEvent {
     pub agent_id: Option<String>,
     pub notification_type: Option<String>,
     pub prompt: Option<String>,
+    /// Nazwa narzędzia (`PreToolUse`, `PermissionRequest`), bez argumentów.
+    pub tool_name: Option<String>,
+    /// Komunikat powiadomienia agenta (`Notification`).
+    pub message: Option<String>,
 }
 
 /// Koperta z potoku → zdarzenie. `None` dla niepoprawnej koperty, nieznanego agenta
@@ -93,7 +110,22 @@ pub fn parse(body: &[u8]) -> Option<HookEvent> {
         agent_id: text("agent_id").map(|s| s.chars().take(200).collect()),
         notification_type: text("notification_type").map(str::to_string),
         prompt: text("prompt").map(|p| hook_wire::clip(p, hook_wire::PROMPT_MAX)),
+        tool_name: text("tool_name").map(|t| hook_wire::clip(t, hook_wire::TOOL_MAX)),
+        // Komunikat trafia do powiadomienia i tablicy: jedna linia.
+        message: text("message").map(|m| {
+            let line = m.split_whitespace().collect::<Vec<_>>().join(" ");
+            hook_wire::clip(&line, hook_wire::MESSAGE_MAX)
+        }),
     })
+}
+
+/// Narzędzia, którymi agent pyta użytkownika (czekanie, nie praca), z powodem.
+fn asks_user(tool: &str) -> Option<&'static str> {
+    match tool {
+        "AskUserQuestion" => Some("pytanie"),
+        "ExitPlanMode" => Some("plan do akceptacji"),
+        _ => None,
+    }
 }
 
 /// Faza sesji.
@@ -103,6 +135,41 @@ pub enum Phase {
     /// Agent czeka na użytkownika (zgoda, pytanie); to nie jest praca.
     Waiting,
     Done,
+}
+
+impl Phase {
+    /// Nazwa fazy w tablicy sesji (`working`, `waiting`, `done`).
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Phase::Working => "working",
+            Phase::Waiting => "waiting",
+            Phase::Done => "done",
+        }
+    }
+}
+
+/// Sesja na tablicy sesji: pracuje, czeka albo skończyła się i nie jest przejrzana.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoardSession {
+    pub agent: String,
+    pub session_id: String,
+    pub cwd: String,
+    pub phase: Phase,
+    /// Wejście w bieżącą fazę (ms).
+    pub phase_at: i64,
+    /// Użytkownik widział czekanie albo koniec („Przejrzane”, kolejny prompt).
+    pub seen: bool,
+    /// Na co czeka sesja; przy końcu tylko [`TIMEOUT_REASON`].
+    pub reason: Option<String>,
+    /// Pracujący subagenci.
+    pub subagents: usize,
+}
+
+impl BoardSession {
+    /// Sesja zakończona przez brak zdarzeń, nie przez `Stop`.
+    pub fn timed_out(&self) -> bool {
+        self.phase == Phase::Done && self.reason.as_deref() == Some(TIMEOUT_REASON)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -125,9 +192,36 @@ pub struct Session {
     /// Pierwszy prompt sesji (do 500 znaków), tylko w pamięci; pod asystenta (A4),
     /// zapisywany tylko przy [`Sessions::keep_prompts`].
     pub first_prompt: Option<String>,
+    /// Wejście w bieżącą fazę (ms).
+    pub phase_at: i64,
+    /// Czekanie albo koniec widziane przez użytkownika; praca jest zawsze „widziana”.
+    pub seen: bool,
+    /// Na co czeka sesja (zgoda na narzędzie, pytanie) albo [`TIMEOUT_REASON`].
+    pub reason: Option<String>,
 }
 
 impl Session {
+    /// Zmiana fazy: nowa chwila wejścia, czekanie i koniec jako nieprzejrzane,
+    /// powód od nowa. Ta sama faza niczego nie zmienia.
+    fn enter(&mut self, phase: Phase, now: i64) {
+        if self.phase == phase {
+            return;
+        }
+        self.phase = phase;
+        self.phase_at = now;
+        self.seen = phase == Phase::Working;
+        self.reason = None;
+    }
+
+    /// Czekanie na użytkownika; pierwszy znany powód zostaje (powiadomienie po
+    /// `PermissionRequest` nie zastępuje nazwy narzędzia).
+    fn wait(&mut self, reason: String, now: i64) {
+        self.enter(Phase::Waiting, now);
+        if self.reason.is_none() {
+            self.reason = Some(reason);
+        }
+    }
+
     /// Trwa jakieś wywołanie narzędzia (długi build, testy, subagent z `Task`).
     fn in_tool(&self) -> bool {
         self.tools.values().any(|&n| n > 0)
@@ -221,6 +315,10 @@ impl Sessions {
                 tools: BTreeMap::new(),
                 stopped: false,
                 first_prompt: None,
+                phase_at: now,
+                // Nowa sesja bez tury nie ma czego przeglądać.
+                seen: true,
+                reason: None,
             });
             s.last = now;
             if !ev.cwd.is_empty() {
@@ -250,8 +348,10 @@ impl Sessions {
             if s.phase != Phase::Working {
                 s.since = now;
             }
-            s.phase = Phase::Working;
+            s.enter(Phase::Working, now);
         };
+        // Powód czekania: komunikat agenta albo opis rodzaju powiadomienia.
+        let told = |fallback: &str| ev.message.clone().unwrap_or_else(|| fallback.into());
         // Wykonawca zdarzenia: subagent (`agent_id`) albo agent główny (`""`).
         let actor = ev.agent_id.clone().unwrap_or_default();
         if let Some(id) = &ev.agent_id {
@@ -268,8 +368,18 @@ impl Sessions {
                 }
             }
             "PreToolUse" => {
+                // Pytanie albo plan do akceptacji od agenta głównego: czeka na
+                // użytkownika do `PostToolUse`.
+                let asks = ev
+                    .tool_name
+                    .as_deref()
+                    .filter(|_| actor.is_empty())
+                    .and_then(asks_user);
                 *s.tools.entry(actor).or_default() += 1;
-                work(s);
+                match asks {
+                    Some(reason) => s.wait(reason.into(), now),
+                    None => work(s),
+                }
             }
             "PostToolUse" => {
                 if let Some(n) = s.tools.get_mut(&actor) {
@@ -287,13 +397,20 @@ impl Sessions {
                     s.tools.remove(id);
                 }
             }
-            "PermissionRequest" => s.phase = Phase::Waiting,
+            "PermissionRequest" => {
+                let reason = ev
+                    .tool_name
+                    .as_deref()
+                    .map_or_else(|| "prośba o zgodę".into(), |t| format!("zgoda: {t}"));
+                s.wait(reason, now);
+            }
             "Notification" => match ev.notification_type.as_deref() {
-                Some("permission_prompt" | "agent_needs_input" | "elicitation_dialog") => {
-                    s.phase = Phase::Waiting
-                }
+                Some("permission_prompt") => s.wait(told("prośba o zgodę"), now),
+                Some("agent_needs_input" | "elicitation_dialog") => s.wait(told("pytanie"), now),
                 // Claude przypomina o bezczynności także po zakończonej turze.
-                Some("idle_prompt") if s.phase == Phase::Working => s.phase = Phase::Waiting,
+                Some("idle_prompt") if s.phase == Phase::Working => {
+                    s.wait(told("czeka na odpowiedź"), now)
+                }
                 _ => {}
             },
             "Stop" => {
@@ -303,7 +420,7 @@ impl Sessions {
                 s.tools.remove("");
                 s.prune_subagents(now);
                 if s.subagents.is_empty() {
-                    s.phase = Phase::Done;
+                    s.enter(Phase::Done, now);
                     s.stopped = false;
                 } else {
                     s.stopped = true;
@@ -313,7 +430,9 @@ impl Sessions {
                 s.subagents.clear();
                 s.tools.clear();
                 s.stopped = false;
-                s.phase = Phase::Done;
+                s.enter(Phase::Done, now);
+                // Przerwał użytkownik: widział, jak sesja się kończy.
+                s.seen = true;
             }
             // SessionStart zakłada sesję (bezczynną); pozostałe zdarzenia tylko
             // odświeżają „ostatnie zdarzenie”.
@@ -345,18 +464,23 @@ impl Sessions {
         }
     }
 
-    /// Timeout braku zdarzeń: praca i czekanie kończą się po [`SILENCE`] (po
-    /// [`TOOL_SILENCE`], gdy trwa wywołanie narzędzia), sesja po `Stop` czekająca
-    /// tylko na subagentów kończy się, gdy ich zabraknie (zgubiony `SubagentStop`),
-    /// a zakończone sesje są zapominane po [`FORGET`]. Zwraca `true`, gdy ubyła
-    /// pracująca sesja.
+    /// Timeout braku zdarzeń: praca kończy się po [`SILENCE`] (po [`TOOL_SILENCE`],
+    /// gdy trwa wywołanie narzędzia), czekanie na użytkownika po [`WAIT_SILENCE`],
+    /// sesja po `Stop` czekająca tylko na subagentów kończy się, gdy ich zabraknie
+    /// (zgubiony `SubagentStop`), a zakończone sesje są zapominane po [`FORGET`].
+    /// Koniec z braku zdarzeń ma powód [`TIMEOUT_REASON`]. Zwraca `true`, gdy
+    /// ubyła pracująca sesja.
     pub fn expire(&mut self, now: i64) -> bool {
         let mut changed = false;
         for s in self.map.values_mut() {
             if s.phase == Phase::Done {
                 continue;
             }
-            let limit = if s.in_tool() { TOOL_SILENCE } else { SILENCE };
+            let limit = match (s.phase, s.in_tool()) {
+                (Phase::Waiting, _) => WAIT_SILENCE,
+                (_, true) => TOOL_SILENCE,
+                _ => SILENCE,
+            };
             let silent = now - s.last > limit || now < s.last;
             let orphaned = s.stopped && {
                 s.prune_subagents(now);
@@ -364,7 +488,13 @@ impl Sessions {
             };
             if silent || orphaned {
                 changed |= s.phase == Phase::Working;
-                s.phase = Phase::Done;
+                // Koniec liczy się od ostatniego zdarzenia, nie od chwili wykrycia ciszy.
+                s.enter(Phase::Done, s.last.min(now));
+                // Sesja po `Stop`, która czekała tylko na subagentów, skończyła
+                // turę normalnie; cisza to raczej ubity proces.
+                if silent && !orphaned {
+                    s.reason = Some(TIMEOUT_REASON.into());
+                }
                 s.subagents.clear();
                 s.tools.clear();
                 s.stopped = false;
@@ -400,6 +530,69 @@ impl Sessions {
             .collect();
         list.sort_by(|a, b| (a.since, &a.kind, &a.cwd).cmp(&(b.since, &b.kind, &b.cwd)));
         list
+    }
+
+    /// Tablica sesji: pracujące, czekające i zakończone nieprzejrzane (sesja bez
+    /// tury i przejrzany koniec nie są pokazywane). Kolejność: czekające od
+    /// najdłużej czekającej, potem pracujące, potem zakończone od najstarszej.
+    pub fn board(&self) -> Vec<BoardSession> {
+        let rank = |p: Phase| match p {
+            Phase::Waiting => 0,
+            Phase::Working => 1,
+            Phase::Done => 2,
+        };
+        let mut list: Vec<BoardSession> = self
+            .map
+            .iter()
+            .filter(|(_, s)| s.phase != Phase::Done || !s.seen)
+            .map(|((_, session_id), s)| BoardSession {
+                agent: s.agent.clone(),
+                session_id: session_id.clone(),
+                cwd: s.cwd.clone(),
+                phase: s.phase,
+                phase_at: s.phase_at,
+                seen: s.seen,
+                reason: s.reason.clone(),
+                subagents: s.subagents.len(),
+            })
+            .collect();
+        list.sort_by(|a, b| {
+            (rank(a.phase), a.phase_at, &a.agent, &a.session_id).cmp(&(
+                rank(b.phase),
+                b.phase_at,
+                &b.agent,
+                &b.session_id,
+            ))
+        });
+        list
+    }
+
+    /// Faza sesji i „przejrzane” (budzenie pętli tablicy po zmianie).
+    pub fn board_state(&self, agent: &str, id: &str) -> Option<(Phase, bool)> {
+        self.session(agent, id).map(|s| (s.phase, s.seen))
+    }
+
+    /// „Przejrzane” dla czekającej albo zakończonej sesji; `true`, gdy coś zmieniło.
+    pub fn mark_seen(&mut self, agent: &str, id: &str) -> bool {
+        match self.map.get_mut(&(agent.to_string(), id.to_string())) {
+            Some(s) if s.phase != Phase::Working && !s.seen => {
+                s.seen = true;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// „Przejrzane” dla wszystkich czekających i zakończonych sesji.
+    pub fn mark_all_seen(&mut self) -> bool {
+        let mut changed = false;
+        for s in self.map.values_mut() {
+            if s.phase != Phase::Working && !s.seen {
+                s.seen = true;
+                changed = true;
+            }
+        }
+        changed
     }
 
     pub fn session(&self, agent: &str, id: &str) -> Option<&Session> {

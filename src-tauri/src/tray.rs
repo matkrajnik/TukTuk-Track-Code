@@ -74,6 +74,28 @@ fn truncate(text: &str, limit: usize) -> String {
     out
 }
 
+/// Dymek z drugim wierszem stanu sesji agentów („Agenci: czeka 2”). Wiersz
+/// agentów zawsze się mieści; przycinany jest wiersz pomiaru.
+pub fn with_agents(text: &str, agents: Option<&str>) -> String {
+    let Some(line) = agents else {
+        return text.to_string();
+    };
+    let line = truncate(line, TOOLTIP_LIMIT);
+    let room = TOOLTIP_LIMIT.saturating_sub(utf16_len(&line) + 1);
+    if room == 0 {
+        return line;
+    }
+    format!("{}\n{line}", truncate(text, room))
+}
+
+/// Pozycja menu tablicy sesji: z licznikiem nieprzejrzanych czekających.
+pub fn agents_item_label(counts: crate::agent_board::Counts) -> String {
+    match counts.waiting {
+        0 => "Sesje agentów".into(),
+        n => format!("Sesje agentów (czeka {n})"),
+    }
+}
+
 /// Jedna linia z białymi znakami zwiniętymi do spacji.
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -235,6 +257,8 @@ const PINS_AT: usize = 2;
 
 struct TrayState {
     current: MenuItem<Wry>,
+    /// „Sesje agentów (czeka N)”: otwiera tablicę sesji.
+    agents: MenuItem<Wry>,
     /// „Zakończ dzień” / „Wznów dzień” (B13).
     day: MenuItem<Wry>,
     menu: Menu<Wry>,
@@ -371,6 +395,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let current = MenuItem::with_id(app, "current", "Brak pomiaru", false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Otwórz TukTuk Track", true, None::<&str>)?;
     let quick = MenuItem::with_id(app, "quick", "Szybkie przełączanie", true, None::<&str>)?;
+    let agents = MenuItem::with_id(app, "agents", "Sesje agentów", true, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", "Zatrzymaj pomiar", true, None::<&str>)?;
     let day = MenuItem::with_id(app, "day", "Zakończ dzień", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Zakończ aplikację", true, None::<&str>)?;
@@ -381,6 +406,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
             &PredefinedMenuItem::separator(app)?,
             &open,
             &quick,
+            &agents,
             &stop,
             &day,
             &PredefinedMenuItem::separator(app)?,
@@ -411,6 +437,14 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
                     crate::show(app);
                     let _ = app.emit("storage-error", e);
                 }
+            }
+            "agents" => {
+                crate::show(app);
+                let open = crate::notify::View {
+                    view: Some("agents"),
+                    ..crate::notify::View::default()
+                };
+                let _ = app.emit_to("main", "navigate", open);
             }
             "stop" => stop_measurement(app, false),
             // „Zakończ dzień” pyta w głównym oknie o zatrzymanie pomiaru (B13);
@@ -443,13 +477,18 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
     let (wake, signal) = mpsc::channel();
     app.manage(TrayState {
         current,
+        agents,
         day,
         menu,
         pin_items: Mutex::new(0),
         idle_icon,
         feedback: Mutex::new(None),
     });
-    for event in ["data-changed", "settings-changed"] {
+    for event in [
+        "data-changed",
+        "settings-changed",
+        crate::agent_board::EVENT,
+    ] {
         let wake = wake.clone();
         // Zdarzenie bywa emitowane pod blokadą bazy, więc tylko budzimy wątek.
         app.listen_any(event, move |_| {
@@ -507,7 +546,11 @@ fn refresh(
             .cloned()
     });
     let text = held.map_or_else(|| tooltip(&status), |(text, _)| text);
-    let _ = tray.set_tooltip(Some(text));
+    // Sesje agentów czekające albo zakończone (tablica sesji) w drugim wierszu.
+    let agents = crate::agent_board::current_counts(app);
+    let line = crate::agent_board::tray_line(agents);
+    let _ = tray.set_tooltip(Some(with_agents(&text, line.as_deref())));
+    let _ = state.agents.set_text(agents_item_label(agents));
     let active = status.active.is_some();
     let label = match (&status.active, &status.day_ended) {
         (None, Some(at)) => day_ended_label(at, status.today_ms),
@@ -614,6 +657,28 @@ mod tests {
         let text = tooltip(&status(Some(&fits), 0, 0, 0));
         assert_eq!(text.encode_utf16().count(), TOOLTIP_LIMIT);
         assert!(!text.contains('…'));
+    }
+
+    #[test]
+    fn agents_line_is_kept_whole_under_the_measurement() {
+        assert_eq!(with_agents("A · 00:00:05", None), "A · 00:00:05");
+        assert_eq!(
+            with_agents("A · 00:00:05", Some("Agenci: czeka 2")),
+            "A · 00:00:05\nAgenci: czeka 2"
+        );
+        let long = tooltip(&status(Some(&"x".repeat(300)), 1000, 0, 480));
+        let text = with_agents(&long, Some("Agenci: czeka 2 · skończone 1"));
+        assert_eq!(utf16_len(&text), TOOLTIP_LIMIT);
+        assert!(text.ends_with("…\nAgenci: czeka 2 · skończone 1"));
+        use crate::agent_board::Counts;
+        assert_eq!(agents_item_label(Counts::default()), "Sesje agentów");
+        assert_eq!(
+            agents_item_label(Counts {
+                waiting: 3,
+                done: 1
+            }),
+            "Sesje agentów (czeka 3)"
+        );
     }
 
     #[test]

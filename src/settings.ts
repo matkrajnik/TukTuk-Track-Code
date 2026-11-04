@@ -38,6 +38,10 @@ export interface AppSettings {
   notifyEvening: string;
   notifyEveningEnabled: boolean;
   notifyTarget: boolean;
+  /** Powiadomienie, gdy sesja agenta czeka na użytkownika (tablica sesji). */
+  agentNotifyWaiting: boolean;
+  /** Powiadomienie, gdy sesja agenta skończy turę. */
+  agentNotifyDone: boolean;
   /** Przypomnienie przed każdym spotkaniem (C3); nadpisywane per spotkanie. */
   meetingReminderEnabled: boolean;
   /** Ile minut przed spotkaniem: 1, 5, 10, 15 albo 30. */
@@ -158,6 +162,8 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   notifyEvening: "17:30",
   notifyEveningEnabled: true,
   notifyTarget: false,
+  agentNotifyWaiting: true,
+  agentNotifyDone: false,
   meetingReminderEnabled: true,
   meetingReminderMinutes: 5,
   jiraAutoImport: true,

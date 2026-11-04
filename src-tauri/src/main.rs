@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod agent_board;
 mod agent_time;
 mod agents;
 mod ai;
@@ -522,6 +523,7 @@ fn main() {
             idle::setup(app.handle());
             gap::setup(app.handle(), stopped_after_gap);
             agents::setup(app.handle());
+            agent_board::setup(app.handle());
             ai::setup(app.handle());
             assign::setup(app.handle());
             mcp::setup(app.handle());
@@ -657,6 +659,9 @@ fn main() {
             gap::gap_notice,
             gap::gap_resolve,
             agents::agents_status,
+            agent_board::agent_board,
+            agent_board::agent_board_seen,
+            agent_board::agent_board_seen_all,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,
@@ -846,6 +851,7 @@ mod tests {
             "idle::setup(",
             "gap::setup(",
             "agents::setup(",
+            "agent_board::setup(",
             "hooks::setup(",
             "notify::setup(",
         ] {

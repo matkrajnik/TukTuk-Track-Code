@@ -630,6 +630,12 @@ function install(init: {
           return !(globalThis as any).__widgetQuickOpen;
         case "agents_status":
           return [];
+        // Tablica sesji (`agent_board.rs`): logika w e2e na podglądzie
+        // (`preview/hooks.ts`); tu bez zdarzeń hooków, więc pusta.
+        case "agent_board":
+        case "agent_board_seen":
+        case "agent_board_seen_all":
+          return [];
         // Asystent AI (A1): logika w `ai.rs`, e2e na podglądzie; tu bez wykrytych CLI.
         case "ai_status":
           return {

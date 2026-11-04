@@ -5,6 +5,7 @@ export type View =
   | "jira"
   | "redmine"
   | "dashboard"
+  | "agents"
   | "journal"
   | "library"
   | "settings";
@@ -27,6 +28,7 @@ import {
   PictureInPicture2,
   Settings,
   Square,
+  SquareTerminal,
   Sun,
   Sunrise,
   Sunset,
@@ -42,6 +44,12 @@ import {
   type WidgetStatus,
 } from "../store";
 import { onSettingsChanged, writeSettings } from "../settings";
+import {
+  boardCounts,
+  onAgentBoardChanged,
+  readAgentBoard,
+  type BoardCounts,
+} from "../agentboard";
 
 const view = defineModel<View>("view", { required: true });
 /** Trwający pomiar: pokazywany w pasku na każdym widoku poza Zadaniami. */
@@ -170,8 +178,38 @@ async function toggleWidget() {
     widgetBusy.value = false;
   }
 }
+// Licznik tablicy sesji agentów: nieprzejrzane czekające i zakończone.
+const agentCounts = ref<BoardCounts>({ waiting: 0, done: 0 });
+const agentsPending = computed(
+  () => agentCounts.value.waiting + agentCounts.value.done,
+);
+const agentsLabel = computed(() => {
+  const { waiting, done } = agentCounts.value;
+  const parts = [
+    waiting ? `czeka ${waiting}` : "",
+    done ? `skończone ${done}` : "",
+  ].filter(Boolean);
+  return parts.length ? `Sesje agentów: ${parts.join(", ")}` : "Sesje agentów";
+});
 const unsubscribers: (() => void)[] = [];
 let unmounted = false;
+onMounted(async () => {
+  try {
+    // Zdarzenie, które przyszło w trakcie odczytu, jest nowsze od jego wyniku.
+    let changed = false;
+    const off = await onAgentBoardChanged((list) => {
+      changed = true;
+      agentCounts.value = boardCounts(list);
+    });
+    if (unmounted) off();
+    else unsubscribers.push(off);
+    const list = await readAgentBoard();
+    if (!changed) agentCounts.value = boardCounts(list);
+  } catch (e) {
+    // Licznik jest pomocniczy: bez niego pozycja nawigacji działa dalej.
+    console.warn("Nie udało się odczytać tablicy sesji agentów:", e);
+  }
+});
 onMounted(async () => {
   try {
     const subscriptions = [
@@ -261,6 +299,24 @@ async function hide() {
         @click="go('dashboard')"
       >
         <LayoutDashboard :size="20" aria-hidden="true" /><span class="nav-label">Dashboard</span>
+      </button>
+      <button
+        class="nav-item"
+        :class="{ selected: view === 'agents' }"
+        :aria-current="view === 'agents' ? 'page' : undefined"
+        :aria-label="agentsLabel"
+        :title="paneCompact ? agentsLabel : undefined"
+        @click="go('agents')"
+      >
+        <SquareTerminal :size="20" aria-hidden="true" /><span class="nav-label"
+          >Sesje agentów</span
+        ><span
+          v-if="agentsPending > 0"
+          class="nav-badge"
+          :class="{ 'nav-badge-waiting': agentCounts.waiting > 0 }"
+          aria-hidden="true"
+          >{{ agentsPending }}</span
+        >
       </button>
       <button
         class="nav-item"

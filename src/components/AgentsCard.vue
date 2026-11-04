@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import {
+  agentTaskLabel,
   onAgentsChanged,
   readAgents,
   type Agent,
-  type AgentTask,
 } from "../agents";
 import { bindAgentFolder, duration, type Task } from "../store";
 import { FolderCheck } from "lucide-vue-next";
@@ -16,15 +16,7 @@ const labels: Record<Agent["kind"], string> = {
   claude: "Claude",
   codex: "Codex",
 };
-/** Opis dopasowanego zadania; bez dopasowania sam klucz albo nic. */
-function taskLabel(agent: Agent): string {
-  const task: AgentTask | null | undefined = agent.task;
-  if (!task) return agent.key ? `${agent.key}: brak zadania` : "";
-  if (task.source === "jira")
-    return `Jira ${task.key}${task.title ? `: ${task.title}` : ""} (bez zadania)`;
-  const title = `zadanie „${task.title}”${task.source === "folder" ? " (folder)" : ""}`;
-  return task.done ? `${title} (ukończone)` : title;
-}
+const taskLabel = agentTaskLabel;
 /** Zadania do wyboru przy przypisaniu folderu: do zrobienia, poza archiwum. */
 const choices = computed(() =>
   props.tasks

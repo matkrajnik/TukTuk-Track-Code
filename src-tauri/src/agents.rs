@@ -482,14 +482,33 @@ impl Wake {
 impl State {
     /// Zdarzenie hooka do maszyny stanów; budzi pętlę, gdy zmienia listę pracujących.
     pub fn apply_hook(&self, ev: &crate::hooks::HookEvent, now: i64) {
+        // Pętla budzi się też przy zmianie fazy widocznej tylko na tablicy sesji
+        // (czekanie, koniec), nie tylko na liście pracujących.
         let changed = self
             .0
             .lock()
-            .map(|mut w| w.sessions.apply(ev, now))
+            .map(|mut w| {
+                let before = w.sessions.board_state(&ev.agent, &ev.session_id);
+                let working = w.sessions.apply(ev, now);
+                working || before != w.sessions.board_state(&ev.agent, &ev.session_id)
+            })
             .unwrap_or(false);
         if changed {
             self.1.notify();
         }
+    }
+    /// „Przejrzane” dla sesji na tablicy (`agent_board`).
+    pub fn mark_seen(&self, agent: &str, id: &str) -> bool {
+        self.0
+            .lock()
+            .map(|mut w| w.sessions.mark_seen(agent, id))
+            .unwrap_or(false)
+    }
+    pub fn mark_all_seen(&self) -> bool {
+        self.0
+            .lock()
+            .map(|mut w| w.sessions.mark_all_seen())
+            .unwrap_or(false)
     }
     /// Zapamiętywanie pierwszego promptu sesji (A4) zgodne z `ai_assign_suggest`;
     /// po wyłączeniu zapamiętane prompty znikają z pamięci.
@@ -563,9 +582,23 @@ pub fn start(app: &tauri::AppHandle) {
             let now = db::now();
             let found = app.state::<State>().0.lock().ok().map(|mut w| {
                 w.sessions.expire(now);
-                w.sessions.working()
+                (w.sessions.working(), w.sessions.board())
             });
-            if let Some(mut found) = found {
+            if let Some((mut found, board)) = found {
+                // Tablica sesji: czekające, pracujące i zakończone nieprzejrzane.
+                let mut board = crate::agent_board::entries(board);
+                if let Some(ai_dir) = &ai_dir {
+                    board.retain(|e| !crate::ai::is_ai_dir(&e.agent.cwd, ai_dir));
+                }
+                if !board.is_empty() {
+                    let mut list: Vec<Agent> = board.iter().map(|e| e.agent.clone()).collect();
+                    branches.recognize(&mut list, now, git_branch);
+                    match_plain(&app, &mut list);
+                    for (entry, agent) in board.iter_mut().zip(list) {
+                        entry.agent = agent;
+                    }
+                }
+                crate::agent_board::publish(&app, board);
                 if let Some(ai_dir) = &ai_dir {
                     without_ai_dir(&mut found, ai_dir);
                 }
@@ -607,9 +640,18 @@ pub fn start(app: &tauri::AppHandle) {
     });
 }
 
-/// Dopasowuje zadania agentów (`resolve`); tytuł zgłoszenia znanego tylko z Jiry
-/// pochodzi z listy wczytanej w tej sesji (`jira::cached_summary`).
+/// Dopasowuje zadania agentów (`match_plain`), a sesjom bez dopasowania dokłada
+/// podpowiedź asystenta przypisań (A4).
 fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
+    match_plain(app, agents);
+    // Sesje bez dopasowania heurystyką: podpowiedź asystenta przypisań (A4).
+    crate::assign::apply(app, agents);
+}
+
+/// Dopasowuje zadania agentów (`resolve`) bez asystenta; tytuł zgłoszenia
+/// znanego tylko z Jiry pochodzi z listy wczytanej w tej sesji
+/// (`jira::cached_summary`).
+fn match_plain(app: &tauri::AppHandle, agents: &mut [Agent]) {
     {
         let state = app.state::<crate::Database>();
         let Ok(db) = state.0.lock() else {
@@ -632,8 +674,6 @@ fn match_tasks(app: &tauri::AppHandle, agents: &mut [Agent]) {
             }
         }
     }
-    // Sesje bez dopasowania heurystyką: podpowiedź asystenta przypisań (A4).
-    crate::assign::apply(app, agents);
 }
 
 /// Ponowne dopasowanie po zmianie przypisań folderów, bez czekania na pętlę.

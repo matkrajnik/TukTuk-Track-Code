@@ -47,6 +47,10 @@ pub struct AppSettings {
     pub notify_evening: String,
     pub notify_evening_enabled: bool,
     pub notify_target: bool,
+    /// Powiadomienie, gdy sesja agenta czeka na użytkownika (zgoda, pytanie).
+    pub agent_notify_waiting: bool,
+    /// Powiadomienie, gdy sesja agenta skończy turę (domyślnie wyłączone).
+    pub agent_notify_done: bool,
     /// Przypomnienie przed każdym spotkaniem (C3); nadpisywane per spotkanie.
     pub meeting_reminder_enabled: bool,
     /// Ile minut przed spotkaniem (1, 5, 10, 15 albo 30).
@@ -212,6 +216,8 @@ impl Default for AppSettings {
             notify_evening: "17:30".into(),
             notify_evening_enabled: true,
             notify_target: false,
+            agent_notify_waiting: true,
+            agent_notify_done: false,
             meeting_reminder_enabled: true,
             meeting_reminder_minutes: 5,
             jira_auto_import: true,

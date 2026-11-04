@@ -101,6 +101,35 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Licznik przy pozycji (sesje agentów): czekające w kolorze ostrzeżenia. */
+.nav-badge {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--text);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.nav-item.selected .nav-badge:not(.nav-badge-waiting) {
+  background: var(--surface);
+}
+.nav-badge.nav-badge-waiting {
+  background: var(--warning);
+  color: var(--bg);
+}
+.nav-pane.compact .nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  min-width: 16px;
+  padding: 0 4px;
+  line-height: 16px;
+}
 /* LeftCompact: same ikony, etykieta zostaje dla czytników i testów. */
 .nav-pane.compact {
   width: 56px;

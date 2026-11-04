@@ -3,7 +3,8 @@
 //! Wspólny plik aplikacji (`mod hook_wire`) i programu hooka (`src/bin/hook.rs`,
 //! przez `#[path]`). Agent (Claude Code albo Codex) uruchamia hooka przy każdym
 //! zdarzeniu i podaje JSON na stdin; hook zostawia z niego tylko pola potrzebne
-//! do stanu sesji (bez narzędzi, treści plików ani transkryptu), pakuje je w
+//! do stanu sesji (bez argumentów narzędzi, treści plików ani transkryptu; nazwa
+//! narzędzia i komunikat powiadomienia opisują czekanie w tablicy sesji), pakuje je w
 //! kopertę `{"agent": …, "event": {…}}` i wysyła ramką native messaging do
 //! potoku `\\.\pipe\tuktuk-track-hooks`. Gdy aplikacja nie działa, kończy się cicho.
 #![allow(dead_code)]
@@ -25,6 +26,11 @@ pub const AI_ENV: &str = "TUKTUK_TRACK_AI";
 pub fn suppressed(env_value: Option<&str>) -> bool {
     env_value.map(str::trim) == Some("1")
 }
+
+/// Komunikat powiadomienia (`Notification`) ma najwyżej tyle znaków.
+pub const MESSAGE_MAX: usize = 200;
+/// Nazwa narzędzia (`PreToolUse`, `PermissionRequest`) ma najwyżej tyle znaków.
+pub const TOOL_MAX: usize = 64;
 
 /// Pola kopiowane z zdarzenia agenta (tylko napisy).
 const FIELDS: [&str; 7] = [
@@ -56,11 +62,23 @@ pub fn envelope(agent: &str, raw: &[u8]) -> Option<Vec<u8>> {
             event.insert(field.into(), Value::String(clip(text, 1024)));
         }
     }
-    // Prompt tylko z UserPromptSubmit i tylko jego początek (pod asystenta, A4).
-    if obj.get("hook_event_name").and_then(Value::as_str) == Some("UserPromptSubmit") {
-        if let Some(prompt) = obj.get("prompt").and_then(Value::as_str) {
-            event.insert("prompt".into(), Value::String(clip(prompt, PROMPT_MAX)));
+    let name = obj.get("hook_event_name").and_then(Value::as_str);
+    let mut copy = |field: &str, max: usize| {
+        if let Some(text) = obj.get(field).and_then(Value::as_str) {
+            event.insert(field.into(), Value::String(clip(text, max)));
         }
+    };
+    // Prompt tylko z UserPromptSubmit i tylko jego początek (pod asystenta, A4).
+    if name == Some("UserPromptSubmit") {
+        copy("prompt", PROMPT_MAX);
+    }
+    // Powód czekania na użytkownika (tablica sesji): sama nazwa narzędzia, bez
+    // argumentów, i komunikat powiadomienia agenta.
+    if matches!(name, Some("PreToolUse" | "PermissionRequest")) {
+        copy("tool_name", TOOL_MAX);
+    }
+    if name == Some("Notification") {
+        copy("message", MESSAGE_MAX);
     }
     serde_json::to_vec(&json!({ "agent": agent, "event": event })).ok()
 }

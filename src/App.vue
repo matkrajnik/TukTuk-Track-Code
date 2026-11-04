@@ -32,6 +32,7 @@ import RedmineView from "./RedmineView.vue";
 import QuickSwitch from "./QuickSwitch.vue";
 import LibraryView from "./LibraryView.vue";
 import DashboardView from "./DashboardView.vue";
+import AgentsView from "./views/AgentsView.vue";
 import JournalView from "./JournalView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import {
@@ -272,6 +273,7 @@ const views: View[] = [
   "journal",
   "library",
   "settings",
+  "agents",
 ];
 /**
  * Kliknięcie treści powiadomienia lub „Podziel…”: Rust już pokazał okno, tu
@@ -752,6 +754,7 @@ onUnmounted(() => {
         @updated="updated"
         @stop="act('stop')"
       />
+      <AgentsView v-else-if="view === 'agents'" :now="now" />
     </main>
     <AiChat
       v-if="chatVisible"

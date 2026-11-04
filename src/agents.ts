@@ -72,6 +72,16 @@ type PreviewAgent = Agent & {
   /** Pierwszy prompt sesji (z hooków przy włączonym asystencie albo z testu). */
   firstPrompt?: string | null;
 };
+/** Opis dopasowanego zadania agenta; bez dopasowania sam klucz albo nic. */
+export function agentTaskLabel(agent: Pick<Agent, "task" | "key">): string {
+  const task = agent.task;
+  if (!task) return agent.key ? `${agent.key}: brak zadania` : "";
+  if (task.source === "jira")
+    return `Jira ${task.key}${task.title ? `: ${task.title}` : ""} (bez zadania)`;
+  const title = `zadanie „${task.title}”${task.source === "folder" ? " (folder)" : ""}`;
+  return task.done ? `${title} (ukończone)` : title;
+}
+
 /** W podglądzie lista agentów pochodzi z localStorage (testy). */
 const key = "tuktuk-track-preview-agents-v1";
 const eventName = "agents-changed";

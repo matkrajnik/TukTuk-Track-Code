@@ -20,6 +20,10 @@ export const HOOK_SILENCE = 10 * 60_000;
 export const HOOK_TOOL_SILENCE = 60 * 60_000;
 /** Subagent bez zdarzeń przestaje się liczyć (`hooks::SUBAGENT_SILENCE`). */
 export const HOOK_SUBAGENT_SILENCE = 3 * 60_000;
+/** Czekanie na użytkownika kończy się samo po takim czasie (`hooks::WAIT_SILENCE`). */
+export const HOOK_WAIT_SILENCE = 2 * 3_600_000;
+/** Powód końca z braku zdarzeń (`hooks::TIMEOUT_REASON`). */
+export const HOOK_TIMEOUT_REASON = "brak zdarzeń";
 /** Zakończona sesja jest zapominana po takim czasie (`hooks::FORGET`). */
 const FORGET = 12 * 3_600_000;
 const RECENT = 30;
@@ -34,9 +38,14 @@ export interface PreviewHookEvent {
   agentId?: string;
   notificationType?: string;
   prompt?: string;
+  /** Nazwa narzędzia (`PreToolUse`, `PermissionRequest`). */
+  toolName?: string;
+  /** Komunikat powiadomienia agenta (`Notification`). */
+  message?: string;
 }
 
-type Phase = "working" | "waiting" | "done";
+export type HookPhase = "working" | "waiting" | "done";
+type Phase = HookPhase;
 interface Session {
   agent: "claude" | "codex";
   sessionId: string;
@@ -51,7 +60,32 @@ interface Session {
   /** Stop agenta głównego przy działających subagentach. */
   stopped: boolean;
   firstPrompt: string | null;
+  /** Wejście w bieżącą fazę (`Session::phase_at`). */
+  phaseAt: number;
+  /** Czekanie albo koniec widziane przez użytkownika (`Session::seen`). */
+  seen: boolean;
+  /** Na co czeka sesja albo `HOOK_TIMEOUT_REASON` (`Session::reason`). */
+  reason: string | null;
 }
+
+/** `Session::enter`: nowa faza, chwila wejścia, czekanie i koniec nieprzejrzane. */
+function enter(s: Session, phase: Phase, at: number) {
+  if (s.phase === phase) return;
+  s.phase = phase;
+  s.phaseAt = at;
+  s.seen = phase === "working";
+  s.reason = null;
+}
+/** `Session::wait`: pierwszy znany powód zostaje. */
+function wait(s: Session, reason: string, at: number) {
+  enter(s, "waiting", at);
+  s.reason ??= reason;
+}
+/** Narzędzia, którymi agent pyta użytkownika (`hooks::asks_user`). */
+const ASKS = new Map<string, string>([
+  ["AskUserQuestion", "pytanie"],
+  ["ExitPlanMode", "plan do akceptacji"],
+]);
 
 const inTool = (s: Session) => [...s.tools.values()].some((n) => n > 0);
 
@@ -105,14 +139,20 @@ export function foldHookEvents(
         tools: new Map(),
         stopped: false,
         firstPrompt: null,
+        phaseAt: ev.at,
+        seen: true,
+        reason: null,
       };
       map.set(key, s);
       s.last = ev.at;
       if (ev.cwd) s.cwd = ev.cwd;
       const work = () => {
         if (s.phase !== "working") s.since = ev.at;
-        s.phase = "working";
+        enter(s, "working", ev.at);
       };
+      // Komunikat jako jedna linia (`hooks::parse`).
+      const message = ev.message?.split(/\s+/).filter(Boolean).join(" ");
+      const told = (fallback: string) => message || fallback;
       const actor = ev.agentId ?? "";
       if (ev.agentId && ev.event !== "SubagentStop")
         s.subagents.set(ev.agentId, ev.at);
@@ -122,10 +162,13 @@ export function foldHookEvents(
           s.stopped = false;
           if (keepPrompts) s.firstPrompt ??= ev.prompt?.slice(0, 500) ?? null;
           break;
-        case "PreToolUse":
+        case "PreToolUse": {
+          const asks = actor ? undefined : ASKS.get(ev.toolName ?? "");
           s.tools.set(actor, (s.tools.get(actor) ?? 0) + 1);
-          work();
+          if (asks) wait(s, asks, ev.at);
+          else work();
           break;
+        }
         case "PostToolUse": {
           const n = (s.tools.get(actor) ?? 0) - 1;
           if (n > 0) s.tools.set(actor, n);
@@ -143,28 +186,31 @@ export function foldHookEvents(
           }
           break;
         case "PermissionRequest":
-          s.phase = "waiting";
+          wait(
+            s,
+            ev.toolName ? `zgoda: ${ev.toolName}` : "prośba o zgodę",
+            ev.at,
+          );
           break;
         case "Notification":
-          if (
-            [
-              "permission_prompt",
-              "agent_needs_input",
-              "elicitation_dialog",
-            ].includes(ev.notificationType ?? "")
+          if (ev.notificationType === "permission_prompt")
+            wait(s, told("prośba o zgodę"), ev.at);
+          else if (
+            ev.notificationType === "agent_needs_input" ||
+            ev.notificationType === "elicitation_dialog"
           )
-            s.phase = "waiting";
+            wait(s, told("pytanie"), ev.at);
           else if (
             ev.notificationType === "idle_prompt" &&
             s.phase === "working"
           )
-            s.phase = "waiting";
+            wait(s, told("czeka na odpowiedź"), ev.at);
           break;
         case "Stop":
           s.tools.delete("");
           pruneSubagents(s, ev.at);
           if (!s.subagents.size) {
-            s.phase = "done";
+            enter(s, "done", ev.at);
             s.stopped = false;
           } else s.stopped = true;
           break;
@@ -172,7 +218,8 @@ export function foldHookEvents(
           s.subagents.clear();
           s.tools.clear();
           s.stopped = false;
-          s.phase = "done";
+          enter(s, "done", ev.at);
+          s.seen = true;
           break;
       }
       if (!detail)
@@ -195,7 +242,12 @@ export function foldHookEvents(
   // Timeout braku zdarzeń (`Sessions::expire`).
   for (const [key, s] of map) {
     if (s.phase !== "done") {
-      const limit = inTool(s) ? HOOK_TOOL_SILENCE : HOOK_SILENCE;
+      const limit =
+        s.phase === "waiting"
+          ? HOOK_WAIT_SILENCE
+          : inTool(s)
+            ? HOOK_TOOL_SILENCE
+            : HOOK_SILENCE;
       const silent = now - s.last > limit || now < s.last;
       let orphaned = false;
       if (s.stopped) {
@@ -204,7 +256,9 @@ export function foldHookEvents(
           !s.subagents.size && now - s.last > HOOK_SUBAGENT_SILENCE;
       }
       if (silent || orphaned) {
-        s.phase = "done";
+        // Koniec od ostatniego zdarzenia, nie od chwili wykrycia ciszy.
+        enter(s, "done", Math.min(s.last, now));
+        if (silent && !orphaned) s.reason = HOOK_TIMEOUT_REASON;
         s.subagents.clear();
         s.tools.clear();
         s.stopped = false;
@@ -250,6 +304,97 @@ export function previewHookAgents(now: number, keepPrompts = false): HookAgent[]
       firstPrompt: s.firstPrompt,
     }))
     .sort((a, b) => a.since - b.since || a.kind.localeCompare(b.kind));
+}
+
+/**
+ * „Przejrzane” w podglądzie: sesje liczone są od nowa ze zdarzeń, więc
+ * zapamiętujemy klucz `agent|sesja|wejście w fazę` (kolejne czekanie albo koniec
+ * jest znów nieprzejrzane, jak w `Session::enter`).
+ */
+export const agentBoardSeenKey = "tuktuk-track-preview-agent-board-seen-v1";
+const seenKey = (s: { agent: string; sessionId: string; phaseAt: number }) =>
+  `${s.agent}|${s.sessionId}|${s.phaseAt}`;
+function seenMarks(): Set<string> {
+  try {
+    const value = JSON.parse(localStorage.getItem(agentBoardSeenKey) ?? "[]");
+    return new Set(Array.isArray(value) ? value.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** Sesja na tablicy (`hooks::BoardSession`) przed rozpoznaniem zadania. */
+export interface HookBoardSession {
+  agent: "claude" | "codex";
+  sessionId: string;
+  cwd: string;
+  name: string;
+  phase: HookPhase;
+  phaseAt: number;
+  seen: boolean;
+  reason: string | null;
+  subagents: number;
+  timedOut: boolean;
+}
+
+/** Wszystkie sesje z oznaczeniem „przejrzane” z localStorage. */
+function boardSessions(now: number): HookBoardSession[] {
+  if (!enabled()) return [];
+  const marks = seenMarks();
+  return foldHookEvents(events(), now).sessions.map((s) => ({
+    agent: s.agent,
+    sessionId: s.sessionId,
+    cwd: s.cwd,
+    name: folder(s.cwd) || "sesja",
+    phase: s.phase,
+    phaseAt: s.phaseAt,
+    seen: s.seen || (s.phase !== "working" && marks.has(seenKey(s))),
+    reason: s.reason,
+    subagents: s.subagents.size,
+    timedOut: s.phase === "done" && s.reason === HOOK_TIMEOUT_REASON,
+  }));
+}
+
+/** Tablica sesji (`Sessions::board`): bez przejrzanego końca, w kolejności Rust. */
+export function previewHookBoard(now: number): HookBoardSession[] {
+  const rank = { waiting: 0, working: 1, done: 2 } as const;
+  // Porównanie napisów jak w Rust (bajtowo), nie według locale.
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return boardSessions(now)
+    .filter((s) => s.phase !== "done" || !s.seen)
+    .sort(
+      (a, b) =>
+        rank[a.phase] - rank[b.phase] ||
+        a.phaseAt - b.phaseAt ||
+        cmp(a.agent, b.agent) ||
+        cmp(a.sessionId, b.sessionId),
+    );
+}
+
+/** „Przejrzane” (`Sessions::mark_seen`, bez sesji = `mark_all_seen`); `true`, gdy coś zmieniło. */
+export function previewMarkBoardSeen(
+  now: number,
+  target?: { agent: string; sessionId: string },
+): boolean {
+  const sessions = boardSessions(now);
+  // Zostają tylko znaczniki bieżących faz istniejących sesji.
+  const current = new Set(sessions.map(seenKey));
+  const marks = new Set([...seenMarks()].filter((k) => current.has(k)));
+  const fresh = sessions.filter(
+    (s) =>
+      s.phase !== "working" &&
+      !s.seen &&
+      (!target ||
+        (s.agent === target.agent && s.sessionId === target.sessionId)),
+  );
+  if (!fresh.length) return false;
+  for (const s of fresh) marks.add(seenKey(s));
+  try {
+    localStorage.setItem(agentBoardSeenKey, JSON.stringify([...marks]));
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /**
