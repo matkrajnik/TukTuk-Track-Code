@@ -1,6 +1,9 @@
-TukTuk Track 2.1.0: sterowanie pomiarem z innych programów i poprawki po 2.0.
+TukTuk Track 2.2.0: tablica sesji agentów — co czeka na Ciebie, co pracuje, co się skończyło.
 
-- Sterowanie pomiarem z innych programów: `tuktuk-track-ctl.exe` (obok aplikacji) albo nazwany potok `\\.\pipe\tuktuk-track-api-<użytkownik>` dodaje zadanie (także ze zgłoszenia Jiry lub Redmine) i od razu je mierzy, zatrzymuje pomiar i podaje, co jest mierzone. Odpowiedź to jeden wiersz JSON. Domyślnie wyłączone: Ustawienia → Agenci → „Pozwól innym programom sterować pomiarem”. Potok przyjmuje tylko połączenia z tego komputera i z Twojego konta Windows.
-- Pomiar po wyłączeniu komputera: gdy aplikacja nie działała co najmniej 10 minut, trwający pomiar kończy się na ostatnim znaku życia aplikacji, a baner „Pomiar zatrzymany po przerwie” pozwala go zostawić, wznowić albo przywrócić cały czas.
-- Ręczne spotkania cykliczne: „Powtarzaj” przy dodawaniu (dni tygodnia, co 1–8 tygodni, do wybranego dnia, najwyżej 200 spotkań i rok). Wystąpienia edytuje się pojedynczo, a usuwa jedno albo „to i kolejne”. Starsze bazy i kopie dostają kolumnę `series_id` przy starcie.
-- Dodanie zadania uruchamia pomiar: „Dodaj i rozpocznij” (Enter) dodaje i od razu mierzy, poprzedni pomiar staje; „Zaplanuj” (Shift+Enter) dodaje bez pomiaru i otwiera plan zadania. Po zakończonym dniu start pyta „Wznowić dzień?”.
+- Widok „Sesje agentów”: sesje Claude Code i Codexa w trzech kolumnach. „Czeka na Ciebie” z powodem (zgoda na narzędzie, pytanie, plan do akceptacji) i czasem czekania, „Pracuje” oraz „Skończone, nieprzejrzane”. „Przejrzane” zdejmuje zakończoną sesję, a licznik przy pozycji w nawigacji pokazuje, ile czeka i ile się skończyło.
+- „Przejdź” przy każdej sesji: VS Code, folder w Eksploratorze albo Orca (dla sesji w worktree Orki wyciąga jej okno na wierzch). Po otwarciu sesja jest przejrzana.
+- Czas czekania na Ciebie: ile dziś sesje agentów czekały na Twoją odpowiedź i suma z 7 dni. Dane w nowej tabeli `agent_waits`, tworzonej przy starcie.
+- Tray i powiadomienia: drugi wiersz dymka „Agenci: czeka 2 · skończone 1”, pozycja menu „Sesje agentów”. Powiadomienie, gdy sesja czeka (domyślnie włączone) albo skończy pracę (domyślnie wyłączone); Ustawienia → Powiadomienia.
+- Pytanie od Claude i plan do akceptacji liczą się jako czekanie, nie praca. Czekanie kończy się samo po 2 godzinach bez zdarzeń.
+- Serwer MCP: nowe narzędzie `agent_sessions` (tablica sesji i dzisiejsze czekanie); `day_summary` podaje czas czekania.
+- Hook przekazuje teraz także nazwę narzędzia (bez argumentów) i komunikat powiadomienia agenta (do 200 znaków).
