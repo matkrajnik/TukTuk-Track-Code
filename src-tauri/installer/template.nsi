@@ -795,7 +795,11 @@ Section Install
   {{/each}}
 
   ; Copy external binaries
+  ; TukTuk Track: działające programy pomocnicze (serwer MCP w sesjach agentów,
+  ; host rozszerzenia przeglądarki) idą na bok zamiast blokować kopiowanie.
   {{#each binaries}}
+    Push "$INSTDIR\\{{this}}"
+    Call TukTukTrackMoveAside
     File /a "/oname={{this}}" "{{no-escape @key}}"
   {{/each}}
 
@@ -943,6 +947,8 @@ Section Uninstall
   {{#each binaries}}
     Delete "$INSTDIR\\{{this}}"
   {{/each}}
+  ; Odsunięte przy aktualizacji, a niesprzątnięte przez aplikację (TukTukTrackMoveAside).
+  Delete "$INSTDIR\tuktuk-track-*.old"
 
   ; TukTuk Track: host native messaging rozszerzenia przeglądarki (W4) — manifest
   ; zapisany przez aplikację obok exe i wpisy w rejestrze Chrome i Edge.
@@ -1071,6 +1077,38 @@ Function TrimQuotes
   Exch $R0
 FunctionEnd
 ; LEGACY-END
+
+; Program pomocniczy (tuktuk-track-mcp/bridge/hook/ctl.exe) może działać w trakcie
+; aktualizacji: każda sesja Claude Code i Codexa trzyma swój tuktuk-track-mcp.exe, a
+; przeglądarka tuktuk-track-bridge.exe. Działającego .exe nie da się nadpisać ani
+; usunąć, ale Windows pozwala zmienić jego nazwę. Stary plik idzie więc na bok jako
+; <nazwa>.<n>.old (działające sesje używają go do końca), a nowy trafia pod właściwą
+; nazwę. Pliki .old usuwa aplikacja przy starcie, gdy nic ich już nie używa.
+; Wejście: ścieżka pliku na stosie.
+Function TukTukTrackMoveAside
+  Exch $R8
+  Push $R9
+  ${If} ${FileExists} "$R8"
+    ClearErrors
+    Delete "$R8"
+    ${If} ${Errors}
+      StrCpy $R9 0
+      ${Do}
+        IntOp $R9 $R9 + 1
+        ; Starszy .old, który już nie działa, zwalnia nazwę.
+        Delete "$R8.$R9.old"
+        ClearErrors
+        Rename "$R8" "$R8.$R9.old"
+        ${IfNot} ${Errors}
+          DetailPrint "Działający $R8 odsunięty jako .$R9.old"
+          ${Break}
+        ${EndIf}
+      ${LoopUntil} $R9 >= 20
+    ${EndIf}
+  ${EndIf}
+  Pop $R9
+  Pop $R8
+FunctionEnd
 
 Function TukTukTrackRequireClosed
   retry_close:

@@ -33,9 +33,70 @@ pub fn record_version(db: &Connection, version: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Czy plik to program pomocniczy odsunięty przez instalator
+/// (`TukTukTrackMoveAside`: `tuktuk-track-<…>.exe.<n>.old`).
+pub fn is_moved_aside(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.starts_with("tuktuk-track-") && lower.contains(".exe.") && lower.ends_with(".old")
+}
+
+/// Usuwa z katalogu programu pliki odsunięte przy aktualizacji. Plik, który
+/// nadal działa (np. serwer MCP w otwartej sesji agenta), zostaje do następnego
+/// startu. Zwraca liczbę usuniętych.
+pub fn remove_moved_aside(dir: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter(|e| is_moved_aside(&e.file_name().to_string_lossy()))
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_helpers_moved_aside_by_the_installer_are_removed() {
+        assert!(is_moved_aside("tuktuk-track-mcp.exe.1.old"));
+        assert!(is_moved_aside("TukTuk-Track-Bridge.EXE.12.OLD"));
+        for keep in [
+            "tuktuk-track-mcp.exe",
+            "tuktuk-track.exe",
+            "notatki.old",
+            "tuktuk-track-mcp.old",
+            "inny-program.exe.1.old",
+        ] {
+            assert!(!is_moved_aside(keep), "{keep}");
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "tuktuk-track-aside-{}-{}",
+            std::process::id(),
+            crate::db::now()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "tuktuk-track-mcp.exe.1.old",
+            "tuktuk-track-hook.exe.2.old",
+            "tuktuk-track-mcp.exe",
+            "dane.old",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(remove_moved_aside(&dir), 2);
+        let mut left: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["dane.old", "tuktuk-track-mcp.exe"]);
+        assert_eq!(remove_moved_aside(&dir.join("nie-ma")), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn backup_contains_wal_and_runs_once_per_version() {
         let dir = std::env::temp_dir().join(format!(

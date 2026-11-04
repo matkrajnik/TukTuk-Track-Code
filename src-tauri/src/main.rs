@@ -476,6 +476,14 @@ fn main() {
             agent_time::prune(&connection, db::now())?;
             // Czekanie sesji agentów na użytkownika: ten sam okres przechowywania.
             agent_wait::prune(&connection, db::now())?;
+            // Programy pomocnicze odsunięte przez instalator (działały w trakcie
+            // aktualizacji); w tle, żeby nie opóźniać startu.
+            if let Some(exe_dir) = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+            {
+                std::thread::spawn(move || maintenance::remove_moved_aside(&exe_dir));
+            }
             maintenance::record_version(
                 &connection,
                 app.config()

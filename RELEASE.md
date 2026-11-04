@@ -230,6 +230,14 @@ i 1.7.5 opublikowana jako release):
   i rozmiary okien są zachowane;
 - wpis w „Aplikacje i funkcje” ma nową wersję, skróty działają, rozszerzenie przeglądarki
   (`tuktuk-track-bridge.exe`) nadal jest zarejestrowane;
+- **działające programy pomocnicze** (od 2.3.1): przy otwartej sesji Claude Code albo
+  Codexa (trzyma `tuktuk-track-mcp.exe`) i otwartej przeglądarce z rozszerzeniem
+  (`tuktuk-track-bridge.exe`) aktualizacja przechodzi bez ręcznego zamykania procesów:
+  `TukTukTrackMoveAside` w szablonie zmienia nazwę działającego pliku na
+  `<nazwa>.<n>.old` i wgrywa nowy; otwarte sesje dalej używają starego pośrednika do
+  restartu, nowe dostają nowy. Pliki `.old` usuwa aplikacja przy starcie
+  (`maintenance::remove_moved_aside`), gdy nic ich już nie używa, a deinstalator
+  usuwa pozostałe;
 - błędny podpis (np. podmieniony `signature` w `latest.json`) daje w banerze komunikat
   „Nie udało się zainstalować aktualizacji…”, a aplikacja działa dalej;
 - bez sieci start aplikacji jest cichy, a „Sprawdź teraz” pokazuje „Nie udało się
