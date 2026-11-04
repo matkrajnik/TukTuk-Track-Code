@@ -1004,7 +1004,7 @@ pub fn status_for(
         dirs.codex.as_deref(),
         dirs.codex_file(),
         &hooks_config::CODEX_EVENTS,
-        &hooks_config::hook_command(exe_for_cmd, "codex"),
+        &hooks_config::agent_command(exe_for_cmd, "codex"),
     );
     let config = dirs
         .codex_config()

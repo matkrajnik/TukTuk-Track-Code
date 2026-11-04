@@ -56,7 +56,10 @@ const trust = computed(() => {
   if (!settings.value.agentHooks || !s.codex.found) return "";
   switch (s.codexTrust) {
     case "trusted":
-      return "Codex: hooki zatwierdzone.";
+      // Aplikacja widzi tylko, że wpis zaufania istnieje, nie czy pasuje do
+      // bieżącego polecenia (skrót liczy Codex); po zmianie polecenia hooka
+      // Codex wymaga ponownego zatwierdzenia.
+      return "Codex: hooki zatwierdzone. Jeśli sesje Codexa nie pojawiają się w „Sesjach agentów”, zatwierdź hooki ponownie: /hooks w Codexie albo ustawienia hooków w Codex Desktop.";
     case "partial":
       return "Codex: część hooków czeka na zatwierdzenie. Otwórz Codexa i wpisz /hooks, żeby zatwierdzić pozostałe.";
     case "untrusted":

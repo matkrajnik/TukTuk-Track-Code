@@ -95,19 +95,82 @@ pub fn is_own(command: &str) -> bool {
     command.contains(OWN) || command.contains(legacy_names::HOOK)
 }
 
+/// Ścieżka w poleceniu hooka: ukośniki `/`, bez przedrostka `\\?\`.
+fn command_path(exe: &Path) -> String {
+    let path = exe.to_string_lossy().replace('\\', "/");
+    path.strip_prefix("//?/").unwrap_or(&path).to_string()
+}
+
+/// Ścieżka wymaga cudzysłowu (spacja albo znak specjalny powłoki).
+fn needs_quote(path: &str) -> bool {
+    path.chars()
+        .any(|c| c.is_whitespace() || "&()^;'`$%!".contains(c))
+}
+
 /// Polecenie hooka: ścieżka exe (ukośniki `/` działają w bashu, cmd i PowerShellu,
 /// cudzysłów tylko gdy ścieżka go wymaga) i nazwa agenta.
 pub fn hook_command(exe: &Path, agent: &str) -> String {
-    let path = exe.to_string_lossy().replace('\\', "/");
-    let path = path.strip_prefix("//?/").unwrap_or(&path).to_string();
-    let quote = path
-        .chars()
-        .any(|c| c.is_whitespace() || "&()^;'`$%!".contains(c));
-    if quote {
+    let path = command_path(exe);
+    if needs_quote(&path) {
         format!("\"{path}\" {agent}")
     } else {
         format!("{path} {agent}")
     }
+}
+
+/// Program hooka w poleceniu Codexa. Codex na Windows (także Codex Desktop)
+/// uruchamia polecenie hooka przez PowerShell, w którym ścieżka w cudzysłowie
+/// jest tekstem, a nie wywołaniem programu, więc hook z katalogu ze spacją
+/// („TukTuk Track”) nigdy się nie uruchamiał. Katalog idzie więc w krótkiej
+/// formie Windows (8.3, np. `TUKTUK~1`), a nazwa pliku zostaje pełna: krótka nazwa
+/// pliku mogłaby się zmienić po aktualizacji, a każda zmiana polecenia wymaga
+/// ponownego zatwierdzenia hooka w Codexie. Bez krótkiej nazwy (wyłączone 8.3)
+/// zostaje dotychczasowa ścieżka.
+pub fn codex_exe(exe: &Path, short_dir: impl Fn(&Path) -> Option<PathBuf>) -> PathBuf {
+    if !needs_quote(&command_path(exe)) {
+        return exe.to_path_buf();
+    }
+    let (Some(dir), Some(name)) = (exe.parent(), exe.file_name()) else {
+        return exe.to_path_buf();
+    };
+    match short_dir(dir).map(|d| d.join(name)) {
+        Some(short) if !needs_quote(&command_path(&short)) => short,
+        _ => exe.to_path_buf(),
+    }
+}
+
+/// Polecenie hooka dla agenta (Codex: [`codex_exe`]).
+pub fn agent_command(exe: &Path, agent: &str) -> String {
+    if agent == "codex" {
+        hook_command(&codex_exe(exe, short_path), agent)
+    } else {
+        hook_command(exe, agent)
+    }
+}
+
+/// Krótka ścieżka Windows (8.3); `None`, gdy system jej nie podaje.
+#[cfg(windows)]
+pub fn short_path(path: &Path) -> Option<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetShortPathNameW(long: *const u16, short: *mut u16, size: u32) -> u32;
+    }
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    // SAFETY: `wide` kończy się zerem; bufor ma podany rozmiar, a zwrócona długość
+    // większa od bufora oznacza błąd (wtedy `None`).
+    let len = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), buf.len() as u32) };
+    if len == 0 || len as usize >= buf.len() {
+        return None;
+    }
+    buf.truncate(len as usize);
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&buf)))
+}
+
+#[cfg(not(windows))]
+pub fn short_path(_path: &Path) -> Option<PathBuf> {
+    None
 }
 
 fn group(command: &str) -> Value {
@@ -546,7 +609,7 @@ fn sync_file(
 
 /// Rejestruje (`exe = Some`) albo usuwa (`None`) hooki w obu agentach.
 pub fn sync(dirs: &Dirs, exe: Option<&Path>) -> (Outcome, Outcome) {
-    let cmd = |agent: &str| exe.map(|e| hook_command(e, agent));
+    let cmd = |agent: &str| exe.map(|e| agent_command(e, agent));
     (
         sync_file(
             dirs.claude.as_deref(),

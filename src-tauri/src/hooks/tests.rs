@@ -1228,6 +1228,39 @@ fn session_keeps_the_last_reported_host() {
 }
 
 #[test]
+fn codex_command_avoids_quotes_with_the_short_directory_name() {
+    let exe = Path::new(r"C:\Users\jan\AppData\Local\TukTuk Track\tuktuk-track-hook.exe");
+    let short = |dir: &Path| {
+        (dir == Path::new(r"C:\Users\jan\AppData\Local\TukTuk Track"))
+            .then(|| PathBuf::from(r"C:\Users\jan\AppData\Local\TUKTUK~1"))
+    };
+    // PowerShell nie uruchamia ścieżki w cudzysłowie: krótki katalog, pełna nazwa pliku.
+    assert_eq!(
+        hook_command(&hooks_config::codex_exe(exe, short), "codex"),
+        "C:/Users/jan/AppData/Local/TUKTUK~1/tuktuk-track-hook.exe codex"
+    );
+    // Bez krótkiej nazwy (8.3 wyłączone): dotychczasowe polecenie.
+    assert_eq!(
+        hook_command(&hooks_config::codex_exe(exe, |_| None), "codex"),
+        "\"C:/Users/jan/AppData/Local/TukTuk Track/tuktuk-track-hook.exe\" codex"
+    );
+    // Ścieżka bez spacji zostaje bez zmian (bez pytania o krótką nazwę).
+    let plain = Path::new(r"C:\App\tuktuk-track-hook.exe");
+    assert_eq!(
+        hooks_config::codex_exe(plain, |_| panic!("niepotrzebne")),
+        plain.to_path_buf()
+    );
+    // Krótka nazwa nadal ze spacją (dziwny wolumin) nie pomaga.
+    let still = |_: &Path| Some(PathBuf::from(r"C:\Dane Zespołu\APP"));
+    assert_eq!(hooks_config::codex_exe(exe, still), exe.to_path_buf());
+    // Claude (bash) zostaje przy pełnej ścieżce w cudzysłowie.
+    assert_eq!(
+        hooks_config::agent_command(exe, "claude"),
+        hook_command(exe, "claude")
+    );
+}
+
+#[test]
 fn board_state_reports_phase_and_seen() {
     let mut s = Sessions::default();
     assert_eq!(s.board_state("claude", "s1"), None);
