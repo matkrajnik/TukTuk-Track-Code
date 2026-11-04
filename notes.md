@@ -1,6 +1,5 @@
-TukTuk Track 2.3.0: tablica sesji wie, gdzie działa agent, i otwiera tam konkretną sesję.
+TukTuk Track 2.3.1: sesje Codexa na tablicy, okno Orki na wierzchu i aktualizacja bez zamykania agentów.
 
-- Przy każdej sesji w „Sesjach agentów” widać, gdzie działa: Orca, Claude Desktop, Codex Desktop, VS Code albo terminal.
-- „Przejdź” do konkretnej sesji: Orca przełącza się na terminal tej sesji, Claude Desktop otwiera tę sesję, a Codex Desktop jej wątek. Gdy terminal Orki ma nieaktualny uchwyt (np. po restarcie Orki), wychodzi samo okno Orki.
-- Hook przekazuje tylko nazwę źródła i identyfikator sesji w tej aplikacji; aplikacja sprawdza oba, a identyfikator nie trafia do okna ani do serwera MCP.
-- Sesje sprzed aktualizacji dostają oznaczenie źródła przy pierwszym nowym zdarzeniu.
+- Sesje Codexa (CLI i Codex Desktop) trafiają na tablicę: hook Codexa wcześniej się nie uruchamiał, bo Codex wykonuje go przez PowerShell, a ścieżka w cudzysłowie nie była tam programem. Po aktualizacji zatwierdź hooki w Codexie jeszcze raz (/hooks albo ustawienia hooków w Codex Desktop).
+- „Orca” przełącza na terminal sesji i wyciąga okno Orki na wierzch, także zminimalizowane albo przykryte innym programem.
+- Aktualizacja przechodzi przy otwartych sesjach Claude Code i Codexa oraz otwartej przeglądarce: działające programy pomocnicze (serwer MCP, host rozszerzenia) nie blokują już instalatora.

@@ -4,6 +4,14 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.3.1
+
+Poprawki z pierwszego używania 2.3. Sprawdzone testami Rust i Playwright oraz na komputerze deweloperskim (polecenie hooka przez PowerShell, wyliczanie okna Orki, zmiana nazwy działającego pliku); pełna aktualizacja i kliknięcie „Orca” w zainstalowanej aplikacji nie były sprawdzane.
+
+- **Sesje Codexa na tablicy.** Hook Codexa wcześniej nigdy się nie uruchamiał: Codex na Windows (CLI i Codex Desktop) wykonuje polecenie hooka przez PowerShell, a ścieżka w cudzysłowie (katalog „TukTuk Track” ma spację) jest tam tekstem, nie programem. Polecenie Codexa używa teraz krótkiej nazwy katalogu bez spacji (np. `…/TUKTUK~1/tuktuk-track-hook.exe codex`). **Po aktualizacji zatwierdź hooki w Codexie jeszcze raz** (`/hooks` w Codex CLI albo ustawienia hooków w Codex Desktop): zmiana polecenia unieważnia poprzednie zatwierdzenie, a aplikacja nadal pokazuje „zatwierdzone”, bo nie zna skrótu, który liczy Codex. Polecenie Claude Code bez zmian.
+- **„Orca” wyciąga okno Orki.** Po przełączeniu na terminal sesji okno Orki wychodzi na wierzch, także zminimalizowane albo przykryte innym programem (wcześniej zmieniała się tylko karta).
+- **Aktualizacja przy otwartych sesjach agentów.** Działający `tuktuk-track-mcp.exe` (każda sesja Claude Code i Codexa) albo `tuktuk-track-bridge.exe` (przeglądarka z rozszerzeniem) nie blokuje już instalatora: działający plik dostaje nazwę `….old`, nowy trafia na jego miejsce, a otwarte sesje używają starego do restartu. Pliki `.old` aplikacja usuwa przy starcie, gdy nic ich nie używa. Działa od aktualizacji do 2.3.1 (aktualizację wykonuje instalator nowej wersji).
+
 ### Nowości 2.3
 
 Wydanie 2.3.0 rozpoznaje, gdzie działa sesja agenta, i otwiera ją tam jednym kliknięciem. Sprawdzone testami Rust i Playwright (bez prawdziwej Orki, Claude Desktop ani Codex Desktop); adresy i polecenia pochodzą z plików instalacji tych aplikacji, natywnie nie były uruchamiane.

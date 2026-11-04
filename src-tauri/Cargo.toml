@@ -1,6 +1,6 @@
 [package]
 name = "tuktuk-track"
-version = "2.3.0"
+version = "2.3.1"
 edition = "2021"
 # Główny program aplikacji; `tuktuk-track-bridge` to host native messaging (W4).
 default-run = "tuktuk-track"
