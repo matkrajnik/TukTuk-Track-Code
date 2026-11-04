@@ -4,6 +4,14 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.3
+
+Wydanie 2.3.0 rozpoznaje, gdzie działa sesja agenta, i otwiera ją tam jednym kliknięciem. Sprawdzone testami Rust i Playwright (bez prawdziwej Orki, Claude Desktop ani Codex Desktop); adresy i polecenia pochodzą z plików instalacji tych aplikacji, natywnie nie były uruchamiane.
+
+- **Źródło sesji na tablicy.** Przy każdej sesji w „Sesjach agentów” jest etykieta: **Orca**, **Claude Desktop**, **Codex Desktop**, **VS Code** albo **terminal**. Hook rozpoznaje je ze środowiska agenta: `ORCA_TERMINAL_HANDLE` (terminal Orki), `CLAUDE_CODE_ENTRYPOINT` (Claude Desktop, rozszerzenie VS Code), `CODEX_INTERNAL_ORIGINATOR_OVERRIDE` (Codex Desktop, rozszerzenie VS Code) i `TERM_PROGRAM`. Sesje sprzed aktualizacji dostają etykietę przy pierwszym nowym zdarzeniu.
+- **„Przejdź” do konkretnej sesji.** Przycisk z nazwą aplikacji: **Orca** przełącza okno Orki na terminal tej sesji (`orca terminal switch`; gdy uchwyt jest nieaktualny, np. po restarcie Orki, wychodzi samo okno), **Claude** otwiera tę sesję w Claude Desktop (`claude://code/continue?session=…`; działa przy włączonych skrótach do Claude Code w Claude Desktop), **Codex** otwiera wątek w Codex Desktop (`codex://threads/…`). Przyciski „VS Code” i „Folder” zostają bez zmian.
+- **Prywatność i bezpieczeństwo.** Hook czyta tylko te pięć zmiennych i przekazuje nazwę źródła oraz uchwyt terminala Orki albo identyfikator sesji Claude Desktop. Aplikacja przyjmuje tylko znane źródła pasujące do agenta i sprawdza format identyfikatorów; adres składa sama, identyfikator nie trafia do okna. Narzędzie MCP `agent_sessions` podaje tylko nazwę źródła.
+
 ### Nowości 2.2
 
 Wydanie 2.2.0 to tablica sesji agentów: przy kilku sesjach Claude Code, Codexa albo Orki naraz widać, co czeka na Ciebie, co pracuje, a co się skończyło. Wszystko poniżej sprawdzono testami Rust i Playwright (zastępcze IPC, bez prawdziwych agentów, VS Code ani Orki); natywna aplikacja i instalator 2.2 nie były uruchamiane.
