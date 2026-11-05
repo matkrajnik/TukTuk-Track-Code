@@ -4,6 +4,10 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.4.0
+
+- **Historia powiadomień (dzwoneczek).** Dzwoneczek w górnym pasku zbiera wszystkie powiadomienia aplikacji z licznikiem nieprzeczytanych; kliknięcie wpisu oznacza go jako przeczytany i otwiera widok z powiadomienia, panel ma „Oznacz wszystkie jako przeczytane” i „Wyczyść historię” (opis niżej, w „Historia powiadomień”). Sprawdzone testami Rust i Playwright oraz w podglądzie; prawdziwe powiadomienia w zainstalowanej aplikacji nie były sprawdzane.
+
 ### Nowości 2.3.2
 
 - **Kalendarz z kontem służbowym Microsoft.** Połączenie kończyło się komunikatem „Nie udało się zapisać tokenu w magazynie poświadczeń Windows.”: wpis Menedżera poświadczeń mieści do 1280 znaków (2560 bajtów w UTF-16), a refresh token konta służbowego bywa dłuższy. Długi token leży teraz w kilku wpisach (`<dzierżawca>|<client id>#1…#N`, wpis główny ze znacznikiem liczby części); krótkie tokeny i zapisane wcześniej zostają w jednym wpisie. Sprawdzone testami Rust, także na prawdziwym Menedżerze poświadczeń (token 2400 znaków); logowanie do Outlooka w aplikacji nie było sprawdzane.
