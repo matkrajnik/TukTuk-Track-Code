@@ -18,6 +18,7 @@ rozszerzenie przeglądarki. Dokumentacja i komunikaty są po polsku.
 | Tryb podglądu | `src/preview/*.ts` | Symulatory w localStorage dla `npm run dev` w przeglądarce. |
 | Testy E2E | `tests/*.spec.ts` (Playwright) | Zastępcze IPC Tauri w `tests/fixtures/tauri.ts`: logika z Rust przeniesiona 1:1 do TS. Zmiana tej logiki w Rust wymaga zmiany fixture. |
 | Testy Rust | moduły `#[cfg(test)]` w `src-tauri/src`, `src-tauri/tests/` | `naming.rs` pilnuje, by stara nazwa (Todo Track, `todo-track`, `todotrack`) występowała tylko w wyjątkach (`legacy*`, instalator). |
+| Workflows | `src-tauri/crates/workflow-core` (domena bez Tauri), `src-tauri/src/workflows/`, `src/workflows.ts`, `src/api/workflow*.ts` | Plan i decyzje w `docs/workflows/`. Walidator i szablony z Rust przeniesione 1:1 do TS (podgląd); zmiana reguł wymaga zmiany obu. `src-tauri/Cargo.toml` to workspace z `default-members`. |
 | Rozszerzenie | `browser-extension/` | Chrome i Edge, ramka native messaging w `src-tauri/src/native_msg.rs`. |
 
 Dokumenty: `README.md` (funkcje, uruchomienie, weryfikacja), `RELEASE.md` (wydania, podpis,
@@ -40,7 +41,7 @@ npm run tauri build        # instalator NSIS w src-tauri/target/release/bundle/n
 Rust leży w `src-tauri/`, więc `cargo` zawsze z manifestem:
 
 ```bash
-cargo fmt --manifest-path src-tauri/Cargo.toml
+cargo fmt --manifest-path src-tauri/Cargo.toml --all   # workspace: aplikacja + crates/workflow-core
 cargo test --manifest-path src-tauri/Cargo.toml --locked
 cargo clippy --manifest-path src-tauri/Cargo.toml   # nie jest częścią CI ani npm run check
 ```

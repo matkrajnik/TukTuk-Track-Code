@@ -36,7 +36,7 @@ const manifest = ["--manifest-path", "src-tauri/Cargo.toml"];
 const steps = [
   ["Build (vue-tsc + vite)", "npm", ["run", "build"]],
   ["Testy Playwright", "npm", ["test"]],
-  ["cargo fmt --check", "cargo", ["fmt", ...manifest, "--check"]],
+  ["cargo fmt --check", "cargo", ["fmt", ...manifest, "--all", "--check"]],
   ["cargo test --locked", "cargo", ["test", ...manifest, "--locked"]],
 ];
 

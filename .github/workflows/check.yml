@@ -53,6 +53,6 @@ jobs:
             playwright-report/
             test-results/
           retention-days: 14
-      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+      - run: cargo fmt --manifest-path src-tauri/Cargo.toml --all --check
       - run: cargo test --manifest-path src-tauri/Cargo.toml --locked
       - run: npm run tauri build -- --no-bundle

@@ -1,3 +1,10 @@
+# Workspace: aplikacja i domena Workflows (docs/workflows/PLAN_WDROZENIA.md, 6).
+# default-members sprawia, że `cargo test --manifest-path src-tauri/Cargo.toml`
+# testuje oba pakiety bez dodatkowych flag w CI i `npm run check`.
+[workspace]
+members = [".", "crates/workflow-core"]
+default-members = [".", "crates/workflow-core"]
+
 [package]
 name = "tuktuk-track"
 version = "2.4.0"
@@ -58,6 +65,8 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 # Parser HTML formularza dnia Ideo Timesheet (PLAN_1.8.md, T1).
 scraper = { version = "=0.27.0", default-features = false }
+# Domena modułu Workflows bez zależności od Tauri (PLAN_WDROZENIA.md, 6).
+workflow-core = { path = "crates/workflow-core" }
 
 [dev-dependencies]
 chrono-tz = "=0.10.4"

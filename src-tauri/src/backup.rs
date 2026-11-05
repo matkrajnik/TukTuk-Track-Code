@@ -26,15 +26,18 @@ fn copy(source: &Connection, target: &mut Connection) -> Result<(), String> {
 /// - `jira`, `redmine`, `timesheet` (login, `device_id` — inny identyfikator
 ///   to dla TS nowe urządzenie), `calendar` (konto Microsoft): poświadczenia
 ///   w Menedżerze poświadczeń należą do bieżącej konfiguracji, nigdy do kopii;
-/// - `redmine_statuses_at`: znacznik świeżości statusów Redmine (`site|czas`).
+/// - `redmine_statuses_at`: znacznik świeżości statusów Redmine (`site|czas`);
+/// - `workflows_unlocked`: odblokowanie modułu Workflows kluczem; starsza kopia
+///   nie może go z powrotem zablokować (docs/workflows/E0_ANALIZA.md, A03).
 ///
 /// Preferencje z `AppSettings` przychodzą z kopii.
-pub const KEEP_KEYS: [&str; 5] = [
+pub const KEEP_KEYS: [&str; 6] = [
     "jira",
     "timesheet",
     "calendar",
     "redmine",
     "redmine_statuses_at",
+    crate::workflows::store::UNLOCKED_KEY,
 ];
 /// Znaczniki obserwacji przypisań (`site|użytkownik`) usuwane przy
 /// przywracaniu kopii. Muszą być spójne z tabelami zgłoszeń (`jira_issues`,
@@ -635,6 +638,7 @@ mod tests {
             ("jira", "{\"site\":\"https://biezaca.atlassian.net\"}"),
             ("redmine", "{\"site\":\"https://redmine.example.pl\"}"),
             ("redmine_statuses_at", "https://redmine.example.pl|1000"),
+            ("workflows_unlocked", "true"),
         ];
         let reset = [
             ("jira_watch", "https://biezaca.atlassian.net|mk@example.pl"),

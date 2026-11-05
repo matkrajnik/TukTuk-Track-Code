@@ -59,6 +59,7 @@ mod week_notes;
 mod widget;
 mod window_focus;
 mod window_state;
+mod workflows;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 struct Database(Mutex<rusqlite::Connection>);
@@ -679,6 +680,18 @@ fn main() {
             inbox::notification_log,
             inbox::notification_log_read,
             inbox::notification_log_clear,
+            workflows::workflow_access,
+            workflows::workflow_unlock,
+            workflows::workflow_list,
+            workflows::workflow_get,
+            workflows::workflow_create,
+            workflows::workflow_save_draft,
+            workflows::workflow_validate,
+            workflows::workflow_publish,
+            workflows::workflow_archive,
+            workflows::workflow_duplicate,
+            workflows::workflow_export,
+            workflows::workflow_import,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,

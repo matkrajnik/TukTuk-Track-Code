@@ -113,7 +113,9 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
     ensure_column(db, "manual_meetings", "series_id", "TEXT")?;
     db.execute_batch(
         "CREATE INDEX IF NOT EXISTS manual_meetings_series ON manual_meetings(series_id);",
-    )
+    )?;
+    // Tabele modułu Workflows (docs/workflows/E0_ANALIZA.md, A03).
+    crate::workflows::store::init_tables(db)
 }
 
 /// Dodaje kolumnę do istniejącej tabeli, gdy jej brak (bazy i kopie sprzed tej
