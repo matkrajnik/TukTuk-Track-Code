@@ -329,6 +329,17 @@ export const settingsSections = [
       "Przetestuj",
     ],
   },
+  {
+    id: "workflows",
+    name: "Workflows",
+    labels: [
+      "procesy agentów",
+      "Klucz dostępu",
+      "Odblokuj Workflows",
+      "Otwórz Workflows",
+      "rozszerzenie",
+    ],
+  },
 ] as const;
 
 export type SettingsSection = (typeof settingsSections)[number]["id"];

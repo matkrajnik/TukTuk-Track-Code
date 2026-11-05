@@ -35,6 +35,8 @@ import DashboardView from "./DashboardView.vue";
 import AgentsView from "./views/AgentsView.vue";
 import JournalView from "./JournalView.vue";
 import SettingsView from "./views/SettingsView.vue";
+import WorkflowsView from "./views/WorkflowsView.vue";
+import { loadWorkflowAccess, workflowsUnlocked } from "./workflowAccess";
 import {
   isSettingsSection,
   readSettingsSection,
@@ -274,6 +276,8 @@ const views: View[] = [
   "library",
   "settings",
   "agents",
+  "workflows",
+  "workflow-definitions",
 ];
 /**
  * Kliknięcie treści powiadomienia lub „Podziel…”: Rust już pokazał okno, tu
@@ -289,8 +293,15 @@ async function navigate(
     userNavigated(source === "external");
     openChat(request.chat);
   }
-  const target = views.find((v) => v === request.view);
-  if (!target) return;
+  const found = views.find((v) => v === request.view);
+  if (!found) return;
+  // Workflows przed odblokowaniem prowadzą do Ustawień → Workflows (klucz).
+  const workflowsView =
+    found === "workflows" || found === "workflow-definitions";
+  if (workflowsView) await loadWorkflowAccess();
+  const locked = workflowsView && !workflowsUnlocked.value;
+  const target: View = locked ? "settings" : found;
+  if (locked) request = { ...request, section: "workflows" };
   if (source !== "morning") userNavigated(source === "external");
   // Otwartego okna dialogowego nie zamykamy: niezapisane zmiany zostają, a
   // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
@@ -755,6 +766,14 @@ onUnmounted(() => {
         @stop="act('stop')"
       />
       <AgentsView v-else-if="view === 'agents'" :now="now" />
+      <WorkflowsView
+        v-else-if="
+          (view === 'workflows' || view === 'workflow-definitions') &&
+          workflowsUnlocked
+        "
+        :section="view === 'workflows' ? 'overview' : 'definitions'"
+        @open="navigate({ view: $event })"
+      />
     </main>
     <AiChat
       v-if="chatVisible"

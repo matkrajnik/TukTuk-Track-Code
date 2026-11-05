@@ -8,7 +8,9 @@ export type View =
   | "agents"
   | "journal"
   | "library"
-  | "settings";
+  | "settings"
+  | "workflows"
+  | "workflow-definitions";
 </script>
 
 <script setup lang="ts">
@@ -33,9 +35,18 @@ import {
   Sunrise,
   Sunset,
   Ticket,
+  Workflow,
+  ListTree,
 } from "lucide-vue-next";
 import BrandIcon from "./BrandIcon.vue";
 import NotificationBell from "./NotificationBell.vue";
+import WorkflowReveal from "./WorkflowReveal.vue";
+import {
+  finishReveal,
+  loadWorkflowAccess,
+  workflowsReveal,
+  workflowsUnlocked,
+} from "../workflowAccess";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   desktop,
@@ -192,6 +203,25 @@ const agentsLabel = computed(() => {
   ].filter(Boolean);
   return parts.length ? `Sesje agentów: ${parts.join(", ")}` : "Sesje agentów";
 });
+// Workflows (docs/workflows): grupa menu widoczna dopiero po odblokowaniu kluczem.
+onMounted(() => {
+  void loadWorkflowAccess();
+});
+/** Podświetlenie nowej grupy po animacji odsłonięcia (4.1.2). */
+const workflowsHighlight = ref(false);
+let highlightTimer: number | undefined;
+/** Czas krótkiego podświetlenia sekcji po odsłonięciu (ms). */
+const HIGHLIGHT_MS = 1500;
+function revealDone() {
+  finishReveal();
+  workflowsHighlight.value = true;
+  window.clearTimeout(highlightTimer);
+  highlightTimer = window.setTimeout(
+    () => (workflowsHighlight.value = false),
+    HIGHLIGHT_MS,
+  );
+}
+onUnmounted(() => window.clearTimeout(highlightTimer));
 const unsubscribers: (() => void)[] = [];
 let unmounted = false;
 onMounted(async () => {
@@ -283,87 +313,128 @@ async function hide() {
       >
     </div>
     <nav aria-label="Nawigacja główna">
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'tasks' }"
-        :aria-current="view === 'tasks' ? 'page' : undefined"
-        :title="paneCompact ? 'Zadania' : undefined"
-        @click="go('tasks')"
-      >
-        <ListTodo :size="20" aria-hidden="true" /><span class="nav-label">Zadania</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'dashboard' }"
-        :aria-current="view === 'dashboard' ? 'page' : undefined"
-        :title="paneCompact ? 'Dashboard' : undefined"
-        @click="go('dashboard')"
-      >
-        <LayoutDashboard :size="20" aria-hidden="true" /><span class="nav-label">Dashboard</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'agents' }"
-        :aria-current="view === 'agents' ? 'page' : undefined"
-        :aria-label="agentsLabel"
-        :title="paneCompact ? agentsLabel : undefined"
-        @click="go('agents')"
-      >
-        <SquareTerminal :size="20" aria-hidden="true" /><span class="nav-label"
-          >Sesje agentów</span
-        ><span
-          v-if="agentsPending > 0"
-          class="nav-badge"
-          :class="{ 'nav-badge-waiting': agentCounts.waiting > 0 }"
-          aria-hidden="true"
-          >{{ agentsPending }}</span
+      <!-- Grupy menu (PLAN_WDROZENIA.md, 4.1): nagłówki w rozwiniętym panelu,
+           separatory w zwiniętym; kolejność taka sama w każdym trybie. -->
+      <div class="nav-group" role="group" aria-labelledby="nav-group-work">
+        <span id="nav-group-work" class="nav-group-label">Praca</span>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'tasks' }"
+          :aria-current="view === 'tasks' ? 'page' : undefined"
+          :title="paneCompact ? 'Zadania' : undefined"
+          @click="go('tasks')"
         >
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'journal' }"
-        :aria-current="view === 'journal' ? 'page' : undefined"
-        :title="paneCompact ? 'Plan i historia' : undefined"
-        @click="go('journal')"
+          <ListTodo :size="20" aria-hidden="true" /><span class="nav-label">Zadania</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'dashboard' }"
+          :aria-current="view === 'dashboard' ? 'page' : undefined"
+          :title="paneCompact ? 'Dashboard' : undefined"
+          @click="go('dashboard')"
+        >
+          <LayoutDashboard :size="20" aria-hidden="true" /><span class="nav-label">Dashboard</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'journal' }"
+          :aria-current="view === 'journal' ? 'page' : undefined"
+          :title="paneCompact ? 'Plan i historia' : undefined"
+          @click="go('journal')"
+        >
+          <CalendarRange :size="20" aria-hidden="true" /><span class="nav-label">Plan i historia</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'reports' }"
+          :aria-current="view === 'reports' ? 'page' : undefined"
+          :title="paneCompact ? 'Raporty dzienne' : undefined"
+          @click="go('reports')"
+        >
+          <CalendarDays :size="20" aria-hidden="true" /><span class="nav-label">Raporty dzienne</span>
+        </button>
+      </div>
+      <div class="nav-group" role="group" aria-labelledby="nav-group-agents">
+        <span id="nav-group-agents" class="nav-group-label">Agenci</span>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'agents' }"
+          :aria-current="view === 'agents' ? 'page' : undefined"
+          :aria-label="agentsLabel"
+          :title="paneCompact ? agentsLabel : undefined"
+          @click="go('agents')"
+        >
+          <SquareTerminal :size="20" aria-hidden="true" /><span class="nav-label"
+            >Sesje agentów</span
+          ><span
+            v-if="agentsPending > 0"
+            class="nav-badge"
+            :class="{ 'nav-badge-waiting': agentCounts.waiting > 0 }"
+            aria-hidden="true"
+            >{{ agentsPending }}</span
+          >
+        </button>
+      </div>
+      <div
+        v-if="workflowsUnlocked"
+        class="nav-group nav-group-workflows"
+        :class="{ reveal: workflowsReveal, highlight: workflowsHighlight }"
+        role="group"
+        aria-labelledby="nav-group-workflows"
       >
-        <CalendarRange :size="20" aria-hidden="true" /><span class="nav-label">Plan i historia</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'reports' }"
-        :aria-current="view === 'reports' ? 'page' : undefined"
-        :title="paneCompact ? 'Raporty dzienne' : undefined"
-        @click="go('reports')"
-      >
-        <CalendarDays :size="20" aria-hidden="true" /><span class="nav-label">Raporty dzienne</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'jira' }"
-        :aria-current="view === 'jira' ? 'page' : undefined"
-        :title="paneCompact ? 'Jira' : undefined"
-        @click="go('jira')"
-      >
-        <Ticket :size="20" aria-hidden="true" /><span class="nav-label">Jira</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'redmine' }"
-        :aria-current="view === 'redmine' ? 'page' : undefined"
-        :title="paneCompact ? 'Redmine' : undefined"
-        @click="go('redmine')"
-      >
-        <ClipboardList :size="20" aria-hidden="true" /><span class="nav-label">Redmine</span>
-      </button>
-      <button
-        class="nav-item"
-        :class="{ selected: view === 'library' }"
-        :aria-current="view === 'library' ? 'page' : undefined"
-        :title="paneCompact ? 'Historia i kopie' : undefined"
-        @click="go('library')"
-      >
-        <History :size="20" aria-hidden="true" /><span class="nav-label">Historia i kopie</span>
-      </button>
+        <span id="nav-group-workflows" class="nav-group-label">Workflows</span>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'workflows' }"
+          :aria-current="view === 'workflows' ? 'page' : undefined"
+          :title="paneCompact ? 'Workflows: przegląd' : undefined"
+          @click="go('workflows')"
+        >
+          <Workflow :size="20" aria-hidden="true" /><span class="nav-label">Przegląd</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'workflow-definitions' }"
+          :aria-current="view === 'workflow-definitions' ? 'page' : undefined"
+          :title="paneCompact ? 'Workflows: definicje' : undefined"
+          @click="go('workflow-definitions')"
+        >
+          <ListTree :size="20" aria-hidden="true" /><span class="nav-label">Definicje</span>
+        </button>
+      </div>
+      <div class="nav-group" role="group" aria-labelledby="nav-group-integrations">
+        <span id="nav-group-integrations" class="nav-group-label">Integracje</span>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'jira' }"
+          :aria-current="view === 'jira' ? 'page' : undefined"
+          :title="paneCompact ? 'Jira' : undefined"
+          @click="go('jira')"
+        >
+          <Ticket :size="20" aria-hidden="true" /><span class="nav-label">Jira</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'redmine' }"
+          :aria-current="view === 'redmine' ? 'page' : undefined"
+          :title="paneCompact ? 'Redmine' : undefined"
+          @click="go('redmine')"
+        >
+          <ClipboardList :size="20" aria-hidden="true" /><span class="nav-label">Redmine</span>
+        </button>
+      </div>
+      <div class="nav-group" role="group" aria-labelledby="nav-group-resources">
+        <span id="nav-group-resources" class="nav-group-label">Zasoby</span>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'library' }"
+          :aria-current="view === 'library' ? 'page' : undefined"
+          :title="paneCompact ? 'Historia i kopie' : undefined"
+          @click="go('library')"
+        >
+          <History :size="20" aria-hidden="true" /><span class="nav-label">Historia i kopie</span>
+        </button>
+      </div>
       <button
         class="nav-item nav-footer"
         :class="{ selected: view === 'settings' }"
@@ -389,6 +460,7 @@ async function hide() {
   <header class="topbar">
     <button
       class="icon-button nav-toggle topbar-menu"
+      :class="{ 'has-news': workflowsReveal || workflowsHighlight }"
       aria-label="Pokaż nawigację"
       :aria-expanded="paneOpen"
       @click="togglePane"
@@ -504,4 +576,5 @@ async function hide() {
       </button>
     </div>
   </header>
+  <WorkflowReveal v-if="workflowsReveal" @done="revealDone" />
 </template>

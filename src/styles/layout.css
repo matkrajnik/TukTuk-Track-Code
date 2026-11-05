@@ -101,6 +101,74 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Grupy menu (Workflows, PLAN_WDROZENIA.md 4.1): nagłówek w rozwiniętym
+   panelu, cienki separator w zwiniętym. */
+.nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nav-group + .nav-group {
+  margin-top: var(--space-2);
+}
+.nav-group-label {
+  padding: 0 14px;
+  color: var(--muted);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 20px;
+}
+.nav-pane.compact .nav-group-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.nav-pane.compact .nav-group + .nav-group {
+  border-top: 1px solid var(--line);
+  padding-top: var(--space-2);
+}
+/* Odsłonięcie Workflows (4.1.2): pozycje pojawiają się kolejno, potem
+   krótkie podświetlenie grupy. Przy ograniczonym ruchu bez animacji. */
+.nav-group-workflows.reveal > * {
+  opacity: 0;
+  animation: nav-reveal-item 320ms ease-out forwards;
+  animation-delay: 650ms;
+}
+.nav-group-workflows.reveal > :nth-child(2) {
+  animation-delay: 760ms;
+}
+.nav-group-workflows.reveal > :nth-child(3) {
+  animation-delay: 870ms;
+}
+.nav-group-workflows.highlight {
+  border-radius: var(--radius);
+  box-shadow: 0 0 0 2px var(--accent-bg);
+  transition: box-shadow 600ms ease-out;
+}
+.topbar-menu.has-news {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+@keyframes nav-reveal-item {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-group-workflows.reveal > * {
+    animation: none;
+    opacity: 1;
+  }
+}
 /* Licznik przy pozycji (sesje agentów): czekające w kolorze ostrzeżenia. */
 .nav-badge {
   margin-left: auto;

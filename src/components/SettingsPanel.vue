@@ -18,6 +18,7 @@ import NotificationsSection from "./settings/NotificationsSection.vue";
 import TemplatesSection from "./settings/TemplatesSection.vue";
 import ShortcutsSection from "./settings/ShortcutsSection.vue";
 import StartupSection from "./settings/StartupSection.vue";
+import WorkflowsSection from "./settings/WorkflowsSection.vue";
 import type { SettingsSection } from "../navigation";
 import {
   defaultSettings,
@@ -93,6 +94,7 @@ onUnmounted(() => {
       v-model:settings="settings"
       :shortcut-errors="info.shortcutErrors"
     />
+    <WorkflowsSection v-if="section === 'workflows'" />
     <StartupSection
       v-if="section === 'startup'"
       v-model:settings="settings"

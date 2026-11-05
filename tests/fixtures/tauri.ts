@@ -90,7 +90,16 @@ export interface TauriOptions {
   hidden?: boolean;
   /** Historia powiadomień (`notification_log`, inbox.rs) na starcie, od najnowszych. */
   notifications?: unknown[];
+  /**
+   * Moduł Workflows (`workflows/mod.rs`): stan odblokowania na starcie i klucz,
+   * który `workflow_unlock` przyjmuje (testowy, nie prawdziwy klucz aplikacji).
+   * Definicje i edytor testuje się w podglądzie (`src/preview/workflows.ts`).
+   */
+  workflows?: { unlocked?: boolean; key?: string };
 }
+
+/** Klucz Workflows w testach aplikacji (fixture), inny niż klucz produkcyjny. */
+export const TEST_WORKFLOWS_KEY = "TUKTUK-WF-TESTY-TESTY-TESTY-TESTY";
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
   await page.clock.setFixedTime(new Date(options.now ?? NOW));
@@ -110,6 +119,10 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     hidden: options.hidden ?? false,
     heartbeat: options.heartbeat ?? null,
     notifications: options.notifications ?? [],
+    workflows: {
+      unlocked: options.workflows?.unlocked ?? false,
+      key: options.workflows?.key ?? TEST_WORKFLOWS_KEY,
+    },
   });
   await page.goto("/");
 }
@@ -150,6 +163,7 @@ function install(init: {
   hidden: boolean;
   heartbeat: number | null;
   notifications: any[];
+  workflows: { unlocked: boolean; key: string };
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -570,6 +584,7 @@ function install(init: {
   }
   // Historia powiadomień (`inbox.rs`): `notify` jak `notify::show` w Rust.
   let inbox: any[] = structuredClone(init.notifications);
+  let workflowsUnlocked = init.workflows.unlocked;
   const inboxChanged = () => {
     emit("notification-log-changed", clone(inbox));
     return clone(inbox);
@@ -660,6 +675,18 @@ function install(init: {
         case "agent_board_seen":
         case "agent_board_seen_all":
           return [];
+        // Jak `workflows::workflow_access` / `workflow_unlock`: klucz po
+        // przycięciu i wielkich literach; trwały znacznik (tu: do przeładowania).
+        case "workflow_access":
+          return { unlocked: workflowsUnlocked };
+        case "workflow_unlock":
+          if (
+            String(args.key ?? "").trim().toUpperCase() !==
+            init.workflows.key.toUpperCase()
+          )
+            throw "Nieprawidłowy klucz dostępu.";
+          workflowsUnlocked = true;
+          return { unlocked: true };
         case "notification_log":
           return clone(inbox);
         case "notification_log_read":

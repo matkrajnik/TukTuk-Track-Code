@@ -21,6 +21,7 @@ const sections = [
   "Uruchamianie",
   "Agenci",
   "Asystent AI",
+  "Workflows",
 ];
 const navButton = (page: Page, name: string) =>
   page

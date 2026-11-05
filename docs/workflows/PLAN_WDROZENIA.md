@@ -369,14 +369,14 @@ Odbiór: definicja zapisuje się i odczytuje; publikacja jest niezmienna; błęd
 
 ### E2 — edytor i projekt funkcjonalny w aplikacji
 
-- [ ] Dodać pozycję nawigacji, listę i edytor z Vue Flow po pozytywnej decyzji E0.
-- [ ] Uporządkować menu w grupy i odsłaniać Workflows jako rozszerzenie obecnej aplikacji, bez przełącznika trybów.
-- [ ] Dodać ustawienia aktywacji kluczem, trwały stan uprawnienia i kontrolę dostępu w backendzie wszystkich komend modułu.
-- [ ] Zaimplementować animację odblokowania, pomijanie przez Escape, wariant reduced motion i zachowanie na małym ekranie.
-- [ ] Zaimplementować pięć typów węzłów, panel parametrów i edycję krawędzi.
-- [ ] Dodać zapis szkicu, publikację, informację o niezapisanych zmianach i konflikcie rewizji.
-- [ ] Dodać szablon procesu oraz dostępny klawiaturą wariant listy kroków.
-- [ ] Uzupełnić preview, Playwright i zrzuty obu motywów.
+- [x] Dodać pozycję nawigacji, listę i edytor (decyzja E2: własny canvas SVG zamiast Vue Flow, patrz dziennik).
+- [x] Uporządkować menu w grupy i odsłaniać Workflows jako rozszerzenie obecnej aplikacji, bez przełącznika trybów.
+- [x] Dodać ustawienia aktywacji kluczem, trwały stan uprawnienia i kontrolę dostępu w backendzie wszystkich komend modułu.
+- [x] Zaimplementować animację odblokowania, pomijanie przez Escape, wariant reduced motion i zachowanie na małym ekranie.
+- [x] Zaimplementować pięć typów węzłów, panel parametrów i edycję krawędzi.
+- [x] Dodać zapis szkicu, publikację, informację o niezapisanych zmianach i konflikcie rewizji.
+- [x] Dodać szablon procesu oraz dostępny klawiaturą wariant listy kroków.
+- [ ] Uzupełnić preview, Playwright i zrzuty obu motywów (preview i Playwright są; nowych zrzutów wzorcowych nie dodano).
 
 Odbiór: użytkownik tworzy i ponownie otwiera poprawny graf; błąd wskazuje konkretny węzeł. Przyciski uruchamiania nie udają działającego runtime przed jego wdrożeniem.
 
@@ -533,3 +533,70 @@ Pierwsza sesja implementacyjna zaczyna od E0 i aktualnego stanu repozytorium, na
 - **Testy:** `workflow-core` 21 passed; `workflows::*` 20 passed (w tym migracja istniejącej bazy
   z zadaniami); Playwright `workflow-definitions.spec.ts` 17 passed.
 - **Pozostaje:** E2 (UI: sekcja Ustawień z kluczem, grupy menu, animacja, lista, edytor, fixture).
+
+### 2026-11-05 — E2 (interfejs definicji)
+
+- **Pliki:** `src/workflowAccess.ts` (wspólny stan odblokowania i jednorazowy znacznik animacji),
+  `src/components/settings/WorkflowsSection.vue`, `src/components/WorkflowReveal.vue`,
+  `src/components/AppNav.vue` (grupy Praca, Agenci, Workflows, Integracje, Zasoby),
+  `src/styles/layout.css`, `src/App.vue` (widoki `workflows` i `workflow-definitions`; bez klucza
+  prośba o widok prowadzi do Ustawień → Workflows), `src/views/WorkflowsView.vue`,
+  `src/components/workflows/{WorkflowEditor,WorkflowGraphView,WorkflowNodePanel}.vue`,
+  `src/workflowEdit.ts`, `src/navigation.ts` (sekcja Ustawień), `tests/fixtures/tauri.ts`
+  (`workflow_access`, `workflow_unlock` z testowym kluczem), `tests/workflows-ui.spec.ts`.
+- **Decyzje E2:**
+  - Canvas: własny SVG (pozycje z definicji, przeciąganie, powiększenie, dopasowanie, łuki pętli)
+    zamiast Vue Flow. Powód: brak nowej zależności, pięć typów węzłów i jeden port na wyjście
+    wystarczą; pełna edycja klawiaturą jest na liście kroków. Do ponownej oceny, gdy dojdą
+    Parallel/Join.
+  - Menu Workflows: „Przegląd” i „Definicje”. „Uruchomienia” dojdą z runtime (E3/E5), żeby nie
+    udawać działania; z tego samego powodu nie ma przycisku „Uruchom”.
+  - Eksport w oknie z polem tekstowym i „Kopiuj” (działa w aplikacji i podglądzie bez dialogów
+    plików); import przez wklejenie JSON.
+  - Cofanie/ponawianie w sesji edycji (Ctrl+Z / Ctrl+Y poza polami tekstowymi), zmiana pola
+    tekstowego to jeden krok (zdarzenie `change`).
+- **Testy:** `tests/workflows-ui.spec.ts` 10 passed (grupy menu, błędny i poprawny klucz, Escape,
+  reduced motion, nakładka nie blokuje kliknięć, przekierowanie bez klucza, edytor: walidacja,
+  cofanie, zapis, publikacja, dodanie kroku, przejście do kroku, porzucenie zmian, import i eksport).
+  `tests/visual.spec.ts` bez zmian wzorców (90 passed). Sprawdzone ręcznie w podglądzie przeglądarki.
+- **Pozostaje z E2:** zrzuty wzorcowe nowych widoków w obu motywach. Następny etap: E3.
+
+### 2026-11-05 — STATUS: przerwane w trakcie poprawek po przeglądzie E2
+
+Commit `1c8b2d3` zawiera E0+E1. Cały E2 jest **niezacommitowany**. Poprawki z przeglądu vue-reviewer
+zostały przerwane w połowie, więc kod jest w stanie przejściowym i **typecheck nie przejdzie**:
+
+- `src/components/workflows/WorkflowEditor.vue` używa `onBeforeUnmount`, ale nie importuje go z `vue`
+  (brakująca edycja importu).
+- W tym samym pliku `ConfirmDialog` ma nadal `@confirm="emit('close')"`; ma wołać `discard`
+  (funkcja jest już dopisana).
+
+Zrobione w poprawkach:
+- Okna w `WorkflowsView` przepięte na `ConfirmDialog` (fokus, Esc, powrót fokusu); fokus w polu
+  importu.
+- `@open` w `App.vue` przechodzi przez `navigate()`.
+- Edytor: migawka wysłanego stanu przy zapisie, `fixSelection` po cofnięciu i ponowieniu, skróty
+  wyłączone przy otwartym oknie, `focusStep('')` ignorowane, `unsavedDrafts` (w `workflowEdit.ts`)
+  zachowuje niezapisane zmiany przy wyjściu z widoku i przywraca je przy ponownym otwarciu.
+
+Do zrobienia potem:
+1. Dokończyć dwie edycje powyżej.
+2. Ustawienia → Workflows: po odblokowaniu fokus na „Otwórz Workflows” i stały region statusu.
+3. Testy przywracania niezapisanych zmian i fokusu w oknach.
+4. `npm run check`.
+5. Commit E2.
+
+Ostatni pełny Playwright przed tymi poprawkami: 714 passed i 3 failed. Wszystkie 3 dotyczyły listy
+sekcji w `settings-tab.spec.ts` i są już poprawione (11 passed).
+
+### 2026-11-05 — E2 dokończony po przerwaniu
+
+- Dokończone przerwane edycje: import `onBeforeUnmount` i `discard` w edytorze. Przy okazji
+  poprawiony `@click="reload"`, który przekazywał zdarzenie jako `restore`.
+- Ustawienia → Workflows: stały region statusu, po odblokowaniu fokus na „Otwórz Workflows”.
+- Nowe testy: fokus w oknach (Nazwa, pole JSON importu, powrót fokusu po Esc), przywracanie
+  niezapisanych zmian po przejściu do innego widoku, „Porzuć zmiany” bez przywracania, fokus po
+  odblokowaniu. Uwaga dla testów: przy zamrożonym zegarze (`setFixedTime`) Vue pomija handler przodka
+  z tym samym znacznikiem czasu, więc test Esc przesuwa zegar o sekundę.
+- `npm run check`: zielone (Playwright 719 passed, Rust 801 + core 21 passed).
+- Otwarte z E2: zrzuty wzorcowe nowych widoków w obu motywach. E2 niezacommitowany.
