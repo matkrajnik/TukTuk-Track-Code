@@ -26,6 +26,7 @@ mod hook_wire;
 mod hooks;
 mod hooks_config;
 mod idle;
+mod inbox;
 mod jira;
 mod jira_board;
 mod jira_fields;
@@ -675,6 +676,9 @@ fn main() {
             agent_board::agent_board,
             agent_board::agent_board_seen,
             agent_board::agent_board_seen_all,
+            inbox::notification_log,
+            inbox::notification_log_read,
+            inbox::notification_log_clear,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,

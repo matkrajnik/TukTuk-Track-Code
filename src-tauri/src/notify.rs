@@ -1019,7 +1019,9 @@ fn app_id(app: &tauri::AppHandle) -> String {
 
 /// Wysyła powiadomienie. W czasie bloku skupienia trafia ono do kolejki
 /// (`focus::hold`) i przychodzi po bloku w jednym zbiorczym.
+/// Każde powiadomienie trafia też do historii (dzwoneczek, `inbox.rs`).
 pub fn show(app: &tauri::AppHandle, message: &Message) {
+    crate::inbox::record_now(app, message);
     if !crate::focus::hold(app, message) {
         display(app, message);
     }

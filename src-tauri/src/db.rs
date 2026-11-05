@@ -106,7 +106,9 @@ pub fn init(db: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, task_id INTEGER REFERENCES tasks(id) ON DELETE SET NULL, at TEXT NOT NULL, repeat TEXT NOT NULL DEFAULT 'none', weekdays TEXT, enabled INTEGER NOT NULL DEFAULT 1, snooze_until TEXT, last_fired_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS reminders_at ON reminders(at);
         CREATE TABLE IF NOT EXISTS meeting_reminders (meeting_id TEXT PRIMARY KEY, minutes INTEGER);
-        CREATE TABLE IF NOT EXISTS app_heartbeat (id INTEGER PRIMARY KEY CHECK(id=1), at INTEGER NOT NULL);")?;
+        CREATE TABLE IF NOT EXISTS app_heartbeat (id INTEGER PRIMARY KEY CHECK(id=1), at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS notification_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '', open TEXT NOT NULL DEFAULT '{}', read INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS notification_log_at ON notification_log(at);")?;
     // Cykle ręcznych spotkań (`meetings.rs`): starsze bazy i kopie dostają kolumnę tutaj.
     ensure_column(db, "manual_meetings", "series_id", "TEXT")?;
     db.execute_batch(

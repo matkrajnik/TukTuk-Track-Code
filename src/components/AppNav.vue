@@ -35,6 +35,7 @@ import {
   Ticket,
 } from "lucide-vue-next";
 import BrandIcon from "./BrandIcon.vue";
+import NotificationBell from "./NotificationBell.vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   desktop,
@@ -472,6 +473,7 @@ async function hide() {
       >
         <ArrowLeftRight :size="15" /><kbd>Ctrl K</kbd>
       </button>
+      <NotificationBell @error="emit('error', $event)" />
       <button
         class="icon-button widget-switch"
         :class="{ on: widgetOn }"

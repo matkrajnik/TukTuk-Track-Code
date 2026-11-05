@@ -88,6 +88,8 @@ export interface TauriOptions {
    * zwraca false do `__tauriMock.show()`, które zgłasza też `tauri://focus`.
    */
   hidden?: boolean;
+  /** Historia powiadomień (`notification_log`, inbox.rs) na starcie, od najnowszych. */
+  notifications?: unknown[];
 }
 
 export async function openDesktop(page: Page, options: TauriOptions = {}) {
@@ -107,6 +109,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     jiraWatch: options.jiraWatch ?? null,
     hidden: options.hidden ?? false,
     heartbeat: options.heartbeat ?? null,
+    notifications: options.notifications ?? [],
   });
   await page.goto("/");
 }
@@ -121,7 +124,8 @@ export function backend<T = unknown>(
     | "snapshot"
     | "calls"
     | "suggest"
-    | "show",
+    | "show"
+    | "notify",
   arg?: unknown,
 ) {
   return page.evaluate(([n, a]) => (window as any).__tauriMock[n](a), [
@@ -145,6 +149,7 @@ function install(init: {
   jiraWatch: { lastOk: number | null; lastError: string; lastErrorAt: number | null } | null;
   hidden: boolean;
   heartbeat: number | null;
+  notifications: any[];
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -563,9 +568,28 @@ function install(init: {
     visible = true;
     emit("tauri://focus");
   }
+  // Historia powiadomień (`inbox.rs`): `notify` jak `notify::show` w Rust.
+  let inbox: any[] = structuredClone(init.notifications);
+  const inboxChanged = () => {
+    emit("notification-log-changed", clone(inbox));
+    return clone(inbox);
+  };
+  function notify(entry: { title: string; body?: string; open?: unknown }) {
+    const id = Math.max(0, ...inbox.map((e) => e.id)) + 1;
+    inbox.unshift({
+      id,
+      at: Date.now(),
+      title: entry.title,
+      body: entry.body ?? "",
+      open: entry.open ?? { view: null },
+      read: false,
+    });
+    return inboxChanged();
+  }
   w.__tauriMock = {
     emit,
     show,
+    notify,
     suggest,
     idleTick,
     jiraCheck,
@@ -636,6 +660,16 @@ function install(init: {
         case "agent_board_seen":
         case "agent_board_seen_all":
           return [];
+        case "notification_log":
+          return clone(inbox);
+        case "notification_log_read":
+          inbox = inbox.map((e) =>
+            args.id == null || e.id === args.id ? { ...e, read: true } : e,
+          );
+          return inboxChanged();
+        case "notification_log_clear":
+          inbox = [];
+          return inboxChanged();
         // „Przejdź” wymaga sesji z tablicy, a tablica w fixture jest pusta.
         case "agent_board_open":
           throw "Tej sesji nie ma już na tablicy.";
