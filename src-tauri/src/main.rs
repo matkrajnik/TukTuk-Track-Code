@@ -60,9 +60,23 @@ mod widget;
 mod window_focus;
 mod window_state;
 mod workflows;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
-struct Database(Mutex<rusqlite::Connection>);
+/// Jedno połączenie aplikacji. `Arc`, żeby repozytorium przebiegów Workflows
+/// (wątek w tle, E5) dzieliło tę samą blokadę zamiast otwierać drugie połączenie.
+struct Database(Arc<Mutex<rusqlite::Connection>>);
+
+impl Database {
+    fn new(connection: rusqlite::Connection) -> Self {
+        Self(Arc::new(Mutex::new(connection)))
+    }
+
+    /// Ta sama blokada dla kodu poza komendami Tauri (np. `SqliteRunRepository`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn shared(&self) -> Arc<Mutex<rusqlite::Connection>> {
+        Arc::clone(&self.0)
+    }
+}
 /// Treść zdarzenia `data-changed` (B6). `source`: etykieta okna, które wywołało
 /// komendę i samo przyjmuje migawkę z jej wyniku, więc nie odświeża się drugi
 /// raz; `null` (wątek cykli, tray, powiadomienia, Jira) odświeża wszystkie okna.
@@ -522,7 +536,7 @@ fn main() {
             {
                 eprintln!("Cykle przy starcie: {e}");
             }
-            app.manage(Database(Mutex::new(connection)));
+            app.manage(Database::new(connection));
             app.manage(settings::Cache::default());
             app.manage(backup::Pending::default());
             shortcuts::setup(app);
@@ -830,6 +844,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    /// Repozytorium przebiegów dostaje tę samą blokadę co komendy (bez drugiego połączenia).
+    #[test]
+    fn database_shares_one_lock_with_the_workflow_repository() {
+        let db = super::Database::new(rusqlite::Connection::open_in_memory().unwrap());
+        let shared = db.shared();
+        assert!(std::sync::Arc::ptr_eq(&shared, &db.0));
+        let guard = db.0.lock().unwrap();
+        assert!(shared.try_lock().is_err(), "druga blokada");
+        drop(guard);
+        let _repo = crate::workflows::runs::SqliteRunRepository::new(shared);
+    }
+
     /// Okna z konfiguracji mają powstawać w `create_windows`, po `manage(Database)`.
     /// Okno utworzone przez Tauri przed `setup` może wywołać komendę czytającą
     /// bazę, zanim stan istnieje, a to kończy proces paniką.
@@ -918,7 +944,7 @@ mod tests {
         let recover = setup.find("gap::recover(").expect("brak gap::recover");
         assert!(recover > setup.find("db::init(&connection)?;").unwrap());
         assert!(recover > setup.find("\"--prepare-update\"").unwrap());
-        assert!(recover < setup.find("app.manage(Database(").unwrap());
+        assert!(recover < setup.find("app.manage(Database::new(").unwrap());
         for command in ["gap::gap_notice", "gap::gap_resolve"] {
             assert!(
                 source.contains(command),

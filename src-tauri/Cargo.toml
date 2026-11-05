@@ -71,6 +71,8 @@ workflow-core = { path = "crates/workflow-core" }
 [dev-dependencies]
 chrono-tz = "=0.10.4"
 calamine = "=0.36.1"
+# Pomocnicy testów silnika (ScriptedRunner, MemoryRepository) tylko w testach hosta.
+workflow-core = { path = "crates/workflow-core", features = ["testing"] }
 
 [target.'cfg(windows)'.dependencies]
 # Ta sama wersja, której używa notify-rust w tauri-plugin-notification 2.5.0;

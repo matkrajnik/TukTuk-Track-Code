@@ -5,6 +5,7 @@
 //! czy moduł odblokowano kluczem; ukrycie menu w interfejsie nie jest kontrolą.
 
 pub mod access;
+pub mod runs;
 pub mod store;
 
 use rusqlite::Connection;

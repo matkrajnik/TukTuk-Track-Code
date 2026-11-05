@@ -382,11 +382,11 @@ Odbiór: użytkownik tworzy i ponownie otwiera poprawny graf; błąd wskazuje ko
 
 ### E3 — silnik na procesach zastępczych
 
-- [ ] Zaimplementować kolejkę, przejścia i trwałe NodeExecution.
-- [ ] Dodać typowane wyniki, warunki, trzy rundy poprawek i terminalne ścieżki.
-- [ ] Dodać trwałe Approval oraz idempotentny start i decyzje.
-- [ ] Dodać timeouty, anulowanie, błędy i strumień zdarzeń z sequence.
-- [ ] Uruchomić scenariusz end-to-end na deterministycznych runnerach testowych.
+- [x] Zaimplementować kolejkę, przejścia i trwałe NodeExecution.
+- [x] Dodać typowane wyniki, warunki, trzy rundy poprawek i terminalne ścieżki.
+- [x] Dodać trwałe Approval oraz idempotentny start i decyzje.
+- [x] Dodać timeouty, anulowanie, błędy i strumień zdarzeń z sequence.
+- [x] Uruchomić scenariusz end-to-end na deterministycznych runnerach testowych.
 
 Odbiór: ten sam zapisany zestaw wyników prowadzi do tej samej ścieżki grafu; żaden test nie potrzebuje konta AI. Restart na granicy kroków nie dubluje kolejnego uruchomienia.
 
@@ -602,3 +602,49 @@ sekcji w `settings-tab.spec.ts` i są już poprawione (11 passed).
   z tym samym znacznikiem czasu, więc test Esc przesuwa zegar o sekundę.
 - `npm run check`: zielone (Playwright 719 passed, Rust 801 + core 21 passed).
 - Otwarte z E2: zrzuty wzorcowe nowych widoków w obu motywach. E2 niezacommitowany.
+
+### 2026-11-05 — E3: decyzje po przeglądzie (runda 1)
+
+- Odstępstwo od E0 (wiersz „Baza”: „identyfikatory INTEGER”): `workflow_runs.id` zostaje
+  INTEGER, ale `workflow_node_executions.id` i `workflow_approvals.id` to deterministyczne
+  identyfikatory TEXT nadawane przez silnik (`{run}-{n}`, `{exec}-a{n}`). Powód (7.1): id kroku
+  i zgody musi być znane w zdarzeniu przed uruchomieniem procesu i nie może zależeć od PID ani
+  od sesji dostawcy; odtworzenie stanu ze zdarzeń daje te same id.
+- `Database` trzyma `Arc<Mutex<Connection>>`; `Database::shared()` zwraca tę samą blokadę dla
+  `SqliteRunRepository`. W E5 repozytorium dostaje `Database::shared()`, nie drugie połączenie.
+- Runner bez reakcji na anulowanie po czasie łaski: krok i przebieg kończą się `Interrupted`
+  (wejście `Unresponsive`), nie `Cancelled` ani `Timeout`, a sterownik nie uruchamia kolejnego
+  kroku, dopóki wątek runnera żyje (5.1, 8.3).
+- Trwały błąd zapisu albo silnika w sterowniku kończy aktywny przebieg `Failed` (`StorageError`,
+  `ProtocolError` albo `InvalidDefinition`, wejście `Fault`). Gdy i ten zapis się nie uda,
+  sterownik zgłasza błąd przez `EventSink::fault` (w E5: zdarzenie na magistrali).
+
+### 2026-11-05 — E3
+
+Zmienione pliki (git status, bez `.claude/launch.json`):
+- `src-tauri/Cargo.toml`, `src-tauri/crates/workflow-core/Cargo.toml` (feature `testing`),
+  `crates/workflow-core/src/lib.rs`, `src-tauri/src/main.rs`, `src-tauri/src/workflows/mod.rs`,
+  `workflows/store.rs`, `workflows/store/tests.rs`, `docs/workflows/E0_ANALIZA.md`.
+- Nowe w workflow-core: `run.rs`, `engine.rs` + `engine/`, `driver.rs` + `driver/`, `output.rs`,
+  `ports.rs`, `samples.rs`, `support.rs`, `testing.rs`; testy `tests/engine.rs`, `driver.rs`,
+  `output.rs`, `run_states.rs`.
+- Nowe w hoście: `src-tauri/src/workflows/runs.rs` + `runs/` (repozytorium SQLite przebiegów).
+
+Decyzje:
+- Silnik to czysta maszyna stanów: zdarzenie wejściowe daje następny krok, stan odtwarza się
+  z zapisanych zdarzeń. Runner jest traitem, w testach deterministyczny; prawdziwe CLI dopiero E4.
+- Limit rund wyczerpany kończy przebieg `Failed` z kodem `ReviewLimitExceeded`.
+- Restart na granicy kroków nie dubluje uruchomienia; restart po zapisie zamiaru oznacza przebieg
+  `Interrupted`.
+- Bez komend IPC, sinka Tauri i podpięcia w `main.rs` (E5, E6). Decyzje po przeglądzie: wpis wyżej.
+
+Wynik testów: `npm run check` zielone (exit 0, 205 s): build OK, Playwright 719 passed,
+`cargo fmt --check` OK, `cargo test`: aplikacja 819 passed (2 ignored), workflow-core i pozostałe
+zestawy bez błędów. Test sterownika: `cargo test -p workflow-core --features testing --test driver`
+(samo `--test driver` bez featury jest pomijane przez `required-features`).
+
+Pozostałe blokery i uwagi:
+- Niezałatwione uwagi z review: brak.
+- Nie zmierzono pokrycia (`cargo llvm-cov`); nie robiono osobnego przeglądu security.
+- Przed E4 wymagana decyzja użytkownika o trybie read-only dla Claude (bloker 1 w E0_ANALIZA.md).
+- Zrzuty wzorcowe nowych widoków z E2 nadal otwarte.

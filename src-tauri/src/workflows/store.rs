@@ -14,8 +14,9 @@ use workflow_core::{validate, Issue, WorkflowGraph, SCHEMA_VERSION};
 
 /// Klucz w `settings` ze znacznikiem odblokowania modułu.
 pub const UNLOCKED_KEY: &str = "workflows_unlocked";
-/// Wersja schematu tabel modułu (niezależna od formatu grafu).
-const MODULE_SCHEMA: i64 = 1;
+/// Wersja schematu tabel modułu (niezależna od formatu grafu). 2 dodaje
+/// tabele przebiegów (E3); `init_tables` zapisuje wszystkie wersje do tej włącznie.
+const MODULE_SCHEMA: i64 = 2;
 /// Najdłuższa nazwa i opis procesu w znakach.
 const MAX_NAME_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 2_000;
@@ -38,11 +39,31 @@ pub fn init_tables(db: &Connection) -> rusqlite::Result<()> {
         CREATE TRIGGER IF NOT EXISTS workflow_versions_no_update BEFORE UPDATE ON workflow_versions BEGIN SELECT RAISE(ABORT, 'opublikowana wersja procesu jest niezmienna'); END;
         CREATE TRIGGER IF NOT EXISTS workflow_versions_no_delete BEFORE DELETE ON workflow_versions BEGIN SELECT RAISE(ABORT, 'opublikowana wersja procesu jest niezmienna'); END;",
     )?;
-    db.execute(
-        "INSERT OR IGNORE INTO workflow_schema_migrations(version, applied_at) VALUES(?1, ?2)",
-        params![MODULE_SCHEMA, crate::db::now()],
-    )?;
+    init_run_tables(db)?;
+    for version in 1..=MODULE_SCHEMA {
+        db.execute(
+            "INSERT OR IGNORE INTO workflow_schema_migrations(version, applied_at) VALUES(?1, ?2)",
+            params![version, crate::db::now()],
+        )?;
+    }
     Ok(())
+}
+
+/// Migracja 2 (E3): przebiegi, kroki, zdarzenia i zgody. `task_id` bez klucza
+/// obcego, żeby usunięcie zadania nie kasowało historii (zostaje `task_title`).
+/// Zdarzenia są dopisywane tylko na końcu: wyzwalacze blokują UPDATE i DELETE.
+fn init_run_tables(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workflow_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, version_id INTEGER NOT NULL REFERENCES workflow_versions(id) ON DELETE RESTRICT, request_id TEXT NOT NULL UNIQUE, definition_json TEXT NOT NULL, definition_hash TEXT NOT NULL, task_id INTEGER, task_title TEXT, repo TEXT, workspace TEXT, base_commit TEXT, status TEXT NOT NULL, error_code TEXT, error TEXT, created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER, updated_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS workflow_runs_status ON workflow_runs(status, updated_at);
+        CREATE INDEX IF NOT EXISTS workflow_runs_task ON workflow_runs(task_id);
+        CREATE TABLE IF NOT EXISTS workflow_node_executions (id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, node_id TEXT NOT NULL, iteration INTEGER NOT NULL, attempt INTEGER NOT NULL, status TEXT NOT NULL, input_json TEXT, output_json TEXT, provider_session_id TEXT, exit_code INTEGER, error_code TEXT, error TEXT, started_at INTEGER, finished_at INTEGER, UNIQUE(run_id, node_id, iteration, attempt));
+        CREATE TABLE IF NOT EXISTS workflow_events (run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, sequence INTEGER NOT NULL, execution_id TEXT, type TEXT NOT NULL, payload_json TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(run_id, sequence));
+        CREATE TRIGGER IF NOT EXISTS workflow_events_no_update BEFORE UPDATE ON workflow_events BEGIN SELECT RAISE(ABORT, 'historia przebiegu jest tylko do dopisywania'); END;
+        CREATE TRIGGER IF NOT EXISTS workflow_events_no_delete BEFORE DELETE ON workflow_events BEGIN SELECT RAISE(ABORT, 'historia przebiegu jest tylko do dopisywania'); END;
+        CREATE TABLE IF NOT EXISTS workflow_approvals (id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, execution_id TEXT NOT NULL, artifact_hash TEXT NOT NULL, status TEXT NOT NULL, comment TEXT, decision_request_id TEXT UNIQUE, decided_at INTEGER);
+        CREATE INDEX IF NOT EXISTS workflow_approvals_execution ON workflow_approvals(execution_id);",
+    )
 }
 
 #[derive(Debug)]

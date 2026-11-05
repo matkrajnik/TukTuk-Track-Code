@@ -105,7 +105,7 @@ przenoszenia). Kanonikalizacja przez `std::fs::canonicalize` przed porównaniem 
 | --- | --- |
 | Podział | crate `src-tauri/crates/workflow-core` (graf, walidacja, szablon; później silnik) + host `src-tauri/src/workflows/`. |
 | Cargo | workspace w `src-tauri/Cargo.toml` z `default-members`, więc istniejące `cargo test`/CI testują core; `cargo fmt` z `--all`. |
-| Baza | tabele modułu przez `init_tables` z `db::init`; identyfikatory INTEGER; JSON grafu w TEXT. |
+| Baza | tabele modułu przez `init_tables` z `db::init`; identyfikatory INTEGER (wyjątek z E3: kroki i zgody przebiegu mają deterministyczne id TEXT z silnika, zob. PLAN_WDROZENIA.md, rozdz. 15); JSON grafu w TEXT. |
 | Klucz | jeden stały klucz, w kodzie skrót SHA-256 (`workflow_access.rs`); znacznik w `settings`. |
 | Pętla | jedyny cykl: warunek z `repairLimit` 1–3 + kroki agentów; po limicie przebieg `Failed`/`ReviewLimitExceeded`. |
 | Async | wątki std + `mpsc`, bez tokio. |
