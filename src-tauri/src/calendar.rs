@@ -6,10 +6,9 @@
 //! Refresh token leży w magazynie poświadczeń Windows (`keyring`, jak token Jiry),
 //! access token tylko w pamięci, a w SQLite są wyłącznie spotkania i ustawienia.
 //! Nic tutaj nie zmienia pomiaru czasu.
-use crate::{db, stats, Database};
+use crate::{db, secret_parts, stats, Database};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use chrono::{Datelike, Duration as Days, Local, NaiveDate, NaiveDateTime, TimeZone};
-use keyring::Entry;
 use reqwest::{Client, StatusCode, Url};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -361,17 +360,27 @@ pub(crate) fn credential_user(db: &Connection) -> Option<String> {
     let c = load(db);
     (!c.email.is_empty() && !c.client_id.is_empty()).then(|| credential_user_of(&c))
 }
-fn entry(app: &tauri::AppHandle, c: &Config) -> Result<Entry, String> {
-    Entry::new(
-        &format!("{}.calendar", app.config().identifier),
-        &credential_user_of(c),
-    )
-    .map_err(|_| "Nie można otworzyć magazynu poświadczeń Windows.".into())
+/// Refresh token w Menedżerze poświadczeń: usługa `<identifier>.calendar`.
+/// Token konta służbowego bywa dłuższy niż jeden wpis, stąd `secret_parts`.
+fn token_op<T>(
+    app: &tauri::AppHandle,
+    c: &Config,
+    op: impl FnOnce(&secret_parts::Keyring, &str) -> keyring::Result<T>,
+) -> keyring::Result<T> {
+    let service = format!("{}.calendar", app.config().identifier);
+    op(&secret_parts::Keyring(&service), &credential_user_of(c))
+}
+fn load_token(app: &tauri::AppHandle, c: &Config) -> keyring::Result<String> {
+    token_op(app, c, |store, user| secret_parts::load(store, user))
+}
+fn save_token(app: &tauri::AppHandle, c: &Config, token: &str) -> keyring::Result<()> {
+    token_op(app, c, |store, user| secret_parts::save(store, user, token))
+}
+fn delete_token(app: &tauri::AppHandle, c: &Config) -> keyring::Result<()> {
+    token_op(app, c, |store, user| secret_parts::delete(store, user))
 }
 fn has_token(app: &tauri::AppHandle, c: &Config) -> bool {
-    !c.email.is_empty()
-        && !c.client_id.is_empty()
-        && entry(app, c).is_ok_and(|e| e.get_password().is_ok())
+    !c.email.is_empty() && !c.client_id.is_empty() && load_token(app, c).is_ok()
 }
 
 fn status(app: &tauri::AppHandle) -> Result<Status, String> {
@@ -486,9 +495,7 @@ async fn access_token(app: &tauri::AppHandle, c: &Config, since: u64) -> Result<
             return Ok(token);
         }
     }
-    let entry = entry(app, c)?;
-    let refresh = entry
-        .get_password()
+    let refresh = load_token(app, c)
         .map_err(|_| "Połącz konto Microsoft w Ustawieniach → Kalendarz.".to_owned())?;
     match token_request(
         c,
@@ -505,14 +512,14 @@ async fn access_token(app: &tauri::AppHandle, c: &Config, since: u64) -> Result<
                 return Err(DISCONNECTED.into());
             }
             if let Some(next) = tokens.refresh.as_deref().filter(|r| *r != refresh) {
-                let _ = entry.set_password(next);
+                let _ = save_token(app, c, next);
             }
             remember(app, &tokens);
             Ok(tokens.access)
         }
         Err((code, _)) if code == "invalid_grant" => {
             // Sesja wygasła albo ją odwołano: konto trzeba połączyć ponownie.
-            let _ = entry.delete_credential();
+            let _ = delete_token(app, c);
             Err("Sesja Microsoft wygasła. Połącz konto ponownie.".into())
         }
         Err((_, message)) => Err(message),
@@ -902,9 +909,7 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
     // Inne konto albo inna aplikacja: stary token i spotkania przestają obowiązywać.
     let changed = old.client_id != c.client_id || old.tenant() != c.tenant();
     if changed && !old.client_id.is_empty() {
-        if let Ok(e) = entry(app, &old) {
-            let _ = e.delete_credential();
-        }
+        let _ = delete_token(app, &old);
     }
     {
         // Spotkania i konto starej aplikacji znikają od razu, nie dopiero po
@@ -990,8 +995,7 @@ async fn connect(app: &tauri::AppHandle, client_id: String, tenant: String) -> R
     if app.state::<CalendarState>().cancel.load(Ordering::SeqCst) || generation(app) != since {
         return Err("Logowanie przerwane.".into());
     }
-    entry(app, &c)?
-        .set_password(&refresh)
+    save_token(app, &c, &refresh)
         .map_err(|_| "Nie udało się zapisać tokenu w magazynie poświadczeń Windows.".to_owned())?;
     remember(app, &tokens);
     let mut saved = load(&db);
@@ -1016,7 +1020,7 @@ pub fn calendar_disconnect(app: tauri::AppHandle) -> Result<Status, String> {
         forget(&app);
         let c = load(&db);
         if !c.client_id.is_empty() {
-            match entry(&app, &c)?.delete_credential() {
+            match delete_token(&app, &c) {
                 Ok(()) | Err(keyring::Error::NoEntry) => {}
                 Err(_) => {
                     return Err(

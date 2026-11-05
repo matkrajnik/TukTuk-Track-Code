@@ -46,6 +46,7 @@ mod recurrence;
 mod redmine;
 mod reminder;
 mod reminders;
+mod secret_parts;
 mod settings;
 mod shortcuts;
 mod stats;
