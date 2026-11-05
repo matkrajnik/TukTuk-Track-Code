@@ -30,8 +30,8 @@ fn init_is_idempotent_and_records_module_schema() {
             r.get(0)
         })
         .unwrap();
-    // Wersje 1 (definicje) i 2 (przebiegi, E3).
-    assert_eq!(versions, 2);
+    // Wersje 1 (definicje), 2 (przebiegi, E3) i 3 (katalogi robocze, E4).
+    assert_eq!(versions, 3);
 }
 
 #[test]

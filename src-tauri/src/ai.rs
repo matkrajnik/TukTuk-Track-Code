@@ -26,6 +26,7 @@
 use crate::ai_privacy::{self, Dictionary};
 use crate::settings::AppSettings;
 use crate::{db, hook_wire};
+pub use agent_cli::{classify, codex_event_text, parse_version, Failure, Spec};
 use serde::Serialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -216,25 +217,6 @@ fn dedup(list: Vec<PathBuf>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Wersja z wyjścia `--version`: pierwszy token wyglądający jak numer
-/// (`2.1.304 (Claude Code)`, `codex-cli 0.162.1`), a bez niego pierwsza linia.
-pub fn parse_version(output: &str) -> String {
-    let line = output.lines().map(str::trim).find(|l| !l.is_empty());
-    let Some(line) = line else {
-        return String::new();
-    };
-    line.split_whitespace()
-        .map(|t| t.trim_start_matches('v'))
-        .find(|t| {
-            t.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && t.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-                && t.contains('.')
-        })
-        .map(str::to_string)
-        .unwrap_or_else(|| line.chars().take(60).collect())
-}
-
 /// Pierwsze istniejące CLI z listy, które odpowiada na `--version`. Także
 /// wykrywanie działa w katalogu AI i ze znacznikiem dla hooka.
 fn first_working(
@@ -299,20 +281,6 @@ pub fn active_engine(engine: &str, detected: &Detected) -> Option<Engine> {
 // ---------------------------------------------------------------------------
 // Uruchamianie procesu
 
-/// Polecenie do uruchomienia.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Spec {
-    pub program: PathBuf,
-    pub args: Vec<String>,
-    /// Treść na stdin (prompt).
-    pub stdin: String,
-    /// Katalog roboczy (`None` = bieżący katalog aplikacji); aplikacja zawsze
-    /// podaje katalog AI.
-    pub cwd: Option<PathBuf>,
-    /// Dodatkowe zmienne środowiska procesu.
-    pub env: Vec<(String, String)>,
-}
-
 /// Wynik procesu.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Output {
@@ -372,25 +340,7 @@ pub(crate) fn kill_tree(pid: u32) {
 
 impl Runner for Process {
     fn run(&self, spec: &Spec, timeout: Duration) -> Result<Output, RunError> {
-        use std::process::{Command, Stdio};
-        let mut command = Command::new(&spec.program);
-        command
-            .args(&spec.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(cwd) = &spec.cwd {
-            command.current_dir(cwd);
-        }
-        for (key, value) in &spec.env {
-            command.env(key, value);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW: bez migającego okna konsoli.
-            command.creation_flags(0x0800_0000);
-        }
+        let mut command = agent_cli::command(spec);
         let mut child = command
             .spawn()
             .map_err(|e| RunError::Spawn(e.to_string()))?;
@@ -584,17 +534,6 @@ pub fn build_spec(
 // ---------------------------------------------------------------------------
 // Odpowiedzi i błędy
 
-/// Powód nieudanego wywołania po stronie CLI.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Failure {
-    NotLoggedIn,
-    Limit,
-    /// Inny błąd CLI (treść nie trafia do interfejsu).
-    Other,
-    /// Odpowiedź nie jest JSON-em.
-    Unreadable,
-}
-
 /// Rodzaj błędu w dzienniku wywołań (bez treści).
 fn failure_code(f: &Failure) -> &'static str {
     match f {
@@ -620,41 +559,6 @@ pub fn failure_message(engine: Engine, failure: &Failure) -> String {
         ),
         Failure::Other => format!("{} zakończył się błędem.", engine.name()),
         Failure::Unreadable => BAD_SCHEMA.to_string(),
-    }
-}
-
-/// Rozpoznaje błąd po tekście zwróconym przez CLI (limit przed logowaniem:
-/// komunikat o limicie bywa długi i zawiera słowa o koncie).
-pub fn classify(text: &str) -> Failure {
-    let lower = text.to_lowercase();
-    let has = |words: &[&str]| words.iter().any(|w| lower.contains(w));
-    if has(&[
-        "usage limit",
-        "limit reached",
-        "rate limit",
-        "rate_limit",
-        "quota",
-        "hit your limit",
-        "too many requests",
-        "429",
-        "overloaded_limit",
-    ]) {
-        Failure::Limit
-    } else if has(&[
-        "not logged in",
-        "not authenticated",
-        "/login",
-        "invalid api key",
-        "authentication",
-        "unauthorized",
-        "401",
-        "log in",
-        "login",
-        "sign in",
-    ]) {
-        Failure::NotLoggedIn
-    } else {
-        Failure::Other
     }
 }
 
@@ -693,32 +597,6 @@ pub fn parse_claude(stdout: &str) -> Result<Value, Failure> {
         return Ok(result["structured_output"].clone());
     }
     extract_json(text).ok_or(Failure::Unreadable)
-}
-
-/// Tekst z jednego zdarzenia `codex exec --json`: wiadomość agenta albo błąd.
-pub(crate) fn codex_event_text(event: &Value) -> Option<(bool, String)> {
-    let kind = event["type"].as_str().unwrap_or_default();
-    let item = &event["item"];
-    let msg = &event["msg"];
-    if kind == "error" || kind == "turn.failed" || kind == "stream_error" {
-        let text = event["message"]
-            .as_str()
-            .or_else(|| event["error"]["message"].as_str())
-            .or_else(|| event["error"].as_str())
-            .unwrap_or("error");
-        return Some((true, text.to_string()));
-    }
-    let message_item = if item["type"] == "agent_message" {
-        Some(item)
-    } else if msg["type"] == "agent_message" {
-        Some(msg)
-    } else {
-        None
-    }?;
-    let text = message_item["text"]
-        .as_str()
-        .or_else(|| message_item["message"].as_str())?;
-    Some((false, text.to_string()))
 }
 
 /// Wynik `codex exec --json`: JSONL zdarzeń. Ostatnia wiadomość agenta (albo

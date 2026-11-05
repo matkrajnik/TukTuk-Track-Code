@@ -202,10 +202,88 @@ fn migration_of_a_v1_database_keeps_data_and_adds_run_tables() {
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_versions"), 1);
     assert_eq!(
         f.column("SELECT CAST(version AS TEXT) FROM workflow_schema_migrations ORDER BY version"),
-        ["1", "2"]
+        ["1", "2", "3"]
     );
     f.create("po-migracji");
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_runs"), 1);
+}
+
+#[test]
+fn migration_2_to_3_keeps_runs_and_definitions_and_is_idempotent() {
+    let f = Fixture::new();
+    // Zadanie z dwoma pomiarami (zakończonym i trwającym) i przebieg przypięty do zadania.
+    let task_id = {
+        let db = f.db.lock().unwrap();
+        db.execute(
+            "INSERT INTO tasks(title, done, created_at) VALUES('Zadanie przed migracją', 0, 100)",
+            [],
+        )
+        .unwrap();
+        let task_id = db.last_insert_rowid();
+        db.execute(
+            "INSERT INTO sessions(task_id, started_at, ended_at) VALUES(?1, 1000, 4600), (?1, 5000, NULL)",
+            [task_id],
+        )
+        .unwrap();
+        task_id
+    };
+    let run = f
+        .repo
+        .create_run(&NewRun {
+            task_id: Some(task_id),
+            ..f.new_run("przed-migracja")
+        })
+        .unwrap()
+        .run_id;
+    let sessions = |f: &Fixture| -> Vec<(i64, i64, Option<i64>)> {
+        let db = f.db.lock().unwrap();
+        let mut stmt = db
+            .prepare("SELECT task_id, started_at, ended_at FROM sessions ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        rows
+    };
+    let sessions_before = sessions(&f);
+    {
+        let db = f.db.lock().unwrap();
+        db.execute_batch(
+            "DROP TABLE workflow_workspaces; DELETE FROM workflow_schema_migrations WHERE version = 3;",
+        )
+        .unwrap();
+        crate::db::init(&db).unwrap();
+        crate::db::init(&db).unwrap();
+    }
+    assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_runs"), 1);
+    assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflows"), 1);
+    assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_versions"), 1);
+    assert_eq!(
+        f.scalar::<i64>("SELECT COUNT(*) FROM workflow_workspaces"),
+        0
+    );
+    assert_eq!(
+        f.scalar::<i64>("SELECT COUNT(*) FROM workflow_schema_migrations"),
+        3
+    );
+    assert_eq!(
+        sessions_before,
+        vec![(task_id, 1000, Some(4600)), (task_id, 5000, None)]
+    );
+    assert_eq!(sessions(&f), sessions_before);
+    assert_eq!(
+        f.scalar::<String>("SELECT title FROM tasks"),
+        "Zadanie przed migracją"
+    );
+    assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM tasks"), 1);
+    assert_eq!(
+        f.scalar::<i64>(&format!(
+            "SELECT task_id FROM workflow_runs WHERE id = {run}"
+        )),
+        task_id
+    );
 }
 
 #[test]

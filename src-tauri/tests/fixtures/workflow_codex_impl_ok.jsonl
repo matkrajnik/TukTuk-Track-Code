@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"thread-codex-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"summary\":\"zmiany\",\"changedFiles\":[\"a.txt\"],\"checks\":[{\"name\":\"cargo test\",\"passed\":true,\"logRef\":null}]}"}}
+{"type":"turn.completed","usage":{}}

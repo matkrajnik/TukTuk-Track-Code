@@ -1,0 +1,20 @@
+[package]
+name = "agent-cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Wspólna warstwa uruchamiania CLI agentów (Claude Code, Codex): Spec, parsery strumieni i nadzorca procesu. Bez zależności od Tauri."
+
+[dependencies]
+serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+# Wersja już obecna w Cargo.lock (zależność tauri i winreg): Job Object do kończenia drzewa procesów.
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+# Testowa binarka procesu zastępczego; nie łączy się z siecią ani z prawdziwymi CLI.
+[[bin]]
+name = "agent-cli-fake"
+path = "src/bin/agent-cli-fake.rs"
+test = false
+doc = false

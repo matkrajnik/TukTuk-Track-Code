@@ -706,6 +706,7 @@ fn main() {
             workflows::workflow_duplicate,
             workflows::workflow_export,
             workflows::workflow_import,
+            workflows::workflow_preflight,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,

@@ -93,9 +93,15 @@ export interface TauriOptions {
   /**
    * Moduł Workflows (`workflows/mod.rs`): stan odblokowania na starcie i klucz,
    * który `workflow_unlock` przyjmuje (testowy, nie prawdziwy klucz aplikacji).
-   * Definicje i edytor testuje się w podglądzie (`src/preview/workflows.ts`).
+   * Definicje i edytor testuje się w podglądzie (`src/preview/workflows.ts`);
+   * `detail` to jedna gotowa (np. opublikowana) definicja dla `workflow_list`
+   * i `workflow_get`, żeby panel gotowości działał na zastępczym IPC.
    */
-  workflows?: { unlocked?: boolean; key?: string };
+  workflows?: { unlocked?: boolean; key?: string; detail?: unknown };
+  /** Odpowiedź `workflow_preflight` (gotowość agentów zadana przez test). */
+  preflight?: unknown[];
+  /** Odpowiedź `workflow_preflight` dla konkretnych `versionId` (pierwszeństwo przed `preflight`). */
+  preflightByVersion?: Record<number, unknown[]>;
 }
 
 /** Klucz Workflows w testach aplikacji (fixture), inny niż klucz produkcyjny. */
@@ -119,9 +125,12 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     hidden: options.hidden ?? false,
     heartbeat: options.heartbeat ?? null,
     notifications: options.notifications ?? [],
+    preflight: options.preflight ?? [],
+    preflightByVersion: options.preflightByVersion ?? {},
     workflows: {
       unlocked: options.workflows?.unlocked ?? false,
       key: options.workflows?.key ?? TEST_WORKFLOWS_KEY,
+      detail: options.workflows?.detail ?? null,
     },
   });
   await page.goto("/");
@@ -163,7 +172,9 @@ function install(init: {
   hidden: boolean;
   heartbeat: number | null;
   notifications: any[];
-  workflows: { unlocked: boolean; key: string };
+  workflows: { unlocked: boolean; key: string; detail: any };
+  preflight: unknown[];
+  preflightByVersion: Record<number, unknown[]>;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -687,6 +698,50 @@ function install(init: {
             throw "Nieprawidłowy klucz dostępu.";
           workflowsUnlocked = true;
           return { unlocked: true };
+        // Definicje (`workflows::store`): logika w Rust i podglądzie; tu tylko
+        // jedna zadana przez test definicja (`workflows.detail`), bez zapisu.
+        case "workflow_list": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          const detail = init.workflows.detail;
+          if (!detail) return [];
+          const { draft: _d, issues: _i, versions: _v, ...summary } = detail;
+          return [clone(summary)];
+        }
+        case "workflow_get":
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          if (!init.workflows.detail || init.workflows.detail.id !== args.id)
+            throw "Nie ma takiego procesu.";
+          return clone(init.workflows.detail);
+        // Publikacja: nowa wersja z kolejnym id na początku listy (jak `store::publish`).
+        case "workflow_publish": {
+          const detail = init.workflows.detail;
+          if (!detail || detail.id !== args.id) throw "Nie ma takiego procesu.";
+          if (detail.draftRevision !== args.expectedRevision)
+            throw "Definicja zmieniła się w międzyczasie.";
+          const version = (detail.publishedVersion ?? 0) + 1;
+          const id = Math.max(0, ...detail.versions.map((v: any) => v.id)) + 1;
+          detail.versions = [
+            { id, version, hash: `h${version}`, createdAt: detail.updatedAt },
+            ...detail.versions,
+          ];
+          detail.publishedVersion = version;
+          detail.unpublishedChanges = false;
+          return clone(detail);
+        }
+        // Gotowość agentów (`workflows::preflight`): logika w Rust i jej testach;
+        // fixture zwraca dane zadane przez test (`options.preflight`) i liczy
+        // wywołania w `window.__preflightCalls` (argumenty: `__tauriMock.calls()`).
+        // `window.__preflightHold` (obietnica) wstrzymuje jedno, najbliższe wywołanie.
+        case "workflow_preflight": {
+          w.__preflightCalls = (w.__preflightCalls ?? 0) + 1;
+          const hold = w.__preflightHold;
+          w.__preflightHold = null;
+          const result = clone(
+            init.preflightByVersion?.[args.versionId] ?? init.preflight,
+          );
+          if (hold) await hold;
+          return result;
+        }
         case "notification_log":
           return clone(inbox);
         case "notification_log_read":

@@ -2,8 +2,8 @@
 # default-members sprawia, że `cargo test --manifest-path src-tauri/Cargo.toml`
 # testuje oba pakiety bez dodatkowych flag w CI i `npm run check`.
 [workspace]
-members = [".", "crates/workflow-core"]
-default-members = [".", "crates/workflow-core"]
+members = [".", "crates/workflow-core", "crates/agent-cli"]
+default-members = [".", "crates/workflow-core", "crates/agent-cli"]
 
 [package]
 name = "tuktuk-track"
@@ -67,6 +67,10 @@ tauri-plugin-process = "2"
 scraper = { version = "=0.27.0", default-features = false }
 # Domena modułu Workflows bez zależności od Tauri (PLAN_WDROZENIA.md, 6).
 workflow-core = { path = "crates/workflow-core" }
+# Wspólna warstwa procesu i parserów CLI agentów (docs/workflows/E0_ANALIZA.md, decyzja E4).
+agent-cli = { path = "crates/agent-cli" }
+# Odczyt config.toml Codexa w preflighcie; wersja już obecna w Cargo.lock (E4).
+toml = "=0.8.2"
 
 [dev-dependencies]
 chrono-tz = "=0.10.4"

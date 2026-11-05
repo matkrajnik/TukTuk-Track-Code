@@ -392,12 +392,19 @@ Odbiór: ten sam zapisany zestaw wyników prowadzi do tej samej ścieżki grafu;
 
 ### E4 — runtime Windows i adaptery
 
-- [ ] Wydzielić współdzielone elementy wykrywania/parsing bez regresji asystenta.
-- [ ] Dodać preflight, profil modelu i kontrolowane środowisko dla każdego adaptera.
-- [ ] Dodać workspace/worktree i rezerwacje.
-- [ ] Zaimplementować streaming, wynik, identyfikator sesji i nadzór drzewa procesów.
-- [ ] Egzekwować profile dostępu i blokowanie nieobsługiwanych konfiguracji.
-- [ ] Przygotować checklistę testu ręcznego dla użytkownika na prawdziwych CLI.
+- [x] Wydzielić współdzielone elementy wykrywania/parsing bez regresji asystenta
+  (`crates/agent-cli`; testy `ai::` i `ai_chat::` bez zmian: 140 passed).
+- [x] Dodać preflight, profil modelu i kontrolowane środowisko dla każdego adaptera
+  (`workflows/preflight.rs`, `runners/env.rs`, `runners/claude.rs`, `runners/codex.rs`).
+- [x] Dodać workspace/worktree i rezerwacje (`workflows/workspace.rs`, migracja schematu 3).
+- [x] Zaimplementować streaming, wynik, identyfikator sesji i nadzór drzewa procesów
+  (`agent-cli/src/process.rs`, `tree.rs`, `runners/mod.rs`).
+- [x] Egzekwować profile dostępu i blokowanie nieobsługiwanych konfiguracji
+  (`runners/guard.rs`, preflight; Claude read-only to kontrola CLI, nie izolacja).
+- [x] Przygotować checklistę testu ręcznego dla użytkownika na prawdziwych CLI
+  (`E4_TEST_RECZNY.md`; wykonanie jej na prawdziwych CLI pozostaje otwarte).
+- [x] Pełna weryfikacja: `npm run check` z kodem 0 (krok sprawdzenia etapu po rundach 1 i 2
+  poprawek: build, Playwright 725 testów, `cargo fmt --check`, `cargo test --locked`; patrz dziennik).
 
 Odbiór: procesy zastępcze potwierdzają timeout, kill i ograniczenia; użytkownik potwierdza rzeczywisty pipeline na testowym repozytorium i wspieranych wersjach obu CLI. Brak takiej walidacji pozostaje jawnie oznaczony.
 
@@ -648,3 +655,148 @@ Pozostałe blokery i uwagi:
 - Nie zmierzono pokrycia (`cargo llvm-cov`); nie robiono osobnego przeglądu security.
 - Przed E4 wymagana decyzja użytkownika o trybie read-only dla Claude (bloker 1 w E0_ANALIZA.md).
 - Zrzuty wzorcowe nowych widoków z E2 nadal otwarte.
+
+### 2026-11-05 — E4 (runtime Windows i adaptery)
+
+Pliki:
+- Nowy crate `src-tauri/crates/agent-cli` (`spec`, `failure`, `parse`, `lines`, `process`, `tree`,
+  testowa binarka `agent-cli-fake`, testy `tests/parse.rs` i `tests/process.rs`).
+- `workflow-core`: `RunRequest.role`, `output::json_schema(role)`, testy `output.rs` i `driver.rs`.
+- Host: `workflows/workspace.rs`, `workflows/runners/{mod,env,prompt,claude,codex,process,guard}.rs`,
+  `workflows/preflight.rs`, `store.rs` (migracja 3, `version_graph`, `VersionInfo.id`),
+  `mod.rs` (`workflow_preflight`, `require_unlocked`), `main.rs`; `ai.rs` i `ai_chat.rs`
+  re-eksportują przeniesione elementy.
+- Frontend: `api/workflows.ts` (`NodeReadiness`), `workflows.ts`, `preview/workflows.ts`,
+  `WorkflowReadiness.vue`, `WorkflowEditor.vue`, `WorkflowNodePanel.vue`, fixture IPC.
+- Dokumenty: `E0_ANALIZA.md` (bloker 1 zaakceptowany), `E4_TEST_RECZNY.md`.
+
+Decyzje:
+- Crate `agent-cli`: testy jednostkowe hosta nie dostają `CARGO_BIN_EXE_*` (binarka bez biblioteki).
+- Kończenie drzewa: Job Object (`KILL_ON_JOB_CLOSE`, `windows-sys =0.61.2`) plus `taskkill /T /F`;
+  `KillResult::{Confirmed, Unconfirmed}`; przy `Unconfirmed` runner nie zwraca wyniku, więc
+  sterownik zapisuje `Interrupted`. Okno wyścigu między spawn a przypisaniem do jobu łata drugie
+  przejście `taskkill`.
+- Stderr: tylko ogon 64 KiB plus licznik, w komunikacie błędu po redakcji tokenopodobnych ciągów.
+  Linie stdout bajtowo z limitem 1 MiB.
+- Claude z `workspaceWrite` blokowany (preflight i runner); parser TOML: zależność `toml =0.8.2`
+  (wersja z Cargo.lock); macierz wersji: Claude 2.1.318, Codex 0.163.0, ta sama seria główna,
+  nowsza z ostrzeżeniem; allowlista sandboxa `["elevated"]`, blokada także dla Codex read-only.
+- Strażnik liczy skrót review przed migawką (`git add -N` zmienia indeks), więc migawki są
+  porównywalne.
+- Podgląd zawsze zwraca blokadę „Podgląd nie uruchamia agentów” (bez haków testowych);
+  odpowiedź preflightu zadaje test przez zastępcze IPC (`options.preflight`).
+- Wrapper `.cmd` przekazuje bez zmian argumenty ze spacjami, cudzysłowami i schemat JSON
+  `--json-schema` (Rust escapuje argumenty plików wsadowych; test w `agent-cli/tests/process.rs`).
+
+Wyniki testów: `cargo test --locked` (cały workspace) zielone: agent-cli 7 + 10, aplikacja 864
+passed (2 ignored), workflow-core 20 driver, 24 engine, 12 output, 7 run_states, 21 validation,
+naming 3; `cargo clippy -p agent-cli -p workflow-core` bez uwag po poprawkach; Playwright
+`workflows-ui` i `workflow-definitions`: 32 passed; `npx vue-tsc --noEmit` czysto.
+
+Pozostałe blokery i uwagi:
+- Ręczny test na prawdziwych Claude i Codex (`E4_TEST_RECZNY.md`): niewykonany.
+- Zachowanie Claude po `taskkill`/`TerminateJobObject` na prawdziwym CLI: niezweryfikowane.
+- Konfiguracja sandboxa Codexa na tej maszynie: do wykonania przez użytkownika.
+- Wpięcie Runtime w `main.rs`, komendy start/cancel/decide (E5); recovery i artefakty logów (E6).
+
+Poprawki po review E4, runda 1 (uwagi 1–18; CRITICAL brak, wszystkie HIGH i MEDIUM poprawione):
+- Schemat wyniku a próbki: tryb ścisły (każde pole w `required`, `logRef` typu string|null);
+  `samples::implementation()` i fixture Codexa podają `"logRef": null`; test waliduje
+  `workflow_core::samples` rekurencyjnie małym walidatorem (`tests/output.rs`).
+- Kończenie drzewa: `Confirmed` tylko gdy proces się zakończył i job jest pusty
+  (`ActiveProcesses == 0`) albo, bez jobu, gdy `taskkill /T` się udał; błąd `Job::attach`
+  zapisany w `RunningProcess::job_error()`. Testy: brak jobu + nieudany taskkill = `Unconfirmed`,
+  brak jobu + taskkill = `Confirmed` i martwy wnuk.
+- Git w worktree (`WorktreeGit`): jawne `GIT_DIR`/`GIT_WORK_TREE` z rezerwacji (katalog
+  `<git-common-dir>/worktrees/<runId>` ze źródła), `core.fsmonitor=false`, hooki wyłączone,
+  `gc.auto=0`, diff z `--no-ext-diff --no-textconv`; przed każdą operacją kontrola, że `<wt>/.git`
+  to plik wskazujący oczekiwany katalog, inaczej `PermissionViolation`. Test: podmieniony `.git`
+  z `core.fsmonitor` (kontrola: zwykły Git uruchamia skrypt) nie uruchamia niczego.
+  Konfiguracja systemowa i globalna Gita zostaje (`GIT_CONFIG_NOSYSTEM` nieustawione): agent
+  nie ma do nich zapisu, a wyłączenie zmieniłoby np. `core.autocrlf` między poleceniami.
+- Nieudane przygotowanie po `git worktree add` usuwa worktree (`worktree remove --force`, `prune`).
+- Migawka kroku read-only obejmuje pliki ignorowane przez `.gitignore`, zagnieżdżone repozytoria
+  (rekurencyjnie), dowiązania (tekst celu, bez podążania); treść czytana strumieniowo do 8 MiB,
+  powyżej rozmiar i czas zmiany; limit 500 000 wpisów (przekroczenie to błąd kroku).
+- Środowisko agenta: allowlista o proxy (`HTTP(S)_PROXY`, `ALL_PROXY`, `NO_PROXY`), CA
+  (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`) i `CLAUDE_CODE_GIT_BASH_PATH`; test
+  `CliRunner` na prawdziwym środowisku procesu i `RealSpawner::options()` (`clear_env`).
+- Prompt: każdy `<` w bloku danych zapisany jako ucieczka JSON, więc dane nie zamkną bloku.
+- `GuardedRunner` nie deklaruje `read_only_enforced` (wykrywanie po fakcie to nie egzekwowanie).
+- Testy argumentów porównują pełne listy argumentów Claude i Codexa.
+- Preflight w UI: test aplikacji przez zastępcze IPC (`workflow_preflight`, `versionId`,
+  licznik 1 → 2); test podglądu „Sprawdź ponownie” zmienia zapisaną wersję pod spodem.
+- Wyścig `cancelling_a_queued_run_never_calls_the_runner`: początkowe `Wake` sterownika mogło
+  wczytać przebieg z bazy i uruchomić go przed anulowaniem; test czeka na uspokojenie
+  sterownika przed utworzeniem przebiegu (wada testu, nie sterownika).
+- Wyścig `cancel_during_a_step_ends_the_run_cancelled` (odtworzony przy zimnym starcie, ok. 95 s):
+  migawka po anulowanym kroku przekraczała czas łaski i dawała `Interrupted`; strażnik nie robi
+  migawki po `Cancelled`. Runner po niepotwierdzonym `kill` czeka konfigurowalnie
+  (`with_unconfirmed_max_wait`, w testach 10 s zamiast 600 s).
+
+Wyniki testów po rundzie 1: agent-cli 7 + 14 (process); workflow-core 24 engine, 14 output,
+7 run_states, 21 validation, 20 driver (`--features testing`); `--bin tuktuk-track workflows` 96,
+`ai` 148; `naming` 3; `cargo fmt --check` czysto; `cargo clippy -p agent-cli -p workflow-core`
+bez uwag; `npm run build` czysto; Playwright `workflows-ui` + `workflow-definitions` 33 passed,
+`visual.spec.ts` 90 passed (bez zmian wzorców). `npm run check` nieuruchomiony w tym kroku.
+Przeglądy agentami (rust-reviewer, security-reviewer, silent-failure-hunter, typescript-reviewer,
+vue-reviewer) nie są zapisane w tym dzienniku; runda 1 to zewnętrzny przegląd etapu.
+
+Poprawki po review E4, runda 2 (uwagi 1–9; HIGH 1–2 i MEDIUM 4–9 poprawione, uwaga 3 otwarta):
+- Niepotwierdzony `kill` (HIGH 1): `Exited` z prawdziwego procesu znaczy tylko koniec
+  bezpośredniego potomka. Runner nie kończy się już na `Exited`; ponawia `kill` (Job Object,
+  `taskkill`, kontrola jobu) aż do `Confirmed` (`Cancelled`) albo do `unconfirmed_max_wait`
+  (`Failed{Interrupted}`). `ScriptedProc` modeluje teraz prawdziwą semantykę (`Exited` zaraz po
+  `kill`, koniec drzewa osobno). Testy: `real_process_whose_tree_end_is_unconfirmed_is_not_cancelled`
+  (`CliRunner` na prawdziwym drzewie `cmd.exe` + `ping`, bez jobu, z nieudanym `taskkill`) i
+  `agent-cli` `exited_after_an_unconfirmed_kill_does_not_mean_the_tree_ended`.
+- Panel gotowości w aplikacji (HIGH 2): fixture IPC obsługuje `workflow_list`, `workflow_get`
+  i `workflow_publish` dla jednej zadanej definicji (`workflows.detail`) oraz
+  `preflightByVersion` i wstrzymanie wywołania (`__preflightHold`). Test aplikacji sprawdza w
+  regionie „Gotowość agentów” teksty „kontrola CLI”, „nie izolacja systemu plików”, blokadę
+  Codexa, licznik IPC 1 → 2 po „Sprawdź ponownie” i brak „Uruchom”.
+- `workflow_preflight` (MEDIUM 4): config.toml Codexa czytany tylko, gdy graf ma węzeł Codexa
+  (`preflight_reading_config`); błąd odczytu blokuje węzły Codexa zamiast całej komendy.
+- `WorkflowReadiness.vue` (MEDIUM 5): licznik żądań zamiast wczesnego `return`; odpowiedź dla
+  starszej wersji jest odrzucana. Test: publikacja w trakcie wstrzymanego sprawdzenia (test
+  pada na starej wersji komponentu).
+- Testy (MEDIUM 6–8): Codex review read-only bez sandboxa jest blokowany, z `elevated` ma
+  `CodexSandbox`; ścieżka komendy (`preflight_graph`: `require_unlocked` + `version_graph`) na
+  zablokowanej bazie; `LineTooLong` bez wyniku → `ProtocolError`; wynik z kodem 2 →
+  `Completed{exit_code: 2}`, a w silniku → `protocolError`; zły JSON Codexa przez
+  Runtime + `SqliteRunRepository` → `invalidOutput`.
+- Środowisko (MEDIUM 9): proxy z danymi logowania w adresie nie przechodzi do procesu agenta;
+  rozszerzona allowlista opisana w `E0_ANALIZA.md` i czeka na potwierdzenie użytkownika.
+- `npm run check` (HIGH 3): nieuruchomiony w tym kroku (polecenie kroku poprawek wyklucza pełne
+  `npm run check`); pole wyboru zostaje otwarte do kroku sprawdzenia etapu.
+
+Wyniki testów po rundzie 2: agent-cli 7 (parse) + 15 (process); workflow-core 24 engine,
+14 output, 7 run_states, 21 validation, 20 driver (`--features testing`); `--bin tuktuk-track
+workflows` 106, `ai` 150; `naming` 3; `cargo fmt --check` czysto; `cargo clippy -p agent-cli
+-p workflow-core` bez uwag; `npm run build` czysto; Playwright `workflows-ui` +
+`workflow-definitions` 35 passed, `visual.spec.ts` 90 passed (bez zmian wzorców). Wcześniejszy
+przebieg `workflows` przy obciążonej maszynie (każde wywołanie `git` ok. 5 s) dał przekroczenia
+czasu Gita w testach `workspace` i integracyjnych; powtórzony bez obciążenia przeszedł w całości.
+
+Weryfikacja końcowa E4 (`npm run check`, kod wyjścia 0): `npm run build` czysto; Playwright 725
+testów zielonych (ok. 2,3 min); `cargo fmt --check` czysto; `cargo test --locked` bez porażek
+(aplikacja 888 testów, 2 ignorowane; agent-cli, workflow-core i `naming` zielone). To zamyka
+uwagę HIGH 3 z rundy 2 (kryterium „`npm run check` z kodem 0” ma teraz dowód).
+
+Pozostałe blokery i uwagi po weryfikacji:
+- Ręczny test na prawdziwych Claude i Codex według `E4_TEST_RECZNY.md` (z przykładowym
+  repozytorium) niewykonany; sekcje przebiegu i testów negatywnych zależą od E5.
+- Zachowanie Claude po `TerminateJobObject` i `taskkill` (bloker 3 z E0) oraz konfiguracja
+  sandboxa Codexa (`[windows] sandbox = elevated`) niezweryfikowane na prawdziwych CLI.
+- Przeglądy agentami (rust-reviewer, security-reviewer, silent-failure-hunter,
+  typescript-reviewer, vue-reviewer) niewykonane; clippy tylko dla `agent-cli` i `workflow-core`.
+- Test `cancelling_a_queued_run_never_calls_the_runner` raz zawiódł przy równoległym obciążeniu,
+  potem trzykrotnie przeszedł; podejrzenie wyścigu sprzed E4, niezbadane.
+- Test cudzysłowu w argumencie przez wrapper `.cmd` pominięty (Rust escapuje pliki wsadowe
+  specjalnie); testowane są argumenty ze spacjami.
+- Test UI preflightu w podglądzie używa haka localStorage
+  (`tuktuk-track-preview-workflows-preflight`).
+- `NEXT_SESSION.md` nie istnieje, więc brak odnośnika do `E4_TEST_RECZNY.md`.
+- Wpięcie Runtime w `main.rs`, komendy start/cancel/decide i monitor (E5); recovery i artefakty
+  logów na dysku (E6).
+- Brak commita (robi go osobny krok workflow).

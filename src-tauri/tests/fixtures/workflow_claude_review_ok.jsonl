@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"sess-claude-1","tools":["Read","Grep","Glob"]}
+{"type":"zdarzenie_z_przyszlosci","x":1}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Przeglądam zmiany."},{"type":"tool_use","name":"Read","input":{"file_path":"a.txt"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"jeden"}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"gotowe","session_id":"sess-claude-1","structured_output":{"verdict":"approved","findings":[],"checkedArtifactHash":"HASH"}}

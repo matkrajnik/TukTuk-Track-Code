@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::engine::{InputRef, RunEvent};
-use crate::model::{AccessProfile, Provider, WorkflowGraph};
+use crate::model::{AccessProfile, AgentRole, Provider, WorkflowGraph};
 use crate::run::FailureCode;
 
 pub type RunId = i64;
@@ -33,6 +33,8 @@ pub struct RunRequest {
     pub run_id: RunId,
     pub execution_id: String,
     pub node_id: String,
+    /// Rola węzła: wybiera schemat wyniku (`output::json_schema`).
+    pub role: AgentRole,
     pub workspace: Option<String>,
     pub provider: Provider,
     pub model: Option<String>,

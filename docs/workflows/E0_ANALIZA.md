@@ -86,6 +86,14 @@ i unieważnia review. To kontrola CLI plus wykrywanie po fakcie, nie izolacja sy
 zgodnie z 8.3 planu UI musi to tak nazywać. Codex w roli review dostaje `-s read-only`; preflight
 blokuje profil, gdy sandbox Windows nie jest skonfigurowany.
 
+**Środowisko procesu agenta (E4, do potwierdzenia użytkownika):** czyste środowisko plus biała
+lista z `runners/env.rs`. Poza zmiennymi systemowymi i katalogami konfiguracji CLI (lista z
+planu, krok 5) review rundy 1 dodało proxy (`HTTP(S)_PROXY`, `ALL_PROXY`, `NO_PROXY`), certyfikaty
+CA (`NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, `SSL_CERT_DIR`), `CLAUDE_CODE_GIT_BASH_PATH` i
+`SystemDrive`, potrzebne na maszynach firmowych. Adres proxy z danymi logowania
+(`http://user:hasło@proxy`) nie przechodzi wcale: proxy z uwierzytelnianiem trzeba skonfigurować
+w samym CLI. Rozszerzona lista czeka na potwierdzenie użytkownika.
+
 ## A08 — edytor grafu
 
 **Decyzja:** Vue Flow (`@vue-flow/core`, licencja MIT, Vue 3, bez zależności od Nuxt) jako kandydat
@@ -112,6 +120,14 @@ przenoszenia). Kanonikalizacja przez `std::fs::canonicalize` przed porównaniem 
 
 ## Otwarte blokery
 
-1. Akceptacja przez użytkownika modelu read-only dla Claude (polityka narzędzi + wykrywanie zmian).
+1. ~~Akceptacja przez użytkownika modelu read-only dla Claude~~ **zaakceptowane 2026-11-05.**
+   Zestaw: Claude `--tools Read,Grep,Glob`, `--permission-mode dontAsk`, `--permission-prompts none`,
+   `--strict-mcp-config` (pusty `--mcp-config`); wykrywanie zmian worktree przed krokiem i po nim;
+   w UI nazwa „kontrola CLI”, nie izolacja systemu plików; Codex review `-s read-only`, preflight
+   blokuje profil Codexa bez skonfigurowanego sandboxa.
+   Decyzje projektowe E4 (obowiązują, dopóki użytkownik ich nie zmieni):
+   (a) nowy crate `crates/agent-cli` jako wspólna warstwa procesu i parserów, wyjątek od układu
+   z rozdz. 6; (b) Claude z profilem `workspaceWrite` jest w MVP blokowany w preflighcie, bo nie ma
+   mechanizmu ograniczenia zapisu do workspace (8.3); implementację wykonuje Codex.
 2. Weryfikacja konfiguracji sandboksa Codexa na tej maszynie (test ręczny w E4).
 3. Zachowanie Claude Code na Windows po `taskkill /T /F` (test procesów zastępczych w E4).

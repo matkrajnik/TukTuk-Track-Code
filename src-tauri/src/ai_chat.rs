@@ -98,102 +98,37 @@ pub trait Sink: Send + Sync {
     fn emit(&self, turn: u64, event: Event);
 }
 
-/// Zdarzenie wyczytane z jednej linii strumienia CLI, przed przywróceniem nazw.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Parsed {
-    Text(String),
-    Tool {
-        name: String,
-        input: Value,
-    },
-    ToolDone {
-        error: bool,
-    },
-    /// Koniec tury; tekst końcowy (gdy odpowiedź nie miała wcześniejszych akapitów).
-    Done(String),
-    Error(Failure),
-}
+pub use agent_cli::Parsed;
 
 /// Nazwa narzędzia bez prefiksu serwera (`mcp__tuktuk-track__day_summary` → `day_summary`).
 pub fn short_tool_name(name: &str) -> String {
     name.strip_prefix(TOOL_PREFIX).unwrap_or(name).to_string()
 }
 
+/// Zachowuje czat bez zmian: krótkie nazwy narzędzi, bez zdarzenia sesji.
+fn shorten(parsed: Vec<Parsed>) -> Vec<Parsed> {
+    parsed
+        .into_iter()
+        .filter_map(|p| match p {
+            Parsed::Session(_) => None,
+            Parsed::Tool { name, input } => Some(Parsed::Tool {
+                name: short_tool_name(&name),
+                input,
+            }),
+            other => Some(other),
+        })
+        .collect()
+}
+
 /// Linia `stream-json` Claude Code.
 pub fn parse_claude_line(line: &str) -> Vec<Parsed> {
-    let Ok(event) = serde_json::from_str::<Value>(line.trim()) else {
-        return Vec::new();
-    };
-    let content = event["message"]["content"].as_array();
-    match event["type"].as_str().unwrap_or_default() {
-        "assistant" => content
-            .into_iter()
-            .flatten()
-            .filter_map(|block| match block["type"].as_str() {
-                Some("text") => block["text"]
-                    .as_str()
-                    .filter(|t| !t.trim().is_empty())
-                    .map(|t| Parsed::Text(t.to_string())),
-                Some("tool_use") => Some(Parsed::Tool {
-                    name: short_tool_name(block["name"].as_str().unwrap_or_default()),
-                    input: block["input"].clone(),
-                }),
-                _ => None,
-            })
-            .collect(),
-        "user" => content
-            .into_iter()
-            .flatten()
-            .filter(|block| block["type"] == "tool_result")
-            .map(|block| Parsed::ToolDone {
-                error: block["is_error"] == true,
-            })
-            .collect(),
-        "result" => {
-            let text = event["result"].as_str().unwrap_or_default();
-            let subtype = event["subtype"].as_str().unwrap_or_default();
-            if event["is_error"] == true || subtype.starts_with("error") {
-                vec![Parsed::Error(ai::classify(&format!("{text} {subtype}")))]
-            } else {
-                vec![Parsed::Done(text.to_string())]
-            }
-        }
-        _ => Vec::new(),
-    }
+    shorten(agent_cli::parse_claude_line_raw(line))
 }
 
 /// Linia JSONL `codex exec --json`: wiadomość agenta, wywołanie narzędzia MCP,
 /// koniec tury albo błąd.
 pub fn parse_codex_line(line: &str) -> Vec<Parsed> {
-    let Ok(event) = serde_json::from_str::<Value>(line.trim()) else {
-        return Vec::new();
-    };
-    let kind = event["type"].as_str().unwrap_or_default();
-    let item = &event["item"];
-    if item["type"] == "mcp_tool_call" {
-        return match kind {
-            "item.started" => vec![Parsed::Tool {
-                name: short_tool_name(item["tool"].as_str().unwrap_or_default()),
-                input: if item["arguments"].is_null() {
-                    json!({})
-                } else {
-                    item["arguments"].clone()
-                },
-            }],
-            "item.completed" => vec![Parsed::ToolDone {
-                error: item["status"] == "failed" || !item["error"].is_null(),
-            }],
-            _ => Vec::new(),
-        };
-    }
-    if kind == "turn.completed" {
-        return vec![Parsed::Done(String::new())];
-    }
-    match ai::codex_event_text(&event) {
-        Some((true, text)) => vec![Parsed::Error(ai::classify(&text))],
-        Some((false, text)) if !text.trim().is_empty() => vec![Parsed::Text(text)],
-        _ => Vec::new(),
-    }
+    shorten(agent_cli::parse_codex_line_raw(line))
 }
 
 fn parse_line(engine: Engine, line: &str) -> Vec<Parsed> {
@@ -370,25 +305,7 @@ impl Child for ProcessChild {
 
 impl Spawner for ProcessSpawner {
     fn spawn(&self, spec: &Spec) -> Result<(Box<dyn Child>, Receiver<Stream>), String> {
-        use std::process::{Command, Stdio};
-        let mut command = Command::new(&spec.program);
-        command
-            .args(&spec.args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if let Some(cwd) = &spec.cwd {
-            command.current_dir(cwd);
-        }
-        for (key, value) in &spec.env {
-            command.env(key, value);
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            // CREATE_NO_WINDOW: bez migającego okna konsoli.
-            command.creation_flags(0x0800_0000);
-        }
+        let mut command = agent_cli::command(spec);
         let mut child = command.spawn().map_err(|e| e.to_string())?;
         let pid = child.id();
         let stdin = child.stdin.take();
@@ -909,6 +826,8 @@ fn handle(
             finish(inner, engine, false);
             sink.emit(turn, Event::Error { message });
         }
+        // Czat używa wariantu z `shorten`, który odfiltrowuje sesję.
+        Parsed::Session(_) => {}
     }
 }
 

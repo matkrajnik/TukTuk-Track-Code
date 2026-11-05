@@ -19,6 +19,7 @@ import { ArrowLeft, Plus, Redo2, Undo2 } from "lucide-vue-next";
 import ConfirmDialog from "../ConfirmDialog.vue";
 import WorkflowGraphView from "./WorkflowGraphView.vue";
 import WorkflowNodePanel from "./WorkflowNodePanel.vue";
+import WorkflowReadiness from "./WorkflowReadiness.vue";
 import {
   getWorkflow,
   nodeTypeNames,
@@ -444,6 +445,12 @@ const stepNames: Record<AddableType, string> = {
         @change="changeGraph"
       />
     </div>
+
+    <WorkflowReadiness
+      v-if="latestVersion && draft && !dirty"
+      :version-id="latestVersion.id"
+      :graph="draft.graph"
+    />
 
     <section
       v-if="draft"

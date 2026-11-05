@@ -6,6 +6,7 @@
  */
 import {
   WORKFLOW_SCHEMA_VERSION,
+  type NodeReadiness,
   type WorkflowAccess,
   type WorkflowDetail,
   type WorkflowGraph,
@@ -174,7 +175,12 @@ async function detail(w: StoredWorkflow): Promise<WorkflowDetail> {
     issues: validateWorkflow(w.draft),
     versions: [...w.versions]
       .reverse()
-      .map(({ version, hash, createdAt }) => ({ version, hash, createdAt })),
+      .map(({ id, version, hash, createdAt }) => ({
+        id,
+        version,
+        hash,
+        createdAt,
+      })),
   };
 }
 
@@ -315,6 +321,7 @@ export async function publish(
     versions: [
       ...current.versions,
       {
+        id: current.id * 1000 + (latest?.version ?? 0) + 1,
         version: (latest?.version ?? 0) + 1,
         hash,
         createdAt: now,
@@ -400,4 +407,39 @@ export async function importWorkflow(text: string): Promise<WorkflowDetail> {
   const description =
     typeof file.description === "string" ? file.description : "";
   return detail(insert(state, file.name, description, graph));
+}
+
+/** Podgląd nie uruchamia agentów, więc nie udaje gotowości żadnego węzła. */
+export const PREVIEW_PREFLIGHT_BLOCK = "Podgląd nie uruchamia agentów";
+
+/**
+ * Podgląd zawsze zwraca blokadę: nie ma tu haków testowych podmieniających
+ * wynik (te są w zastępczym IPC `tests/fixtures/tauri.ts`).
+ */
+export async function preflight(versionId: number): Promise<NodeReadiness[]> {
+  const state = unlocked();
+  const stored = state.workflows
+    .flatMap((w) => w.versions)
+    .find((v) => v.id === versionId);
+  if (!stored) throw new Error("Nie znaleziono wersji procesu.");
+  return stored.graph.nodes.flatMap((node) =>
+    node.kind.type === "agent"
+      ? [
+          {
+            nodeId: node.id,
+            provider: node.kind.provider,
+            access: node.kind.access,
+            cliFound: false,
+            version: null,
+            supported: false,
+            enforcement: "none" as const,
+            warning: null,
+            blocked: {
+              code: "cliMissing" as const,
+              message: PREVIEW_PREFLIGHT_BLOCK,
+            },
+          },
+        ]
+      : [],
+  );
 }

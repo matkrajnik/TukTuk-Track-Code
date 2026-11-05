@@ -388,3 +388,26 @@ test.describe("podgląd modułu Workflows", () => {
     expect(saved.ok.unpublishedChanges).toBe(false);
   });
 });
+
+test("podgląd nie udaje gotowości agentów", async ({ page }) => {
+  await openWorkflowsPreview(page, true);
+  const created = (await call(page, "createWorkflow", "Proces", "", true)) as {
+    ok: { id: number; draftRevision: number };
+  };
+  const published = (await call(
+    page,
+    "publishWorkflow",
+    created.ok.id,
+    created.ok.draftRevision,
+  )) as { ok: { versions: { id: number }[] } };
+  const readiness = (await call(
+    page,
+    "workflowPreflight",
+    published.ok.versions[0].id,
+  )) as { ok: { nodeId: string; supported: boolean; blocked: { message: string } | null }[] };
+  expect(readiness.ok.length).toBeGreaterThan(0);
+  for (const node of readiness.ok) {
+    expect(node.supported).toBe(false);
+    expect(node.blocked?.message).toBe("Podgląd nie uruchamia agentów");
+  }
+});

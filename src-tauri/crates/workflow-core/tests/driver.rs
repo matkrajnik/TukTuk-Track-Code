@@ -233,6 +233,10 @@ fn cancelling_a_queued_run_never_calls_the_runner() {
     let env = Env::new();
     let runner = Arc::new(ScriptedRunner::new());
     let handle = env.run(&runner, config());
+    // Bez tego wyścig: początkowe `Wake` sterownika mogło wczytać już utworzony
+    // przebieg z bazy i uruchomić go, zanim dotarło anulowanie (raz zawiodło
+    // pod obciążeniem). Po uspokojeniu przebieg czeka w kolejce bez `Start`.
+    settle(&handle);
     let run = env.create("r1");
     handle.cancel(run);
     settle(&handle);
@@ -707,4 +711,35 @@ fn queued_run_does_not_start_while_an_unresponsive_runner_is_alive() {
     assert_eq!(runner.max_concurrency(), 1);
     let st = env.state(second);
     assert_eq!(st.status, RunStatus::WaitingForApproval, "{:?}", st.failure);
+}
+
+#[test]
+fn runner_receives_the_role_of_the_node() {
+    use std::sync::Mutex;
+    let env = Env::new();
+    let seen: Arc<Mutex<Vec<(String, workflow_core::AgentRole)>>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let runner = Arc::new(
+        ScriptedRunner::new()
+            .template_script(vec![samples::review_approved()])
+            .with_probe(move |request| {
+                sink.lock()
+                    .expect("blokada")
+                    .push((request.node_id.clone(), request.role));
+            }),
+    );
+    let handle = env.run(&runner, config());
+    let run = env.create("roles");
+    handle.start_run(run);
+    settle(&handle);
+    let seen = seen.lock().expect("blokada").clone();
+    use workflow_core::AgentRole::{Analysis, Implementation, Review};
+    assert_eq!(
+        seen,
+        [
+            ("analysis".to_owned(), Analysis),
+            ("implementation".to_owned(), Implementation),
+            ("review".to_owned(), Review)
+        ]
+    );
 }

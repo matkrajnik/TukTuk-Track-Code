@@ -5,8 +5,11 @@
 //! czy moduł odblokowano kluczem; ukrycie menu w interfejsie nie jest kontrolą.
 
 pub mod access;
+pub mod preflight;
+pub mod runners;
 pub mod runs;
 pub mod store;
+pub mod workspace;
 
 use rusqlite::Connection;
 use serde::Serialize;
@@ -34,15 +37,21 @@ fn with_db<R>(
     f(&db).map_err(|e| e.to_string())
 }
 
+/// Błąd `LOCKED`, gdy moduł nie jest odblokowany.
+pub(crate) fn require_unlocked(db: &Connection) -> Result<(), StoreError> {
+    if !store::is_unlocked(db)? {
+        return Err(StoreError::BadInput(LOCKED.into()));
+    }
+    Ok(())
+}
+
 /// Jak `with_db`, ale tylko po odblokowaniu modułu.
 fn with_unlocked<R>(
     app: &tauri::AppHandle,
     f: impl FnOnce(&Connection) -> Result<R, StoreError>,
 ) -> Result<R, String> {
     with_db(app, |db| {
-        if !store::is_unlocked(db)? {
-            return Err(StoreError::BadInput(LOCKED.into()));
-        }
+        require_unlocked(db)?;
         f(db)
     })
 }
@@ -171,4 +180,29 @@ pub fn workflow_import(app: tauri::AppHandle, text: String) -> Result<Detail, St
         let id = store::import(db, &text, crate::db::now())?;
         store::get(db, id)
     })
+}
+
+/// Gotowość agentów opublikowanej wersji procesu (E4). Definicję czyta krótka
+/// transakcja; wykrywanie CLI i odczyt config.toml odbywają się poza blokadą bazy.
+#[tauri::command]
+pub async fn workflow_preflight(
+    app: tauri::AppHandle,
+    version_id: i64,
+) -> Result<Vec<preflight::NodeReadiness>, String> {
+    let graph = with_db(&app, |db| preflight_graph(db, version_id))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let detected = crate::ai::detected_cached(&app);
+        preflight::preflight_reading_config(&graph, &detected, preflight::read_codex_config)
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// Definicja do preflightu: tylko po odblokowaniu modułu (ścieżka komendy).
+pub(crate) fn preflight_graph(
+    db: &Connection,
+    version_id: i64,
+) -> Result<WorkflowGraph, StoreError> {
+    require_unlocked(db)?;
+    store::version_graph(db, version_id)
 }

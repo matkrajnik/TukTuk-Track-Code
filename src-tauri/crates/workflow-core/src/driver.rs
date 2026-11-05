@@ -466,6 +466,7 @@ impl Worker {
             run_id,
             execution_id: execution_id.clone(),
             node_id,
+            role: config.role,
             workspace: self.workspace.workspace_path(run_id),
             provider: config.provider,
             model: config.model.clone(),

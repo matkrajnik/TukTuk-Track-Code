@@ -126,6 +126,8 @@ export interface WorkflowSummary {
 }
 
 export interface WorkflowVersion {
+  /** Identyfikator wersji (argument `workflowPreflight`). */
+  id: number;
   version: number;
   hash: string;
   createdAt: number;
@@ -209,3 +211,35 @@ export const portNames: Record<Port, string> = {
   approve: "akceptacja",
   reject: "odrzucenie",
 };
+
+/** `workflows::preflight::Enforcement`. */
+export type WorkflowEnforcement = "cliControl" | "codexSandbox" | "none";
+
+/** Kody błędów kroku (`workflow_core::FailureCode`, camelCase). */
+export type WorkflowFailureCode =
+  | "cliMissing"
+  | "notLoggedIn"
+  | "unsupportedVersion"
+  | "spawnFailed"
+  | "protocolError"
+  | "invalidOutput"
+  | "timeout"
+  | "cancelled"
+  | "permissionViolation"
+  | "storageError"
+  | "reviewLimitExceeded"
+  | "interrupted"
+  | "invalidDefinition";
+
+/** `workflows::preflight::NodeReadiness`: gotowość jednego węzła agenta. */
+export interface NodeReadiness {
+  nodeId: string;
+  provider: Provider;
+  access: AccessProfile;
+  cliFound: boolean;
+  version: string | null;
+  supported: boolean;
+  enforcement: WorkflowEnforcement;
+  warning: string | null;
+  blocked: { code: WorkflowFailureCode; message: string } | null;
+}

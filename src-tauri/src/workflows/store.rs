@@ -15,8 +15,8 @@ use workflow_core::{validate, Issue, WorkflowGraph, SCHEMA_VERSION};
 /// Klucz w `settings` ze znacznikiem odblokowania modułu.
 pub const UNLOCKED_KEY: &str = "workflows_unlocked";
 /// Wersja schematu tabel modułu (niezależna od formatu grafu). 2 dodaje
-/// tabele przebiegów (E3); `init_tables` zapisuje wszystkie wersje do tej włącznie.
-const MODULE_SCHEMA: i64 = 2;
+/// tabele przebiegów (E3), 3 rezerwacje katalogów roboczych (E4); `init_tables` zapisuje wszystkie wersje do tej włącznie.
+const MODULE_SCHEMA: i64 = 3;
 /// Najdłuższa nazwa i opis procesu w znakach.
 const MAX_NAME_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 2_000;
@@ -40,6 +40,7 @@ pub fn init_tables(db: &Connection) -> rusqlite::Result<()> {
         CREATE TRIGGER IF NOT EXISTS workflow_versions_no_delete BEFORE DELETE ON workflow_versions BEGIN SELECT RAISE(ABORT, 'opublikowana wersja procesu jest niezmienna'); END;",
     )?;
     init_run_tables(db)?;
+    init_workspace_tables(db)?;
     for version in 1..=MODULE_SCHEMA {
         db.execute(
             "INSERT OR IGNORE INTO workflow_schema_migrations(version, applied_at) VALUES(?1, ?2)",
@@ -63,6 +64,16 @@ fn init_run_tables(db: &Connection) -> rusqlite::Result<()> {
         CREATE TRIGGER IF NOT EXISTS workflow_events_no_delete BEFORE DELETE ON workflow_events BEGIN SELECT RAISE(ABORT, 'historia przebiegu jest tylko do dopisywania'); END;
         CREATE TABLE IF NOT EXISTS workflow_approvals (id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, execution_id TEXT NOT NULL, artifact_hash TEXT NOT NULL, status TEXT NOT NULL, comment TEXT, decision_request_id TEXT UNIQUE, decided_at INTEGER);
         CREATE INDEX IF NOT EXISTS workflow_approvals_execution ON workflow_approvals(execution_id);",
+    )
+}
+
+/// Migracja 3 (E4): rezerwacje worktree. Jedna aktywna rezerwacja na ścieżkę
+/// (częściowy indeks unikalny); wiersze zostają po zwolnieniu jako historia.
+fn init_workspace_tables(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workflow_workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, source_repo TEXT NOT NULL, worktree_path TEXT NOT NULL, base_commit TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('reserved','released')), created_at INTEGER NOT NULL, released_at INTEGER);
+        CREATE UNIQUE INDEX IF NOT EXISTS workflow_workspaces_reserved_path ON workflow_workspaces(worktree_path) WHERE state = 'reserved';
+        CREATE INDEX IF NOT EXISTS workflow_workspaces_run ON workflow_workspaces(run_id);",
     )
 }
 
@@ -97,6 +108,20 @@ impl fmt::Display for StoreError {
             StoreError::Db(e) => write!(f, "Błąd bazy procesów: {e}"),
         }
     }
+}
+
+/// Graf opublikowanej wersji procesu (niezmienny zapis z `workflow_versions`).
+pub fn version_graph(db: &Connection, version_id: i64) -> Result<WorkflowGraph, StoreError> {
+    let text: String = db
+        .query_row(
+            "SELECT definition_json FROM workflow_versions WHERE id = ?1",
+            [version_id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .ok_or(StoreError::NotFound)?;
+    serde_json::from_str(&text)
+        .map_err(|e| StoreError::BadInput(format!("Uszkodzona definicja wersji procesu: {e}")))
 }
 
 pub fn is_unlocked(db: &Connection) -> rusqlite::Result<bool> {
@@ -138,6 +163,8 @@ pub struct Summary {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VersionInfo {
+    /// Identyfikator wiersza wersji (argument `workflow_preflight`).
+    pub id: i64,
     pub version: i64,
     pub hash: String,
     pub created_at: i64,
@@ -265,7 +292,7 @@ pub fn get(db: &Connection, id: i64) -> Result<Detail, StoreError> {
     )?;
     let draft = parse_graph(&draft_json)?;
     let mut statement = db.prepare(
-        "SELECT version, hash, created_at FROM workflow_versions
+        "SELECT version, hash, created_at, id FROM workflow_versions
          WHERE workflow_id = ?1 ORDER BY version DESC",
     )?;
     let versions = statement
@@ -274,6 +301,7 @@ pub fn get(db: &Connection, id: i64) -> Result<Detail, StoreError> {
                 version: r.get(0)?,
                 hash: r.get(1)?,
                 created_at: r.get(2)?,
+                id: r.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -385,7 +413,7 @@ pub fn publish(
     let hash = text_hash(&draft_json);
     let latest: Option<VersionInfo> = tx
         .query_row(
-            "SELECT version, hash, created_at FROM workflow_versions
+            "SELECT version, hash, created_at, id FROM workflow_versions
              WHERE workflow_id = ?1 ORDER BY version DESC LIMIT 1",
             [id],
             |r| {
@@ -393,6 +421,7 @@ pub fn publish(
                     version: r.get(0)?,
                     hash: r.get(1)?,
                     created_at: r.get(2)?,
+                    id: r.get(3)?,
                 })
             },
         )
@@ -407,12 +436,14 @@ pub fn publish(
          VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
         params![id, version, SCHEMA_VERSION, draft_json, hash, now],
     )?;
+    let version_id = tx.last_insert_rowid();
     tx.execute(
         "UPDATE workflows SET updated_at = ?1 WHERE id = ?2",
         params![now, id],
     )?;
     tx.commit()?;
     Ok(VersionInfo {
+        id: version_id,
         version,
         hash,
         created_at: now,

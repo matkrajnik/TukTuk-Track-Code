@@ -148,6 +148,59 @@ pub fn parse_output(role: AgentRole, value: &Value) -> Result<AgentOutput, Outpu
     }
 }
 
+fn text_schema() -> Value {
+    json!({"type": "string", "maxLength": MAX_OUTPUT_TEXT_CHARS})
+}
+
+fn list_schema(items: Value) -> Value {
+    json!({"type": "array", "maxItems": MAX_OUTPUT_ITEMS, "items": items})
+}
+
+fn object_schema(properties: Value) -> Value {
+    let required: Vec<String> = properties
+        .as_object()
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default();
+    json!({"type": "object", "additionalProperties": false,
+           "required": required, "properties": properties})
+}
+
+/// Schemat JSON wyniku roli, zgodny z typami `*Output` (przekazywany CLI agenta).
+/// Rola Fix używa schematu implementacji, tak jak `parse_output`.
+///
+/// Tryb ścisły (wymóg `--output-schema` Codexa): każde pole obiektu jest w
+/// `required`, także opcjonalne po stronie typu. Opcjonalność wyraża typ z `null`
+/// (`logRef`), więc poprawny wynik zawsze podaje pole, choćby jako `null`.
+pub fn json_schema(role: AgentRole) -> Value {
+    match role {
+        AgentRole::Analysis => object_schema(json!({
+            "summary": text_schema(),
+            "plan": list_schema(text_schema()),
+            "acceptanceCriteria": list_schema(text_schema()),
+            "risks": list_schema(text_schema()),
+        })),
+        AgentRole::Implementation | AgentRole::Fix => object_schema(json!({
+            "summary": text_schema(),
+            "changedFiles": list_schema(text_schema()),
+            "checks": list_schema(object_schema(json!({
+                "name": text_schema(),
+                "passed": {"type": "boolean"},
+                "logRef": {"type": ["string", "null"]},
+            }))),
+        })),
+        AgentRole::Review => object_schema(json!({
+            "verdict": {"type": "string", "enum": ["approved", "changes_requested"]},
+            "findings": list_schema(object_schema(json!({
+                "file": text_schema(),
+                "location": text_schema(),
+                "severity": text_schema(),
+                "description": text_schema(),
+            }))),
+            "checkedArtifactHash": text_schema(),
+        })),
+    }
+}
+
 impl AgentOutput {
     /// Znormalizowany JSON wyniku (to trafia do zdarzeń i bazy).
     pub fn to_value(&self) -> Value {

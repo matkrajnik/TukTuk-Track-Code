@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "./fixtures/test";
 import { NOW, openPreview } from "./fixtures/seed";
 import { openDesktop, TEST_WORKFLOWS_KEY } from "./fixtures/tauri";
+import { analysisImplementationReview } from "../src/api/workflowTemplates";
 
 /**
  * Moduł Workflows, etap E2 (docs/workflows/PLAN_WDROZENIA.md, 4.1–4.3):
@@ -326,5 +327,260 @@ test.describe("podgląd: lista i edytor", () => {
     await expect(exported.getByLabel("JSON procesu")).toHaveValue(
       /"format": "tuktuk-track-workflow"/,
     );
+  });
+});
+
+/** Tworzy i publikuje szablon w podglądzie; zwraca edytor z panelem gotowości. */
+async function publishTemplate(page: Page) {
+  await previewUnlocked(page);
+  await nav(page).getByRole("button", { name: "Definicje" }).click();
+  await page.getByRole("button", { name: "Z szablonu" }).click();
+  await page
+    .getByRole("dialog", { name: "Nowy proces" })
+    .getByRole("button", { name: "Utwórz" })
+    .click();
+  const editor = page.getByRole("region", { name: "Edytor procesu" });
+  await editor.getByRole("button", { name: "Opublikuj" }).click();
+  await expect(editor.getByText("Opublikowano wersję 1.")).toBeVisible();
+  return editor;
+}
+
+const claudeReview = {
+  nodeId: "review",
+  provider: "claude",
+  access: "readOnly",
+  cliFound: true,
+  version: "2.1.318",
+  supported: true,
+  enforcement: "cliControl",
+  warning: null,
+  blocked: null,
+};
+const codexBlocked = {
+  nodeId: "implementation",
+  provider: "codex",
+  access: "workspaceWrite",
+  cliFound: true,
+  version: "0.163.0",
+  supported: true,
+  enforcement: "none",
+  warning: null,
+  blocked: {
+    code: "permissionViolation",
+    // Tekst z `preflight.rs` (MSG_CODEX_NO_SANDBOX).
+    message:
+      'Codex nie ma skonfigurowanego sandboxa Windows. Ustaw [windows] sandbox = "elevated" w config.toml Codexa.',
+  },
+};
+
+/** Opublikowana definicja z szablonu (`workflows::store::Detail`) dla zastępczego IPC. */
+const publishedDetail = {
+  id: 5,
+  name: "Proces E4",
+  description: "",
+  draftRevision: 2,
+  createdAt: NOW,
+  updatedAt: NOW,
+  archivedAt: null,
+  publishedVersion: 1,
+  publishedAt: NOW,
+  unpublishedChanges: false,
+  draft: analysisImplementationReview(),
+  issues: [],
+  versions: [{ id: 42, version: 1, hash: "abc", createdAt: NOW }],
+};
+
+test.describe("podgląd: gotowość agentów (E4)", () => {
+  test("podgląd zawsze blokuje węzły agentów i nie ma przycisku Uruchom", async ({
+    page,
+  }) => {
+    const editor = await publishTemplate(page);
+    const panel = editor.getByRole("region", { name: "Gotowość agentów" });
+    await expect(panel.getByRole("status")).toContainText(
+      "Gotowość sprawdzona: zablokowane węzły",
+    );
+    const blocked = panel.getByText("Zablokowane: Podgląd nie uruchamia agentów");
+    const nodes = panel.getByRole("listitem");
+    await expect(nodes.first()).toBeVisible();
+    const agentCount = await nodes.count();
+    await expect(blocked).toHaveCount(agentCount);
+    await expect(panel).not.toContainText("kontrola CLI");
+    // Wpis w localStorage, który kiedyś podmieniał wynik, niczego nie zmienia.
+    await page.evaluate(() =>
+      localStorage.setItem(
+        "tuktuk-track-preview-workflows-preflight",
+        JSON.stringify([]),
+      ),
+    );
+    await panel.getByRole("button", { name: "Sprawdź ponownie" }).click();
+    await expect(panel.getByRole("status")).toContainText(
+      `zablokowane węzły: ${agentCount}`,
+    );
+    await expect(blocked).toHaveCount(agentCount);
+    await expect(page.getByRole("button", { name: /Uruchom/ })).toHaveCount(0);
+  });
+
+  test("Sprawdź ponownie czyta wersję od nowa, dostępne klawiaturą", async ({
+    page,
+  }) => {
+    const editor = await publishTemplate(page);
+    const panel = editor.getByRole("region", { name: "Gotowość agentów" });
+    await expect(panel).toContainText("Claude Code");
+    // Zmiana zapisanej wersji pod spodem: tylko ponowne wywołanie ją pokaże.
+    await page.evaluate((key) => {
+      const state = JSON.parse(localStorage.getItem(key) ?? "{}");
+      for (const workflow of state.workflows)
+        for (const version of workflow.versions)
+          for (const node of version.graph.nodes)
+            if (node.kind.type === "agent") node.kind.provider = "codex";
+      localStorage.setItem(key, JSON.stringify(state));
+    }, WORKFLOWS_KEY);
+    await expect(panel).toContainText("Claude Code");
+    const recheck = panel.getByRole("button", { name: "Sprawdź ponownie" });
+    await recheck.focus();
+    await page.keyboard.press("Enter");
+    await expect(panel).not.toContainText("Claude Code");
+    await expect(panel).toContainText("Codex");
+    await expect(panel.getByRole("status")).toContainText("Gotowość sprawdzona");
+  });
+});
+
+test.describe("aplikacja: workflow_preflight przez IPC (E4)", () => {
+  test("panel pokazuje kontrolę CLI i blokadę Codexa, Sprawdź ponownie woła IPC", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      workflows: { unlocked: true, detail: publishedDetail },
+      preflight: [claudeReview, codexBlocked],
+    });
+    await nav(page).getByRole("button", { name: "Definicje" }).click();
+    await page.getByRole("button", { name: "Edytuj Proces E4" }).click();
+    const panel = page
+      .getByRole("region", { name: "Edytor procesu" })
+      .getByRole("region", { name: "Gotowość agentów" });
+    await expect(panel.getByRole("status")).toContainText(
+      "zablokowane węzły: 1",
+    );
+    await expect(panel).toContainText("kontrola CLI");
+    await expect(panel).toContainText("nie izolacja systemu plików");
+    await expect(panel).toContainText(
+      "Zablokowane: Codex nie ma skonfigurowanego sandboxa Windows",
+    );
+    const calls = () =>
+      page.evaluate(() => {
+        const w = window as unknown as {
+          __preflightCalls?: number;
+          __tauriMock: { calls: () => { cmd: string; args: unknown }[] };
+        };
+        return {
+          count: w.__preflightCalls ?? 0,
+          args: w.__tauriMock
+            .calls()
+            .filter((c) => c.cmd === "workflow_preflight")
+            .map((c) => c.args),
+        };
+      });
+    expect(await calls()).toEqual({ count: 1, args: [{ versionId: 42 }] });
+    await panel.getByRole("button", { name: "Sprawdź ponownie" }).click();
+    await expect.poll(async () => (await calls()).count).toBe(2);
+    expect((await calls()).args).toEqual([{ versionId: 42 }, { versionId: 42 }]);
+    await expect(panel).toContainText("kontrola CLI");
+    await expect(page.getByRole("button", { name: /Uruchom/ })).toHaveCount(0);
+  });
+
+  test("publikacja w trakcie sprawdzania: panel pokazuje nową wersję, stara odpowiedź odpada", async ({
+    page,
+  }) => {
+    const codexReady = {
+      ...codexBlocked,
+      enforcement: "codexSandbox",
+      blocked: null,
+    };
+    await openDesktop(page, {
+      workflows: {
+        unlocked: true,
+        detail: { ...publishedDetail, unpublishedChanges: true },
+      },
+      preflightByVersion: {
+        42: [claudeReview, codexBlocked],
+        43: [claudeReview, codexReady],
+      },
+    });
+    // Pierwsze sprawdzenie (wersja 42) czeka, aż test je zwolni.
+    await page.evaluate(() => {
+      const w = window as unknown as {
+        __preflightHold?: Promise<void>;
+        __releasePreflight?: () => void;
+      };
+      w.__preflightHold = new Promise((r) => (w.__releasePreflight = r));
+    });
+    await nav(page).getByRole("button", { name: "Definicje" }).click();
+    await page.getByRole("button", { name: "Edytuj Proces E4" }).click();
+    const editor = page.getByRole("region", { name: "Edytor procesu" });
+    const panel = editor.getByRole("region", { name: "Gotowość agentów" });
+    await expect(panel.getByRole("status")).toContainText("Sprawdzam");
+    await editor.getByRole("button", { name: "Opublikuj" }).click();
+    await expect(editor.getByText("Opublikowano wersję 2.")).toBeVisible();
+    await expect(panel.getByRole("status")).toContainText(
+      "wszystkie węzły gotowe",
+    );
+    await expect(panel).toContainText("sandbox Codexa");
+    // Spóźniona odpowiedź dla wersji 42 nie nadpisuje wyniku wersji 43.
+    await page.evaluate(() =>
+      (window as unknown as { __releasePreflight: () => void }).__releasePreflight(),
+    );
+    const args = await page.evaluate(() =>
+      (
+        window as unknown as {
+          __tauriMock: { calls: () => { cmd: string; args: unknown }[] };
+        }
+      ).__tauriMock
+        .calls()
+        .filter((c) => c.cmd === "workflow_preflight")
+        .map((c) => c.args),
+    );
+    expect(args).toEqual([{ versionId: 42 }, { versionId: 43 }]);
+    await page.waitForTimeout(100);
+    await expect(panel).not.toContainText("Zablokowane");
+    await expect(panel.getByRole("status")).toContainText(
+      "wszystkie węzły gotowe",
+    );
+  });
+
+  test("każde sprawdzenie woła IPC z versionId i zwraca wynik z Rust", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      workflows: { unlocked: true },
+      preflight: [claudeReview, codexBlocked],
+    });
+    const check = () =>
+      page.evaluate(async () => {
+        const workflows: {
+          workflowPreflight: (versionId: number) => Promise<unknown[]>;
+        } = await import(/* @vite-ignore */ "/src/workflows.ts");
+        return workflows.workflowPreflight(42);
+      });
+    const calls = () =>
+      page.evaluate(() => {
+        const w = window as unknown as {
+          __preflightCalls?: number;
+          __tauriMock: { calls: () => { cmd: string; args: unknown }[] };
+        };
+        return {
+          count: w.__preflightCalls ?? 0,
+          args: w.__tauriMock
+            .calls()
+            .filter((c) => c.cmd === "workflow_preflight")
+            .map((c) => c.args),
+        };
+      });
+    expect(await check()).toEqual([claudeReview, codexBlocked]);
+    expect(await calls()).toEqual({ count: 1, args: [{ versionId: 42 }] });
+    expect(await check()).toEqual([claudeReview, codexBlocked]);
+    expect(await calls()).toEqual({
+      count: 2,
+      args: [{ versionId: 42 }, { versionId: 42 }],
+    });
   });
 });

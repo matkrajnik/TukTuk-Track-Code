@@ -9,6 +9,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "agent-cli"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "ahash"
 version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5031,6 +5039,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 name = "tuktuk-track"
 version = "2.4.0"
 dependencies = [
+ "agent-cli",
  "auto-launch",
  "base64 0.22.1",
  "calamine",
@@ -5057,6 +5066,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
  "tauri-winrt-notification",
+ "toml 0.8.2",
  "winreg 0.10.1",
  "workflow-core",
 ]

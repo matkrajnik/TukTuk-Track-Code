@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { desktop } from "./store";
 import * as sim from "./preview/workflows";
 import type {
+  NodeReadiness,
   WorkflowAccess,
   WorkflowDetail,
   WorkflowGraph,
@@ -105,4 +106,12 @@ export async function exportWorkflow(id: number): Promise<string> {
 export async function importWorkflow(text: string): Promise<WorkflowDetail> {
   if (desktop) return invoke("workflow_import", { text });
   return sim.importWorkflow(text);
+}
+
+/** Gotowość agentów opublikowanej wersji (CLI, wersje, sandbox); nie wywołuje modeli. */
+export async function workflowPreflight(
+  versionId: number,
+): Promise<NodeReadiness[]> {
+  if (desktop) return invoke("workflow_preflight", { versionId });
+  return sim.preflight(versionId);
 }

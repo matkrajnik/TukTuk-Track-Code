@@ -1,4 +1,7 @@
 //! Przykładowe poprawne wyniki ról agentów (dla testów silnika i hosta).
+//!
+//! Każda próbka spełnia `output::json_schema` swojej roli (tryb ścisły: każde pole
+//! jest wymagane, `logRef` może być `null`); pilnuje tego test w `tests/output.rs`.
 
 use serde_json::{json, Value};
 
@@ -9,7 +12,7 @@ pub fn analysis() -> Value {
 
 pub fn implementation() -> Value {
     json!({"summary": "zmiany", "changedFiles": ["a.rs"],
-           "checks": [{"name": "cargo test", "passed": true}]})
+           "checks": [{"name": "cargo test", "passed": true, "logRef": null}]})
 }
 
 pub fn review_approved() -> Value {

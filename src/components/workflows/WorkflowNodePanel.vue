@@ -174,7 +174,7 @@ function remove() {
           Dostęp:
           {{
             kind.access === "readOnly"
-              ? "tylko odczyt repozytorium"
+              ? "tylko odczyt repozytorium (kontrola CLI i wykrywanie zmian, nie izolacja systemu plików)"
               : "zapis w katalogu roboczym przebiegu"
           }}
           (wynika z roli).
