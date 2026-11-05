@@ -507,6 +507,8 @@ Po MVP, w kolejności wartości:
 
 Przy każdym etapie dopisywać: datę, zakres, zmienione pliki, decyzje, wykonane testy z wynikami i pozostałe blokery. Nie zaznaczać odbioru na podstawie deklaracji agenta bez dowodów. Aktualizować plan po odkryciu ograniczeń CLI lub istniejącego kodu.
 
+Kolejne etapy (E3–E7) uruchamia się zapisanym workflow `workflows-stage` (commit po każdym etapie, bez push); prompt i opis w [PROMPT_ETAPU.md](PROMPT_ETAPU.md).
+
 Pierwsza sesja implementacyjna zaczyna od E0 i aktualnego stanu repozytorium, następnie przygotowuje kontrakty E1. Nie zaczyna od instalacji Nuxt UI/SQLx ani budowy osobnej aplikacji. Wybór modelu do pracy pozostaje po stronie użytkownika w aplikacji.
 
 ## 15. Dziennik realizacji
