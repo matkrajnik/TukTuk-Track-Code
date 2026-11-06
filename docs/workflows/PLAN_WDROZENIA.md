@@ -439,7 +439,56 @@ Odbiór: restart nie gubi historii i zgód, nie uruchamia ponownie zmian w ciemn
 
 Odbiór: spełniona lista z rozdziału 13, znane ograniczenia opisane, sprawdzona instalacja i aktualizacja na Windows. Wyłączenie funkcji zatrzymuje nowe starty i zachowuje historię; nie usuwa bazy.
 
-Zależności: E0 → E1 → E2/E3 → E4 → E5 → E6 → E7. E2 i E3 można organizacyjnie prowadzić niezależnie po ustaleniu kontraktów; nie jest to polecenie uruchomienia dodatkowych agentów. Nie deklarować dat zakończenia przed zamknięciem E0. Największa niewiadoma: egzekwowanie uprawnień i niezawodny lifecycle CLI na Windows.
+### E8 — tryb „Dynamic Workflow” (tylko Claude)
+
+Plan szczegółowy, decyzje i ryzyka: `E8_PLAN.md`; rozpoznanie na prawdziwym CLI: `E8_ROZPOZNANIE.md`.
+
+Proces dynamiczny to zwykły graf ze stałym kształtem: Start → Orkiestrator (Claude, rola
+`orchestrator`, subagenci przez narzędzie `Agent`) → [Review → Warunek ↔ Poprawki] → Decyzja
+użytkownika → Koniec. Typ wynika z grafu (węzeł z rolą `orchestrator`), nie z osobnego pola;
+format grafu zostaje w wersji 1. Edytor pokazuje dla niego formularz zamiast canvasu.
+Zabezpieczenia bez zmian: worktree, `--restricted`, wykrywanie zmian, zgoda na diff, limit
+czasu i zakończenie całego drzewa procesu, jeden aktywny przebieg.
+
+- [ ] E8.0 Rozpoznanie na prawdziwym CLI wykonane przez użytkownika i zapisane w
+  `E8_ROZPOZNANIE.md` (kształt zdarzeń z `parent_tool_use_id`, dziedziczenie `--restricted`
+  i `--tools` przez subagentów, `Workflow` w `-p`, zakończenie drzewa procesu).
+- [ ] E8.1 Czytelny dziennik narzędzi w monitorze dla obu trybów; dziennik czyta prawdziwy
+  kształt zdarzeń (`payload.payload.text`); oś zdarzeń bez zdarzeń narzędzi
+  (`workflow-activity.spec.ts`).
+- [ ] E8.2 Parser `parse_claude_line_traced` (rodzic, id narzędzi) i runner parujący narzędzia
+  po `tool_use_id`, odporny na nieznane kształty; parser czatu bez zmian
+  (`agent-cli/tests/parse.rs::traced_parser_*`, `runners::tests::*subagent*`; testy `ai_chat::` bez zmian).
+- [ ] E8.3 Domena: rola `orchestrator`, `maxSubagents`, `dynamic::{build, spec_of}`, walidacja
+  kształtu w Rust i TS 1:1 (`workflow-core/tests/validation.rs::dynamic_*`, `orchestrator_*`,
+  `graph_without_max_subagents_serializes_unchanged`; `workflow-definitions.spec.ts`).
+- [ ] E8.4 Adapter i preflight: `--tools …,Agent`, `--forward-subagent-text`, `--restricted`
+  dla orkiestratora; Claude ≥ 2.1.319; Codex jako orkiestrator zablokowany; tryb dynamiczny
+  (oba profile dostępu) zablokowany do potwierdzenia rozpoznania (stała
+  `DYNAMIC_SUBAGENTS_CONFIRMED`) (`preflight::tests::dynamic_*`, `runners::tests::orchestrator_args_*`).
+- [ ] E8.5 Edytor (formularz trybu dynamicznego), tworzenie z szablonu „Dynamiczny (Claude)”,
+  ostrzeżenie o koszcie w formularzu startu (`workflow-dynamic.spec.ts`).
+- [ ] E8.6 Monitor: drzewo orkiestrator → subagenci z bieżącą czynnością i licznikiem
+  (`workflow-activity.spec.ts`).
+- [ ] E8.7 Podgląd z przykładowym przebiegiem dynamicznym i fixture (preflight dynamiczny,
+  zdarzenia subagentów w prawdziwym kształcie).
+- [ ] E8.8 Dokumentacja (`INSTRUKCJA.md`, `E0_ANALIZA.md`, `E8_TEST_RECZNY.md`) i `npm run check`
+  z kodem 0.
+
+Odbiór: proces dynamiczny tworzy się, waliduje, publikuje i uruchamia z tymi samymi
+zabezpieczeniami co standardowy; monitor pokazuje drzewo subagentów i czytelne czynności
+na żywo i po ponownym otwarciu; stara historia przebiegów i definicji (skróty wersji)
+jest niezmieniona; czat AI bez regresji; żaden test nie łączy się z prawdziwym Claude.
+Tryb dynamiczny pozostaje zablokowany w preflighcie (oba profile dostępu), dopóki użytkownik nie
+potwierdzi w `E8_ROZPOZNANIE.md`, że subagenci dziedziczą `--restricted` i listę narzędzi
+(decyzja D2, 2026-11-06). Weryfikację na prawdziwym CLI wykonuje użytkownik (`E8_TEST_RECZNY.md`).
+
+Realizacja w dwóch częściach (skrypt `workflows-stage`): **E8a** = E8.0–E8.2 (poprawka do wydania:
+naprawa dziennika, czytelne narzędzia, parser subagentów; nie zmienia UI trybu dynamicznego),
+**E8b** = E8.3–E8.8 (tryb dynamiczny, po rozpoznaniu).
+
+Zależności: E0 → E1 → E2/E3 → E4 → E5 → E6 → E7 → E8a → E8b (E8.1 → E8.0 przed ostatecznym E8.2 →
+E8.3 → E8.4 → E8.5/E8.6 → E8.7 → E8.8). E2 i E3 można organizacyjnie prowadzić niezależnie po ustaleniu kontraktów; nie jest to polecenie uruchomienia dodatkowych agentów. Nie deklarować dat zakończenia przed zamknięciem E0. Największa niewiadoma: egzekwowanie uprawnień i niezawodny lifecycle CLI na Windows.
 
 ## 11. Plan testów
 
@@ -1199,3 +1248,14 @@ Testy: Rust (`workflow-core`: `tests/engine.rs`, `tests/driver.rs`, `tests/run_s
 `run_commands`, `runtime`, `backup`, `quit`, `main.rs`, `tests/workflow_commands.rs`) i Playwright
 (`tests/workflow-paused.spec.ts`). Natywne sprawdzenie (restart, wznowienie, tray) w `E6_TEST_RECZNY.md` i
 `E7_TEST_RECZNY.md`.
+
+### 2026-11-06 — Claude w krokach z zapisem
+
+Decyzja użytkownika: Claude może działać w krokach z zapisem (Implementacja, Poprawki;
+`AccessProfile::WorkspaceWrite`). Adapter (`runners/claude.rs`) dodaje dla zapisu `--restricted`,
+`--tools Read,Grep,Glob,Edit,Write` (bez Bash) i `--permission-mode acceptEdits`; read-only zostaje przy
+zestawie z E4. Preflight wymaga Claude Code 2.1.319+ (`CLAUDE_RESTRICTED`; starsza wersja:
+`UnsupportedVersion` z prośbą o aktualizację), nowy tryb egzekwowania `cliRestricted` (kontrola CLI, nie
+sandbox). Strażnik worktree nie traktuje zmian kroku z zapisem jako naruszenia (jak dla Codexa). Prompt
+kroku Claude z zapisem mówi, że nie ma powłoki i ma wypisać testy do uruchomienia. Sprawdzenie natywne
+w `E7_TEST_RECZNY.md`.

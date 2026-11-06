@@ -1,6 +1,6 @@
 export const meta = {
   name: 'workflows-stage',
-  description: 'Realizuje kolejne etapy planu Workflows (E3–E7): plan, implementacja (Sonnet), review i poprawki (Opus), npm run check, dziennik i commit po każdym etapie',
+  description: 'Realizuje kolejne etapy planu Workflows (E3–E8): plan, implementacja (Sonnet), review i poprawki (Opus), npm run check, dziennik i commit po każdym etapie',
   whenToUse: 'Etapy z docs/workflows/PLAN_WDROZENIA.md, np. args: { from: "E3", to: "E7", notes: { E3: "...", E4: "..." } }',
   phases: [
     { title: 'Plan', detail: 'rozbicie etapu na kroki i kryteria odbioru (agent planner)' },
@@ -14,7 +14,7 @@ export const meta = {
 
 // ---------------------------------------------------------------------------
 // args = {
-//   from: "E3", to: "E7",                 // zakres etapów (domyślnie E3–E7)
+//   from: "E3", to: "E7",                 // zakres etapów (domyślnie E3–E7; E8a, E8b — E8b wymaga notes.E8b)
 //   notes: { E3: "...", E4: "..." },      // wskazówki i decyzje dla etapów
 // }
 // Dla zgodności: { stage: "E3", notes: "..." } uruchamia jeden etap.
@@ -25,7 +25,9 @@ export const meta = {
 // Zatrzymanie: czerwone npm run check po próbach naprawy, brak commitu, albo
 // E4 bez decyzji użytkownika o read-only (notes.E4 musi ją zawierać).
 // ---------------------------------------------------------------------------
-const ALL_STAGES = ['E3', 'E4', 'E5', 'E6', 'E7']
+// E8 jest podzielone: E8a = E8.0–E8.2 (poprawka wydania), E8b = E8.3–E8.8 (tryb dynamiczny,
+// wymaga notes.E8b z wynikiem rozpoznania albo decyzją „nie wykonano”); opis w rozdz. 10 i E8_PLAN.md.
+const ALL_STAGES = ['E3', 'E4', 'E5', 'E6', 'E7', 'E8a', 'E8b']
 const single = args && args.stage
 const from = (args && args.from) || single || 'E3'
 const to = (args && args.to) || single || 'E7'
@@ -345,6 +347,11 @@ for (const stage of stages) {
   if (stage === 'E4' && !notesFor('E4')) {
     log('Zatrzymanie przed E4: brak decyzji użytkownika o read-only dla Claude (args.notes.E4).')
     report.push({ stage: 'E4', skipped: true, reason: 'Brak decyzji o read-only dla Claude w args.notes.E4 (bloker 1 w E0_ANALIZA.md).' })
+    break
+  }
+  if (stage === 'E8b' && !notesFor('E8b')) {
+    log('Zatrzymanie przed E8b: brak wyniku rozpoznania na prawdziwym CLI (docs/workflows/E8_ROZPOZNANIE.md) w args.notes.E8b.')
+    report.push({ stage: 'E8b', skipped: true, reason: 'Brak w args.notes.E8b wyniku E8_ROZPOZNANIE.md (albo decyzji „nie wykonano — tryb zostaje zablokowany”).' })
     break
   }
   phase('Plan')
