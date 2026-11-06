@@ -11,6 +11,9 @@ pub enum RunStatus {
     Queued,
     Running,
     WaitingForApproval,
+    /// Po restarcie aplikacji przebieg w kolejce albo na granicy kroków czeka na
+    /// ręczne wznowienie (`workflow_resume`); nic w nim nie działa.
+    Paused,
     Cancelling,
     Cancelled,
     Succeeded,
@@ -20,10 +23,11 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    pub const ALL: [RunStatus; 9] = [
+    pub const ALL: [RunStatus; 10] = [
         RunStatus::Queued,
         RunStatus::Running,
         RunStatus::WaitingForApproval,
+        RunStatus::Paused,
         RunStatus::Cancelling,
         RunStatus::Cancelled,
         RunStatus::Succeeded,
@@ -40,6 +44,7 @@ impl RunStatus {
             RunStatus::Queued
             | RunStatus::Running
             | RunStatus::WaitingForApproval
+            | RunStatus::Paused
             | RunStatus::Cancelling => false,
             RunStatus::Cancelled
             | RunStatus::Succeeded
@@ -52,12 +57,21 @@ impl RunStatus {
     pub fn can_transition_to(self, next: RunStatus) -> bool {
         use RunStatus::*;
         match self {
-            Queued => matches!(next, Running | Cancelled | Failed | Interrupted),
+            Queued => matches!(next, Running | Paused | Cancelled | Failed | Interrupted),
             Running => matches!(
                 next,
-                WaitingForApproval | Cancelling | Succeeded | Rejected | Failed | Interrupted
+                WaitingForApproval
+                    | Paused
+                    | Cancelling
+                    | Succeeded
+                    | Rejected
+                    | Failed
+                    | Interrupted
             ),
             WaitingForApproval => matches!(next, Running | Cancelling | Rejected | Interrupted),
+            // Wznowienie, anulowanie (bez kroku, więc od razu `Cancelled`), naruszony
+            // katalog roboczy przy wznowieniu i przywrócona kopia.
+            Paused => matches!(next, Running | Cancelled | Failed | Interrupted),
             Cancelling => matches!(next, Cancelled | Failed | Interrupted),
             Cancelled | Succeeded | Rejected | Failed | Interrupted => false,
         }
@@ -185,6 +199,7 @@ impl FailureCode {
 /// Czy stan przebiegu nie przeczy stanom kroków: aktywny krok może istnieć
 /// tylko w stanach `Running` i `Cancelling` (i najwyżej jeden), a krok
 /// oczekujący na zgodę tylko przy `WaitingForApproval`, `Running` lub `Cancelling`.
+/// `Paused` nie ma ani kroku w toku, ani oczekującego.
 pub fn consistent(run: RunStatus, executions: &[ExecutionStatus]) -> bool {
     let running = executions
         .iter()
@@ -198,6 +213,7 @@ pub fn consistent(run: RunStatus, executions: &[ExecutionStatus]) -> bool {
         RunStatus::Running | RunStatus::Cancelling => running <= 1,
         RunStatus::Queued
         | RunStatus::WaitingForApproval
+        | RunStatus::Paused
         | RunStatus::Cancelled
         | RunStatus::Succeeded
         | RunStatus::Rejected
@@ -208,6 +224,7 @@ pub fn consistent(run: RunStatus, executions: &[ExecutionStatus]) -> bool {
         RunStatus::WaitingForApproval => waiting == 1,
         RunStatus::Cancelling | RunStatus::Running => waiting <= 1,
         RunStatus::Queued
+        | RunStatus::Paused
         | RunStatus::Cancelled
         | RunStatus::Succeeded
         | RunStatus::Rejected

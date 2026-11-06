@@ -476,6 +476,8 @@ impl EventSink for RecordingSink {
 pub struct FixedWorkspace {
     hash: Mutex<String>,
     fail: AtomicBool,
+    verify_error: Mutex<Option<String>>,
+    verify_failure: Mutex<Option<String>>,
 }
 
 impl FixedWorkspace {
@@ -483,7 +485,19 @@ impl FixedWorkspace {
         Self {
             hash: Mutex::new(hash.to_owned()),
             fail: AtomicBool::new(false),
+            verify_error: Mutex::new(None),
+            verify_failure: Mutex::new(None),
         }
+    }
+
+    /// Wynik `verify` (sprawdzenie katalogu przed wznowieniem): `Some` to naruszony.
+    pub fn set_verify_error(&self, error: Option<&str>) {
+        *lock(&self.verify_error) = error.map(str::to_owned);
+    }
+
+    /// Błąd samego sprawdzenia (`verify` zwraca `Err`, np. baza niedostępna).
+    pub fn set_verify_failure(&self, failure: Option<&str>) {
+        *lock(&self.verify_failure) = failure.map(str::to_owned);
     }
 
     pub fn set_hash(&self, hash: &str) {
@@ -501,6 +515,13 @@ impl WorkspaceAccess for FixedWorkspace {
             return Err("skrót niedostępny".into());
         }
         Ok(lock(&self.hash).clone())
+    }
+
+    fn verify(&self, _run_id: RunId) -> Result<Option<String>, String> {
+        if let Some(failure) = lock(&self.verify_failure).clone() {
+            return Err(failure);
+        }
+        Ok(lock(&self.verify_error).clone())
     }
 }
 

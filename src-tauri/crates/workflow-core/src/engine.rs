@@ -44,6 +44,10 @@ pub enum RunEvent {
         from: RunStatus,
         to: RunStatus,
         code: Option<FailureCode>,
+        /// Konkretny powód błędu (np. z `WorkspaceAccess::verify` przy wznowieniu);
+        /// bez niego host zapisuje ogólny tekst kodu. Starsza historia go nie ma.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
     },
     /// Zamiar uruchomienia kroku, zapisywany przed startem runnera (5.4).
     ExecutionPlanned {
@@ -91,6 +95,11 @@ pub enum RunEvent {
         node_ids: Vec<String>,
     },
     CancelRequested,
+    /// Ręczne wznowienie wstrzymanego przebiegu (`Paused`); `request_id` daje
+    /// idempotencję (powtórka z tym samym id nie zmienia stanu).
+    ResumeRequested {
+        request_id: String,
+    },
     /// Komunikat runnera: informacyjny, pomijany przy odtwarzaniu stanu.
     Message {
         execution_id: String,
@@ -125,6 +134,7 @@ impl RunEvent {
             | RunEvent::ApprovalResolved { .. }
             | RunEvent::NodesSkipped { .. }
             | RunEvent::Reconciled { .. }
+            | RunEvent::ResumeRequested { .. }
             | RunEvent::CancelRequested => None,
         }
     }
@@ -135,6 +145,7 @@ impl RunEvent {
             RunEvent::RunCreated { .. }
             | RunEvent::RunStateChanged { .. }
             | RunEvent::RepairRoundCounted { .. }
+            | RunEvent::ResumeRequested { .. }
             | RunEvent::CancelRequested => "runStateChanged",
             RunEvent::ExecutionPlanned { .. }
             | RunEvent::ConditionEvaluated { .. }
@@ -192,6 +203,17 @@ pub enum Input {
     /// Wyjątki bez skutków ubocznych: niezłożona jeszcze zgoda jest przygotowywana
     /// ponownie, a `Cancelling` bez kroku kończy się jako `Cancelled`.
     Recover,
+    /// Restart (rekonsyliacja przy starcie aplikacji, nie w trakcie pracy): przebieg w
+    /// kolejce albo na granicy kroków przechodzi w `Paused` i czeka na ręczne
+    /// wznowienie; nic nie jest uruchamiane. W `Paused` nic nie zmienia.
+    PauseAfterRestart,
+    /// Ręczne wznowienie `Paused` → `Running` (sterownik kontynuuje graf od kursora).
+    /// `workspace_error`: katalog roboczy nie przeszedł sprawdzenia, więc przebieg
+    /// kończy się `Failed`/`WorkspaceUnavailable` bez uruchomienia agenta.
+    Resume {
+        request_id: String,
+        workspace_error: Option<String>,
+    },
     /// Restart w `WaitingForApproval`: ponowne sprawdzenie skrótu artefaktu zgody.
     ApprovalRevalidated {
         approval_id: String,

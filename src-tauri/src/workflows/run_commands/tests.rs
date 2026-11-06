@@ -389,9 +389,13 @@ fn lock_is_refused_while_runs_are_active() {
             "{status}"
         );
     }
-    let f = Fixture::new(true);
-    set_status(&f, "waitingForApproval");
-    assert!(lock_now(&f).is_ok());
+    // Bez procesu w toku wyłączenie jest dozwolone: czekający na zgodę i wstrzymany
+    // po restarcie (decyzja po E7).
+    for status in ["waitingForApproval", "paused"] {
+        let f = Fixture::new(true);
+        set_status(&f, status);
+        assert!(lock_now(&f).is_ok(), "{status}");
+    }
 }
 
 #[test]
@@ -519,4 +523,153 @@ fn newer_module_schema_blocks_mutations_but_not_history() {
     cancel(&f.db, &f.handle, f.run).unwrap();
     assert!(f.handle.wait_idle(WAIT));
     assert_eq!(count(&f, "workflow_runs"), before);
+}
+
+// ---------------------------------------------------------------------------
+// Decyzja po E7: wznowienie przebiegu wstrzymanego po restarcie (`workflow_resume`).
+
+/// Fixture z przebiegiem wstrzymanym na granicy kroków (po analizie), zanim
+/// sterownik go zobaczy; sterownik po starcie niczego nie uruchamia.
+struct PausedFixture {
+    db: SharedDb,
+    handle: RuntimeHandle,
+    runner: Arc<ScriptedRunner>,
+    run: i64,
+}
+
+impl PausedFixture {
+    fn new(unlocked: bool) -> Self {
+        use workflow_core::engine::{Effect, Input};
+        use workflow_core::ports::RunnerOutcome;
+        use workflow_core::testing::apply_inputs;
+        let t = crate::workflows::test_db::TestDb::new();
+        if unlocked {
+            store::set_unlocked(&t.db.lock().unwrap()).unwrap();
+        }
+        let run = t.create("p1");
+        let effects = apply_inputs(&t.repo, run, vec![Input::Start, Input::Continue]).unwrap();
+        let Some(Effect::LaunchAgent { execution_id, .. }) = effects.first().cloned() else {
+            panic!("brak LaunchAgent");
+        };
+        apply_inputs(
+            &t.repo,
+            run,
+            vec![
+                Input::ExecutionResult {
+                    execution_id,
+                    outcome: RunnerOutcome::Completed {
+                        output: samples::analysis(),
+                        exit_code: 0,
+                        session_id: None,
+                    },
+                },
+                Input::PauseAfterRestart,
+            ],
+        )
+        .unwrap();
+        let runner = Arc::new(
+            ScriptedRunner::new()
+                .script(
+                    "implementation",
+                    vec![workflow_core::testing::Step::complete(
+                        samples::implementation(),
+                    )],
+                )
+                .script(
+                    "review",
+                    vec![workflow_core::testing::Step::complete(
+                        samples::review_approved(),
+                    )],
+                ),
+        );
+        let handle = Runtime::start(
+            Arc::new(t.repo.clone()),
+            runner.clone(),
+            Arc::new(RecordingSink::new()),
+            Arc::new(FixedWorkspace::new("h1")),
+            DriverConfig {
+                step_timeout: |_: &AgentConfig| Duration::from_secs(20),
+                cancel_grace: Duration::from_secs(2),
+                poll_interval: Duration::from_millis(5),
+                now: || 1_000,
+                on_error: |m| panic!("błąd sterownika: {m}"),
+            },
+        );
+        assert!(handle.wait_idle(WAIT));
+        Self {
+            db: t.db.clone(),
+            handle,
+            runner,
+            run,
+        }
+    }
+
+    fn status(&self) -> String {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT status FROM workflow_runs WHERE id = ?1",
+                [self.run],
+                |r| r.get(0),
+            )
+            .unwrap()
+    }
+}
+
+#[test]
+fn paused_run_does_not_start_after_restart() {
+    let f = PausedFixture::new(true);
+    assert_eq!(f.status(), "paused");
+    assert_eq!(f.runner.total_calls(), 0);
+}
+
+#[test]
+fn resume_requires_unlock_and_leaves_the_run_paused() {
+    let f = PausedFixture::new(false);
+    let err = resume_run(&f.db, &f.handle, f.run, "w1").unwrap_err();
+    assert!(err.contains("nie jest odblokowany"), "{err}");
+    assert!(f.handle.wait_idle(WAIT));
+    assert_eq!(f.status(), "paused");
+    assert_eq!(f.runner.total_calls(), 0);
+}
+
+#[test]
+fn resume_twice_with_the_same_request_id_launches_one_step() {
+    let f = PausedFixture::new(true);
+    assert_eq!(
+        resume_run(&f.db, &f.handle, f.run, "w1").unwrap(),
+        RunStatus::Running
+    );
+    resume_run(&f.db, &f.handle, f.run, "w1").unwrap();
+    assert!(f.handle.wait_idle(WAIT));
+    assert_eq!(f.runner.calls("implementation"), 1);
+    assert_eq!(f.runner.calls("analysis"), 0);
+    assert_eq!(f.status(), "waitingForApproval");
+    // Inne id po wznowieniu: czytelny błąd.
+    let err = resume_run(&f.db, &f.handle, f.run, "w2").unwrap_err();
+    assert_eq!(err, "Przebieg nie jest wstrzymany.");
+    assert!(resume_run(&f.db, &f.handle, 999, "w3").is_err());
+}
+
+#[test]
+fn cancel_of_a_paused_run_works_without_unlock() {
+    let f = PausedFixture::new(false);
+    cancel(&f.db, &f.handle, f.run).unwrap();
+    assert!(f.handle.wait_idle(WAIT));
+    assert_eq!(f.status(), "cancelled");
+    assert_eq!(f.runner.total_calls(), 0);
+}
+
+#[test]
+fn resume_after_shutdown_is_refused_with_a_message() {
+    let f = PausedFixture::new(true);
+    f.handle.shutdown_graceful(Duration::from_secs(2));
+    let err = resume_run(&f.db, &f.handle, f.run, "w1").unwrap_err();
+    assert_eq!(
+        err,
+        "Aplikacja się zamyka — wznów przebieg po ponownym uruchomieniu."
+    );
+    assert_eq!(f.status(), "paused");
+    assert_eq!(f.runner.total_calls(), 0);
 }

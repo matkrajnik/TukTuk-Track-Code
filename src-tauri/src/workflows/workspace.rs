@@ -343,6 +343,23 @@ pub fn release(db: &SharedDb, run_id: RunId, now: i64) -> Result<(), WorkspaceEr
     .map_err(storage)
 }
 
+const ERR_NO_WORKSPACE: &str =
+    "Przebieg nie ma zarezerwowanego katalogu roboczego (aplikacja przerwała przygotowanie).";
+
+/// Czy katalog roboczy przebiegu nadal jest pewny przed uruchomieniem agenta:
+/// `Ok(Some(powód))` przy braku rezerwacji albo worktree, którego Git nie
+/// potwierdza (np. podmieniony `.git`); `Err` przy błędzie bazy. Git i odczyt
+/// `.git` bez blokady bazy (rekonsyliacja przy starcie i `workflow_resume`).
+pub(crate) fn workspace_problem(db: &SharedDb, run_id: RunId) -> Result<Option<String>, String> {
+    let Some(workspace) = reserved(db, run_id).map_err(|e| e.to_string())? else {
+        return Ok(Some(ERR_NO_WORKSPACE.to_owned()));
+    };
+    match WorktreeGit::for_workspace(&workspace).and_then(|git| git.verify()) {
+        Ok(()) => Ok(None),
+        Err(e) => Ok(Some(e.to_string())),
+    }
+}
+
 /// Rezerwacja przebiegu (aktywna), jeśli istnieje.
 pub(crate) fn reserved(db: &SharedDb, run_id: RunId) -> Result<Option<Workspace>, WorkspaceError> {
     let db = conn(db)?;
@@ -777,6 +794,10 @@ impl WorkspaceAccess for GitWorkspace {
             .ok()
             .flatten()
             .map(|ws| ws.worktree_path.to_string_lossy().into_owned())
+    }
+
+    fn verify(&self, run_id: RunId) -> Result<Option<String>, String> {
+        workspace_problem(&self.db, run_id)
     }
 }
 

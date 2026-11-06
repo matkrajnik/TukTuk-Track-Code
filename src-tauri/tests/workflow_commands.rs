@@ -21,7 +21,7 @@ const KEYLESS: [&str; 9] = [
 ];
 
 /// Komendy wymagające odblokowanego modułu.
-const KEYED: [&str; 15] = [
+const KEYED: [&str; 16] = [
     "workflow_list",
     "workflow_get",
     "workflow_create",
@@ -36,22 +36,30 @@ const KEYED: [&str; 15] = [
     "workflow_version_graph",
     "workflow_start",
     "workflow_decide",
+    "workflow_resume",
     "workflow_artifact_read",
 ];
 
 /// Wywołania sprawdzające klucz: bezpośrednie (`with_unlocked`, `require_unlocked`,
 /// `run_commands::unlocked`) albo przez funkcję rdzenia, która je robi.
-const GUARDS: [&str; 7] = [
+const GUARDS: [&str; 8] = [
     "with_unlocked",
     "require_unlocked",
     "unlocked",
     "start_run",
     "preflight_graph",
     "decide",
+    "resume_run",
     "artifact_read",
 ];
 /// Funkcje rdzenia, do których komendy delegują; same muszą sprawdzać klucz.
-const CORE_GUARDED: [&str; 4] = ["start_run", "decide", "artifact_read", "preflight_graph"];
+const CORE_GUARDED: [&str; 5] = [
+    "start_run",
+    "decide",
+    "resume_run",
+    "artifact_read",
+    "preflight_graph",
+];
 /// Bezpośrednie sprawdzenia klucza w funkcjach rdzenia.
 const DIRECT_GUARDS: [&str; 2] = ["require_unlocked", "unlocked"];
 

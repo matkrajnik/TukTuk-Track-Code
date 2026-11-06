@@ -200,7 +200,7 @@ Zgoda jest przypisana do `runId`, konkretnego wykonania węzła i skrótu przegl
 
 ### 5.2 Stany
 
-`WorkflowRun`: Queued → Running → WaitingForApproval → Running → Succeeded/Rejected. Dodatkowe przejścia: Running/WaitingForApproval → Cancelling → Cancelled; błędy → Failed; awaria hosta → Interrupted. Interrupted wymaga świadomego odzyskania. Przebieg Queued można anulować bez uruchamiania procesów.
+`WorkflowRun`: Queued → Running → WaitingForApproval → Running → Succeeded/Rejected. Dodatkowe przejścia: Running/WaitingForApproval → Cancelling → Cancelled; błędy → Failed; awaria hosta → Interrupted. Interrupted wymaga świadomego odzyskania. Przebieg Queued można anulować bez uruchamiania procesów. Od decyzji po E7 (rozdz. 15, 2026-11-06): po restarcie aplikacji Queued i Running na granicy kroków → Paused (czeka na ręczne wznowienie); Paused → Running (wznowienie), Cancelled (anulowanie), Failed (naruszony worktree przy wznowieniu), Interrupted (przywrócona kopia).
 
 `NodeExecution`: Pending → Running → Completed/Failed/Cancelled/Interrupted; Approval: Pending → Waiting → Completed/Rejected/Cancelled. Węzły niewybranej gałęzi są Skipped. Status końcowy przebiegu i status kroku nie mogą sobie przeczyć.
 
@@ -388,7 +388,7 @@ Odbiór: użytkownik tworzy i ponownie otwiera poprawny graf; błąd wskazuje ko
 - [x] Dodać timeouty, anulowanie, błędy i strumień zdarzeń z sequence.
 - [x] Uruchomić scenariusz end-to-end na deterministycznych runnerach testowych.
 
-Odbiór: ten sam zapisany zestaw wyników prowadzi do tej samej ścieżki grafu; żaden test nie potrzebuje konta AI. Restart na granicy kroków nie dubluje kolejnego uruchomienia.
+Odbiór: ten sam zapisany zestaw wyników prowadzi do tej samej ścieżki grafu; żaden test nie potrzebuje konta AI. Restart na granicy kroków nie dubluje kolejnego uruchomienia (od 2026-11-06: przebieg czeka jako Wstrzymany i rusza dopiero po ręcznym wznowieniu, dokładnie raz; test `restart_at_a_step_boundary_waits_paused_until_resumed_once`).
 
 ### E4 — runtime Windows i adaptery
 
@@ -1150,3 +1150,52 @@ security-reviewer, vue-reviewer; sprawdzono tylko clippy i grep klucza). Testy n
 aktualizacja z 2.4.0, tray a „Zakończ”, zabicie procesu), testy na prawdziwych Claude i Codex oraz pilotaż:
 checklista w `E7_TEST_RECZNY.md`, wykonuje ją użytkownik. Do potwierdzenia: numer 2.5.0. Poza zakresem E7: nowe
 zrzuty wzorcowe widoków Workflows, filtr repozytorium z `agent_bindings`, pomiar `cargo llvm-cov`.
+
+### 2026-11-06 — decyzje po E7
+
+Decyzje użytkownika po E7:
+
+1. **Wersja 2.5.0** dla wydania z modułem Workflows (numer potwierdzony; podniesienie wersji w plikach przy wydaniu).
+2. **`workflow_lock` odmawia przy aktywnych przebiegach** (kolejka, praca, zatrzymywanie) zamiast je anulować;
+   czekający na zgodę i wstrzymany po restarcie nie blokują (nic w nich nie działa).
+3. **Przywracanie kopii zablokowane także przy `WaitingForApproval` i `Paused`** (każdy nieskończony przebieg);
+   przywrócona kopia z takim przebiegiem przerywa go (`Interrupted`) jak inne nieskończone.
+4. **Potwierdzenie przy „Zakończ aplikację” z traya w trakcie kroku.** Gdy przebieg ma działający krok agenta
+   (`Running`/`Cancelling` z krokiem w toku), tray pokazuje główne okno i pyta: „Trwa krok przebiegu „<proces>”.
+   Zakończenie aplikacji przerwie go, a przebieg zostanie oznaczony jako przerwany. Zakończyć?” („Zakończ” /
+   „Anuluj”, Esc = Anuluj). Pytanie pada także przy zablokowanym module. Bez kroku w toku wyjście jak dotąd;
+   zamknięcie okna (X) bez zmian. Kod: `quit::{plan, request_quit, app_quit_pending, app_quit_cancel, app_quit_confirmed}`,
+   `workflows::runtime::{quit_needs_confirmation, running_step_workflow}`, `src/components/QuitDialog.vue`.
+5. **Przebieg po restarcie czeka na ręczne wznowienie.** Nowy stan `RunStatus::Paused` („Wstrzymany”, ⏯).
+   Rekonsyliacja przy starcie (`recovery::reconcile_at_startup`, przed startem sterownika) przenosi przebieg w
+   kolejce z poprawną rezerwacją i przebieg na granicy kroków z pewnym worktree do `Paused`
+   (`Input::PauseAfterRestart`); naruszony worktree albo brak rezerwacji dalej daje `Failed`/`workspaceUnavailable`.
+   Krok przerwany w trakcie dalej daje `Interrupted`. Dotyczy to też kolejki: wcześniej przebieg `Queued` z
+   rezerwacją startował po restarcie sam. Wznowienie: komenda `workflow_resume(runId, requestId)` (z kluczem,
+   idempotentna po `requestId` przez zdarzenie `ResumeRequested`), przed wznowieniem `WorkspaceAccess::verify`
+   (jak rekonsyliacja), potem sterownik kontynuuje graf od następnego kroku dokładnie raz. Anulowanie `Paused`
+   działa bez klucza i kończy się od razu `Cancelled` (bez `Cancelling`, bo nic nie działa). Wstrzymany nie blokuje
+   `workflow_lock` ani aktualizacji; blokuje przywracanie kopii; rezerwacja worktree zostaje. Powiadomienie (ustawienie
+   „czeka na Ciebie”): „Przebieg wstrzymany po restarcie — wznów go w monitorze.”, raz na przebieg (klucz
+   `wf-paused:<runId>`). Kryterium E3 o restarcie na granicy kroków zmienione świadomie (test
+   `restart_at_a_step_boundary_waits_paused_until_resumed_once`).
+
+Decyzje wykonawcy: wstrzymanie w rekonsyliacji hosta, a nie w sterowniku (testy i fixture tworzą przebiegi `Queued`
+przed startem sterownika, a w aplikacji przebieg powstaje dopiero po starcie sterownika, więc każdy `Queued` przy
+starcie pochodzi z poprzedniej sesji); „Wznów” tylko w monitorze (tablica agentów pokazuje wstrzymany przebieg i
+otwiera monitor, bez klucza pozwala go zatrzymać); podgląd odrzuca wznowienie jak start („Podgląd nie uruchamia
+agentów.”) i nie ma przykładowego przebiegu `Paused`.
+
+Poprawki po przeglądzie (rust-reviewer, vue-reviewer): pytanie o zakończenie w module `quit.rs` (czysta
+decyzja `quit::plan`, oczekujące pytanie odpytywane przez okno komendą `app_quit_pending`, czyszczone przez
+`app_quit_cancel`; `app_quit_confirmed` zwraca błąd zatrzymania pomiaru do okna); idempotencja wznowienia
+dotyczy jednej pauzy (wejście w `Paused` czyści `resume_requests`); błąd samego sprawdzenia worktree
+odrzuca wznowienie bez zdarzeń; zatrzymujący się sterownik odrzuca wznowienie („Aplikacja się zamyka — wznów
+przebieg po ponownym uruchomieniu.”); powód naruszonego worktree trafia do błędu przebiegu (pole `message` w
+`RunStateChanged`, opcjonalne w JSON); tekst blokady przywracania wspomina wstrzymane przebiegi; okno
+wyłączenia modułu ostrzega o wstrzymanych przebiegach.
+
+Testy: Rust (`workflow-core`: `tests/engine.rs`, `tests/driver.rs`, `tests/run_states.rs`; host: `recovery`,
+`run_commands`, `runtime`, `backup`, `quit`, `main.rs`, `tests/workflow_commands.rs`) i Playwright
+(`tests/workflow-paused.spec.ts`). Natywne sprawdzenie (restart, wznowienie, tray) w `E6_TEST_RECZNY.md` i
+`E7_TEST_RECZNY.md`.

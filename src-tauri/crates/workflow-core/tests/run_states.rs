@@ -7,12 +7,14 @@ const ALLOWED: &[(RunStatus, RunStatus)] = &[
     (Queued, Cancelled),
     (Queued, Failed),
     (Queued, Interrupted),
+    (Queued, Paused),
     (Running, WaitingForApproval),
     (Running, Cancelling),
     (Running, Succeeded),
     (Running, Rejected),
     (Running, Failed),
     (Running, Interrupted),
+    (Running, Paused),
     (WaitingForApproval, Running),
     (WaitingForApproval, Cancelling),
     (WaitingForApproval, Rejected),
@@ -20,6 +22,12 @@ const ALLOWED: &[(RunStatus, RunStatus)] = &[
     (Cancelling, Cancelled),
     (Cancelling, Failed),
     (Cancelling, Interrupted),
+    // Decyzja po E7: wstrzymany po restarcie czeka na wznowienie, anulowanie,
+    // błąd katalogu roboczego przy wznowieniu albo przywrócenie kopii.
+    (Paused, Running),
+    (Paused, Cancelled),
+    (Paused, Failed),
+    (Paused, Interrupted),
 ];
 
 #[test]
@@ -120,6 +128,7 @@ fn names_serialize_in_camel_case() {
         "\"reviewLimitExceeded\""
     );
     assert_eq!(json(WaitingForApproval), "\"waitingForApproval\"");
+    assert_eq!(json(Paused), "\"paused\"");
     assert_eq!(json(ApprovalStatus::Invalidated), "\"invalidated\"");
     assert_eq!(json(ExecutionStatus::Interrupted), "\"interrupted\"");
     let back: FailureCode = serde_json::from_str("\"invalidOutput\"").unwrap();
@@ -162,4 +171,14 @@ fn approval_resolved_without_comment_still_replays() {
         RunEvent::ApprovalResolved { comment, .. } => assert_eq!(comment, None),
         other => panic!("{other:?}"),
     }
+}
+
+#[test]
+fn paused_is_not_terminal_and_has_no_running_step() {
+    assert!(!Paused.is_terminal());
+    assert!(RunStatus::ALL.contains(&Paused));
+    assert!(consistent(Paused, &[ExecutionStatus::Completed]));
+    assert!(consistent(Paused, &[]));
+    assert!(!consistent(Paused, &[ExecutionStatus::Running]));
+    assert!(!consistent(Paused, &[ExecutionStatus::Waiting]));
 }

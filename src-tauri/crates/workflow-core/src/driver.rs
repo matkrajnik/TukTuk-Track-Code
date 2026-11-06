@@ -24,10 +24,12 @@ use crate::support::{lock, replay_stored};
 
 mod decide;
 mod messages;
+mod resume;
 
 pub use decide::{DecideError, DecideRequest, DecideResult, MAX_APPROVAL_COMMENT_CHARS};
 use messages::MessageBuffer;
 pub use messages::{MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_PAYLOAD_BYTES, RUNNER_EVENT_BATCH};
+pub use resume::ResumeError;
 
 /// Co ile sterownik sprawdza komendy i limity czasu podczas czekania na krok.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -106,6 +108,8 @@ enum Command {
     Start(RunId),
     Decide(DecideRequest, Sender<Result<DecideResult, DecideError>>),
     Cancel(RunId),
+    /// Ręczne wznowienie wstrzymanego przebiegu (id żądania i odpowiedź).
+    Resume(RunId, String, Sender<Result<RunStatus, ResumeError>>),
     Wake,
     /// Jednorazowe ponowne sprawdzenie zgód po starcie (E6).
     Revalidate,
@@ -168,6 +172,15 @@ impl RuntimeHandle {
 
     pub fn cancel(&self, run_id: RunId) {
         self.send(Command::Cancel(run_id));
+    }
+
+    /// Wznawia przebieg wstrzymany po restarcie (`Paused`); powtórka z tym samym
+    /// `request_id` zwraca stan bez drugiego wznowienia.
+    pub fn resume(&self, run_id: RunId, request_id: &str) -> Result<RunStatus, ResumeError> {
+        let (reply, answer) = mpsc::channel();
+        self.send(Command::Resume(run_id, request_id.to_owned(), reply));
+        // Brak odpowiedzi: wątek roboczy już się zakończył (wyjście z aplikacji).
+        answer.recv().map_err(|_| ResumeError::ShuttingDown)?
     }
 
     /// Ponownie przegląda aktywne przebiegi (też robi to przy starcie).
@@ -400,6 +413,10 @@ impl Worker {
             Command::Revalidate => self.revalidate_approvals(),
             Command::ShutdownGraceful(limit, reply) => self.begin_graceful(limit, reply),
             Command::Cancel(run_id) => self.cancel_run(run_id),
+            Command::Resume(run_id, request_id, reply) => {
+                let result = self.resume_run(run_id, &request_id);
+                let _ = reply.send(result);
+            }
             Command::Decide(request, reply) => {
                 let result = self.decide_approval(&request);
                 let _ = reply.send(result);
@@ -551,8 +568,10 @@ impl Worker {
                 (RunStatus::Running, false) => Some(Input::Continue),
                 (RunStatus::Running | RunStatus::Cancelling, true) => Some(Input::Recover),
                 (RunStatus::Cancelling, false) => Some(Input::Recover),
+                // Wstrzymany czeka na `resume`; samo przejrzenie go nie wznawia.
                 (
                     RunStatus::WaitingForApproval
+                    | RunStatus::Paused
                     | RunStatus::Cancelled
                     | RunStatus::Succeeded
                     | RunStatus::Rejected

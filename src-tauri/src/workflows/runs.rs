@@ -69,7 +69,9 @@ fn insert_event(
 /// Przenosi zdarzenie do tabel projekcji.
 fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Result<(), RepoError> {
     match event {
-        RunEvent::RunStateChanged { to, code, .. } => {
+        RunEvent::RunStateChanged {
+            to, code, message, ..
+        } => {
             tx.execute(
                 "UPDATE workflow_runs SET status = ?1, updated_at = ?2,
                     error_code = COALESCE(?3, error_code),
@@ -81,7 +83,7 @@ fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Resul
                     enum_text(to),
                     now,
                     code.map(|c| enum_text(&c)),
-                    code.map(|c| c.message()),
+                    code.map(|c| message.clone().unwrap_or_else(|| c.message().to_owned())),
                     to.is_terminal(),
                     run_id
                 ],
@@ -199,6 +201,7 @@ fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Resul
         | RunEvent::RepairRoundCounted { .. }
         | RunEvent::NodesSkipped { .. }
         | RunEvent::CancelRequested
+        | RunEvent::ResumeRequested { .. }
         | RunEvent::Reconciled {
             workspace_released: false,
             ..

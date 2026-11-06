@@ -1,7 +1,7 @@
 //! Workflows w kopii zapasowej (PLAN_WDROZENIA.md, 7.2; E0_ANALIZA.md, A03; etap E6).
 //!
 //! - Przywrócenie jest odrzucane, gdy jakikolwiek przebieg jest nieskończony
-//!   (`Queued`, `Running`, `Cancelling`, `WaitingForApproval`); sprawdzenie
+//!   (`Queued`, `Running`, `Cancelling`, `WaitingForApproval`, `Paused`); sprawdzenie
 //!   odbywa się pod tą samą blokadą bazy co zastąpienie danych. Przygotowanie
 //!   aktualizacji (`active_work`) blokują tylko przebiegi z procesem w toku.
 //! - Kopia z nowszym schematem modułu jest odrzucana przed migracją.
@@ -35,7 +35,10 @@ pub const RESTORED_MESSAGE: &str =
     "Przebieg przerwany: przywrócono kopię zapasową; nie jest wznawiany.";
 
 const ACTIVE_STATUSES: &str = "'queued', 'running', 'cancelling'";
-const UNFINISHED_STATUSES: &str = "'queued', 'running', 'cancelling', 'waitingForApproval'";
+/// Wstrzymany po restarcie (`paused`) też jest nieskończony: kopia odebrałaby mu
+/// rezerwację katalogu roboczego (decyzja po E7).
+const UNFINISHED_STATUSES: &str =
+    "'queued', 'running', 'cancelling', 'waitingForApproval', 'paused'";
 
 fn count_in(conn: &Connection, statuses: &str) -> rusqlite::Result<i64> {
     conn.query_row(
@@ -46,7 +49,8 @@ fn count_in(conn: &Connection, statuses: &str) -> rusqlite::Result<i64> {
 }
 
 /// Opis przebiegów z procesami w toku albo `None` (blokada aktualizacji;
-/// przebieg czekający na zgodę nie ma procesu, więc nie blokuje). Wołać pod
+/// przebieg czekający na zgodę albo wstrzymany po restarcie nie ma procesu, więc
+/// nie blokuje). Wołać pod
 /// blokadą bazy, tą samą co przygotowanie aktualizacji.
 pub fn active_work(conn: &Connection) -> rusqlite::Result<Option<String>> {
     let count = count_in(conn, ACTIVE_STATUSES)?;
@@ -65,7 +69,7 @@ pub fn restore_blocker(conn: &Connection) -> rusqlite::Result<Option<String>> {
     let count = count_in(conn, UNFINISHED_STATUSES)?;
     Ok((count > 0).then(|| {
         format!(
-            "Nieskończone przebiegi Workflows: {count}. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody lub zatrzymaj przebiegi."
+            "Nieskończone przebiegi Workflows: {count}. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody, wznów wstrzymane przebiegi lub zatrzymaj przebiegi."
         )
     }))
 }

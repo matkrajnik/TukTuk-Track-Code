@@ -1,7 +1,7 @@
 /**
  * Przebiegi Workflows (E5): w aplikacji komendy `workflow_*` z `run_commands.rs`,
  * w podglądzie symulator `preview/workflowRuns.ts` (jeden przykładowy przebieg;
- * start, decyzja i anulowanie są zablokowane).
+ * start, decyzja, wznowienie i anulowanie są zablokowane).
  */
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -15,6 +15,7 @@ import type {
   WorkflowFault,
   RunDetail,
   RunFilter,
+  RunStatus,
   RunSummary,
   StartRunRequest,
   StartRunResult,
@@ -62,6 +63,18 @@ export async function workflowRunEvents(
 export async function cancelWorkflowRun(runId: number): Promise<void> {
   if (desktop) return invoke("workflow_cancel", { runId });
   return sim.cancel(runId);
+}
+
+/**
+ * Wznowienie przebiegu wstrzymanego po restarcie (`paused`): wymaga klucza, bo
+ * uruchamia agentów. Ten sam `requestId` przy powtórce nie wznawia drugi raz.
+ */
+export async function resumeWorkflowRun(
+  runId: number,
+  requestId: string,
+): Promise<RunStatus> {
+  if (desktop) return invoke("workflow_resume", { runId, requestId });
+  return sim.resume(runId, requestId);
 }
 
 /** Świadome odzyskanie przerwanego przebiegu (E6): bez klucza, nie wznawia grafu. */

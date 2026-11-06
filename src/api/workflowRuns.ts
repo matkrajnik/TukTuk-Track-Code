@@ -9,6 +9,8 @@ export type RunStatus =
   | "queued"
   | "running"
   | "waitingForApproval"
+  /** Po restarcie aplikacji: czeka na ręczne wznowienie (`workflow_resume`). */
+  | "paused"
   | "cancelling"
   | "cancelled"
   | "succeeded"
@@ -206,6 +208,9 @@ export function recoveryMessage(view: RecoveryView): string {
 
 /** Stały prefiks błędu `workflow_decide`, gdy zmiany unieważniły zgodę. */
 export const INVALIDATED_PREFIX = "Zgoda unieważniona: ";
+/** Wyjaśnienie w monitorze przebiegu wstrzymanego po restarcie (decyzja po E7). */
+export const PAUSED_HINT =
+  "Przebieg został wstrzymany po restarcie aplikacji. „Wznów” sprawdzi katalog roboczy i uruchomi następny krok.";
 /** Komunikat podglądu: start, decyzja i anulowanie nie uruchamiają agentów. */
 export const PREVIEW_NO_AGENTS = "Podgląd nie uruchamia agentów.";
 /** Najwięcej linii logu wyrenderowanych naraz (starsze za „Pokaż wcześniejsze”). */
@@ -219,6 +224,7 @@ export const ACTIVE_STATUSES: RunStatus[] = [
   "queued",
   "running",
   "waitingForApproval",
+  "paused",
   "cancelling",
 ];
 
@@ -234,6 +240,7 @@ export const RUN_STATUS_LABELS: Record<
   queued: { label: "W kolejce", icon: "…" },
   running: { label: "W toku", icon: "▶" },
   waitingForApproval: { label: "Czeka na zgodę", icon: "⏸" },
+  paused: { label: "Wstrzymany", icon: "⏯" },
   cancelling: { label: "Zatrzymywanie", icon: "■" },
   cancelled: { label: "Zatrzymany", icon: "■" },
   succeeded: { label: "Zakończony", icon: "✓" },

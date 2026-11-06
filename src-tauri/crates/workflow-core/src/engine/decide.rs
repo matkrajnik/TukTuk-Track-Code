@@ -58,6 +58,11 @@ pub fn decide(
             &current_hash,
         )?,
         Input::Recover => work.recover()?,
+        Input::PauseAfterRestart => work.pause_after_restart()?,
+        Input::Resume {
+            request_id,
+            workspace_error,
+        } => work.resume(request_id, workspace_error)?,
         Input::ApprovalRevalidated {
             approval_id,
             current_hash,
@@ -96,12 +101,36 @@ impl Work<'_> {
     }
 
     fn set_status(&mut self, to: RunStatus, code: Option<FailureCode>) -> Result<(), EngineError> {
+        self.set_status_with(to, code, None)
+    }
+
+    fn set_status_with(
+        &mut self,
+        to: RunStatus,
+        code: Option<FailureCode>,
+        message: Option<String>,
+    ) -> Result<(), EngineError> {
         let from = self.state.status;
-        self.emit(RunEvent::RunStateChanged { from, to, code })
+        self.emit(RunEvent::RunStateChanged {
+            from,
+            to,
+            code,
+            message,
+        })
     }
 
     /// Zapisuje węzły, których przebieg nie odwiedził, i przechodzi do stanu końcowego.
     fn finish_run(&mut self, to: RunStatus, code: Option<FailureCode>) -> Result<(), EngineError> {
+        self.finish_run_with(to, code, None)
+    }
+
+    /// Jak `finish_run`, z konkretnym powodem błędu w zdarzeniu stanu.
+    fn finish_run_with(
+        &mut self,
+        to: RunStatus,
+        code: Option<FailureCode>,
+        message: Option<String>,
+    ) -> Result<(), EngineError> {
         let skipped: Vec<String> = self
             .graph
             .nodes
@@ -112,7 +141,7 @@ impl Work<'_> {
         if !skipped.is_empty() {
             self.emit(RunEvent::NodesSkipped { node_ids: skipped })?;
         }
-        self.set_status(to, code)
+        self.set_status_with(to, code, message)
     }
 
     fn fail_run(&mut self, code: FailureCode) -> Result<(), EngineError> {
@@ -511,6 +540,11 @@ impl Work<'_> {
                 }
                 self.finish_run(RunStatus::Cancelled, None)
             }
+            // Wstrzymany przebieg nie ma kroku w toku: kończy się od razu.
+            RunStatus::Paused => {
+                self.emit(RunEvent::CancelRequested)?;
+                self.finish_run(RunStatus::Cancelled, None)
+            }
             // Powtórne anulowanie i anulowanie zakończonego przebiegu nic nie zmieniają.
             RunStatus::Cancelling
             | RunStatus::Cancelled
@@ -687,6 +721,43 @@ impl Work<'_> {
             return Ok(());
         }
         self.interrupt(&record.id, FailureCode::Interrupted.message())
+    }
+
+    fn pause_after_restart(&mut self) -> Result<(), EngineError> {
+        match self.state.status {
+            RunStatus::Paused => Ok(()),
+            RunStatus::Queued => self.set_status(RunStatus::Paused, None),
+            RunStatus::Running if self.state.unfinished().is_none() => {
+                self.set_status(RunStatus::Paused, None)
+            }
+            _ => Err(invalid_state(
+                "wstrzymać po restarcie można tylko przebieg w kolejce albo na granicy kroków",
+            )),
+        }
+    }
+
+    /// Wznowienie: powtórka z tym samym `request_id` nic nie zmienia (także po
+    /// błędzie katalogu roboczego), inne id poza `Paused` to niedozwolony stan.
+    fn resume(
+        &mut self,
+        request_id: String,
+        workspace_error: Option<String>,
+    ) -> Result<(), EngineError> {
+        if self.state.resume_requests.contains(&request_id) {
+            return Ok(());
+        }
+        if self.state.status != RunStatus::Paused {
+            return Err(invalid_state("przebieg nie jest wstrzymany"));
+        }
+        self.emit(RunEvent::ResumeRequested { request_id })?;
+        match workspace_error {
+            Some(reason) => self.finish_run_with(
+                RunStatus::Failed,
+                Some(FailureCode::WorkspaceUnavailable),
+                Some(format!("Wznowienie odrzucone: {reason}")),
+            ),
+            None => self.set_status(RunStatus::Running, None),
+        }
     }
 
     fn invalidate_pending_approvals(&mut self) -> Result<(), EngineError> {

@@ -13,6 +13,7 @@ import JiraMoveBanner from "./components/JiraMoveBanner.vue";
 import FocusBanner from "./components/FocusBanner.vue";
 import UpdateBanner from "./components/UpdateBanner.vue";
 import DayDialogs from "./components/DayDialogs.vue";
+import QuitDialog from "./components/QuitDialog.vue";
 import AiFirstRun from "./components/AiFirstRun.vue";
 import AiChat from "./components/AiChat.vue";
 import { chat, openChat, setChatOpen, startChat, useChatEnabled } from "./aichat";
@@ -865,6 +866,7 @@ onUnmounted(() => {
       <QuickSwitch @close="quickPreview = false" @updated="data = $event" />
     </div>
     <DayDialogs main :data="data" @updated="updated" @error="error = $event" />
+    <QuitDialog />
     <AiFirstRun
       v-if="aiAsk"
       :detected="aiAsk"

@@ -3,7 +3,7 @@
  * szablonu „Analiza → implementacja → review” czekający na zgodę (repozytorium
  * z kalkulator.js) oraz drugi, przerwany przebieg z zarezerwowanym katalogiem
  * roboczym do pokazania odzyskania (E6). Wyniki mają kształt
- * `workflow_core::samples`. Start, decyzja i anulowanie rzucają komunikat, bo
+ * `workflow_core::samples`. Start, decyzja, wznowienie i anulowanie rzucają komunikat, bo
  * podgląd nie uruchamia agentów; odzyskanie tylko zwalnia przykładową rezerwację.
  */
 import {
@@ -14,6 +14,7 @@ import {
   type RecoverOutcome,
   type RunDetail,
   type RunFilter,
+  type RunStatus,
   type RunSummary,
   type StartRunRequest,
   type StartRunResult,
@@ -160,6 +161,11 @@ export function decide(_command: DecideRunRequest): Promise<DecideRunResult> {
 }
 
 export function cancel(_runId: number): Promise<void> {
+  return Promise.reject(PREVIEW_NO_AGENTS);
+}
+
+/** Wznowienie uruchamia agentów, więc podgląd je odrzuca (jak start). */
+export function resume(_runId: number, _requestId: string): Promise<RunStatus> {
   return Promise.reject(PREVIEW_NO_AGENTS);
 }
 

@@ -48,6 +48,8 @@ pub struct RunState {
     pub skipped: Vec<String>,
     pub failure: Option<FailureCode>,
     pub cancel_requested: bool,
+    /// Identyfikatory żądań wznowienia (`ResumeRequested`), w kolejności.
+    pub resume_requests: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +106,7 @@ impl RunState {
             skipped: Vec::new(),
             failure: None,
             cancel_requested: false,
+            resume_requests: Vec::new(),
         }
     }
 
@@ -175,7 +178,7 @@ impl RunState {
                     self.visited.insert(trigger.id.clone());
                 }
             }
-            RunEvent::RunStateChanged { from, to, code } => {
+            RunEvent::RunStateChanged { from, to, code, .. } => {
                 if *from != self.status {
                     return Err(ReplayError::Contradiction(format!(
                         "przejście z {from:?}, a stan to {:?}",
@@ -191,6 +194,11 @@ impl RunState {
                 self.status = *to;
                 if code.is_some() {
                     self.failure = *code;
+                }
+                // Idempotencja wznowienia dotyczy jednej pauzy: nowa pauza zaczyna od zera,
+                // więc to samo id po kolejnym restarcie faktycznie wznawia.
+                if *to == RunStatus::Paused {
+                    self.resume_requests.clear();
                 }
             }
             RunEvent::ExecutionPlanned {
@@ -315,6 +323,14 @@ impl RunState {
             }
             RunEvent::NodesSkipped { node_ids } => self.skipped = node_ids.clone(),
             RunEvent::CancelRequested => self.cancel_requested = true,
+            RunEvent::ResumeRequested { request_id } => {
+                if self.status != RunStatus::Paused {
+                    return Err(ReplayError::Contradiction(
+                        "wznowienie dotyczy tylko wstrzymanego przebiegu".into(),
+                    ));
+                }
+                self.resume_requests.push(request_id.clone());
+            }
             RunEvent::Reconciled { .. } => {
                 if self.status != RunStatus::Interrupted {
                     return Err(ReplayError::Contradiction(

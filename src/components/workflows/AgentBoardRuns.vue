@@ -26,7 +26,13 @@ import {
 } from "../../workflowAccess";
 
 /** Stany „w toku” (bez stanów końcowych z `RunStatus::is_terminal`). */
-const ACTIVE: RunStatus[] = ["queued", "running", "waitingForApproval", "cancelling"];
+const ACTIVE: RunStatus[] = [
+  "queued",
+  "running",
+  "waitingForApproval",
+  "paused",
+  "cancelling",
+];
 const LIMIT = 20;
 
 const runs = ref<RunSummary[]>([]);

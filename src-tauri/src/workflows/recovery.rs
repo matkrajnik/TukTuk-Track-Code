@@ -9,7 +9,10 @@
 //! 2. rezerwacje przebiegów końcowych (poza `Interrupted`) zostaną zwolnione;
 //! 3. przebieg w kolejce bez rezerwacji, a także przebieg w kolejce albo na granicy
 //!    kroków z naruszonym worktree (np. podmieniony `.git`), skończy się
-//!    `Failed`/`workspaceUnavailable` zamiast uruchomić agenta w ciemno.
+//!    `Failed`/`workspaceUnavailable` zamiast uruchomić agenta w ciemno;
+//! 4. przebieg w kolejce albo na granicy kroków z pewnym worktree przejdzie w
+//!    `Paused` (`Input::PauseAfterRestart`, decyzja po E7): po restarcie nic nie
+//!    rusza samo, użytkownik wznawia przebieg w monitorze (`workflow_resume`).
 //!
 //! Przy starcie usuwane są też pliki `diff-*.tmp` po przerwanym zapisie artefaktu
 //! (`remove_orphan_tmp`), a problemy trafiają do interfejsu przez `FAULT_EVENT`
@@ -29,10 +32,8 @@ use workflow_core::{replay_stored, FailureCode, RunStatus, WorkflowGraph};
 
 use super::processes::{open_processes, settle, ProcState, ProcessControl};
 use super::runs::SqliteRunRepository;
-use super::workspace::{reserved, SharedDb, WorktreeGit};
+use super::workspace::{reserved, workspace_problem, SharedDb};
 
-const ERR_NO_WORKSPACE: &str =
-    "Przebieg nie ma zarezerwowanego katalogu roboczego (aplikacja przerwała przygotowanie).";
 const ERR_NOT_INTERRUPTED: &str = "Odzyskać można tylko przerwany przebieg.";
 
 fn lock_error() -> String {
@@ -72,6 +73,8 @@ pub struct StartupReport {
     pub released: usize,
     /// Przebiegi zakończone `workspaceUnavailable` zamiast uruchomienia agenta.
     pub failed_runs: Vec<RunId>,
+    /// Przebiegi wstrzymane do ręcznego wznowienia (kolejka albo granica kroków).
+    pub paused_runs: Vec<RunId>,
     /// Błędy, które nie zatrzymały rekonsyliacji (do logu).
     pub errors: Vec<String>,
 }
@@ -102,15 +105,26 @@ pub fn reconcile_at_startup(
     report.released = release_terminal(db, now)?;
     let repo = SqliteRunRepository::new(db.clone());
     for run_id in repo.active_runs().map_err(|e| e.to_string())? {
-        match check_launchable(db, &repo, run_id) {
-            Ok(None) => {}
-            Ok(Some(reason)) => match fail_unavailable(&repo, run_id, &reason, now) {
-                Ok(events) => {
-                    events.iter().for_each(emit);
-                    report.failed_runs.push(run_id);
-                }
-                Err(e) => report.errors.push(format!("Przebieg {run_id}: {e}")),
-            },
+        let (input, outcome) = match startup_action(db, &repo, run_id) {
+            Ok(StartupAction::Leave) => continue,
+            Ok(StartupAction::Pause) => (Input::PauseAfterRestart, &mut report.paused_runs),
+            Ok(StartupAction::Fail(reason)) => (
+                Input::Fault {
+                    code: FailureCode::WorkspaceUnavailable,
+                    message: reason,
+                },
+                &mut report.failed_runs,
+            ),
+            Err(e) => {
+                report.errors.push(format!("Przebieg {run_id}: {e}"));
+                continue;
+            }
+        };
+        match apply_input(&repo, run_id, input, now) {
+            Ok(events) => {
+                events.iter().for_each(emit);
+                outcome.push(run_id);
+            }
             Err(e) => report.errors.push(format!("Przebieg {run_id}: {e}")),
         }
     }
@@ -204,15 +218,23 @@ fn release_terminal(db: &SharedDb, now: i64) -> Result<usize, String> {
     .map_err(|e| e.to_string())
 }
 
-/// Czy przebieg może dostać od sterownika `Start`/`Continue`. `Some(powód)`, gdy
-/// nie: brak rezerwacji albo worktree, którego Git nie potwierdza. Przebiegi z
-/// krokiem bez wyniku, czekające na zgodę i anulowane pomija (sterownik ich nie
-/// uruchamia).
-fn check_launchable(
+/// Co rekonsyliacja robi z aktywnym przebiegiem przy starcie.
+enum StartupAction {
+    /// Krok bez wyniku, zgoda, anulowanie albo już wstrzymany: zostawia sterownikowi.
+    Leave,
+    /// Przebieg w kolejce albo na granicy kroków z pewnym worktree: `Paused`.
+    Pause,
+    /// Brak rezerwacji albo worktree, którego Git nie potwierdza: `Failed`.
+    Fail(String),
+}
+
+/// Przebieg, któremu sterownik dałby `Start`/`Continue`, nie rusza po restarcie
+/// sam: z pewnym worktree czeka (`Pause`), z naruszonym kończy się (`Fail`).
+fn startup_action(
     db: &SharedDb,
     repo: &SqliteRunRepository,
     run_id: RunId,
-) -> Result<Option<String>, String> {
+) -> Result<StartupAction, String> {
     let (_, state) = load(repo, run_id)?;
     let launches = match state.status {
         RunStatus::Queued => true,
@@ -220,33 +242,12 @@ fn check_launchable(
         _ => false,
     };
     if !launches {
-        return Ok(None);
+        return Ok(StartupAction::Leave);
     }
-    let Some(workspace) = reserved(db, run_id).map_err(|e| e.to_string())? else {
-        return Ok(Some(ERR_NO_WORKSPACE.to_owned()));
-    };
-    // Git (rev-parse) i odczyt `.git` bez blokady bazy.
-    match WorktreeGit::for_workspace(&workspace).and_then(|git| git.verify()) {
-        Ok(()) => Ok(None),
-        Err(e) => Ok(Some(e.to_string())),
-    }
-}
-
-fn fail_unavailable(
-    repo: &SqliteRunRepository,
-    run_id: RunId,
-    reason: &str,
-    now: i64,
-) -> Result<Vec<StoredEvent>, String> {
-    apply_input(
-        repo,
-        run_id,
-        Input::Fault {
-            code: FailureCode::WorkspaceUnavailable,
-            message: reason.to_owned(),
-        },
-        now,
-    )
+    Ok(match workspace_problem(db, run_id)? {
+        Some(reason) => StartupAction::Fail(reason),
+        None => StartupAction::Pause,
+    })
 }
 
 /// Wynik `workflow_recover`.

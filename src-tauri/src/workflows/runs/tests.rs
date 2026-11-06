@@ -1094,6 +1094,7 @@ fn failed_event_write_keeps_the_reservation() {
     let run = f.create("r1");
     f.reserve(run, "C:/wt/r1");
     let to_cancelled = RunEvent::RunStateChanged {
+        message: None,
         from: RunStatus::Queued,
         to: RunStatus::Cancelled,
         code: None,

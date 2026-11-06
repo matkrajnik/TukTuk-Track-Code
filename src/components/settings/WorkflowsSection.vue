@@ -42,6 +42,8 @@ const lockError = ref("");
  * okno ostrzega, że po wyłączeniu zostaje tylko ich zatrzymanie (bez klucza).
  */
 const waitingApprovals = ref(0);
+/** Przebiegi wstrzymane po restarcie: bez klucza nie da się ich wznowić. */
+const pausedRuns = ref(0);
 
 onMounted(() => {
   void loadWorkflowAccess();
@@ -69,14 +71,21 @@ async function unlock() {
 async function askLock() {
   lockError.value = "";
   waitingApprovals.value = 0;
+  pausedRuns.value = 0;
   confirmingLock.value = true;
   try {
-    const waiting = await listWorkflowRuns({ status: ["waitingForApproval"] });
-    waitingApprovals.value = waiting.length;
+    const runs = await listWorkflowRuns({
+      status: ["waitingForApproval", "paused"],
+    });
+    waitingApprovals.value = runs.filter(
+      (r) => r.status === "waitingForApproval",
+    ).length;
+    pausedRuns.value = runs.filter((r) => r.status === "paused").length;
   } catch {
     // Brak listy nie blokuje wyłączenia: ostrzeżenie jest tylko pomocą,
     // a reguły (`workflow_lock`) i tak pilnuje Rust.
     waitingApprovals.value = 0;
+    pausedRuns.value = 0;
   }
 }
 
@@ -197,6 +206,11 @@ function open() {
       Przebiegi czekające na zgodę: {{ waitingApprovals }}. Po wyłączeniu nie
       da się ich zatwierdzić ani odrzucić (tylko zatrzymać), a do tego czasu
       trzymają katalog roboczy.
+    </p>
+    <p v-if="pausedRuns > 0" class="lock-warning">
+      Przebiegi wstrzymane po restarcie: {{ pausedRuns }}. Po wyłączeniu nie da
+      się ich wznowić (tylko zatrzymać), a do tego czasu trzymają katalog
+      roboczy.
     </p>
   </ConfirmDialog>
 </template>

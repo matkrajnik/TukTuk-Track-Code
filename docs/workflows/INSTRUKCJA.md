@@ -29,18 +29,26 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 7. **Zgoda.** Przebieg czeka na decyzję o konkretnym diffie (skrót zmian). „Akceptuj” albo
    „Odrzuć” (odrzucenie wymaga komentarza). Aplikacja nie robi merge automatycznie.
 8. **Zatrzymanie.** „Zatrzymaj” w monitorze albo na tablicy agentów (działa też bez klucza).
-9. **Odzyskanie.** Przerwany przebieg (np. po awarii) wymaga „Odzyskaj przebieg”, który
-   sprawdza procesy i zwalnia katalog roboczy. Przebieg nie jest wznawiany.
-10. **Wyłączenie.** Ustawienia → Workflows → „Wyłącz Workflows”. Historia i definicje
+   „Zakończ aplikację” z traya w trakcie kroku agenta najpierw pyta o potwierdzenie: zakończenie
+   przerwie krok, a przebieg będzie „Przerwany”. Zamknięcie okna (X) tylko chowa je do traya.
+9. **Wznowienie po restarcie.** Przebieg, który przy zamknięciu aplikacji czekał w kolejce albo
+   był między krokami, po starcie ma stan „Wstrzymany” i nic samo nie rusza (powiadomienie: „Przebieg
+   wstrzymany po restarcie — wznów go w monitorze.”). „Wznów” w monitorze sprawdza katalog roboczy
+   i uruchamia następny krok; naruszony katalog kończy przebieg błędem. „Wznów” wymaga klucza;
+   „Zatrzymaj” działa też bez niego.
+10. **Odzyskanie.** Przerwany przebieg (np. po awarii) wymaga „Odzyskaj przebieg”, który
+    sprawdza procesy i zwalnia katalog roboczy. Przebieg nie jest wznawiany.
+11. **Wyłączenie.** Ustawienia → Workflows → „Wyłącz Workflows”. Historia i definicje
     zostają; ponowne włączenie wymaga klucza. Wyłączenie jest wstrzymane, gdy są przebiegi w
-    toku (kolejka, praca, zatrzymywanie); przebieg czekający na zgodę nie blokuje.
+    toku (kolejka, praca, zatrzymywanie); przebieg czekający na zgodę albo wstrzymany nie blokuje.
 
 ## Dane, kopia i retencja
 
 - Diffy leżą w `workflows/runs/<runId>/` w katalogu danych aplikacji. Ustawienia → Workflows →
   retencja 7–365 dni; starsze diffy znikają przy starcie, historia zostaje.
-- Kopia zapasowa osadza diffy. Przywrócenie jest zablokowane, gdy są nieskończone przebiegi;
-  przywrócona kopia nie odblokowuje modułu i przerywa stare przebiegi.
+- Kopia zapasowa osadza diffy. Przywrócenie jest zablokowane, gdy są nieskończone przebiegi
+  (także czekające na zgodę i wstrzymane); przywrócona kopia nie odblokowuje modułu i przerywa
+  stare przebiegi.
 
 ## Rozwiązywanie problemów
 
@@ -61,7 +69,9 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 | Za mało miejsca na dysku danych aplikacji | Mało wolnego miejsca (start wymaga 512 MiB). | Zwolnij miejsce i uruchom ponownie. |
 | Brak miejsca na dysku: nie zapisano diffu. Zwolnij miejsce i uruchom przebieg ponownie. | Dysk pełny przy zapisie diffu. | Zwolnij miejsce. |
 | Aktualizacja wstrzymana. | Przebieg z procesem w toku. | Poczekaj albo zatrzymaj przebieg. |
-| Nieskończone przebiegi Workflows | Blokada przywracania kopii. | Zakończ, zatwierdź, odrzuć albo zatrzymaj przebiegi. |
+| Nieskończone przebiegi Workflows | Blokada przywracania kopii. | Zakończ, zatwierdź, odrzuć albo zatrzymaj przebiegi (wstrzymany: wznów albo zatrzymaj). |
+| Przebieg wstrzymany po restarcie — wznów go w monitorze. | Stan Wstrzymany (`Paused`) po starcie aplikacji. | „Wznów” w monitorze albo „Zatrzymaj”. |
+| Przebieg nie jest wstrzymany. | „Wznów” na przebiegu, który już ruszył albo się zakończył. | Odśwież monitor. |
 | Wyłączenie wstrzymane. | Przebieg w toku przy wyłączaniu. | Poczekaj albo zatrzymaj przebieg. |
 | Baza Workflows pochodzi z nowszej wersji aplikacji | Starsza aplikacja na nowszej bazie. | Zaktualizuj aplikację. Historia i zatrzymanie działają. |
 

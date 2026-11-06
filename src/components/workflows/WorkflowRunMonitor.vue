@@ -4,7 +4,9 @@
  * Przy montowaniu najpierw rejestruje nasłuch `workflow-event` (zdarzenia z
  * czasu odczytu trafiają do bufora), potem pobiera szczegóły i strony zdarzeń,
  * a na końcu scala bufor; duplikaty sekwencji są pomijane, a luka powoduje
- * dociągnięcie od ostatniej znanej sekwencji. Pauzy nie ma (tylko „Zatrzymaj”).
+ * dociągnięcie od ostatniej znanej sekwencji. Pauzy na żądanie nie ma (tylko
+ * „Zatrzymaj”); przebieg wstrzymany po restarcie aplikacji (`paused`) ma „Wznów”
+ * z jednym identyfikatorem żądania na monitor (podwójne kliknięcie = jedno wznowienie).
  * „Akceptuj” jest aktywne dopiero po wyświetleniu całego diffu: zgoda dotyczy
  * tego, co użytkownik zobaczył, więc diff przycięty (ponad 2 MB) można tylko
  * odrzucić. Szczegóły przebiegu odświeżają się tylko po zdarzeniach zmieniających
@@ -20,6 +22,7 @@ import {
   MAX_APPROVAL_COMMENT_CHARS,
   MAX_LOG_LINES_RENDERED,
   MAX_LOG_LINE_CHARS,
+  PAUSED_HINT,
   RUN_STATUS_LABELS,
   formatDuration,
   isTerminal,
@@ -32,6 +35,7 @@ import {
   readWorkflowArtifact,
   recoverWorkflowRun,
   recoveryMessage,
+  resumeWorkflowRun,
   unconfirmedNote,
   workflowRunEvents,
   type DiffArtifact,
@@ -53,6 +57,9 @@ const diffLoading = ref(false);
 const comment = ref("");
 const deciding = ref(false);
 const recovering = ref(false);
+const resuming = ref(false);
+/** Jedno id żądania wznowienia na monitor przebiegu (monitor ma klucz = przebieg). */
+const resumeRequestId = newRequestId();
 const confirmRecover = ref(false);
 /**
  * Jeden identyfikator żądania na zgodę: podwójne kliknięcie ma jeden skutek, a
@@ -283,6 +290,34 @@ async function stop() {
   }
 }
 
+/**
+ * Wznowienie przebiegu wstrzymanego po restarcie: jedno wywołanie naraz i jedno
+ * id żądania (powtórka po błędzie nie wznowi drugi raz). Stan odświeża się po
+ * odpowiedzi i po zdarzeniu `runStateChanged`.
+ */
+async function resume() {
+  if (resuming.value) return;
+  resuming.value = true;
+  error.value = "";
+  notice.value = "";
+  try {
+    const status = await resumeWorkflowRun(props.runId, resumeRequestId);
+    if (status === "running") notice.value = "Wznowiono przebieg.";
+    else if (status === "failed")
+      error.value =
+        "Nie wznowiono przebiegu: katalog roboczy jest niedostępny, przebieg zakończył się błędem.";
+  } catch (e) {
+    error.value = `Nie udało się wznowić przebiegu: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    resuming.value = false;
+    try {
+      await refreshDetail();
+    } catch (e) {
+      error.value = String(e);
+    }
+  }
+}
+
 /** Odzyskanie przerwanego przebiegu: nic nie wznawia, tylko zwalnia katalog po potwierdzeniu. */
 const canRecover = computed(() => {
   const view = detail.value?.recovery;
@@ -360,7 +395,24 @@ onBeforeUnmount(() => {
         zgody: {{ formatDuration(detail.waitingMs) }}; tokeny:
         {{ detail.tokens ?? "brak danych" }}.
       </p>
+      <p
+        v-if="detail.summary.status === 'paused'"
+        class="hint"
+        data-testid="run-paused"
+      >
+        {{ PAUSED_HINT }}
+      </p>
       <div class="wf-toolbar">
+        <button
+          v-if="detail.summary.status === 'paused'"
+          type="button"
+          class="primary-button"
+          :disabled="resuming"
+          :aria-busy="resuming"
+          @click="resume"
+        >
+          {{ resuming ? "Wznawianie…" : "Wznów" }}
+        </button>
         <button
           v-if="!isTerminal(detail.summary.status)"
           type="button"

@@ -30,7 +30,7 @@ pub const FAULT_EVENT: &str = "workflow-fault";
 pub const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// Powód odmowy aktualizacji: przebieg z procesami w toku (`Queued`, `Running`,
-/// `Cancelling`); sam `WaitingForApproval` nie blokuje. Wołać pod blokadą bazy.
+/// `Cancelling`); `WaitingForApproval` i `Paused` nie blokują. Wołać pod blokadą bazy.
 pub fn update_blocker(conn: &rusqlite::Connection) -> Result<Option<String>, String> {
     super::backup::active_work(conn)
         .map(|work| work.map(|m| format!("Aktualizacja wstrzymana. {m}")))
@@ -118,7 +118,11 @@ fn run_text(info: &RunInfo) -> String {
     }
 }
 
-/// Powiadomienie dla zdarzenia: tylko prośba o zgodę i stan końcowy przebiegu.
+/// Tytuł powiadomienia o przebiegu wstrzymanym po restarcie (decyzja po E7).
+pub const PAUSED_TITLE: &str = "Przebieg wstrzymany po restarcie — wznów go w monitorze.";
+
+/// Powiadomienie dla zdarzenia: prośba o zgodę, wstrzymanie po restarcie (raz na
+/// przebieg, przy ustawieniu „czeka na Ciebie”) i stan końcowy przebiegu.
 pub fn notice_for(
     event: &StoredEvent,
     info: &RunInfo,
@@ -140,10 +144,21 @@ pub fn notice_for(
                 open,
             })
         }
-        "runStateChanged" if settings.done => {
+        "runStateChanged" => {
+            if event.payload.get("type")?.as_str()? != "runStateChanged" {
+                return None;
+            }
             let to = event.payload.get("to")?.as_str()?;
-            if event.payload.get("type")?.as_str()? != "runStateChanged" || !is_terminal_status(to)
-            {
+            if to == "paused" {
+                return settings.waiting.then(|| Message {
+                    key: format!("wf-paused:{}", event.run_id),
+                    title: PAUSED_TITLE.into(),
+                    body: run_text(info),
+                    actions: Vec::new(),
+                    open,
+                });
+            }
+            if !settings.done || !is_terminal_status(to) {
                 return None;
             }
             Some(Message {
@@ -156,6 +171,55 @@ pub fn notice_for(
         }
         _ => None,
     }
+}
+
+/// Czy „Zakończ aplikację” ma zapytać: przebieg ma działający krok agenta
+/// (`Running` albo `Cancelling` z krokiem w toku). Wstrzymany, czekający na zgodę
+/// i przebieg na granicy kroków nie mają procesu, więc wyjście ich nie przerywa.
+pub fn quit_needs_confirmation(status: workflow_core::RunStatus, step_running: bool) -> bool {
+    use workflow_core::RunStatus::*;
+    let active = match status {
+        Running | Cancelling => true,
+        Queued | WaitingForApproval | Paused | Cancelled | Succeeded | Rejected | Failed
+        | Interrupted => false,
+    };
+    active && step_running
+}
+
+/// Nazwa procesu pierwszego przebiegu z krokiem w toku (pytanie przy „Zakończ
+/// aplikację”) albo `None`. Nie zależy od klucza modułu: zatrzymanie i
+/// bezpieczeństwo danych dotyczą też zablokowanego modułu. Wołać pod blokadą bazy.
+pub fn running_step_workflow(conn: &rusqlite::Connection) -> Result<Option<String>, String> {
+    let mut statement = conn
+        .prepare(
+            "SELECT r.status, w.name, EXISTS(SELECT 1 FROM workflow_node_executions e
+                    WHERE e.run_id = r.id AND e.status = 'running')
+             FROM workflow_runs r
+             JOIN workflow_versions v ON v.id = r.version_id
+             JOIN workflows w ON w.id = v.workflow_id
+             WHERE r.finished_at IS NULL ORDER BY r.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, bool>(2)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (status, name, step_running) = row.map_err(|e| e.to_string())?;
+        let status = serde_json::from_value::<workflow_core::RunStatus>(serde_json::Value::String(
+            status.clone(),
+        ))
+        .map_err(|_| format!("Nieznany stan przebiegu: {status}"))?;
+        if quit_needs_confirmation(status, step_running) {
+            return Ok(Some(name));
+        }
+    }
+    Ok(None)
 }
 
 /// Zapisuje klucz powiadomienia: `Ok(true)` tylko za pierwszym razem (także po restarcie).
@@ -356,7 +420,7 @@ fn startup_maintenance(
                 errors: vec![format!("rekonsyliacja nie powiodła się: {e}")],
                 ..Default::default()
             });
-    if report.killed + report.unknown + report.failed_runs.len() > 0 {
+    if report.killed + report.unknown + report.failed_runs.len() + report.paused_runs.len() > 0 {
         eprintln!("Workflows: rekonsyliacja po starcie: {report:?}");
     }
     // Problemy trafiają do interfejsu przez FAULT_EVENT (i do logu).

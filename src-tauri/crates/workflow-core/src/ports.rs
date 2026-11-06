@@ -210,6 +210,12 @@ pub trait WorkspaceAccess: Send + Sync {
     fn workspace_path(&self, _run_id: RunId) -> Option<String> {
         None
     }
+    /// Czy katalog roboczy przebiegu nadal jest pewny (przed ręcznym wznowieniem).
+    /// `Ok(Some(powód))`: naruszony, przebieg kończy się `WorkspaceUnavailable`.
+    /// `Err`: sprawdzenie się nie udało (np. baza), wznowienie jest odrzucane.
+    fn verify(&self, _run_id: RunId) -> Result<Option<String>, String> {
+        Ok(None)
+    }
 }
 
 /// Odwołanie do wejścia kroku; trzymane tu, by `ports` nie zależało od szczegółów silnika.

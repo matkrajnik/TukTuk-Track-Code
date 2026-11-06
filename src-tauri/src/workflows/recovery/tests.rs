@@ -330,17 +330,16 @@ fn boundary_run_with_tampered_gitfile_fails_instead_of_launching() {
     let report = reconcile(&t, &FakeProcesses::default());
     assert_eq!(report.failed_runs, [tampered], "{:?}", report.errors);
     assert_eq!(t.status(tampered), RunStatus::Failed);
-    let runner = Arc::new(
-        ScriptedRunner::new()
-            .script(
-                "implementation",
-                vec![Step::complete(samples::implementation())],
-            )
-            .script("review", vec![Step::complete(samples::review_approved())]),
-    );
+    // Decyzja po E7: nienaruszony przebieg na granicy kroków czeka na wznowienie.
+    assert_eq!(report.paused_runs, [intact], "{:?}", report.errors);
+    assert_eq!(t.status(intact), RunStatus::Paused);
+    let runner = after_analysis_runner();
     let handle = runtime(&t, &runner);
     settle_runtime(&handle);
-    // Tylko nienaruszony przebieg ruszył dalej.
+    assert_eq!(runner.total_calls(), 0, "po starcie nic nie rusza samo");
+    // Dopiero ręczne wznowienie uruchamia następny krok, dokładnie raz.
+    assert_eq!(handle.resume(intact, "w1"), Ok(RunStatus::Running));
+    settle_runtime(&handle);
     assert_eq!(runner.calls("implementation"), 1);
     assert_eq!(t.status(tampered), RunStatus::Failed);
     assert_eq!(t.status(intact), RunStatus::WaitingForApproval);
@@ -353,6 +352,105 @@ fn boundary_run_with_tampered_gitfile_fails_instead_of_launching() {
         let _ =
             crate::workflows::workspace::git(&source, &["worktree", "remove", "--force", &path]);
     }
+}
+
+fn after_analysis_runner() -> Arc<ScriptedRunner> {
+    Arc::new(
+        ScriptedRunner::new()
+            .script(
+                "implementation",
+                vec![Step::complete(samples::implementation())],
+            )
+            .script("review", vec![Step::complete(samples::review_approved())]),
+    )
+}
+
+fn remove_worktrees(t: &TestDb, source: &std::path::Path, runs: &[RunId]) {
+    for run in runs {
+        let path: String = t.scalar(
+            "SELECT worktree_path FROM workflow_workspaces WHERE run_id = ?1",
+            *run,
+        );
+        let _ = crate::workflows::workspace::git(source, &["worktree", "remove", "--force", &path]);
+    }
+}
+
+/// Decyzja po E7: przebieg w kolejce z poprawną rezerwacją po restarcie nie
+/// startuje sam, tylko czeka (`Paused`) na ręczne wznowienie.
+#[test]
+fn queued_run_with_a_valid_workspace_waits_paused_after_restart() {
+    let sandbox = GitSandbox::new();
+    let source = sandbox.repo();
+    let app_data = sandbox.root.join("app data");
+    let t = TestDb::new();
+    let run = t.create("kolejka");
+    crate::workflows::workspace::prepare_workspace(&t.db, &source, &app_data, run, 1).unwrap();
+    let report = reconcile(&t, &FakeProcesses::default());
+    assert_eq!(report.paused_runs, [run], "{:?}", report.errors);
+    assert!(report.failed_runs.is_empty());
+    assert_eq!(t.status(run), RunStatus::Paused);
+    assert_eq!(t.reservation(run), ("reserved".to_owned(), None));
+    let runner = Arc::new(ScriptedRunner::new());
+    let handle = runtime(&t, &runner);
+    settle_runtime(&handle);
+    assert_eq!(runner.total_calls(), 0);
+    // Kolejna rekonsyliacja nie zmienia wstrzymanego przebiegu.
+    drop(handle);
+    let again = reconcile(&t, &FakeProcesses::default());
+    assert!(again.paused_runs.is_empty());
+    assert_eq!(t.status(run), RunStatus::Paused);
+    remove_worktrees(&t, &source, &[run]);
+}
+
+/// Worktree naruszony już po wstrzymaniu: wznowienie sprawdza go jak rekonsyliacja
+/// (`GitWorkspace::verify`) i kończy przebieg `workspaceUnavailable` bez runnera.
+#[test]
+fn resume_with_a_tampered_worktree_fails_without_runner() {
+    let sandbox = GitSandbox::new();
+    let source = sandbox.repo();
+    let app_data = sandbox.root.join("app data");
+    let t = TestDb::new();
+    let run = t.create("wstrzymany");
+    crate::workflows::workspace::prepare_workspace(&t.db, &source, &app_data, run, 1).unwrap();
+    at_boundary(&t, run);
+    reconcile(&t, &FakeProcesses::default());
+    assert_eq!(t.status(run), RunStatus::Paused);
+    let worktree: String = t.scalar(
+        "SELECT worktree_path FROM workflow_workspaces WHERE run_id = ?1",
+        run,
+    );
+    std::fs::write(
+        PathBuf::from(&worktree).join(".git"),
+        format!("gitdir: {}", sandbox.root.join("obcy").display()),
+    )
+    .unwrap();
+    let runner = after_analysis_runner();
+    let handle = Runtime::start(
+        Arc::new(t.repo.clone()),
+        runner.clone(),
+        Arc::new(RecordingSink::new()),
+        Arc::new(crate::workflows::workspace::GitWorkspace::new(t.db.clone())),
+        DriverConfig {
+            step_timeout: |_: &AgentConfig| Duration::from_secs(20),
+            cancel_grace: Duration::from_millis(300),
+            poll_interval: Duration::from_millis(5),
+            now: || 1_000,
+            on_error: |m| panic!("błąd sterownika: {m}"),
+        },
+    );
+    settle_runtime(&handle);
+    assert_eq!(handle.resume(run, "w1"), Ok(RunStatus::Failed));
+    settle_runtime(&handle);
+    assert_eq!(runner.total_calls(), 0);
+    assert_eq!(t.status(run), RunStatus::Failed);
+    let code: String = t.scalar("SELECT error_code FROM workflow_runs WHERE id = ?1", run);
+    assert_eq!(code, "workspaceUnavailable");
+    // Konkretny powód z `GitWorkspace::verify` zostaje w błędzie przebiegu.
+    let error: String = t.scalar("SELECT error FROM workflow_runs WHERE id = ?1", run);
+    assert!(error.starts_with("Wznowienie odrzucone: "), "{error}");
+    assert!(error.contains(".git"), "{error}");
+    drop(handle);
+    remove_worktrees(&t, &source, &[run]);
 }
 
 // ---------------------------------------------------------------------------

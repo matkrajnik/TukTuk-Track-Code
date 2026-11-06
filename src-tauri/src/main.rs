@@ -43,6 +43,7 @@ mod orca;
 mod plan_assist;
 mod planner;
 mod quickadd;
+mod quit;
 mod recurrence;
 mod redmine;
 mod reminder;
@@ -690,6 +691,9 @@ fn main() {
             days::day_end_request,
             days::day_start_request,
             days::day_start_answer,
+            quit::app_quit_pending,
+            quit::app_quit_cancel,
+            quit::app_quit_confirmed,
             set_priority,
             reorder_tasks,
             plan_task,
@@ -727,6 +731,7 @@ fn main() {
             workflows::run_commands::workflow_run_events,
             workflows::run_commands::workflow_cancel,
             workflows::run_commands::workflow_decide,
+            workflows::run_commands::workflow_resume,
             workflows::run_commands::workflow_artifact_read,
             workflows::run_commands::workflow_recover,
             workflows::run_commands::workflow_faults,
@@ -983,6 +988,25 @@ mod tests {
         let exit = &run[run.find("tauri::RunEvent::Exit").unwrap()..];
         let end = exit.find("});").unwrap();
         assert!(exit[..end].contains("workflows::runtime::shutdown(app);"));
+    }
+
+    /// „Zakończ aplikację” z traya idzie przez `quit::request_quit` (decyzja w
+    /// `quit::plan`, testy w `quit.rs`), a komendy pytania są zarejestrowane.
+    #[test]
+    fn tray_quit_goes_through_the_quit_question() {
+        let tray = include_str!("tray.rs");
+        assert!(tray.contains("\"quit\" => crate::quit::request_quit(app),"));
+        let source = include_str!("main.rs");
+        for command in [
+            "quit::app_quit_pending,",
+            "quit::app_quit_cancel,",
+            "quit::app_quit_confirmed,",
+        ] {
+            assert!(
+                source.contains(command),
+                "{command} nie jest zarejestrowana"
+            );
+        }
     }
 
     /// Zamknięcie okna chowa je do traya i nie dotyka sterownika przebiegów.

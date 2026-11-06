@@ -103,9 +103,15 @@ fn restore_is_refused_while_any_run_is_unfinished() {
     let prepared = crate::backup::prepare_restore(&path, 1).unwrap();
     let cache = crate::settings::Cache::default();
     let mut conn = live.db.lock().unwrap();
-    // Każdy nieskończony przebieg blokuje, także czekający na zgodę: kopia
-    // zastąpiłaby go i odebrała rezerwację jego katalogu roboczego.
-    for status in ["queued", "running", "cancelling", "waitingForApproval"] {
+    // Każdy nieskończony przebieg blokuje, także czekający na zgodę albo wstrzymany
+    // po restarcie: kopia zastąpiłaby go i odebrała rezerwację jego katalogu roboczego.
+    for status in [
+        "queued",
+        "running",
+        "cancelling",
+        "waitingForApproval",
+        "paused",
+    ] {
         conn.execute(
             "UPDATE workflow_runs SET status = ?2 WHERE id = ?1",
             rusqlite::params![run, status],
@@ -113,8 +119,11 @@ fn restore_is_refused_while_any_run_is_unfinished() {
         .unwrap();
         let err = crate::backup::restore_locked(&mut conn, &prepared.db, &dir.0.join("b"), &cache)
             .unwrap_err();
+        // Ten sam tekst w fixture (`tests/fixtures/tauri.ts`, `workflowRestoreBlocker`).
         assert!(
-            err.contains("Nieskończone przebiegi Workflows: 1"),
+            err.ends_with(
+                "Nieskończone przebiegi Workflows: 1. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody, wznów wstrzymane przebiegi lub zatrzymaj przebiegi."
+            ),
             "{status}: {err}"
         );
         assert_eq!(status_of(&conn, run), status, "baza robocza bez zmian");
@@ -174,10 +183,13 @@ fn restored_active_runs_become_interrupted_and_runtime_never_calls_runner() {
     let boundary = at_boundary(&source, "granica");
     let in_step = with_step_in_progress(&source, "krok");
     let queued = source.create("kolejka");
+    // Wstrzymany po restarcie (decyzja po E7) też jest nieskończony.
+    let paused = at_boundary(&source, "wstrzymany");
+    apply_inputs(&source.repo, paused, vec![Input::PauseAfterRestart]).unwrap();
     let path = dir.0.join("kopia.sqlite");
     save_copy(&source, &path);
     let prepared = crate::backup::prepare_restore(&path, 5).unwrap();
-    for run in [waiting, boundary, in_step, queued] {
+    for run in [waiting, boundary, in_step, queued, paused] {
         assert_eq!(
             status_of(&prepared.db, run),
             "interrupted",
@@ -210,7 +222,7 @@ fn restored_active_runs_become_interrupted_and_runtime_never_calls_runner() {
         0,
         "przywrócona kopia nie wznawia poleceń"
     );
-    for run in [waiting, boundary, in_step, queued] {
+    for run in [waiting, boundary, in_step, queued, paused] {
         assert_eq!(live.status(run), RunStatus::Interrupted, "przebieg {run}");
     }
     // Oczekująca zgoda jest unieważniona, krok w toku przerwany.

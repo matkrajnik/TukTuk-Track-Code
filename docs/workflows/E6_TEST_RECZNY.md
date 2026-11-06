@@ -15,15 +15,31 @@ Przygotuj repozytorium testowe jak w `E4_TEST_RECZNY.md` (sekcja 1).
 ## 2. Zamknięcie okna a wyjście
 
 1. W trakcie kroku zamknij okno (X): aplikacja chowa się do traya, krok trwa dalej.
-2. Wybierz „Zakończ” z traya: krok jest anulowany, aplikacja kończy się w ciągu ok. 8 s.
-3. Po ponownym uruchomieniu przebieg jest „Przerwany” i nie startuje ponownie.
+2. Wybierz „Zakończ aplikację” z traya: pojawia się główne okno z pytaniem „Zakończyć aplikację?”
+   z nazwą procesu. „Anuluj” (i Esc) zostawia aplikację i krok bez zmian.
+3. Ponownie „Zakończ aplikację” → „Zakończ”: krok jest anulowany, aplikacja kończy się w ciągu ok. 8 s.
+4. Po ponownym uruchomieniu przebieg jest „Przerwany” i nie startuje ponownie.
+5. Bez kroku w toku (np. przebieg czeka na zgodę albo jest wstrzymany) „Zakończ aplikację” kończy
+   od razu, bez pytania. Pytanie pada też po wyłączeniu modułu (bez klucza), gdy krok działa.
+
+## 2a. Restart na granicy kroków i w kolejce
+
+1. Zamknij aplikację („Zakończ” bez kroku w toku albo przez Menedżera zadań), gdy przebieg jest
+   między krokami (np. tuż po wyniku analizy) albo czeka w kolejce za innym przebiegiem.
+2. Po starcie przebieg ma stan „Wstrzymany”, żaden agent nie startuje; pojawia się powiadomienie
+   „Przebieg wstrzymany po restarcie — wznów go w monitorze.” (jedno na przebieg).
+3. W monitorze kliknij „Wznów” (także dwukrotnie szybko): startuje dokładnie jeden następny krok.
+4. Powtórz z podmienionym plikiem `.git` w worktree przebiegu przed „Wznów”: przebieg kończy się
+   „Błąd” (katalog roboczy niedostępny), agent nie startuje.
+5. „Zatrzymaj” na wstrzymanym przebiegu kończy go jako „Zatrzymany” (także bez klucza).
 
 ## 3. Aktualizacja i przywracanie kopii
 
 1. Przy przebiegu „W toku” kliknij instalację aktualizacji: baner pokazuje „Aktualizacja wstrzymana”.
 2. Przy przebiegu „Czeka na zgodę” aktualizacja przechodzi.
-3. Przy przebiegu „W toku” albo „Czeka na zgodę” przywracanie kopii pokazuje „Nie można teraz
-   przywrócić kopii”, a podgląd kopii ostrzega o tym przed potwierdzeniem.
+3. Przy przebiegu „W toku”, „Czeka na zgodę” albo „Wstrzymany” przywracanie kopii pokazuje „Nie można
+   teraz przywrócić kopii”, a podgląd kopii ostrzega o tym przed potwierdzeniem. Przy „Wstrzymany”
+   aktualizacja i wyłączenie modułu przechodzą.
 4. Wyeksportuj kopię z przebiegiem czekającym na zgodę, odrzuć tę zgodę w aplikacji, usuń katalog
    `workflows\runs` z danych aplikacji i przywróć kopię: przebieg z kopii jest „Przerwany”, a plik
    diffu wraca na dysk.

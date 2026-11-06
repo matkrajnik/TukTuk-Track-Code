@@ -138,7 +138,17 @@ export interface TauriOptions {
      */
     recoverUnconfirmed?: boolean;
     recoverUnconfirmedPid?: number;
+    /** `workflow_resume` rzuca ten błąd (np. sterownik jeszcze się uruchamia). */
+    resumeError?: string;
+    /** `workflow_resume` znajduje naruszony worktree: przebieg kończy się `failed`. */
+    resumeWorkspaceBroken?: boolean;
   };
+  /**
+   * Pytanie o zakończenie aplikacji (`quit.rs`): `pending` to nazwa procesu, którą
+   * zwraca `app_quit_pending` (pytanie wysłane, zanim okno zaczęło nasłuchiwać),
+   * a `error` to błąd `app_quit_confirmed` (np. nieudane zatrzymanie pomiaru).
+   */
+  quit?: { pending?: string | null; error?: string };
   /** Odpowiedź `workflow_preflight` (gotowość agentów zadana przez test). */
   preflight?: unknown[];
   /** Odpowiedź `workflow_preflight` dla konkretnych `versionId` (pierwszeństwo przed `preflight`). */
@@ -170,6 +180,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     preflight: options.preflight ?? [],
     preflightByVersion: options.preflightByVersion ?? {},
     workflowRuns: options.workflowRuns ?? {},
+    quit: { pending: options.quit?.pending ?? null, error: options.quit?.error ?? "" },
     workflows: {
       unlocked: options.workflows?.unlocked ?? false,
       key: options.workflows?.key ?? TEST_WORKFLOWS_KEY,
@@ -226,6 +237,7 @@ function install(init: {
   preflight: unknown[];
   preflightByVersion: Record<number, unknown[]>;
   workflowRuns: any;
+  quit: { pending: string | null; error: string };
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -664,16 +676,20 @@ function install(init: {
       ? `Przebiegi Workflows w toku: ${count}. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).`
       : null;
   }
-  /** Jak `workflows::backup::restore_blocker`: każdy nieskończony przebieg, także czekający na zgodę. */
+  /**
+   * Jak `workflows::backup::restore_blocker`: każdy nieskończony przebieg, także
+   * czekający na zgodę i wstrzymany po restarcie.
+   */
   function workflowRestoreBlocker(): string | null {
     const count = workflowRunsIn([
       "queued",
       "running",
       "cancelling",
       "waitingForApproval",
+      "paused",
     ]);
     return count > 0
-      ? `Nieskończone przebiegi Workflows: ${count}. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody lub zatrzymaj przebiegi.`
+      ? `Nieskończone przebiegi Workflows: ${count}. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody, wznów wstrzymane przebiegi lub zatrzymaj przebiegi.`
       : null;
   }
   const inboxChanged = () => {
@@ -705,6 +721,8 @@ function install(init: {
   };
   /** Stan przebiegów fixture (test może zmienić status przed zdarzeniem `workflow-event`). */
   w.__workflowRunsState = init.workflowRuns;
+  /** Pytanie o zakończenie (`quit.rs`); test może zmienić `error` w trakcie. */
+  w.__quitState = init.quit;
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   w.__TAURI_INTERNALS__ = {
     metadata: {
@@ -904,6 +922,75 @@ function install(init: {
           w.__workflowCancels = (w.__workflowCancels ?? 0) + 1;
           return null;
         }
+        // Jak `run_commands::resume_run` i `driver/resume.rs`: klucz wymagany, ten
+        // sam requestId zwraca zapisany stan bez drugiego wznowienia, poza `paused`
+        // błąd; naruszony worktree kończy przebieg `failed`/`workspaceUnavailable`.
+        case "workflow_resume": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          if (!String(args.requestId ?? "").trim()) throw "Brak identyfikatora żądania.";
+          // `window.__workflowResumeHold` (obietnica) wstrzymuje najbliższą odpowiedź.
+          const hold = w.__workflowResumeHold;
+          w.__workflowResumeHold = null;
+          if (hold) await hold;
+          if (init.workflowRuns.resumeError) throw init.workflowRuns.resumeError;
+          const detail = init.workflowRuns.details?.[args.runId];
+          const listed = init.workflowRuns.runs?.find((r: any) => r.id === args.runId);
+          if (!detail && !listed) throw "Nie znaleziono przebiegu.";
+          const status = detail?.summary.status ?? listed.status;
+          // Jak `RunState::resume_requests`: powtórka w tej samej pauzie zwraca
+          // bieżący stan bez drugiego wznowienia.
+          const saved: Record<string, boolean> = (w.__workflowResumeRequests ??= {});
+          const key = `${args.runId}|${args.requestId}`;
+          if (saved[key]) return status;
+          if (status !== "paused") throw "Przebieg nie jest wstrzymany.";
+          const broken = !!init.workflowRuns.resumeWorkspaceBroken;
+          const next = broken ? "failed" : "running";
+          saved[key] = true;
+          w.__workflowResumes = (w.__workflowResumes ?? 0) + 1;
+          for (const summary of [detail?.summary, listed].filter(Boolean)) {
+            summary.status = next;
+            if (broken) summary.errorCode = "workspaceUnavailable";
+          }
+          if (detail) {
+            detail.revision += 2;
+            const event = {
+              runId: args.runId,
+              sequence: detail.revision,
+              executionId: null,
+              type: "runStateChanged",
+              timestamp: now,
+              payload: {
+                type: "runStateChanged",
+                from: "paused",
+                to: next,
+                code: broken ? "workspaceUnavailable" : null,
+              },
+            };
+            const requested = {
+              ...event,
+              sequence: detail.revision - 1,
+              payload: { type: "resumeRequested", requestId: args.requestId },
+            };
+            (init.workflowRuns.events ??= {})[args.runId] = (
+              init.workflowRuns.events[args.runId] ?? []
+            ).concat(requested, event);
+            emit("workflow-event", requested);
+            emit("workflow-event", event);
+          }
+          return next;
+        }
+        // Jak `quit.rs`: oczekujące pytanie, anulowanie i potwierdzenie (błąd
+        // zatrzymania pomiaru wraca do okna; po sukcesie pytanie znika).
+        case "app_quit_pending":
+          return init.quit.pending;
+        case "app_quit_cancel":
+          init.quit.pending = null;
+          return null;
+        case "app_quit_confirmed":
+          if (init.quit.error) throw init.quit.error;
+          init.quit.pending = null;
+          w.__appQuits = (w.__appQuits ?? 0) + 1;
+          return null;
         // Jak `run_commands::workflow_faults`: bez klucza, kopia dziennika problemów.
         case "workflow_faults":
           return clone(init.workflowRuns.faults ?? []);

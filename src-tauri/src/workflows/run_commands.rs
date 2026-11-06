@@ -3,7 +3,7 @@
 //! cienkie komendy Tauri. Funkcje rdzenia biorą `&SharedDb` i `&RuntimeHandle`,
 //! więc testuje się je bez `AppHandle`.
 //!
-//! Dostęp: start, decyzja i odczyt artefaktu wymagają odblokowania modułu.
+//! Dostęp: start, decyzja, wznowienie i odczyt artefaktu wymagają odblokowania modułu.
 //! Anulowanie oraz historia (lista, szczegóły, zdarzenia) działają także bez
 //! klucza, żeby przy odzyskiwaniu dostępu dało się przejrzeć i zatrzymać przebieg.
 
@@ -11,7 +11,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use workflow_core::driver::{DecideError, DecideRequest, RuntimeHandle};
+use workflow_core::driver::{DecideError, DecideRequest, ResumeError, RuntimeHandle};
 use workflow_core::ports::StoredEvent;
 use workflow_core::{ApprovalStatus, Decision, RunStatus};
 
@@ -128,7 +128,26 @@ pub fn history_events(
         .map_err(db_error)
 }
 
-/// Zatrzymanie przebiegu w stanie Queued, Running albo WaitingForApproval; bez klucza.
+/// Wznowienie przebiegu wstrzymanego po restarcie (`Paused`): tylko po odblokowaniu,
+/// bo uruchamia agentów. Idempotentne po `request_id`; sterownik przed wznowieniem
+/// sprawdza worktree (naruszony kończy przebieg `workspaceUnavailable`).
+pub fn resume_run(
+    db: &SharedDb,
+    handle: &RuntimeHandle,
+    run_id: i64,
+    request_id: &str,
+) -> Result<RunStatus, String> {
+    unlocked(db)?;
+    if request_id.trim().is_empty() {
+        return Err("Brak identyfikatora żądania.".into());
+    }
+    handle.resume(run_id, request_id).map_err(|e| match e {
+        ResumeError::NotFound => "Nie znaleziono przebiegu.".to_owned(),
+        other => other.to_string(),
+    })
+}
+
+/// Zatrzymanie przebiegu w stanie Queued, Running, WaitingForApproval albo Paused; bez klucza.
 pub fn cancel(db: &SharedDb, handle: &RuntimeHandle, run_id: i64) -> Result<(), String> {
     let status: String = {
         let conn = db
@@ -267,6 +286,21 @@ pub async fn workflow_decide(
     tauri::async_runtime::spawn_blocking(move || decide(&db, runtime_handle(&app)?, command))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Wznowienie wstrzymanego przebiegu; Git (sprawdzenie worktree) poza wątkiem interfejsu.
+#[tauri::command]
+pub async fn workflow_resume(
+    app: tauri::AppHandle,
+    run_id: i64,
+    request_id: String,
+) -> Result<RunStatus, String> {
+    let db = shared(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        resume_run(&db, runtime_handle(&app)?, run_id, &request_id)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Sprawdzanie i kończenie procesów oraz Git poza wątkiem interfejsu.

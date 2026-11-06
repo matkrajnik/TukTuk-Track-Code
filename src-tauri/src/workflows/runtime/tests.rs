@@ -90,6 +90,33 @@ fn notice_respects_agent_notify_settings() {
     );
 }
 
+/// Decyzja po E7: wstrzymanie po restarcie daje jedno powiadomienie na przebieg
+/// (ustawienie „czeka na Ciebie”), z prośbą o wznowienie w monitorze.
+#[test]
+fn paused_after_restart_notifies_once_per_run_when_waiting_is_on() {
+    let message = notice_for(&state_change("paused"), &info(), ON).expect("paused");
+    assert_eq!(message.key, "wf-paused:7");
+    assert_eq!(
+        message.title,
+        "Przebieg wstrzymany po restarcie — wznów go w monitorze."
+    );
+    assert_eq!(message.open.view, Some("workflow-runs"));
+    let only_done = NoticeSettings {
+        waiting: false,
+        done: true,
+    };
+    assert_eq!(
+        notice_for(&state_change("paused"), &info(), only_done),
+        None
+    );
+    // Wznowienie (typ `resumeRequested` w strumieniu stanu) nie powiadamia.
+    let resumed = event(
+        "runStateChanged",
+        json!({"type": "resumeRequested", "requestId": "w1"}),
+    );
+    assert_eq!(notice_for(&resumed, &info(), ON), None);
+}
+
 #[test]
 fn notice_targets_the_run_view() {
     let message = notice_for(&approval("a"), &info(), ON).unwrap();
@@ -295,6 +322,8 @@ fn update_blocker_rejects_queued_running_cancelling_but_not_waiting() {
         ("running", true),
         ("cancelling", true),
         ("waitingForApproval", false),
+        // Decyzja po E7: wstrzymany po restarcie nie ma procesu.
+        ("paused", false),
         ("interrupted", false),
         ("succeeded", false),
     ] {
@@ -358,4 +387,56 @@ fn fault_log_keeps_bounded_recent_faults() {
     assert_eq!(all.len(), MAX_FAULTS);
     assert_eq!(all.last().unwrap().run_id, 100 + MAX_FAULTS as i64 + 9);
     assert!(all.iter().all(|f| f.run_id >= 100), "najstarsze odpadły");
+}
+
+// ---------------------------------------------------------------------------
+// Decyzja po E7: „Zakończ aplikację” z traya w trakcie kroku pyta o potwierdzenie.
+
+#[test]
+fn quit_asks_only_while_an_agent_step_is_running() {
+    use workflow_core::RunStatus::*;
+    assert!(quit_needs_confirmation(Running, true));
+    assert!(quit_needs_confirmation(Cancelling, true));
+    for (status, step) in [
+        (Running, false),
+        (Cancelling, false),
+        (Paused, false),
+        (WaitingForApproval, false),
+        (Queued, false),
+        (Interrupted, false),
+        (Succeeded, false),
+    ] {
+        assert!(!quit_needs_confirmation(status, step), "{status:?}");
+    }
+}
+
+#[test]
+fn running_step_names_the_workflow_of_a_step_in_progress() {
+    use workflow_core::engine::{Effect, Input};
+    use workflow_core::testing::apply_inputs;
+    let t = crate::workflows::test_db::TestDb::new();
+    let conn_check = |t: &crate::workflows::test_db::TestDb| {
+        let conn = t.db.lock().unwrap();
+        running_step_workflow(&conn).unwrap()
+    };
+    assert_eq!(conn_check(&t), None, "bez przebiegów");
+    let run = t.create("q");
+    assert_eq!(conn_check(&t), None, "w kolejce nic nie działa");
+    let effects = apply_inputs(&t.repo, run, vec![Input::Start, Input::Continue]).unwrap();
+    assert!(matches!(effects.first(), Some(Effect::LaunchAgent { .. })));
+    assert_eq!(conn_check(&t), Some("Proces".to_owned()));
+    // Moduł zablokowany kluczem: pytanie i tak pada (bezpieczeństwo danych).
+    crate::workflows::store::set_locked(&t.db.lock().unwrap()).unwrap();
+    assert_eq!(conn_check(&t), Some("Proces".to_owned()));
+    // Wstrzymany albo czekający na zgodę: bez pytania.
+    for status in ["paused", "waitingForApproval"] {
+        t.db.lock()
+            .unwrap()
+            .execute(
+                "UPDATE workflow_runs SET status = ?1 WHERE id = ?2",
+                rusqlite::params![status, run],
+            )
+            .unwrap();
+        assert_eq!(conn_check(&t), None, "{status}");
+    }
 }

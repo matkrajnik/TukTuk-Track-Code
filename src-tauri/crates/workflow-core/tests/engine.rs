@@ -553,6 +553,7 @@ fn replay_rejects_a_sequence_gap_and_a_forbidden_transition() {
             from: RunStatus::WaitingForApproval,
             to: RunStatus::Succeeded,
             code: None,
+            message: None,
         },
     });
     assert!(matches!(
@@ -990,4 +991,210 @@ fn reconciled_event_keeps_interrupted_and_replays() {
             note: None
         })
         .is_err());
+}
+
+// ---------------------------------------------------------------------------
+// Decyzja po E7: przebieg na granicy kroków po restarcie czeka (`Paused`) na
+// ręczne wznowienie; wznowienie jest idempotentne po `request_id`.
+
+/// Przebieg na granicy kroków: analiza zakończona, następny krok nie zaplanowany.
+fn at_boundary() -> Sim {
+    let mut sim = Sim::new(analysis_implementation_review());
+    let execution_id = launched(&mut sim);
+    sim.feed(Input::ExecutionResult {
+        execution_id,
+        outcome: ok(samples::analysis()),
+    });
+    assert_eq!(sim.state.status, RunStatus::Running);
+    assert!(sim.state.unfinished().is_none());
+    sim
+}
+
+fn resume(request: &str) -> Input {
+    Input::Resume {
+        request_id: request.into(),
+        workspace_error: None,
+    }
+}
+
+#[test]
+fn pause_after_restart_at_a_boundary_waits_without_effects() {
+    let mut sim = at_boundary();
+    let t = sim.feed(Input::PauseAfterRestart);
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Paused);
+    assert!(!sim.state.status.is_terminal());
+    // Ponowne wstrzymanie nic nie zmienia.
+    assert!(sim.feed(Input::PauseAfterRestart).events.is_empty());
+    // Kontynuacja z pominięciem wznowienia jest odrzucana.
+    assert!(matches!(
+        sim.try_feed(Input::Continue),
+        Err(EngineError::InvalidState(_))
+    ));
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+}
+
+#[test]
+fn pause_after_restart_of_a_queued_run_waits_too() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    sim.feed(Input::PauseAfterRestart);
+    assert_eq!(sim.state.status, RunStatus::Paused);
+    sim.feed(resume("q1"));
+    assert_eq!(sim.state.status, RunStatus::Running);
+    let t = sim.feed(Input::Continue);
+    assert!(matches!(
+        t.effects.first(),
+        Some(Effect::LaunchAgent { node_id, .. }) if node_id == "analysis"
+    ));
+}
+
+#[test]
+fn pause_after_restart_is_refused_with_an_unfinished_step_or_approval() {
+    let mut running = Sim::new(analysis_implementation_review());
+    launched(&mut running);
+    assert!(running.try_feed(Input::PauseAfterRestart).is_err());
+    let mut waiting = waiting_sim();
+    assert!(waiting.try_feed(Input::PauseAfterRestart).is_err());
+}
+
+#[test]
+fn resume_continues_from_the_next_node_exactly_once() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    let t = sim.feed(resume("w1"));
+    assert!(
+        t.effects.is_empty(),
+        "wznowienie samo niczego nie uruchamia"
+    );
+    assert!(t
+        .events
+        .iter()
+        .any(|e| matches!(e, RunEvent::ResumeRequested { request_id } if request_id == "w1")));
+    assert_eq!(t.events[0].stream_type(), "runStateChanged");
+    assert_eq!(sim.state.status, RunStatus::Running);
+    // Powtórka z tym samym id: bez zdarzeń.
+    assert!(sim.feed(resume("w1")).events.is_empty());
+    let t = sim.feed(Input::Continue);
+    let launches: Vec<_> = t
+        .effects
+        .iter()
+        .filter_map(|e| match e {
+            Effect::LaunchAgent { node_id, .. } => Some(node_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(launches, ["implementation"]);
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+    assert_eq!(replayed.resume_requests, ["w1"]);
+}
+
+#[test]
+fn resume_with_another_id_outside_paused_is_invalid_state() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    sim.feed(resume("w1"));
+    assert!(matches!(
+        sim.try_feed(resume("w2")),
+        Err(EngineError::InvalidState(_))
+    ));
+}
+
+#[test]
+fn resume_with_a_broken_workspace_fails_without_effects() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    let t = sim.feed(Input::Resume {
+        request_id: "w1".into(),
+        workspace_error: Some("podmieniony .git".into()),
+    });
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Failed);
+    assert_eq!(sim.state.failure, Some(FailureCode::WorkspaceUnavailable));
+    // Powód z `verify` trafia do komunikatu błędu przebiegu (jak przy rekonsyliacji).
+    let message = t.events.iter().find_map(|e| match e {
+        RunEvent::RunStateChanged {
+            to: RunStatus::Failed,
+            message,
+            ..
+        } => message.clone(),
+        _ => None,
+    });
+    assert_eq!(
+        message.as_deref(),
+        Some("Wznowienie odrzucone: podmieniony .git")
+    );
+    // Powtórka z tym samym id nic nie zmienia.
+    assert!(sim.feed(resume("w1")).events.is_empty());
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+}
+
+#[test]
+fn cancelling_a_paused_run_ends_cancelled_without_effects() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    let t = sim.feed(Input::CancelRequested);
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Cancelled);
+    assert!(sim.try_feed(resume("w1")).is_err());
+}
+
+#[test]
+fn abandon_of_a_paused_run_interrupts_it() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    sim.feed(abandon());
+    assert_eq!(sim.state.status, RunStatus::Interrupted);
+}
+
+#[test]
+fn recover_leaves_a_paused_run_alone() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    assert!(sim.feed(Input::Recover).events.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Paused);
+}
+
+/// Idempotencja wznowienia dotyczy jednej pauzy: to samo id po kolejnym
+/// restarcie (nowa pauza) faktycznie wznawia, a nie zwraca „sukcesu” bez zmian.
+#[test]
+fn same_request_id_after_a_new_pause_really_resumes() {
+    let mut sim = at_boundary();
+    sim.feed(Input::PauseAfterRestart);
+    sim.feed(resume("w1"));
+    let t = sim.feed(Input::Continue);
+    let Some(Effect::LaunchAgent { execution_id, .. }) = t.effects.first().cloned() else {
+        panic!("brak LaunchAgent");
+    };
+    sim.feed(Input::ExecutionResult {
+        execution_id,
+        outcome: ok(samples::implementation()),
+    });
+    sim.feed(Input::PauseAfterRestart);
+    assert_eq!(sim.state.status, RunStatus::Paused);
+    assert!(sim.state.resume_requests.is_empty());
+    let t = sim.feed(resume("w1"));
+    assert!(!t.events.is_empty(), "nowa pauza: wznowienie ma skutek");
+    assert_eq!(sim.state.status, RunStatus::Running);
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+}
+
+#[test]
+fn state_change_message_is_optional_in_json() {
+    let event = RunEvent::RunStateChanged {
+        from: RunStatus::Running,
+        to: RunStatus::Paused,
+        code: None,
+        message: None,
+    };
+    let json = serde_json::to_value(&event).unwrap();
+    assert!(json.get("message").is_none());
+    let old: RunEvent = serde_json::from_value(
+        json!({"type": "runStateChanged", "from": "running", "to": "paused", "code": null}),
+    )
+    .unwrap();
+    assert_eq!(old, event);
 }

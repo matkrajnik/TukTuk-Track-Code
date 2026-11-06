@@ -205,6 +205,27 @@ export async function read(): Promise<Snapshot> {
   return snapshotSim.read();
 }
 /**
+ * Pytanie z traya „Zakończ aplikację” w trakcie kroku przebiegu Workflows
+ * (`quit::QUIT_REQUEST`, ładunek: nazwa procesu); odpowiada `QuitDialog.vue`.
+ */
+export const QUIT_REQUEST_EVENT = "app-quit-request";
+/**
+ * Potwierdzone „Zakończ” (`quit::app_quit_confirmed`): zatrzymanie pomiaru i
+ * wyjście jak bez kroku w toku. Podgląd nie ma traya ani procesu do zakończenia.
+ */
+export async function quitAppConfirmed(): Promise<void> {
+  if (desktop) return invoke("app_quit_confirmed");
+}
+/** Oczekujące pytanie o zakończenie (nazwa procesu), gdy zdarzenie przyszło przed nasłuchem. */
+export async function quitAppPending(): Promise<string | null> {
+  if (desktop) return invoke("app_quit_pending");
+  return null;
+}
+/** „Anuluj” w pytaniu o zakończenie: backend zapomina pytanie. */
+export async function quitAppCancel(): Promise<void> {
+  if (desktop) return invoke("app_quit_cancel");
+}
+/**
  * Pytanie przed startem pomiaru (B13): po „Zakończ dzień” Start na zadaniu pyta
  * „Wznowić dzień?”. Rejestruje je okno z dialogiem (`DayDialogs.vue`) albo widget
  * (pytanie w głównym oknie); `false` = Anuluj (albo pytanie w innym oknie), wtedy

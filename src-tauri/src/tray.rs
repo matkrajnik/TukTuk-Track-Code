@@ -293,27 +293,31 @@ fn active_icon() -> Image<'static> {
     tauri::include_image!("./icons/icon-active.ico")
 }
 
-fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
+/// Zatrzymanie pomiaru (i przy `quit` wyjście) z menu traya: błąd zapisu pokazuje
+/// główne okno ze zdarzeniem `storage-error`.
+pub(crate) fn stop_measurement(app: &tauri::AppHandle, quit: bool) {
+    if let Err(e) = try_stop_measurement(app, quit) {
+        crate::show(app);
+        let _ = app.emit("storage-error", e);
+    }
+}
+
+/// Jak [`stop_measurement`], ale błąd wraca do wołającego (pytanie o zakończenie
+/// w oknie pokazuje go samo, zamiast wisieć zajęte).
+pub(crate) fn try_stop_measurement(app: &tauri::AppHandle, quit: bool) -> Result<(), String> {
     let state = app.state::<Database>();
-    let result = state
+    state
         .0
         .lock()
         .map_err(|e| e.to_string())
-        .and_then(|db| db::stop(&db, db::now()).map_err(|e| e.to_string()));
-    match result {
-        Ok(()) => {
-            reminder::reset(app);
-            let _ = app.emit("data-changed", ());
-            if quit {
-                crate::window_state::save(app);
-                app.exit(0);
-            }
-        }
-        Err(e) => {
-            crate::show(app);
-            let _ = app.emit("storage-error", e);
-        }
+        .and_then(|db| db::stop(&db, db::now()).map_err(|e| e.to_string()))?;
+    reminder::reset(app);
+    let _ = app.emit("data-changed", ());
+    if quit {
+        crate::window_state::save(app);
+        app.exit(0);
     }
+    Ok(())
 }
 
 /// Klik w przypięte zadanie: poprzedni pomiar staje, startuje wybrane (jak `mutate`).
@@ -462,7 +466,7 @@ pub fn setup(app: &tauri::App) -> tauri::Result<Refresher> {
                     crate::days::request_end(app);
                 }
             }
-            "quit" => stop_measurement(app, true),
+            "quit" => crate::quit::request_quit(app),
             id => {
                 if let Some(task_id) = id.strip_prefix("pin:").and_then(|t| t.parse().ok()) {
                     start_pinned(app, task_id);

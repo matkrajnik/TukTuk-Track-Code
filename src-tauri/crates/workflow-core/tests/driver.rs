@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use workflow_core::driver::{
-    DecideError, DecideRequest, DriverConfig, Runtime, RuntimeHandle,
+    DecideError, DecideRequest, DriverConfig, ResumeError, Runtime, RuntimeHandle,
     MAX_RUNNER_EVENTS_PER_EXECUTION,
 };
 use workflow_core::engine::{Effect, Input, RunEvent, RunState};
@@ -294,10 +294,8 @@ fn two_runs_never_hit_the_runner_concurrently() {
     assert_eq!(runner.total_calls(), 6);
 }
 
-#[test]
-fn restart_at_a_step_boundary_launches_the_next_step_once() {
-    let env = Env::new();
-    let run = env.create("r1");
+/// Historia do granicy kroków: analiza zakończona, implementacja nie zaplanowana.
+fn boundary_history(env: &Env, run: RunId) {
     let effects = apply_inputs(&*env.repo, run, vec![Input::Start, Input::Continue]).unwrap();
     let Some(Effect::LaunchAgent { execution_id, .. }) = effects.first().cloned() else {
         panic!("brak LaunchAgent");
@@ -315,15 +313,40 @@ fn restart_at_a_step_boundary_launches_the_next_step_once() {
         }],
     )
     .unwrap();
-    let runner = Arc::new(
+}
+
+fn after_analysis_runner() -> Arc<ScriptedRunner> {
+    Arc::new(
         ScriptedRunner::new()
             .script(
                 "implementation",
                 vec![Step::complete(samples::implementation())],
             )
             .script("review", vec![Step::complete(samples::review_approved())]),
-    );
+    )
+}
+
+/// Kryterium E3 zmienione świadomie decyzją po E7 (PLAN_WDROZENIA.md, 15,
+/// „2026-11-06 — decyzje po E7”): przebieg na granicy kroków po restarcie nie
+/// rusza sam. Rekonsyliacja hosta (`recovery::reconcile_at_startup`) wstrzymuje go
+/// (`Input::PauseAfterRestart`, tu odtworzone przez `apply_inputs`), sterownik po
+/// starcie nie uruchamia żadnego agenta, a dopiero `resume` kontynuuje graf od
+/// następnego kroku dokładnie raz; kolejny restart niczego nie powtarza.
+#[test]
+fn restart_at_a_step_boundary_waits_paused_until_resumed_once() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    let runner = after_analysis_runner();
     let handle = env.run(&runner, config());
+    settle(&handle);
+    assert_eq!(runner.total_calls(), 0, "wstrzymany przebieg nie rusza sam");
+    assert_eq!(env.state(run).status, RunStatus::Paused);
+    handle.wake();
+    settle(&handle);
+    assert_eq!(runner.total_calls(), 0, "Wake nie wznawia wstrzymanego");
+    assert_eq!(handle.resume(run, "w1"), Ok(RunStatus::Running));
     settle(&handle);
     assert_eq!(runner.calls("analysis"), 0);
     assert_eq!(runner.calls("implementation"), 1);
@@ -333,6 +356,122 @@ fn restart_at_a_step_boundary_launches_the_next_step_once() {
     let handle = env.run(&runner, config());
     settle(&handle);
     assert_eq!(runner.calls("implementation"), 1);
+}
+
+#[test]
+fn double_resume_with_the_same_request_id_launches_one_step() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let first = handle.resume(run, "w1");
+    let second = handle.resume(run, "w1");
+    assert!(first.is_ok(), "{first:?}");
+    assert!(second.is_ok(), "{second:?}");
+    settle(&handle);
+    assert_eq!(runner.calls("implementation"), 1);
+    assert_eq!(env.state(run).resume_requests, ["w1"]);
+    // Inny identyfikator po wznowieniu jest odrzucany.
+    assert_eq!(handle.resume(run, "w2"), Err(ResumeError::NotPaused));
+}
+
+#[test]
+fn resume_with_a_broken_workspace_fails_the_run_without_runner() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    env.workspace
+        .set_verify_error(Some("Katalog roboczy nie jest worktree przebiegu."));
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    assert_eq!(handle.resume(run, "w1"), Ok(RunStatus::Failed));
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Failed);
+    assert_eq!(state.failure, Some(FailureCode::WorkspaceUnavailable));
+    assert_eq!(runner.total_calls(), 0);
+}
+
+/// Błąd samego sprawdzenia katalogu (np. baza) nie kończy przebiegu: wznowienie
+/// jest odrzucone bez zdarzeń, a ponowienie z tym samym id po naprawie wznawia.
+#[test]
+fn verify_error_refuses_resume_without_events_and_retry_resumes() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    env.workspace.set_verify_failure(Some("baza niedostępna"));
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let before = env.state(run).event_count;
+    assert!(matches!(
+        handle.resume(run, "w1"),
+        Err(ResumeError::Storage(m)) if m.contains("baza niedostępna")
+    ));
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Paused);
+    assert_eq!(state.event_count, before, "bez zdarzeń");
+    assert_eq!(runner.total_calls(), 0);
+    env.workspace.set_verify_failure(None);
+    assert_eq!(handle.resume(run, "w1"), Ok(RunStatus::Running));
+    settle(&handle);
+    assert_eq!(runner.calls("implementation"), 1);
+}
+
+/// Zatrzymany sterownik (wyjście z aplikacji) odrzuca wznowienie czytelnym
+/// komunikatem, a przebieg zostaje wstrzymany do następnego uruchomienia.
+#[test]
+fn resume_after_graceful_shutdown_is_refused() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    handle.shutdown_graceful(Duration::from_secs(2));
+    let err = handle.resume(run, "w1").unwrap_err();
+    assert_eq!(err, ResumeError::ShuttingDown);
+    assert_eq!(
+        err.to_string(),
+        "Aplikacja się zamyka — wznów przebieg po ponownym uruchomieniu."
+    );
+    assert_eq!(env.state(run).status, RunStatus::Paused);
+    assert_eq!(runner.total_calls(), 0);
+}
+
+#[test]
+fn cancel_of_a_paused_run_ends_cancelled_without_runner() {
+    let env = Env::new();
+    let run = env.create("r1");
+    boundary_history(&env, run);
+    apply_inputs(&*env.repo, run, vec![Input::PauseAfterRestart]).unwrap();
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    handle.cancel(run);
+    settle(&handle);
+    assert_eq!(env.state(run).status, RunStatus::Cancelled);
+    assert_eq!(runner.total_calls(), 0);
+    assert_eq!(handle.resume(run, "w1"), Err(ResumeError::NotPaused));
+}
+
+#[test]
+fn resume_of_an_unknown_run_is_reported() {
+    let env = Env::new();
+    let runner = after_analysis_runner();
+    let handle = env.run(&runner, config());
+    assert!(matches!(
+        handle.resume(999, "w1"),
+        Err(ResumeError::Storage(_)) | Err(ResumeError::NotFound)
+    ));
 }
 
 #[test]

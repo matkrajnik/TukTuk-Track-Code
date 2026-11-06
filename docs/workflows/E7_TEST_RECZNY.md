@@ -13,10 +13,12 @@ Dokument dla użytkownika. Agent go nie wykonuje. Zob. też `INSTRUKCJA.md`,
 ## 2. Moduł
 
 - [ ] Odblokowanie kluczem, wyłączenie i ponowne włączenie (wymaga klucza).
-- [ ] Wyłączenie przy przebiegu w toku: „Wyłączenie wstrzymane.”; przy czekającym na zgodę przechodzi.
+- [ ] Wyłączenie przy przebiegu w toku: „Wyłączenie wstrzymane.”; przy czekającym na zgodę i wstrzymanym przechodzi.
 - [ ] Po wyłączeniu tablica agentów nadal pokazuje przebieg i pozwala go zatrzymać.
-- [ ] Zamknięcie do traya a „Zakończ” przy przebiegu w toku (otwarte z E6).
-- [ ] Restart w trakcie zgody: przebieg przerwany, „Odzyskaj przebieg”.
+- [ ] Zamknięcie do traya a „Zakończ aplikację” przy kroku w toku: pytanie z nazwą procesu, „Anuluj”/Esc zostawia krok, „Zakończ” kończy (przebieg „Przerwany”); bez kroku bez pytania (E6, sekcja 2).
+- [ ] Restart na granicy kroków i w kolejce: przebieg „Wstrzymany”, jedno powiadomienie, „Wznów” uruchamia jeden krok, naruszony worktree daje „Błąd” (E6, sekcja 2a).
+- [ ] Przywracanie kopii przy przebiegu „Wstrzymany” jest zablokowane.
+- [ ] Restart w trakcie zgody: zgoda jest ponownie sprawdzana (skrót diffu); bez zmian w katalogu przebieg dalej „Czeka na zgodę”, a przy zmienionym diffie stara zgoda jest unieważniona i pojawia się nowa. Przerwanie i „Odzyskaj przebieg” dotyczą restartu w trakcie kroku agenta.
 - [ ] Zabicie procesu aplikacji w Menedżerze zadań w trakcie kroku: po starcie problem w alercie, odzyskanie działa.
 - [ ] Blokada aktualizacji (`--prepare-update`) przy przebiegu w toku.
 
