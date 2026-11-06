@@ -4,6 +4,16 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.5.1
+
+Poprawki Workflows po pierwszym użyciu 2.5.0. Sprawdzone testami Rust i Playwright na procesach zastępczych; prawdziwe CLI i instalacja natywna czekają na użytkownika (`docs/workflows/E7_TEST_RECZNY.md`).
+
+- **Dziennik agentów pokazuje tekst.** W 2.5.0 monitor przebiegu wyświetlał surowy JSON zdarzenia zamiast komunikatu agenta.
+- **Claude w krokach z zapisem.** Claude Code 2.1.319+ może wykonywać Implementację i Poprawki w trybie `--restricted`: zapis tylko w katalogu roboczym przebiegu, bez poleceń powłoki (testy wypisuje, nie uruchamia). To kontrola CLI, nie sandbox systemu; panel „Gotowość agentów” to zaznacza. Starsza wersja dostaje komunikat z wykrytą wersją.
+- **Zakładka „Graf”.** Monitor przebiegu ma zakładki „Przebieg” i „Graf”; graf wypełnia szerokość okna, ma powiększenie co najmniej 100% i czytelne statusy kroków.
+- **Animacja odblokowania.** Świetlne smugi po krawędziach okna i podświetlony graf; Esc pomija, przy ograniczonym ruchu bez animacji.
+- **Wstrzymanie po restarcie i potwierdzenie zakończenia.** Przebieg na granicy kroków czeka po restarcie jako „Wstrzymany” do ręcznego „Wznów” (z kluczem); „Zakończ aplikację” z traya w trakcie kroku agenta pyta o potwierdzenie.
+
 ### Nowości 2.5.0
 
 - **Workflows (funkcja eksperymentalna).** Procesy agentów (Claude Code, Codex) odblokowywane kluczem dostępu; bez klucza nic się nie zmienia. Można je wyłączyć w Ustawieniach (historia i definicje zostają), a problemy po awarii są widoczne w alercie. Sprawdzone testami Rust i Playwright na procesach zastępczych; prawdziwe CLI i instalacja natywna czekają na użytkownika (`docs/workflows/E7_TEST_RECZNY.md`).

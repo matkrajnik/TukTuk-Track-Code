@@ -1,7 +1,7 @@
-TukTuk Track 2.5.0: Workflows (eksperymentalne) — procesy agentów odblokowywane kluczem.
+TukTuk Track 2.5.1: poprawki Workflows po pierwszym użyciu 2.5.0.
 
-- Nowy moduł Workflows: proces agentów (analiza, implementacja, review) w osobnym katalogu roboczym, z Twoją zgodą na konkretny diff. Bez automatycznego merge.
-- Moduł włącza klucz dostępu w Ustawieniach → Workflows i można go tam wyłączyć; historia i definicje zostają.
-- Problemy po awarii lub restarcie są widoczne w alercie, także na tablicy agentów.
-- Claude Code 2.1.319+ może wykonywać kroki z zapisem (tryb `--restricted`: zmiany tylko w katalogu roboczym, bez poleceń powłoki).
-- Bez klucza nic się nie zmienia: śledzenie czasu, raporty i integracje działają jak dotąd.
+- Dziennik agentów w monitorze przebiegu pokazuje tekst komunikatów (w 2.5.0 pokazywał surowy JSON zdarzenia).
+- Claude Code 2.1.319+ może wykonywać kroki z zapisem (Implementacja, Poprawki) w trybie `--restricted`: zmiany tylko w katalogu roboczym przebiegu, bez poleceń powłoki (agent nie uruchamia testów, tylko je wypisuje). Starsza wersja dostaje czytelny komunikat z wykrytą wersją.
+- Monitor przebiegu ma zakładki „Przebieg” i „Graf”; graf w osobnej zakładce wypełnia szerokość okna z powiększeniem co najmniej 100% i czytelnymi statusami kroków.
+- Nowa animacja odblokowania Workflows: świetlne smugi po krawędziach okna i podświetlony graf (Esc pomija; przy ograniczonym ruchu bez animacji).
+- Przebieg na granicy kroków po restarcie czeka jako „Wstrzymany” do ręcznego „Wznów”; „Zakończ aplikację” z traya w trakcie kroku agenta pyta o potwierdzenie.
