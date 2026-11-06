@@ -70,6 +70,34 @@ export interface ApprovalView {
   comment: string | null;
   decidedAt: number | null;
   artifactAvailable: boolean;
+  /** Diff usunęła retencja (E6): widok mówi o tym zamiast błędu odczytu. */
+  artifactPurged: boolean;
+}
+
+/** Stan odzyskania przerwanego przebiegu (`runs::query::RecoveryView`, E6). */
+export interface RecoveryView {
+  /** Katalog roboczy nadal zarezerwowany (blokada do potwierdzenia końca procesów). */
+  workspaceReserved: boolean;
+  /** Procesy z rejestru bez potwierdzonego końca. */
+  processesUnconfirmed: number;
+  /** PID tych procesów (użytkownik może zakończyć je ręcznie). */
+  unconfirmedPids: number[];
+  /** Liczba zapisanych prób odzyskania (zdarzenia `recovery`). */
+  attempts: number;
+}
+
+/** Wynik `workflow_recover` (`recovery::RecoverOutcome`). */
+export interface RecoverOutcome {
+  processesConfirmed: boolean;
+  workspaceReleased: boolean;
+  alreadyRecovered: boolean;
+  /** PID procesów bez potwierdzonego końca (rezerwacja zostaje). */
+  unconfirmedPids: number[];
+}
+
+/** Jak `recovery::unconfirmed_note` w Rust: komunikat z PID procesów. */
+export function unconfirmedNote(pids: readonly number[]): string {
+  return `Nie potwierdzono końca procesu agenta (PID ${pids.join(", ")}); katalog roboczy pozostaje zablokowany. Zakończ proces ręcznie i spróbuj ponownie.`;
 }
 
 export interface RunDetail {
@@ -88,6 +116,8 @@ export interface RunDetail {
   waitingMs: number;
   /** Tokeny nie są zbierane: interfejs pokazuje „brak danych”. */
   tokens: number | null;
+  /** Tylko dla przebiegu `interrupted`. */
+  recovery: RecoveryView | null;
 }
 
 export interface StoredEvent {
@@ -146,6 +176,20 @@ export interface DiffArtifact {
   truncated: boolean;
   size: number;
   hash: string;
+}
+
+/** Typ zdarzenia odzyskania przerwanego przebiegu (`RunEvent::Reconciled`). */
+export const RECOVERY_EVENT = "recovery";
+
+/** Komunikat o stanie odzyskania przerwanego przebiegu dla monitora. */
+export function recoveryMessage(view: RecoveryView): string {
+  if (!view.workspaceReserved && view.processesUnconfirmed === 0)
+    return "Przebieg odzyskany: katalog roboczy zwolniony. Przebieg nie jest wznawiany.";
+  if (view.processesUnconfirmed > 0)
+    return view.unconfirmedPids.length > 0
+      ? unconfirmedNote(view.unconfirmedPids)
+      : `Nie potwierdzono końca procesu agenta (${view.processesUnconfirmed}); katalog roboczy pozostaje zablokowany.`;
+  return "Katalog roboczy jest zablokowany do świadomego odzyskania przebiegu.";
 }
 
 /** Stały prefiks błędu `workflow_decide`, gdy zmiany unieważniły zgodę. */

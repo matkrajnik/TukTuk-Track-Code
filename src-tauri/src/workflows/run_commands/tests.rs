@@ -225,6 +225,7 @@ fn start_and_decide_require_unlock() {
             app_data: &dir,
             detected: &detected,
             read_codex_config: || Ok(None),
+            free_bytes: agent_cli::available_bytes,
             now: 1,
             enqueue: &enqueue,
             emit: &emit,
@@ -281,4 +282,36 @@ fn artifact_read_requires_matching_run() {
     let err = artifact_read(&f.db, &dir, 12345, "..\\..\\sekret").unwrap_err();
     assert!(err.contains("Nie znaleziono artefaktu"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `workflow_recover` działa bez klucza modułu (odzyskiwanie dostępu), jak anulowanie.
+#[test]
+fn recover_works_without_unlock_key() {
+    use workflow_core::engine::Input;
+    let f = Fixture::new(false);
+    f.handle.start_run(f.run);
+    assert!(f.handle.wait_idle(WAIT));
+    f.db.lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at)
+             VALUES(?1, 'C:/repo', 'C:/wt/r', 'abc', 'reserved', 1)",
+            [f.run],
+        )
+        .unwrap();
+    let repo = SqliteRunRepository::new(f.db.clone());
+    workflow_core::testing::apply_inputs(
+        &repo,
+        f.run,
+        vec![Input::Abandon {
+            message: "przywrócona kopia".into(),
+        }],
+    )
+    .unwrap();
+    let fake = crate::workflows::processes::fake::FakeProcesses::default();
+    let outcome = recover_run(&f.db, &fake, &|_| {}, f.run, 50).unwrap();
+    assert!(outcome.processes_confirmed && outcome.workspace_released);
+    assert!(!outcome.already_recovered);
+    // Bez klucza nadal nie da się startować ani decydować.
+    assert!(unlocked(&f.db).is_err());
 }

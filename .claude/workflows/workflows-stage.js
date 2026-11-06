@@ -41,6 +41,12 @@ const FIRST_DEV_MODEL = 'sonnet'
 const FIX_DEV_MODEL = 'opus'
 const MAX_REVIEW_ROUNDS = 2
 const MAX_CHECK_ATTEMPTS = 2
+// Kiedy błąd testów uznajemy za problem środowiska (testy odkładane na koniec), a kiedy za błąd kodu (stop).
+const ENV_RULE = `environmental=true tylko wtedy, gdy KAŻDY błąd wynika ze środowiska, a nie z kodu: przekroczenia czasu
+przy obciążeniu maszyny, brak narzędzia w PATH (cargo, node, npx), zajęty port, plik zablokowany przez inny proces
+(os error 32, EBUSY, EPERM przy kasowaniu target/), brak sieci przy pobieraniu zależności, brak miejsca na dysku,
+proces testowy ubity przez system lub antywirusa, przeglądarka Playwright nie wystartowała. environmental=false, gdy
+choć jeden błąd to asercja, błąd kompilacji, vue-tsc, cargo fmt albo panic w kodzie aplikacji.`
 
 if (!stages.length) return { error: `Nieprawidłowy zakres etapów: ${from}–${to}.` }
 log(`Etapy do realizacji: ${stages.join(', ')}. Commit po każdym etapie, bez push.`)
@@ -250,14 +256,17 @@ ${toFix.map((f, i) => `${i + 1}. [${f.severity}] ${f.file}${f.line ? ':' + f.lin
 
 Uruchom w katalogu repozytorium: npm run check (build, cały Playwright, cargo fmt --check, cargo test --locked).
 To jedyny proces testowy w tej chwili — nie uruchamiaj niczego równolegle. Trwa 3–8 minut; użyj timeoutu 900000 ms.
-Zwróć: passed, krótkie podsumowanie liczb, listę nieudanych testów z pierwszą linią błędu. environmental=true, gdy
-wszystkie błędy to przekroczenia czasu przy otwieraniu stron (obciążenie maszyny), a nie asercje. Niczego nie poprawiaj.`,
+Zwróć: passed, krótkie podsumowanie liczb, listę nieudanych testów z pierwszą linią błędu. ${ENV_RULE} Niczego nie poprawiaj.`,
       { label: `check:${stage}:${attempt}`, phase: 'Check', schema: CHECK_SCHEMA, effort: 'low' },
     )
-    if (!check || check.passed) break
+    if (check && check.passed) break
     if (attempt > MAX_CHECK_ATTEMPTS) break
+    if (!check) {
+      log(`${stage}: agent sprawdzenia nie zwrócił wyniku (np. brak połączenia z API) — ponowna próba.`)
+      continue
+    }
     if (check.environmental) {
-      log(`${stage}: błędy wyglądają na środowiskowe (timeouty) — ponowne uruchomienie bez poprawek.`)
+      log(`${stage}: błędy wyglądają na środowiskowe — ponowne uruchomienie bez poprawek.`)
       continue
     }
     await agent(
@@ -273,19 +282,27 @@ ${check.failures.join('\n')}`,
     )
   }
   const green = !!(check && check.passed)
+  // Same timeouty środowiskowe po wszystkich próbach: nie zatrzymujemy się, tylko odkładamy
+  // potwierdzenie testów na koniec workflow (finalCheck) i odnotowujemy to w dzienniku i commicie.
+  const envSkipped = !green && (!check || !!check.environmental)
+  if (envSkipped) log(`${stage}: npm run check niepotwierdzone przez środowisko — odkładam testy na koniec.`)
+  const envNote = envSkipped
+    ? `UWAGA: npm run check pominięte z powodu problemu ze środowiskiem (${check ? check.failures.join('; ') : 'agent sprawdzenia nie zwrócił wyniku, np. brak połączenia z API'}). Ponowne sprawdzenie na końcu workflow.`
+    : ''
 
   // --- Dziennik ---------------------------------------------------------------
   await agent(
     `${CONTEXT}
 
 Dopisz na końcu docs/workflows/PLAN_WDROZENIA.md (rozdz. 15) wpis "### <data z git log -1 --format=%cs> — ${stage}"
+(jeśli wpis dla ${stage} już istnieje z wcześniejszej próby, zaktualizuj go zamiast dopisywać drugi)
 oraz zaznacz w rozdz. 10 checkboxy etapu ${stage}, które mają dowód w testach (zgodnie z rozdz. 14: bez dowodu
 nie zaznaczaj). Wpis: zmienione pliki (git status), decyzje, wynik testów (poniżej), pozostałe blokery.
 Pisz po polsku, rzeczowo. Zmieniaj tylko ten dokument.
 
 Wynik npm run check: ${check ? (check.passed ? 'zielone' : 'NIE przechodzi') + ' — ' + check.summary : 'brak wyniku'}
 Niezałatwione uwagi review: ${openFindings.length ? openFindings.map((f) => `[${f.severity}] ${f.file}: ${f.issue}`).join('; ') : 'brak'}
-Pominięte w implementacji: ${dev.notDone.length ? dev.notDone.join('; ') : 'nic'}`,
+Pominięte w implementacji: ${dev.notDone.length ? dev.notDone.join('; ') : 'nic'}${envNote ? '\n' + envNote + '\nOdnotuj to wyraźnie w wpisie (sekcja "Testy pominięte — środowisko") i nie zaznaczaj checkboxów, których jedynym dowodem są pominięte testy.' : ''}`,
     { label: `dziennik:${stage}`, phase: 'Dziennik', model: FIRST_DEV_MODEL, effort: 'low' },
   )
 
@@ -295,8 +312,9 @@ Pominięte w implementacji: ${dev.notDone.length ? dev.notDone.join('; ') : 'nic
     notDone: dev.notDone,
     openFindings,
     check,
+    envSkipped,
   }
-  if (!green) {
+  if (!green && !envSkipped) {
     log(`${stage}: npm run check nie przechodzi — bez commitu, workflow się zatrzymuje.`)
     return { ...result, committed: false, stop: true }
   }
@@ -305,7 +323,7 @@ Pominięte w implementacji: ${dev.notDone.length ? dev.notDone.join('; ') : 'nic
   const commit = await agent(
     `${CONTEXT}
 
-Zrób commit etapu ${stage} (npm run check właśnie przeszedł). Kroki:
+Zrób commit etapu ${stage} (${envSkipped ? 'npm run check NIE zostało potwierdzone z powodu środowiska — dopisz w treści commitu punkt "Testy: npm run check niepotwierdzone (timeouty środowiskowe), do sprawdzenia"' : 'npm run check właśnie przeszedł'}). Kroki:
 1. git status — dodaj wszystkie zmiany etapu (zmienione i nowe pliki), ale NIE .claude/launch.json
    (lokalna konfiguracja podglądu) ani plików tymczasowych (test-results/, playwright-report/, *.log).
 2. Sprawdź, że w zmianach nie ma prawdziwego klucza Workflows ani innych sekretów (git diff --cached).
@@ -336,4 +354,24 @@ for (const stage of stages) {
   if (result.stop) break
 }
 
-return { stages: report }
+// --- Odłożone testy: jedno pełne sprawdzenie na końcu ----------------------------
+let finalCheck = null
+const deferred = report.filter((r) => r.envSkipped).map((r) => r.stage)
+if (deferred.length) {
+  phase('Check')
+  for (let attempt = 1; attempt <= MAX_CHECK_ATTEMPTS + 1; attempt++) {
+    finalCheck = await agent(
+      `${CONTEXT}
+
+Końcowe sprawdzenie odłożonych testów (etapy ${deferred.join(', ')} miały npm run check niepotwierdzone przez środowisko).
+Uruchom w katalogu repozytorium: npm run check. To jedyny proces testowy w tej chwili — nie uruchamiaj niczego
+równolegle. Użyj timeoutu 900000 ms. Zwróć: passed, podsumowanie, nieudane testy z pierwszą linią błędu.
+${ENV_RULE} Niczego nie poprawiaj i nie commituj.`,
+      { label: `check:final:${attempt}`, phase: 'Check', schema: CHECK_SCHEMA, effort: 'low' },
+    )
+    if (!finalCheck || finalCheck.passed || !finalCheck.environmental) break
+  }
+  log(`Końcowe sprawdzenie (${deferred.join(', ')}): ${finalCheck && finalCheck.passed ? 'zielone' : 'NIE przechodzi'}.`)
+}
+
+return { stages: report, deferredTests: deferred, finalCheck }

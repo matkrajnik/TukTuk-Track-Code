@@ -58,6 +58,16 @@ pub fn decide(
             &current_hash,
         )?,
         Input::Recover => work.recover()?,
+        Input::ApprovalRevalidated {
+            approval_id,
+            current_hash,
+        } => work.approval_revalidated(&approval_id, &current_hash)?,
+        Input::Abandon { message } => work.abandon(&message)?,
+        Input::Reconcile {
+            processes_confirmed,
+            workspace_released,
+            note,
+        } => work.reconcile(processes_confirmed, workspace_released, note)?,
         Input::Unresponsive { execution_id } => work.unresponsive(&execution_id)?,
         Input::Fault { code, message } => work.fault(code, message)?,
     }
@@ -569,19 +579,14 @@ impl Work<'_> {
         if artifact_hash != approval.artifact_hash || current_hash != approval.artifact_hash {
             // Artefakt zmienił się albo użytkownik widział inny: zgoda traci ważność,
             // a przebieg prosi o nową dla aktualnego artefaktu.
-            self.emit(RunEvent::ApprovalResolved {
-                approval_id: approval_id.to_owned(),
-                decision: Some(decision),
-                status: ApprovalStatus::Invalidated,
+            return self.reissue_approval(
+                approval_id,
+                &execution_id,
+                Some(decision),
                 request_id,
                 comment,
-            })?;
-            let new_id = self.new_approval_id(&execution_id);
-            return self.emit(RunEvent::ApprovalRequested {
-                approval_id: new_id,
-                execution_id,
-                artifact_hash: current_hash.to_owned(),
-            });
+                current_hash,
+            );
         }
         let (status, execution_status) = match decision {
             Decision::Approve => (ApprovalStatus::Approved, ExecutionStatus::Completed),
@@ -598,6 +603,54 @@ impl Work<'_> {
         self.set_status(RunStatus::Running, None)
     }
 
+    /// Unieważnia zgodę i prosi o nową dla podanego skrótu (wspólne dla decyzji
+    /// ze starym skrótem i ponownego sprawdzenia po restarcie).
+    fn reissue_approval(
+        &mut self,
+        approval_id: &str,
+        execution_id: &str,
+        decision: Option<Decision>,
+        request_id: Option<String>,
+        comment: Option<String>,
+        current_hash: &str,
+    ) -> Result<(), EngineError> {
+        self.emit(RunEvent::ApprovalResolved {
+            approval_id: approval_id.to_owned(),
+            decision,
+            status: ApprovalStatus::Invalidated,
+            request_id,
+            comment,
+        })?;
+        let new_id = self.new_approval_id(execution_id);
+        self.emit(RunEvent::ApprovalRequested {
+            approval_id: new_id,
+            execution_id: execution_id.to_owned(),
+            artifact_hash: current_hash.to_owned(),
+        })
+    }
+
+    fn approval_revalidated(
+        &mut self,
+        approval_id: &str,
+        current_hash: &str,
+    ) -> Result<(), EngineError> {
+        if self.state.status != RunStatus::WaitingForApproval {
+            return Err(invalid_state("przebieg nie czeka na zgodę"));
+        }
+        let approval = self
+            .state
+            .approval(approval_id)
+            .ok_or_else(|| EngineError::UnknownApproval(approval_id.to_owned()))?;
+        if approval.status != ApprovalStatus::Pending {
+            return Err(invalid_state("zgoda jest już rozstrzygnięta"));
+        }
+        if approval.artifact_hash == current_hash {
+            return Ok(());
+        }
+        let execution_id = approval.execution_id.clone();
+        self.reissue_approval(approval_id, &execution_id, None, None, None, current_hash)
+    }
+
     fn recover(&mut self) -> Result<(), EngineError> {
         if !matches!(
             self.state.status,
@@ -605,10 +658,87 @@ impl Work<'_> {
         ) {
             return Ok(());
         }
-        let Some(id) = self.state.unfinished().map(|e| e.id.clone()) else {
+        let Some(record) = self.state.unfinished().cloned() else {
+            if self.state.status == RunStatus::Cancelling {
+                self.invalidate_pending_approvals()?;
+                return self.finish_run(RunStatus::Cancelled, None);
+            }
             return Ok(());
         };
-        self.interrupt(&id, FailureCode::Interrupted.message())
+        // Krok zgody bez przygotowanej zgody nie ma skutków ubocznych: wystarczy
+        // przygotować ją ponownie (deterministyczne id, bez zdarzeń stanu).
+        let unprepared_approval = self.state.status == RunStatus::Running
+            && record.status == ExecutionStatus::Running
+            && matches!(
+                self.graph.node(&record.node_id).map(|n| &n.kind),
+                Some(NodeKind::Approval(_))
+            )
+            && !self
+                .state
+                .approvals
+                .iter()
+                .any(|a| a.execution_id == record.id);
+        if unprepared_approval {
+            let approval_id = self.new_approval_id(&record.id);
+            self.effects.push(Effect::RequestApproval {
+                approval_id,
+                execution_id: record.id,
+            });
+            return Ok(());
+        }
+        self.interrupt(&record.id, FailureCode::Interrupted.message())
+    }
+
+    fn invalidate_pending_approvals(&mut self) -> Result<(), EngineError> {
+        let pending: Vec<String> = self
+            .state
+            .approvals
+            .iter()
+            .filter(|a| a.status == ApprovalStatus::Pending)
+            .map(|a| a.id.clone())
+            .collect();
+        for approval_id in pending {
+            self.emit(RunEvent::ApprovalResolved {
+                approval_id,
+                decision: None,
+                status: ApprovalStatus::Invalidated,
+                request_id: None,
+                comment: None,
+            })?;
+        }
+        Ok(())
+    }
+
+    fn abandon(&mut self, message: &str) -> Result<(), EngineError> {
+        if self.state.status.is_terminal() {
+            return Ok(());
+        }
+        self.invalidate_pending_approvals()?;
+        if let Some(id) = self.state.unfinished().map(|e| e.id.clone()) {
+            self.finish_execution(
+                &id,
+                ExecutionStatus::Interrupted,
+                Some(FailureCode::Interrupted),
+                Some(message.to_owned()),
+            )?;
+        }
+        self.finish_run(RunStatus::Interrupted, Some(FailureCode::Interrupted))
+    }
+
+    fn reconcile(
+        &mut self,
+        processes_confirmed: bool,
+        workspace_released: bool,
+        note: Option<String>,
+    ) -> Result<(), EngineError> {
+        if self.state.status != RunStatus::Interrupted {
+            return Err(invalid_state("odzyskać można tylko przerwany przebieg"));
+        }
+        self.emit(RunEvent::Reconciled {
+            processes_confirmed,
+            workspace_released,
+            note,
+        })
     }
 
     fn unresponsive(&mut self, execution_id: &str) -> Result<(), EngineError> {

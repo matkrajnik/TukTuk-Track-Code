@@ -1,14 +1,17 @@
 /**
  * Podgląd przebiegów Workflows: jeden deterministyczny, przykładowy przebieg
  * szablonu „Analiza → implementacja → review” czekający na zgodę (repozytorium
- * z kalkulator.js). Wyniki mają kształt `workflow_core::samples`. Start,
- * decyzja i anulowanie rzucają komunikat, bo podgląd nie uruchamia agentów.
+ * z kalkulator.js) oraz drugi, przerwany przebieg z zarezerwowanym katalogiem
+ * roboczym do pokazania odzyskania (E6). Wyniki mają kształt
+ * `workflow_core::samples`. Start, decyzja i anulowanie rzucają komunikat, bo
+ * podgląd nie uruchamia agentów; odzyskanie tylko zwalnia przykładową rezerwację.
  */
 import {
   PREVIEW_NO_AGENTS,
   type DecideRunRequest,
   type DecideRunResult,
   type DiffArtifact,
+  type RecoverOutcome,
   type RunDetail,
   type RunFilter,
   type RunSummary,
@@ -23,6 +26,8 @@ const BACKSLASH = String.fromCharCode(92);
 const TRAILING_SEPARATORS = /[\\/]+$/;
 
 const RUN_ID = 1;
+/** Przykładowy przebieg przerwany (awaria aplikacji w trakcie implementacji). */
+const INTERRUPTED_ID = 2;
 const T0 = Date.UTC(2026, 10, 5, 9, 0, 0);
 const HASH = "a".repeat(63) + "1";
 const DIFF = [
@@ -53,6 +58,21 @@ const summary: RunSummary = {
   errorCode: null,
   waitingApproval: true,
 };
+
+const interruptedSummary: RunSummary = {
+  ...summary,
+  id: INTERRUPTED_ID,
+  workflowName: "Analiza → implementacja → review (przerwany)",
+  status: "interrupted",
+  createdAt: T0 - 3_600_000,
+  startedAt: T0 - 3_599_000,
+  finishedAt: T0 - 3_580_000,
+  errorCode: "interrupted",
+  waitingApproval: false,
+};
+
+/** Stan odzyskania przykładu (w pamięci strony; przeładowanie zaczyna od nowa). */
+let interruptedRecovered = false;
 
 const executions: RunDetail["executions"] = [
   ["analysis", "completed", 5_000, {
@@ -131,6 +151,80 @@ export function cancel(_runId: number): Promise<void> {
   return Promise.reject(PREVIEW_NO_AGENTS);
 }
 
+/**
+ * Jak `recovery::recover`: tylko przerwany przebieg. Przykład nie ma procesów,
+ * więc odzyskanie zwalnia jego rezerwację i dopisuje zdarzenie `recovery`;
+ * kolejne wywołanie nic nie zmienia.
+ */
+export async function recover(runId: number): Promise<RecoverOutcome> {
+  if (runId !== RUN_ID && runId !== INTERRUPTED_ID) throw "Nie znaleziono przebiegu.";
+  if (runId !== INTERRUPTED_ID) throw "Odzyskać można tylko przerwany przebieg.";
+  const alreadyRecovered = interruptedRecovered;
+  interruptedRecovered = true;
+  return {
+    processesConfirmed: true,
+    workspaceReleased: true,
+    alreadyRecovered,
+    unconfirmedPids: [],
+  };
+}
+
+function interruptedEvents(): StoredEvent[] {
+  const make = (
+    sequence: number,
+    type: string,
+    payload: Record<string, unknown>,
+    executionId: string | null = null,
+  ): StoredEvent => ({
+    runId: INTERRUPTED_ID,
+    sequence,
+    executionId,
+    type,
+    timestamp: interruptedSummary.createdAt + sequence * 1_000,
+    payload: { type, ...payload },
+  });
+  const list = [
+    make(1, "runStateChanged", { from: "queued", to: "queued", code: null }),
+    make(2, "runStateChanged", { from: "queued", to: "running", code: null }),
+    make(3, "nodeStateChanged", { status: "completed" }, "e-1"),
+    make(4, "nodeStateChanged", { status: "interrupted" }, "e-2"),
+    make(5, "runStateChanged", { from: "running", to: "interrupted", code: "interrupted" }),
+  ];
+  if (interruptedRecovered)
+    list.push(
+      make(6, "recovery", { processesConfirmed: true, workspaceReleased: true }),
+    );
+  return list;
+}
+
+function interruptedDetail(): RunDetail {
+  return {
+    summary: { ...interruptedSummary },
+    goal: "Napraw odejmowanie w kalkulatorze",
+    graph: analysisImplementationReview(),
+    definitionHash: "przyklad",
+    revision: interruptedEvents().length,
+    workspace: "C:\\Dane\\workflows\\worktrees\\2",
+    baseCommit: "0123456789abcdef0123456789abcdef01234567",
+    error: "Aplikacja zakończyła się w trakcie kroku; krok nie jest wznawiany.",
+    executions: executions.slice(0, 2).map((e, i) =>
+      i === 1
+        ? { ...e, status: "interrupted", finishedAt: null, exitCode: null, output: null }
+        : { ...e },
+    ),
+    approvals: [],
+    agentMs: 9_000,
+    waitingMs: 0,
+    tokens: null,
+    recovery: {
+      workspaceReserved: !interruptedRecovered,
+      processesUnconfirmed: 0,
+      unconfirmedPids: [],
+      attempts: interruptedRecovered ? 1 : 0,
+    },
+  };
+}
+
 /** Klucz repozytorium jak `runs::query::repo_key` (bez kanonikalizacji dysku). */
 function repoKey(path: string): string {
   return path.trim().replaceAll("/", BACKSLASH).replace(TRAILING_SEPARATORS, "").toLowerCase();
@@ -142,15 +236,17 @@ export async function list(filter: RunFilter): Promise<RunSummary[]> {
   if (!(await access()).unlocked) return [];
   const statuses = filter.status ?? [];
   const repo = filter.repo?.trim() ? repoKey(filter.repo) : null;
-  const match =
-    (statuses.length === 0 || statuses.includes(summary.status)) &&
-    (filter.beforeId == null || summary.id < filter.beforeId) &&
-    (filter.workflowId == null || filter.workflowId === summary.workflowId) &&
-    (repo == null || repo === repoKey(summary.repo ?? ""));
-  return match ? [{ ...summary }] : [];
+  const match = (s: RunSummary) =>
+    (statuses.length === 0 || statuses.includes(s.status)) &&
+    (filter.beforeId == null || s.id < filter.beforeId) &&
+    (filter.workflowId == null || filter.workflowId === s.workflowId) &&
+    (repo == null || repo === repoKey(s.repo ?? ""));
+  // Od najnowszego (jak `runs::query::list`): przerwany przykład ma większe id.
+  return [interruptedSummary, summary].filter(match).map((s) => ({ ...s }));
 }
 
 export async function get(runId: number): Promise<RunDetail> {
+  if (runId === INTERRUPTED_ID) return interruptedDetail();
   if (runId !== RUN_ID) throw "Nie znaleziono przebiegu.";
   return {
     summary: { ...summary },
@@ -171,11 +267,13 @@ export async function get(runId: number): Promise<RunDetail> {
         comment: null,
         decidedAt: null,
         artifactAvailable: true,
+        artifactPurged: false,
       },
     ],
     agentMs: 15_000,
     waitingMs: 0,
     tokens: null,
+    recovery: null,
   };
 }
 
@@ -184,8 +282,8 @@ export async function events(
   after: number,
   limit: number,
 ): Promise<StoredEvent[]> {
-  if (runId !== RUN_ID) return [];
-  return eventList()
+  if (runId !== RUN_ID && runId !== INTERRUPTED_ID) return [];
+  return (runId === RUN_ID ? eventList() : interruptedEvents())
     .filter((e) => e.sequence > after)
     .slice(0, Math.min(Math.max(limit, 1), 500));
 }

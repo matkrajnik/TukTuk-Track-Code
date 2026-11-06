@@ -343,7 +343,8 @@ pub fn release(db: &SharedDb, run_id: RunId, now: i64) -> Result<(), WorkspaceEr
     .map_err(storage)
 }
 
-fn reserved(db: &SharedDb, run_id: RunId) -> Result<Option<Workspace>, WorkspaceError> {
+/// Rezerwacja przebiegu (aktywna), jeśli istnieje.
+pub(crate) fn reserved(db: &SharedDb, run_id: RunId) -> Result<Option<Workspace>, WorkspaceError> {
     let db = conn(db)?;
     db.query_row(
         "SELECT source_repo, worktree_path, base_commit FROM workflow_workspaces

@@ -203,7 +203,7 @@ fn migration_of_a_v1_database_keeps_data_and_adds_run_tables() {
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_versions"), 1);
     assert_eq!(
         f.column("SELECT CAST(version AS TEXT) FROM workflow_schema_migrations ORDER BY version"),
-        ["1", "2", "3", "4"]
+        ["1", "2", "3", "4", "5"]
     );
     f.create("po-migracji");
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_runs"), 1);
@@ -267,7 +267,7 @@ fn migration_2_to_3_keeps_runs_and_definitions_and_is_idempotent() {
     );
     assert_eq!(
         f.scalar::<i64>("SELECT COUNT(*) FROM workflow_schema_migrations"),
-        4
+        5
     );
     assert_eq!(
         sessions_before,
@@ -997,4 +997,153 @@ fn events_page_is_bounded() {
     let page = f.repo.events_since(run, 0, 1_000_000).unwrap();
     assert!(page.len() <= MAX_EVENTS_PAGE);
     assert_eq!(f.repo.events_since(run, 0, 2).unwrap().len(), 2);
+}
+
+// ---- E6: zwolnienie rezerwacji w transakcji stanu końcowego ----
+
+impl Fixture {
+    fn reserve(&self, run: RunId, path: &str) {
+        self.db
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at) VALUES(?1, 'C:/repo', ?2, 'abc', 'reserved', 1)",
+                rusqlite::params![run, path],
+            )
+            .unwrap();
+    }
+
+    fn reservation(&self, run: RunId) -> (String, Option<String>) {
+        self.db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT state, release_reason FROM workflow_workspaces WHERE run_id = ?1",
+                [run],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap()
+    }
+}
+
+#[test]
+fn succeeded_failed_rejected_cancelled_release_reservation_atomically() {
+    use workflow_core::testing::apply_inputs;
+    let f = Fixture::new();
+    // Cancelled i Failed z kolejki.
+    let cancelled = f.create("c");
+    f.reserve(cancelled, "C:/wt/c");
+    apply_inputs(&f.repo, cancelled, vec![Input::CancelRequested]).unwrap();
+    assert_eq!(f.run_status(cancelled), RunStatus::Cancelled);
+    assert_eq!(
+        f.reservation(cancelled),
+        ("released".to_owned(), Some("terminal".to_owned()))
+    );
+    let failed = f.create("f");
+    f.reserve(failed, "C:/wt/f");
+    apply_inputs(
+        &f.repo,
+        failed,
+        vec![Input::Fault {
+            code: FailureCode::WorkspaceUnavailable,
+            message: "x".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(f.run_status(failed), RunStatus::Failed);
+    assert_eq!(f.reservation(failed).0, "released");
+    // Succeeded i Rejected przez sterownik.
+    for (name, decision, expected) in [
+        ("s", Decision::Approve, RunStatus::Succeeded),
+        ("j", Decision::Reject, RunStatus::Rejected),
+    ] {
+        let runner = template_runner(vec![samples::review_approved()]);
+        let handle = f.runtime(&runner);
+        let run = f.create(name);
+        f.reserve(run, &format!("C:/wt/{name}"));
+        handle.start_run(run);
+        settle(&handle);
+        assert_eq!(f.reservation(run).0, "reserved", "czeka na zgodę");
+        let events = f.repo.load_events(run, 0).unwrap();
+        let graph = f.repo.graph(run).unwrap();
+        let state = workflow_core::testing::replay_stored(&graph, &events).unwrap();
+        let approval = state.approvals.last().unwrap();
+        handle
+            .decide(DecideRequest {
+                run_id: run,
+                approval_id: approval.id.clone(),
+                decision,
+                request_id: format!("d-{name}"),
+                expected_revision: state.event_count,
+                artifact_hash: approval.artifact_hash.clone(),
+                comment: (decision == Decision::Reject).then(|| "Do poprawy".to_owned()),
+            })
+            .unwrap();
+        settle(&handle);
+        assert_eq!(f.run_status(run), expected);
+        assert_eq!(
+            f.reservation(run),
+            ("released".to_owned(), Some("terminal".to_owned()))
+        );
+    }
+}
+
+#[test]
+fn failed_event_write_keeps_the_reservation() {
+    let f = Fixture::new();
+    let run = f.create("r1");
+    f.reserve(run, "C:/wt/r1");
+    let to_cancelled = RunEvent::RunStateChanged {
+        from: RunStatus::Queued,
+        to: RunStatus::Cancelled,
+        code: None,
+    };
+    let planned = RunEvent::ExecutionPlanned {
+        execution_id: "x".into(),
+        node_id: "analysis".into(),
+        iteration: 1,
+        attempt: 1,
+        inputs: vec![],
+    };
+    let result = f
+        .repo
+        .append(run, 2, &[to_cancelled, planned.clone(), planned], 1);
+    assert!(result.is_err());
+    assert_eq!(f.reservation(run), ("reserved".to_owned(), None));
+    assert_eq!(f.run_status(run), RunStatus::Queued);
+}
+
+#[test]
+fn interrupted_keeps_reservation() {
+    use workflow_core::testing::apply_inputs;
+    let f = Fixture::new();
+    let run = f.create("r1");
+    f.reserve(run, "C:/wt/r1");
+    apply_inputs(
+        &f.repo,
+        run,
+        vec![Input::Abandon {
+            message: "x".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(f.run_status(run), RunStatus::Interrupted);
+    assert_eq!(f.reservation(run), ("reserved".to_owned(), None));
+}
+
+#[test]
+fn released_worktree_path_can_be_reserved_again_only_after_release() {
+    use workflow_core::testing::apply_inputs;
+    let f = Fixture::new();
+    let first = f.create("a");
+    let second = f.create("b");
+    f.reserve(first, "C:/wt/same");
+    let blocked = f.db.lock().unwrap().execute(
+        "INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at) VALUES(?1, 'C:/repo', 'C:/wt/same', 'abc', 'reserved', 1)",
+        [second],
+    );
+    assert!(blocked.is_err(), "ścieżka zajęta do zwolnienia");
+    apply_inputs(&f.repo, first, vec![Input::CancelRequested]).unwrap();
+    f.reserve(second, "C:/wt/same");
+    assert_eq!(f.reservation(second).0, "reserved");
 }

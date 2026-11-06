@@ -163,7 +163,18 @@ impl Proc for ScriptedProc {
             total_bytes: 64,
         }
     }
+
+    fn identity(&self) -> Option<agent_cli::ProcessIdentity> {
+        Some(SCRIPTED_IDENTITY)
+    }
 }
+
+/// Tożsamość każdego skryptowanego procesu (rejestr procesów, E6).
+const SCRIPTED_IDENTITY: agent_cli::ProcessIdentity = agent_cli::ProcessIdentity {
+    pid: 4242,
+    created_ft: 77,
+    job_attached: true,
+};
 
 impl Spawner for ScriptedSpawner {
     fn spawn(&self, spec: &Spec) -> Result<Box<dyn Proc>, SpawnError> {
@@ -1571,6 +1582,7 @@ fn sample_start(env: &Env, handle: &RuntimeHandle, request_id: &str) -> StartRes
             app_data: &env.app_data,
             detected: &detected,
             read_codex_config: || Ok(Some("[windows]\nsandbox = \"elevated\"\n".into())),
+            free_bytes: agent_cli::available_bytes,
             now: 1_000,
             enqueue: &enqueue,
             emit: &emit,
@@ -1824,4 +1836,234 @@ fn cancel_mid_step_starts_no_next_step() {
     handle.cancel(started.run_id);
     wait_for(&env, started.run_id, RunStatus::Cancelled);
     assert_eq!(spawner.specs.lock().unwrap().len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// Rejestr procesów (E6)
+
+use crate::workflows::processes::{ProcState, ProcessLedger};
+
+#[derive(Default)]
+struct RecordingLedger {
+    entries: Mutex<Vec<String>>,
+    fail_spawn: bool,
+}
+
+impl ProcessLedger for RecordingLedger {
+    fn spawned(
+        &self,
+        run_id: i64,
+        execution_id: &str,
+        identity: &agent_cli::ProcessIdentity,
+    ) -> Result<(), String> {
+        if self.fail_spawn {
+            return Err("baza zablokowana".into());
+        }
+        self.entries.lock().unwrap().push(format!(
+            "spawned {run_id} {execution_id} {} {}",
+            identity.pid, identity.created_ft
+        ));
+        Ok(())
+    }
+
+    fn ended(&self, execution_id: &str, state: ProcState) -> Result<(), String> {
+        self.entries
+            .lock()
+            .unwrap()
+            .push(format!("ended {execution_id} {}", state.as_str()));
+        Ok(())
+    }
+}
+
+#[test]
+fn ledger_records_the_spawned_process_and_its_exit() {
+    let dir = temp_dir("ledger");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+    let ledger = Arc::new(RecordingLedger::default());
+    let r = runner(&spawner, &dir, "h").with_ledger(ledger.clone());
+    let (_, _) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Analysis, Some(&dir)),
+    );
+    assert_eq!(
+        *ledger.entries.lock().unwrap(),
+        ["spawned 7 exec-1 4242 77", "ended exec-1 exited"]
+    );
+}
+
+#[test]
+fn cancelled_step_is_recorded_as_killed() {
+    let dir = temp_dir("ledger-cancel");
+    let spawner = ScriptedSpawner::hanging(KillResult::Confirmed, Duration::ZERO);
+    let ledger = Arc::new(RecordingLedger::default());
+    let r = runner(&spawner, &dir, "h").with_ledger(ledger.clone());
+    let cancel = cancel_token();
+    cancel.store(true, Ordering::SeqCst);
+    let outcome = r.run(
+        &request(Provider::Claude, AgentRole::Analysis, Some(&dir)),
+        &cancel,
+        &mut |_| {},
+    );
+    assert_eq!(outcome, RunnerOutcome::Cancelled);
+    assert_eq!(
+        ledger.entries.lock().unwrap().last().unwrap(),
+        "ended exec-1 killed"
+    );
+}
+
+/// Proces bez wpisu w rejestrze nie dałby się sprawdzić po awarii hosta: krok
+/// kończy się błędem zapisu, a proces jest kończony przed czytaniem strumienia.
+#[test]
+fn ledger_write_failure_kills_the_process_and_fails_the_step() {
+    let dir = temp_dir("ledger-fail");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+    let ledger = Arc::new(RecordingLedger {
+        fail_spawn: true,
+        ..RecordingLedger::default()
+    });
+    let r = runner(&spawner, &dir, "h").with_ledger(ledger.clone());
+    let (outcome, events) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Analysis, Some(&dir)),
+    );
+    assert_eq!(failure_code(&outcome), Some(FailureCode::StorageError));
+    assert!(events.is_empty(), "strumień nie był czytany");
+    assert!(ledger.entries.lock().unwrap().is_empty());
+}
+
+/// Niepotwierdzony koniec drzewa procesów (`Interrupted`) zostaje w rejestrze
+/// jako `unknown`: rekonsyliacja po restarcie sprawdzi go po PID.
+#[test]
+fn unconfirmed_kill_marks_unknown() {
+    let dir = temp_dir("ledger-unknown");
+    let spawner = ScriptedSpawner::hanging(KillResult::Unconfirmed, Duration::from_secs(3600));
+    let ledger = Arc::new(RecordingLedger::default());
+    let r = runner(&spawner, &dir, "h")
+        .with_unconfirmed_max_wait(Duration::from_millis(200))
+        .with_ledger(ledger.clone());
+    let cancel = cancel_token();
+    cancel.store(true, Ordering::SeqCst);
+    let outcome = r.run(
+        &request(Provider::Claude, AgentRole::Analysis, Some(&dir)),
+        &cancel,
+        &mut |_| {},
+    );
+    assert_eq!(failure_code(&outcome), Some(FailureCode::Interrupted));
+    assert_eq!(
+        *ledger.entries.lock().unwrap(),
+        ["spawned 7 exec-1 4242 77", "ended exec-1 unknown"]
+    );
+}
+
+/// Rejestr, który przy zapisie procesu sprawdza, czy strumień był już czytany.
+struct OrderLedger {
+    output_seen: Arc<AtomicBool>,
+    seen_at_spawn: Mutex<Option<bool>>,
+}
+
+impl ProcessLedger for OrderLedger {
+    fn spawned(
+        &self,
+        _run_id: i64,
+        _execution_id: &str,
+        _identity: &agent_cli::ProcessIdentity,
+    ) -> Result<(), String> {
+        *self.seen_at_spawn.lock().unwrap() = Some(self.output_seen.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    fn ended(&self, _execution_id: &str, _state: ProcState) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn spawn_is_recorded_before_any_output_is_read() {
+    let dir = temp_dir("ledger-order");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+    let output_seen = Arc::new(AtomicBool::new(false));
+    let ledger = Arc::new(OrderLedger {
+        output_seen: output_seen.clone(),
+        seen_at_spawn: Mutex::new(None),
+    });
+    let r = runner(&spawner, &dir, "h").with_ledger(ledger.clone());
+    let mut events = 0;
+    let outcome = r.run(
+        &request(Provider::Claude, AgentRole::Analysis, Some(&dir)),
+        &cancel_token(),
+        &mut |_| {
+            output_seen.store(true, Ordering::SeqCst);
+            events += 1;
+        },
+    );
+    assert!(
+        matches!(outcome, RunnerOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert!(events > 0, "strumień był czytany");
+    assert_eq!(
+        *ledger.seen_at_spawn.lock().unwrap(),
+        Some(false),
+        "zapis procesu przed pierwszym zdarzeniem strumienia"
+    );
+}
+
+/// Wpis rejestru przeżywa restart aplikacji: po ponownym otwarciu bazy z pliku
+/// proces jest nadal otwarty (do sprawdzenia przez rekonsyliację) z tym samym PID.
+#[test]
+fn ledger_rows_survive_restart_of_repository() {
+    use crate::workflows::processes::{open_processes, SqliteLedger};
+    use workflow_core::ports::{NewRun, RunRepository};
+
+    let dir = temp_dir("ledger-restart");
+    let path = dir.join("baza.sqlite");
+    let open = || -> crate::workflows::workspace::SharedDb {
+        let conn = Connection::open(&path).unwrap();
+        crate::db::init(&conn).unwrap();
+        Arc::new(Mutex::new(conn))
+    };
+    let run_id = {
+        let db = open();
+        let version_id = {
+            let conn = db.lock().unwrap();
+            let id =
+                store::create(&conn, "Proces", "", &analysis_implementation_review(), 1).unwrap();
+            store::publish(&conn, id, 1, 2).unwrap();
+            conn.query_row("SELECT id FROM workflow_versions", [], |r| r.get(0))
+                .unwrap()
+        };
+        let run_id = SqliteRunRepository::new(db.clone())
+            .create_run(&NewRun {
+                version_id,
+                request_id: "restart".into(),
+                now: 10,
+                ..NewRun::default()
+            })
+            .unwrap()
+            .run_id;
+        // Krok wisi i jest anulowany bez potwierdzenia: zostaje `unknown`.
+        let spawner = ScriptedSpawner::hanging(KillResult::Unconfirmed, Duration::from_secs(3600));
+        let r = runner(&spawner, &dir, "h")
+            .with_unconfirmed_max_wait(Duration::from_millis(100))
+            .with_ledger(Arc::new(SqliteLedger::new(db.clone(), || 5)));
+        let mut req = request(Provider::Claude, AgentRole::Analysis, Some(&dir));
+        req.run_id = run_id;
+        let cancel = cancel_token();
+        cancel.store(true, Ordering::SeqCst);
+        r.run(&req, &cancel, &mut |_| {});
+        run_id
+    };
+    let db = open();
+    let processes = open_processes(&db, Some(run_id)).unwrap();
+    assert_eq!(processes.len(), 1);
+    assert_eq!(processes[0].execution_id, "exec-1");
+    assert_eq!(processes[0].identity.pid, 4242);
+    assert_eq!(processes[0].state, ProcState::Unknown);
+    // Po ponownym otwarciu rejestr nadal przyjmuje koniec procesu.
+    SqliteLedger::new(db.clone(), || 9)
+        .ended("exec-1", ProcState::Exited)
+        .unwrap();
+    assert!(open_processes(&db, Some(run_id)).unwrap().is_empty());
+    drop(db);
+    let _ = std::fs::remove_dir_all(&dir);
 }

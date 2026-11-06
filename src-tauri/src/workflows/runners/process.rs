@@ -13,6 +13,10 @@ pub trait Proc: Send {
     fn next(&self, timeout: Duration) -> Option<ProcessEvent>;
     fn kill(&self, confirm_timeout: Duration) -> KillResult;
     fn stderr_tail(&self) -> StderrTail;
+    /// PID i czas utworzenia do rejestru procesów; `None`, gdy nieznane.
+    fn identity(&self) -> Option<agent_cli::ProcessIdentity> {
+        None
+    }
 }
 
 pub trait Spawner: Send + Sync {
@@ -42,6 +46,10 @@ impl Proc for RealProc {
 
     fn stderr_tail(&self) -> StderrTail {
         self.0.stderr_tail()
+    }
+
+    fn identity(&self) -> Option<agent_cli::ProcessIdentity> {
+        self.0.identity()
     }
 }
 

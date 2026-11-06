@@ -312,3 +312,104 @@ fn exited_after_an_unconfirmed_kill_does_not_mean_the_tree_ended() {
         .output();
     assert_dead_soon(grandchild);
 }
+
+// ---- E6: tożsamość procesu ----
+
+use agent_cli::{available_bytes, kill_tree_if_same, probe, Probe, ProcessIdentity};
+
+#[cfg(windows)]
+#[test]
+fn identity_of_live_child_probes_same_alive() {
+    let p = StreamingProcess::spawn(&spec(&["hang"]), Options::default()).expect("spawn");
+    let identity = p.identity().expect("tożsamość");
+    assert_eq!(identity.pid, p.pid());
+    assert_ne!(identity.created_ft, 0);
+    assert_eq!(probe(&identity), Probe::SameAlive);
+    assert_eq!(p.kill(WAIT), KillResult::Confirmed);
+}
+
+#[cfg(windows)]
+#[test]
+fn identity_after_exit_probes_gone() {
+    let p = StreamingProcess::spawn(&spec(&["exit", "0"]), Options::default()).expect("spawn");
+    let identity = p.identity().expect("tożsamość");
+    drain(&p);
+    assert_eq!(probe(&identity), Probe::Gone);
+}
+
+#[cfg(windows)]
+#[test]
+fn identity_with_other_creation_time_probes_reused_and_is_not_killed() {
+    let p = StreamingProcess::spawn(&spec(&["hang"]), Options::default()).expect("spawn");
+    let real = p.identity().expect("tożsamość");
+    let forged = ProcessIdentity {
+        created_ft: real.created_ft + 1,
+        ..real
+    };
+    assert_eq!(probe(&forged), Probe::Reused);
+    assert_eq!(kill_tree_if_same(&forged, WAIT), KillResult::Confirmed);
+    assert!(
+        process_alive(real.pid),
+        "cudzy proces nie może zostać zabity"
+    );
+    assert_eq!(p.kill(WAIT), KillResult::Confirmed);
+}
+
+#[cfg(windows)]
+#[test]
+fn kill_tree_if_same_kills_child_and_grandchild_and_confirms() {
+    let dir = unique_dir("identity-tree");
+    let pidfile = dir.join("pid.txt");
+    let p = StreamingProcess::spawn(
+        &spec(&["spawn-child-and-hang", pidfile.to_str().expect("utf8")]),
+        Options::default(),
+    )
+    .expect("spawn");
+    let identity = p.identity().expect("tożsamość");
+    let grandchild: u32 = wait_for_file(&pidfile).trim().parse().expect("pid");
+    assert!(process_alive(grandchild));
+    assert_eq!(kill_tree_if_same(&identity, WAIT), KillResult::Confirmed);
+    assert_eq!(probe(&identity), Probe::Gone);
+    assert_dead_soon(grandchild);
+}
+
+#[test]
+fn available_bytes_of_temp_dir_is_positive() {
+    #[cfg(windows)]
+    assert!(available_bytes(&std::env::temp_dir()).expect("miejsce") > 0);
+    #[cfg(not(windows))]
+    assert!(available_bytes(&std::env::temp_dir()).is_none());
+}
+
+/// Uwaga 4: nieudany `taskkill` (potomkowie nieznani) nie może dać `Confirmed`,
+/// nawet gdy proces główny był w jobie i sam zginął: job po awarii hosta nie
+/// dowodzi końca potomków.
+#[cfg(windows)]
+#[test]
+fn failed_taskkill_is_unconfirmed_even_with_job_attached() {
+    let p = StreamingProcess::spawn(&spec(&["hang"]), Options::default()).expect("spawn");
+    let identity = p.identity().expect("tożsamość");
+    assert!(identity.job_attached);
+    let result = agent_cli::kill_tree_if_same_with(&identity, WAIT, &|_| false);
+    assert_eq!(result, KillResult::Unconfirmed);
+    // Proces główny i tak skończył się przez uchwyt (TerminateProcess).
+    assert_eq!(probe(&identity), Probe::Gone);
+    assert_eq!(p.kill(WAIT), KillResult::Confirmed);
+}
+
+/// Uwaga 16: koniec potwierdza oczekiwanie na trzymanym uchwycie, a udany
+/// `taskkill` razem z końcem procesu głównego daje `Confirmed`.
+#[cfg(windows)]
+#[test]
+fn kill_with_held_handle_confirms_only_after_the_root_ends() {
+    let p = StreamingProcess::spawn(&spec(&["hang"]), Options::default()).expect("spawn");
+    let identity = p.identity().expect("tożsamość");
+    let killed_pid = std::sync::Mutex::new(None);
+    let result = agent_cli::kill_tree_if_same_with(&identity, WAIT, &|pid| {
+        *killed_pid.lock().unwrap() = Some(pid);
+        true
+    });
+    assert_eq!(result, KillResult::Confirmed);
+    assert_eq!(*killed_pid.lock().unwrap(), Some(identity.pid));
+    assert_eq!(probe(&identity), Probe::Gone);
+}

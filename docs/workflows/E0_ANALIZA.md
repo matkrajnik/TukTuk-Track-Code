@@ -44,6 +44,16 @@ pseudonimizacja `ai_privacy`.
   wszystko poza `KEEP_KEYS`. **Decyzja:** znacznik odblokowania `workflows_unlocked` dopisany do
   `KEEP_KEYS` (przywrócenie starej kopii nie blokuje modułu). Artefakty na dysku (logi, diffy)
   nie są w kopii — do rozwiązania w E6; restore musi oznaczyć aktywne przebiegi jako przerwane.
+- **E6 (zamknięte):** eksport osadza diffy (skrót SHA-256 sprawdzony, limit 256 MiB) w tabeli
+  `workflow_backup_artifacts` samej kopii; baza robocza tej tabeli nie ma; wynik eksportu podaje
+  liczbę pominiętych diffów. Restore przyjmuje tylko diffy z dokładną ścieżką
+  `workflows/runs/<run>/diff-<hash>.patch`, zgodnym skrótem i wierszem indeksu, usuwa tabelę z kopii
+  i zapisuje pliki dopiero po udanej zamianie bazy. Każdy nieskończony przebieg z kopii przechodzi przez silnik
+  (`Input::Abandon`) w `Interrupted`, aktywne rezerwacje są zwalniane jako `restored`. Restore jest
+  odrzucany przy każdym nieskończonym przebiegu, także `waitingForApproval` (`restore_blocker`,
+  sprawdzenie pod blokadą zamiany; podgląd kopii ostrzega z góry); aktualizację blokują tylko
+  `queued`/`running`/`cancelling` (`active_work`). Kopia
+  z nowszym schematem modułu jest odrzucana przed migracją (`workflows/backup.rs`).
 
 ## A04 — punkty integracji UI
 

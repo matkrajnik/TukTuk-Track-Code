@@ -765,3 +765,229 @@ fn approval_comment_is_trimmed_by_engine() {
         Some("Zła nazwa")
     );
 }
+
+// ---- E6: odzyskiwanie ----
+
+/// Prowadzi do kroku zgody, którego zgoda nie została jeszcze przygotowana.
+fn unprepared_approval(sim: &mut Sim) -> (String, String) {
+    let mut script = template_script(&[approved()]);
+    sim.feed(Input::Start);
+    loop {
+        let t = sim.feed(Input::Continue);
+        match t.effects.first() {
+            Some(Effect::LaunchAgent {
+                execution_id,
+                node_id,
+                ..
+            }) => {
+                let outcome = script
+                    .get_mut(node_id.as_str())
+                    .and_then(VecDeque::pop_front)
+                    .expect("skrypt dla węzła");
+                sim.feed(Input::ExecutionResult {
+                    execution_id: execution_id.clone(),
+                    outcome,
+                });
+            }
+            Some(Effect::RequestApproval {
+                approval_id,
+                execution_id,
+            }) => return (approval_id.clone(), execution_id.clone()),
+            other => panic!("nieoczekiwany skutek: {other:?}"),
+        }
+    }
+}
+
+fn waiting_sim() -> Sim {
+    let mut sim = Sim::new(analysis_implementation_review());
+    drive(&mut sim, &mut template_script(&[approved()]));
+    assert_eq!(sim.state.status, RunStatus::WaitingForApproval);
+    sim
+}
+
+#[test]
+fn recover_of_unprepared_approval_requests_it_again_without_interrupt() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    let (approval_id, execution_id) = unprepared_approval(&mut sim);
+    let before = sim.state.event_count;
+    let t = sim.feed(Input::Recover);
+    assert!(t.events.is_empty());
+    assert_eq!(
+        t.effects,
+        vec![Effect::RequestApproval {
+            approval_id,
+            execution_id
+        }]
+    );
+    assert_eq!(sim.state.status, RunStatus::Running);
+    assert_eq!(sim.state.event_count, before);
+}
+
+#[test]
+fn recover_of_cancelling_run_without_step_ends_cancelled() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    let execution_id = launched(&mut sim);
+    sim.feed(Input::CancelRequested);
+    assert_eq!(sim.state.status, RunStatus::Cancelling);
+    // Awaria po zapisaniu końca kroku, a przed zapisaniem końca przebiegu.
+    let finished = RunEvent::ExecutionFinished {
+        execution_id,
+        status: ExecutionStatus::Cancelled,
+        output: None,
+        code: Some(FailureCode::Cancelled),
+        message: None,
+        exit_code: None,
+        session_id: None,
+    };
+    sim.state.apply(&sim.graph, &finished).unwrap();
+    sim.log.push(finished);
+    let t = sim.feed(Input::Recover);
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Cancelled);
+}
+
+/// Kryterium 3 E6: `Cancelling` z krokiem bez wyniku po restarcie daje `Interrupted`
+/// (koniec procesu niepotwierdzony), a nie `Cancelled`, i nie startuje niczego.
+#[test]
+fn recover_of_cancelling_run_with_step_ends_interrupted() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    launched(&mut sim);
+    sim.feed(Input::CancelRequested);
+    assert_eq!(sim.state.status, RunStatus::Cancelling);
+    assert!(sim.state.unfinished().is_some());
+    let t = sim.feed(Input::Recover);
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Interrupted);
+    assert_eq!(sim.state.failure, Some(FailureCode::Interrupted));
+    assert_eq!(
+        sim.executions_of("analysis")[0].status,
+        ExecutionStatus::Interrupted
+    );
+}
+
+#[test]
+fn revalidated_approval_with_same_hash_emits_nothing() {
+    let mut sim = waiting_sim();
+    let id = sim.state.approvals[0].id.clone();
+    let t = sim.feed(Input::ApprovalRevalidated {
+        approval_id: id,
+        current_hash: HASH.into(),
+    });
+    assert!(t.events.is_empty() && t.effects.is_empty());
+    assert_eq!(sim.state.approvals.len(), 1);
+}
+
+#[test]
+fn revalidated_approval_with_changed_hash_invalidates_and_requests_new() {
+    let mut sim = waiting_sim();
+    let id = sim.state.approvals[0].id.clone();
+    sim.feed(Input::ApprovalRevalidated {
+        approval_id: id,
+        current_hash: "changed".into(),
+    });
+    assert_eq!(sim.state.approvals[0].status, ApprovalStatus::Invalidated);
+    assert_eq!(sim.state.approvals[0].decision, None);
+    assert_eq!(sim.state.approvals[1].status, ApprovalStatus::Pending);
+    assert_eq!(sim.state.approvals[1].artifact_hash, "changed");
+    assert_eq!(sim.state.status, RunStatus::WaitingForApproval);
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+}
+
+#[test]
+fn revalidate_outside_waiting_is_invalid_state() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    sim.feed(Input::Start);
+    let err = sim
+        .try_feed(Input::ApprovalRevalidated {
+            approval_id: "x".into(),
+            current_hash: HASH.into(),
+        })
+        .unwrap_err();
+    assert!(matches!(err, EngineError::InvalidState(_)));
+}
+
+fn abandon() -> Input {
+    Input::Abandon {
+        message: "Przebieg z przywróconej kopii nie jest wznawiany".into(),
+    }
+}
+
+#[test]
+fn abandon_turns_every_active_status_into_interrupted() {
+    let mut queued = Sim::new(analysis_implementation_review());
+    let t = queued.feed(abandon());
+    assert!(t.effects.is_empty());
+    assert_eq!(queued.state.status, RunStatus::Interrupted);
+
+    let mut running = Sim::new(analysis_implementation_review());
+    launched(&mut running);
+    running.feed(abandon());
+    assert_eq!(running.state.status, RunStatus::Interrupted);
+    assert_eq!(
+        running.executions_of("analysis")[0].status,
+        ExecutionStatus::Interrupted
+    );
+    assert_eq!(running.state.failure, Some(FailureCode::Interrupted));
+
+    let mut waiting = waiting_sim();
+    waiting.feed(abandon());
+    assert_eq!(waiting.state.status, RunStatus::Interrupted);
+    assert_eq!(
+        waiting.state.approvals[0].status,
+        ApprovalStatus::Invalidated
+    );
+    assert_eq!(
+        waiting.executions_of("approval")[0].status,
+        ExecutionStatus::Interrupted
+    );
+
+    let mut cancelling = Sim::new(analysis_implementation_review());
+    launched(&mut cancelling);
+    cancelling.feed(Input::CancelRequested);
+    cancelling.feed(abandon());
+    assert_eq!(cancelling.state.status, RunStatus::Interrupted);
+
+    for sim in [&queued, &running, &waiting, &cancelling] {
+        let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+        assert_eq!(replayed, sim.state);
+    }
+}
+
+#[test]
+fn abandon_of_terminal_run_changes_nothing() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    sim.feed(Input::CancelRequested);
+    let t = sim.feed(abandon());
+    assert!(t.events.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Cancelled);
+}
+
+#[test]
+fn reconciled_event_keeps_interrupted_and_replays() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    launched(&mut sim);
+    sim.feed(Input::Recover);
+    assert_eq!(sim.state.status, RunStatus::Interrupted);
+    let t = sim.feed(Input::Reconcile {
+        processes_confirmed: true,
+        workspace_released: true,
+        note: None,
+    });
+    let event = t.events[0].clone();
+    assert_eq!(event.stream_type(), "recovery");
+    assert_eq!(event.execution_id(), None);
+    assert_eq!(sim.state.status, RunStatus::Interrupted);
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed, sim.state);
+    // Poza Interrupted audyt jest niedozwolony.
+    let mut running = Sim::new(analysis_implementation_review());
+    running.feed(Input::Start);
+    assert!(running
+        .try_feed(Input::Reconcile {
+            processes_confirmed: true,
+            workspace_released: true,
+            note: None
+        })
+        .is_err());
+}

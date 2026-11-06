@@ -157,7 +157,13 @@ pub struct AppSettings {
     pub ai_day_close: bool,
     /// Asystent w Rano i przeglądzie tygodnia (A6); działa tylko przy wybranym silniku.
     pub ai_plan_assist: bool,
+    /// Ile dni trzymać diffy zakończonych przebiegów Workflows (E6, 1–365,
+    /// domyślnie 30); starsze usuwa retencja przy starcie, historia zostaje.
+    pub workflow_retention_days: u32,
 }
+/// Zakres `workflow_retention_days` (dni). Co najmniej tydzień: krótsza retencja
+/// mogłaby usunąć diff świeżo zakończonego przebiegu w trakcie jego przeglądu.
+pub const WORKFLOW_RETENTION_DAYS: std::ops::RangeInclusive<u32> = 7..=365;
 
 /// Domyślne statusy Jiry oznaczające czekanie.
 pub fn default_waiting_statuses() -> Vec<String> {
@@ -263,6 +269,7 @@ impl Default for AppSettings {
             ai_assign_suggest: true,
             ai_day_close: true,
             ai_plan_assist: true,
+            workflow_retention_days: 30,
         }
     }
 }
@@ -474,6 +481,9 @@ fn validate_fields(mut s: AppSettings) -> Result<AppSettings, String> {
     }
     if !(1..=60).contains(&s.focus_break_minutes) {
         return Err("Przerwa musi mieć od 1 do 60 minut.".into());
+    }
+    if !WORKFLOW_RETENTION_DAYS.contains(&s.workflow_retention_days) {
+        return Err("Przechowywanie diffów Workflows: od 7 do 365 dni.".into());
     }
     if s.work_days.iter().any(|d| !(1..=7).contains(d)) {
         return Err("Dni robocze muszą być liczbami od 1 do 7.".into());
@@ -1395,6 +1405,25 @@ mod tests {
         );
         assert_eq!(load(&db), saved);
         assert!(!load(&db).agent_suggest);
+    }
+
+    #[test]
+    fn workflow_retention_days_are_validated_and_saved() {
+        let mut db = db();
+        let base = AppSettings::default();
+        assert_eq!(base.workflow_retention_days, 30);
+        for bad in [
+            json!({"workflowRetentionDays": 0}),
+            json!({"workflowRetentionDays": 1}),
+            json!({"workflowRetentionDays": 6}),
+            json!({"workflowRetentionDays": 366}),
+        ] {
+            assert!(apply(&base, &bad).is_err(), "{bad} powinno być odrzucone");
+        }
+        let saved = save(&mut db, &json!({"workflowRetentionDays": 7})).unwrap();
+        assert_eq!(load(&db).workflow_retention_days, 7);
+        assert_eq!(saved.workflow_retention_days, 7);
+        assert!(apply(&base, &json!({"workflowRetentionDays": 365})).is_ok());
     }
 
     #[test]

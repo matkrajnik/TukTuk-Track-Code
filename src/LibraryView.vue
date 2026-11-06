@@ -22,8 +22,35 @@ const preview = ref<{
     tasks: number;
     sessions: number;
     trash: number;
+    /** Nieskończone przebiegi Workflows zablokują przywrócenie (`restore_blocker`). */
+    workflowBlocker?: string | null;
   } | null>(null),
   confirmed = ref(false);
+/** Wynik `export_backup` (`backup::ExportResult`). */
+interface ExportResult {
+  path: string;
+  skippedArtifacts: number;
+  overLimitArtifacts: number;
+}
+/** Komunikat po eksporcie; pominięte diffy Workflows są wymienione jawnie. */
+function exportMessage(result: ExportResult): string {
+  const parts = ["Zapisano kopię: " + result.path + "."];
+  if (result.skippedArtifacts > 0)
+    parts.push(
+      `Pominięto diffy Workflows bez pliku albo z niezgodną treścią: ${result.skippedArtifacts}.`,
+    );
+  if (result.overLimitArtifacts > 0)
+    parts.push(
+      `Diffy Workflows ponad limit 256 MB kopii nie trafiły do niej: ${result.overLimitArtifacts}.`,
+    );
+  return parts.join(" ");
+}
+async function exportBackup() {
+  await run(async () => {
+    const result = await invoke<ExportResult | null>("export_backup");
+    if (result) message.value = exportMessage(result);
+  });
+}
 /**
  * Wiersze historii (dzień, zadanie) z czasem albo notatką, od najnowszego dnia,
  * w kolejności zadań ze snapshotu. Jedno przejście po przedziałach zgrupowane
@@ -198,12 +225,7 @@ async function restore() {
       <button
         class="today-button"
         :disabled="busy || !desktop"
-        @click="
-          run(async () => {
-            const path = await invoke<string | null>('export_backup');
-            if (path) message = 'Zapisano kopię: ' + path;
-          })
-        "
+        @click="exportBackup"
       >
         Eksportuj kopię</button
       ><button
@@ -219,6 +241,13 @@ async function restore() {
       <p>
         Zadania: {{ preview.tasks }}, przedziały czasu: {{ preview.sessions }},
         zadania w koszu: {{ preview.trash }}.
+      </p>
+      <p
+        v-if="preview.workflowBlocker"
+        class="error"
+        data-testid="restore-workflow-blocker"
+      >
+        Przywrócenie zostanie odrzucone. {{ preview.workflowBlocker }}
       </p>
       <p>
         Przywrócenie zastąpi aktualne dane. Najpierw powstanie kopia obecnej

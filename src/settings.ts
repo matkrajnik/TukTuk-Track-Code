@@ -63,6 +63,8 @@ export interface AppSettings {
   focusBlockMinutes: number;
   /** Długość przerwy po bloku w minutach (1–60). */
   focusBreakMinutes: number;
+  /** Dni przechowywania diffów zakończonych przebiegów Workflows (1–365, E6). */
+  workflowRetentionDays: number;
   /** Przerwa zatrzymuje pomiar. */
   focusBreakStops: boolean;
   /** Tytuły spotkań z kalendarza; wyłączone = „Spotkanie”. */
@@ -176,6 +178,7 @@ export const defaultSettings: Readonly<AppSettings> = Object.freeze({
   shortcutToggle: "Control+Alt+Space",
   focusBlockMinutes: 25,
   focusBreakMinutes: 5,
+  workflowRetentionDays: 30,
   focusBreakStops: true,
   calendarShowTitles: true,
   planWithCorrection: false,
@@ -442,6 +445,8 @@ function applyFields(
     throw new Error("Blok skupienia musi mieć od 1 do 240 minut.");
   if (!range(s.focusBreakMinutes, 1, 60))
     throw new Error("Przerwa musi mieć od 1 do 60 minut.");
+  if (!range(s.workflowRetentionDays, 7, 365))
+    throw new Error("Przechowywanie diffów Workflows: od 7 do 365 dni.");
   if (s.workDays.some((d) => !Number.isInteger(d) || d < 1 || d > 7))
     throw new Error("Dni robocze muszą być liczbami od 1 do 7.");
   s.workDays = [...new Set(s.workDays)].sort((a, b) => a - b);

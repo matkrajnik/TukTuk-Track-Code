@@ -5,6 +5,8 @@
 //! procesu strumieniowego z limitami, kodem wyjścia i kończeniem całego drzewa.
 
 mod failure;
+mod fs_space;
+mod identity;
 mod lines;
 mod parse;
 mod process;
@@ -12,6 +14,8 @@ mod spec;
 mod tree;
 
 pub use failure::{classify, codex_event_text, parse_version, Failure};
+pub use fs_space::available_bytes;
+pub use identity::{kill_tree_if_same, kill_tree_if_same_with, probe, Probe, ProcessIdentity};
 pub use lines::{read_lines, LineItem};
 pub use parse::{parse_claude_line_raw, parse_codex_line_raw, Parsed};
 pub use process::{

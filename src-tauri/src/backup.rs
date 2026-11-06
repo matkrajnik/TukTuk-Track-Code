@@ -14,6 +14,19 @@ pub struct Preview {
     tasks: usize,
     sessions: usize,
     trash: usize,
+    /// Ostrzeżenie z góry: nieskończone przebiegi Workflows w bazie roboczej
+    /// zablokują przywrócenie (`workflows::backup::restore_blocker`).
+    workflow_blocker: Option<String>,
+}
+/// Wynik eksportu: ścieżka i diffy Workflows, których kopia nie zawiera.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportResult {
+    path: String,
+    /// Diffy brakujące albo ze złym skrótem (kopia powstała bez nich).
+    skipped_artifacts: usize,
+    /// Diffy pominięte przez limit rozmiaru kopii.
+    over_limit_artifacts: usize,
 }
 fn copy(source: &Connection, target: &mut Connection) -> Result<(), String> {
     Backup::new(source, target)
@@ -85,6 +98,8 @@ fn replace(
 pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
     let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .map_err(|_| "Nie można otworzyć kopii SQLite.")?;
+    // Nowszy schemat modułu Workflows odrzucamy przed migracją (E6).
+    crate::workflows::backup::check_schema(&source)?;
     let valid:bool=source.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks') AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions')",[],|r|r.get(0)).map_err(|_|"Niepoprawny plik kopii.")?;
     if !valid {
         return Err("To nie jest kopia TukTuk Track.".into());
@@ -137,18 +152,74 @@ pub fn stage(path: &std::path::Path) -> Result<Connection, String> {
     Ok(memory)
 }
 
+/// Kopia przygotowana do przywrócenia: baza po neutralizacji przebiegów i diffy
+/// Workflows zweryfikowane, ale jeszcze niezapisane na dysk.
+pub struct PreparedRestore {
+    pub db: Connection,
+    artifacts: crate::workflows::backup::StagedArtifacts,
+}
+
+impl PreparedRestore {
+    /// Zapisuje diffy z kopii do katalogu danych. Wołać po udanym
+    /// `restore_locked`, bez blokady bazy: odrzucone przywrócenie nie zostawia
+    /// plików z kopii przy przebiegach bazy roboczej.
+    pub fn write_artifacts(
+        &self,
+        app_data: &std::path::Path,
+    ) -> Result<crate::workflows::backup::ExtractReport, String> {
+        self.artifacts.write(app_data)
+    }
+}
+
+/// Kopia do przywrócenia: przygotowanie (`stage`), neutralizacja przebiegów
+/// Workflows (żaden nie wznawia się po przywróceniu) i weryfikacja diffów z
+/// kopii. Bez blokady bazy roboczej i bez zapisu na dysk.
+pub fn prepare_restore(path: &std::path::Path, now: i64) -> Result<PreparedRestore, String> {
+    let staged = stage(path)?;
+    let db = crate::workflows::backup::neutralize_restored(staged, now)?;
+    let artifacts = crate::workflows::backup::take_artifacts(&db)?;
+    Ok(PreparedRestore { db, artifacts })
+}
+/// Zastępuje bazę roboczą przygotowaną kopią pod jedną blokadą: odmowa, gdy
+/// jakikolwiek przebieg Workflows jest nieskończony (E6), potem kopia
+/// bezpieczeństwa i zamiana.
+pub(crate) fn restore_locked(
+    db: &mut Connection,
+    staged: &Connection,
+    backups_dir: &std::path::Path,
+    cache: &crate::settings::Cache,
+) -> Result<(), String> {
+    if let Some(message) =
+        crate::workflows::backup::restore_blocker(db).map_err(|e| e.to_string())?
+    {
+        return Err(format!("Nie można teraz przywrócić kopii. {message}"));
+    }
+    std::fs::create_dir_all(backups_dir).map_err(|e| e.to_string())?;
+    let safety = backups_dir.join(format!("before-restore-{}.sqlite", crate::db::now()));
+    db.execute("VACUUM INTO ?1", [safety.to_string_lossy().as_ref()])
+        .map_err(|e| e.to_string())?;
+    replace(db, staged, cache)
+}
 #[tauri::command]
-pub async fn export_backup(app: tauri::AppHandle) -> Result<Option<String>, String> {
+pub async fn export_backup(app: tauri::AppHandle) -> Result<Option<ExportResult>, String> {
     tauri::async_runtime::spawn_blocking(move||{
         let Some(file)=app.dialog().file().set_file_name(format!("TukTuk-Track-{}.sqlite",chrono::Local::now().format("%Y-%m-%d"))).add_filter("Kopia TukTuk Track", &["sqlite"]).blocking_save_file() else{return Ok(None);};
         let path=file.into_path().map_err(|e|e.to_string())?;
         let own=app.path().app_data_dir().map_err(|e|e.to_string())?.join(crate::legacy::DB_FILE);
         if path.exists() && path.canonicalize().ok()==own.canonicalize().ok() { return Err("Wybierz plik inny niż bieżąca baza.".into()); }
-        let state=app.state::<Database>(); let db=state.0.lock().map_err(|e|e.to_string())?;
-        let mut snapshot=Connection::open_in_memory().map_err(|e|e.to_string())?; copy(&db,&mut snapshot)?;
+        let mut snapshot=Connection::open_in_memory().map_err(|e|e.to_string())?;
+        {
+            let state=app.state::<Database>(); let db=state.0.lock().map_err(|e|e.to_string())?;
+            copy(&db,&mut snapshot)?;
+        }
+        // Diffy Workflows do tabeli samej kopii; pliki czytane bez blokady bazy (E6).
+        let app_data=app.path().app_data_dir().map_err(|e|e.to_string())?;
+        let embedded=crate::workflows::backup::embed_artifacts(&snapshot,&app_data,crate::workflows::backup::MAX_BACKUP_ARTIFACT_BYTES)?;
+
         snapshot.execute("INSERT INTO settings(key,value) VALUES('backup_exported_at',?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[db::now().to_string()]).map_err(|e|e.to_string())?;
         let mut target=Connection::open(&path).map_err(|e|e.to_string())?; copy(&snapshot,&mut target)?;
-        Ok(Some(path.to_string_lossy().into_owned()))
+        // Pominięte diffy wracają do interfejsu (komunikat w LibraryView.vue).
+        Ok(Some(ExportResult{path:path.to_string_lossy().into_owned(),skipped_artifacts:embedded.missing,over_limit_artifacts:embedded.over_limit}))
     }).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
@@ -166,6 +237,11 @@ pub async fn inspect_backup(app: tauri::AppHandle) -> Result<Option<Preview>, St
         let path = file.into_path().map_err(|e| e.to_string())?;
         let staged = stage(&path)?;
         let snap = db::snapshot(&staged).map_err(|e| e.to_string())?;
+        let workflow_blocker = {
+            let state = app.state::<Database>();
+            let db = state.0.lock().map_err(|e| e.to_string())?;
+            crate::workflows::backup::restore_blocker(&db).map_err(|e| e.to_string())?
+        };
         let preview = Preview {
             name: path
                 .file_name()
@@ -175,6 +251,7 @@ pub async fn inspect_backup(app: tauri::AppHandle) -> Result<Option<Preview>, St
             tasks: snap.tasks.len(),
             sessions: snap.sessions.len(),
             trash: snap.trash.len(),
+            workflow_blocker,
         };
         // Stage a stable snapshot so the confirmation refers to the inspected content.
         let dir = app
@@ -202,23 +279,30 @@ pub async fn restore_backup(app: tauri::AppHandle) -> Result<db::Snapshot, Strin
             .map_err(|e| e.to_string())?
             .clone()
             .ok_or("Najpierw wybierz i sprawdź kopię.")?;
-        let staged = stage(&path)?;
+        let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+        let prepared = prepare_restore(&path, crate::db::now())?;
         let state = app.state::<Database>();
         let mut db = state.0.lock().map_err(|e| e.to_string())?;
-        let dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("backups");
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let safety = dir.join(format!("before-restore-{}.sqlite", crate::db::now()));
-        db.execute("VACUUM INTO ?1", [safety.to_string_lossy().as_ref()])
-            .map_err(|e| e.to_string())?;
-        replace(&mut db, &staged, &app.state::<crate::settings::Cache>())?;
+        restore_locked(
+            &mut db,
+            &prepared.db,
+            &app_data.join("backups"),
+            &app.state::<crate::settings::Cache>(),
+        )?;
         let result = db::snapshot(&db).map_err(|e| e.to_string())?;
         // Kopia nie ma wystąpień cykli na dziś: tworzymy je od razu (B6).
         let result = crate::with_recurrence(&mut db, result);
         drop(db);
+        // Diffy z kopii dopiero po udanej zamianie i bez blokady bazy (E6).
+        match prepared.write_artifacts(&app_data) {
+            Ok(report) if report.rejected > 0 => eprintln!(
+                "Kopia: pominięto {} diffów Workflows o niepoprawnej ścieżce lub skrócie.",
+                report.rejected
+            ),
+            Ok(_) => {}
+            // Baza jest już zastąpiona; brakujący diff monitor pokaże jako niedostępny.
+            Err(e) => eprintln!("Kopia: nie zapisano diffów Workflows: {e}"),
+        }
         *app.state::<Pending>().0.lock().map_err(|e| e.to_string())? = None;
         crate::idle::clear(&app);
         crate::reminder::reset(&app);

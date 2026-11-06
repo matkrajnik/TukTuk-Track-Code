@@ -42,6 +42,8 @@ pub struct StartDeps<'a> {
     pub app_data: &'a Path,
     pub detected: &'a Detected,
     pub read_codex_config: fn() -> Result<Option<String>, String>,
+    /// Wolne miejsce na dysku ścieżki (`agent_cli::available_bytes`; testy podstawiają).
+    pub free_bytes: fn(&Path) -> Option<u64>,
     pub now: i64,
     /// Wstawia przebieg do kolejki sterownika.
     pub enqueue: &'a dyn Fn(i64),
@@ -213,6 +215,8 @@ pub fn start(deps: &StartDeps, req: StartRequest) -> Result<StartResult, String>
         return Err(message);
     }
     check_source(&source, deps.app_data).map_err(|e| e.to_string())?;
+    // Brak miejsca blokuje start przed utworzeniem przebiegu i worktree (7.2).
+    super::disk::ensure_free_space((deps.free_bytes)(deps.app_data))?;
 
     let repo = SqliteRunRepository::new(deps.db.clone());
     let created = repo

@@ -11,7 +11,15 @@ import {
   unlockWithKey,
   workflowsUnlocked,
 } from "../../workflowAccess";
-import { message } from "./section";
+import type { AppSettings } from "../../settings";
+import { message, number, useSettingsSection } from "./section";
+
+const settings = defineModel<AppSettings>("settings", { required: true });
+const {
+  busy: savingRetention,
+  error: retentionError,
+  save,
+} = useSettingsSection(settings);
 
 const key = ref("");
 const busy = ref(false);
@@ -69,6 +77,23 @@ function open() {
   >
     Otwórz Workflows
   </button>
+  <div v-if="workflowsUnlocked" class="settings-fields">
+    <p v-if="retentionError" class="error" role="alert">{{ retentionError }}</p>
+    <label
+      >Przechowywanie diffów zakończonych przebiegów (dni)<input
+        :value="settings.workflowRetentionDays"
+        type="number"
+        min="7"
+        max="365"
+        :disabled="savingRetention"
+        aria-describedby="workflows-retention-hint"
+        @change="save({ workflowRetentionDays: number($event) })"
+    /></label>
+    <p id="workflows-retention-hint" class="hint">
+      Starsze diffy usuwa aplikacja przy starcie; historia przebiegów i zgód
+      zostaje.
+    </p>
+  </div>
   <form v-else class="settings-fields workflows-unlock" @submit.prevent="unlock">
     <label>
       Klucz dostępu

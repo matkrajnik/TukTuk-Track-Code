@@ -6,13 +6,20 @@
 
 pub mod access;
 pub mod artifacts;
+pub mod backup;
+pub mod disk;
 pub mod preflight;
+pub mod processes;
+pub mod recovery;
+pub mod retention;
 pub mod run_commands;
 pub mod runners;
 pub mod runs;
 pub mod runtime;
 pub mod service;
 pub mod store;
+#[cfg(test)]
+pub(crate) mod test_db;
 #[cfg(test)]
 pub(crate) mod test_git;
 pub mod workspace;

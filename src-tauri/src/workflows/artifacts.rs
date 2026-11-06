@@ -33,6 +33,10 @@ pub enum ArtifactError {
     Unknown,
     /// Plik zniknął, wyszedł poza katalog artefaktów albo skrót się nie zgadza.
     Unavailable,
+    /// Plik usunęła retencja (wiersz indeksu zostaje z `purged_at`).
+    Purged,
+    /// Brak miejsca na dysku przy zapisie; plik częściowy jest usuwany.
+    DiskFull,
     Storage(String),
 }
 
@@ -41,6 +45,12 @@ impl fmt::Display for ArtifactError {
         match self {
             ArtifactError::Unknown => f.write_str("Nie znaleziono artefaktu tego przebiegu."),
             ArtifactError::Unavailable => f.write_str(ERR_UNAVAILABLE),
+            ArtifactError::Purged => f.write_str(
+                "Diff usunięto po okresie przechowywania (Ustawienia → Workflows); historia przebiegu zostaje.",
+            ),
+            ArtifactError::DiskFull => f.write_str(
+                "Brak miejsca na dysku: nie zapisano diffu. Zwolnij miejsce i uruchom przebieg ponownie.",
+            ),
             ArtifactError::Storage(m) => write!(f, "Błąd zapisu artefaktu: {m}"),
         }
     }
@@ -50,6 +60,22 @@ impl std::error::Error for ArtifactError {}
 
 fn storage(e: impl fmt::Display) -> ArtifactError {
     ArtifactError::Storage(e.to_string())
+}
+
+/// Błąd zapisu pliku: pełny dysk ma własny, czytelny komunikat.
+fn write_error(e: std::io::Error) -> ArtifactError {
+    if super::disk::is_disk_full(&e) {
+        ArtifactError::DiskFull
+    } else {
+        storage(e)
+    }
+}
+
+/// Domyślny zapis pliku tymczasowego: treść i `sync_all`.
+fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = std::fs::File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// Widok diffu dla interfejsu.
@@ -65,16 +91,45 @@ pub struct DiffView {
     pub hash: String,
 }
 
-fn is_hash(text: &str) -> bool {
+pub(crate) fn is_hash(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn runs_dir(app_data: &Path) -> PathBuf {
+pub(crate) fn runs_dir(app_data: &Path) -> PathBuf {
     workflows_dir(app_data).join("runs")
 }
 
-fn rel_path(run_id: RunId, hash: &str) -> String {
+pub(crate) fn rel_path(run_id: RunId, hash: &str) -> String {
     format!("workflows/runs/{run_id}/diff-{hash}.patch")
+}
+
+/// Szczegóły przebiegu z dostępnością plików diffów: zgoda, której plik zniknął
+/// (np. kopia zapasowa bez diffu), ma `artifact_available = false`, więc monitor
+/// mówi o braku pliku zamiast pokazywać błąd odczytu. Wołać bez blokady bazy.
+pub fn with_file_availability(
+    detail: super::runs::RunDetail,
+    app_data: &Path,
+) -> super::runs::RunDetail {
+    let run_id = detail.summary.id;
+    let approvals = detail
+        .approvals
+        .into_iter()
+        .map(|approval| {
+            let available = approval.artifact_available
+                && is_hash(&approval.artifact_hash)
+                && app_data
+                    .join(rel_path(run_id, &approval.artifact_hash))
+                    .is_file();
+            super::runs::ApprovalView {
+                artifact_available: available,
+                ..approval
+            }
+        })
+        .collect();
+    super::runs::RunDetail {
+        approvals,
+        ..detail
+    }
 }
 
 /// Zapisuje diff atomowo (plik tymczasowy + rename) i indeksuje go w bazie.
@@ -88,9 +143,37 @@ pub fn store_diff(
     hash: &str,
     now: i64,
 ) -> Result<(), ArtifactError> {
-    store_diff_with(db, app_data, run_id, bytes, hash, now, |from, to| {
-        std::fs::rename(from, to)
-    })
+    store_diff_with(
+        db,
+        app_data,
+        run_id,
+        DiffBytes { bytes, hash },
+        now,
+        &FileOps::real(),
+    )
+}
+
+/// Diff z jego skrótem.
+#[derive(Clone, Copy)]
+pub(crate) struct DiffBytes<'a> {
+    pub bytes: &'a [u8],
+    pub hash: &'a str,
+}
+
+/// Operacje plikowe zapisu atomowego (testy wstrzykują błędy).
+pub(crate) struct FileOps<'a> {
+    pub write: &'a dyn Fn(&Path, &[u8]) -> std::io::Result<()>,
+    pub rename: &'a dyn Fn(&Path, &Path) -> std::io::Result<()>,
+}
+
+impl FileOps<'static> {
+    /// Zwykły zapis na dysk.
+    pub(crate) fn real() -> Self {
+        FileOps {
+            write: &write_file,
+            rename: &|from, to| std::fs::rename(from, to),
+        }
+    }
 }
 
 /// Licznik nazw plików tymczasowych: dwa równoległe zapisy tego samego skrótu
@@ -111,25 +194,22 @@ impl Drop for TempFile {
     }
 }
 
-fn write_atomic(
+pub(crate) fn write_atomic(
     target: &Path,
     hash: &str,
     bytes: &[u8],
-    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ops: &FileOps<'_>,
 ) -> Result<(), ArtifactError> {
     let dir = target.parent().ok_or(ArtifactError::Unavailable)?;
-    std::fs::create_dir_all(dir).map_err(storage)?;
+    std::fs::create_dir_all(dir).map_err(write_error)?;
     let unique = TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
     let mut tmp = TempFile {
         path: dir.join(format!("diff-{hash}.{}-{unique}.tmp", std::process::id())),
         keep: false,
     };
-    {
-        let mut file = std::fs::File::create(&tmp.path).map_err(storage)?;
-        file.write_all(bytes).map_err(storage)?;
-        file.sync_all().map_err(storage)?;
-    }
-    match rename(&tmp.path, target) {
+    // Błąd zapisu (także pełny dysk) usuwa plik tymczasowy w `Drop`.
+    (ops.write)(&tmp.path, bytes).map_err(write_error)?;
+    match (ops.rename)(&tmp.path, target) {
         Ok(()) => {
             tmp.keep = true;
             Ok(())
@@ -140,22 +220,22 @@ fn write_atomic(
     }
 }
 
-fn store_diff_with(
+pub(crate) fn store_diff_with(
     db: &SharedDb,
     app_data: &Path,
     run_id: RunId,
-    bytes: &[u8],
-    hash: &str,
+    diff: DiffBytes,
     now: i64,
-    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+    ops: &FileOps<'_>,
 ) -> Result<(), ArtifactError> {
+    let DiffBytes { bytes, hash } = diff;
     if !is_hash(hash) || hex_of(bytes) != hash {
         return Err(ArtifactError::Storage("Skrót nie pasuje do diffu.".into()));
     }
     let rel = rel_path(run_id, hash);
     let target = app_data.join(&rel);
     if !target.exists() {
-        write_atomic(&target, hash, bytes, rename)?;
+        write_atomic(&target, hash, bytes, ops)?;
     }
     let conn = db
         .lock()
@@ -228,7 +308,7 @@ pub fn redact_for_view(text: &str) -> (String, usize) {
     (out, hidden)
 }
 
-fn hex_of(bytes: &[u8]) -> String {
+pub(crate) fn hex_of(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -246,19 +326,22 @@ pub fn read_diff(
     if !is_hash(hash) {
         return Err(ArtifactError::Unknown);
     }
-    let rel: Option<String> = {
+    let row: Option<(String, Option<i64>)> = {
         let conn = db
             .lock()
             .map_err(|_| ArtifactError::Storage("Blokada bazy jest zatruta.".into()))?;
         conn.query_row(
-            "SELECT rel_path FROM workflow_artifacts WHERE run_id = ?1 AND kind = 'diff' AND hash = ?2",
+            "SELECT rel_path, purged_at FROM workflow_artifacts WHERE run_id = ?1 AND kind = 'diff' AND hash = ?2",
             params![run_id, hash],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()
         .map_err(storage)?
     };
-    let rel = rel.ok_or(ArtifactError::Unknown)?;
+    let (rel, purged_at) = row.ok_or(ArtifactError::Unknown)?;
+    if purged_at.is_some() {
+        return Err(ArtifactError::Purged);
+    }
     let root = canonical(&runs_dir(app_data)).map_err(|_| ArtifactError::Unavailable)?;
     let path = canonical(&app_data.join(rel)).map_err(|_| ArtifactError::Unavailable)?;
     if !is_under(&path, &root) {

@@ -83,6 +83,22 @@ pub struct ApprovalView {
     pub comment: Option<String>,
     pub decided_at: Option<i64>,
     pub artifact_available: bool,
+    /// Plik diffu usunęła retencja (E6): interfejs pokazuje to zamiast błędu odczytu.
+    pub artifact_purged: bool,
+}
+
+/// Stan odzyskania przerwanego przebiegu (E6, `workflow_recover`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecoveryView {
+    /// Katalog roboczy nadal zarezerwowany (blokada do potwierdzenia końca procesów).
+    pub workspace_reserved: bool,
+    /// Procesy z rejestru bez potwierdzonego końca.
+    pub processes_unconfirmed: i64,
+    /// PID tych procesów (do komunikatu: użytkownik może zakończyć je ręcznie).
+    pub unconfirmed_pids: Vec<u32>,
+    /// Liczba zapisanych prób odzyskania (zdarzenia `recovery`).
+    pub attempts: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -104,6 +120,8 @@ pub struct RunDetail {
     pub waiting_ms: i64,
     /// Tokeny nie są zbierane: interfejs pokazuje „brak danych”.
     pub tokens: Option<i64>,
+    /// Tylko dla przebiegu `interrupted`.
+    pub recovery: Option<RecoveryView>,
 }
 
 const SUMMARY_SELECT: &str =
@@ -226,6 +244,7 @@ struct RawRun {
     approvals: Vec<ApprovalView>,
     /// (approval_id, type, created_at) zdarzeń zgód, w kolejności sekwencji.
     approval_events: Vec<(String, String, i64)>,
+    recovery: Option<RecoveryView>,
 }
 
 type Header = (
@@ -302,7 +321,11 @@ fn read_raw(conn: &Connection, run_id: RunId) -> Result<Option<RawRun>, String> 
             .prepare(
                 "SELECT a.id, a.execution_id, a.status, a.artifact_hash, a.comment, a.decided_at,
                     EXISTS(SELECT 1 FROM workflow_artifacts f WHERE f.run_id = a.run_id
-                           AND f.kind = 'diff' AND f.hash = a.artifact_hash)
+                           AND f.kind = 'diff' AND f.hash = a.artifact_hash
+                           AND f.purged_at IS NULL),
+                    EXISTS(SELECT 1 FROM workflow_artifacts f WHERE f.run_id = a.run_id
+                           AND f.kind = 'diff' AND f.hash = a.artifact_hash
+                           AND f.purged_at IS NOT NULL)
                  FROM workflow_approvals a WHERE a.run_id = ?1 ORDER BY a.rowid",
             )
             .map_err(err)?;
@@ -316,6 +339,7 @@ fn read_raw(conn: &Connection, run_id: RunId) -> Result<Option<RawRun>, String> 
                     comment: r.get(4)?,
                     decided_at: r.get(5)?,
                     artifact_available: r.get::<_, bool>(6)?,
+                    artifact_purged: r.get::<_, bool>(7)?,
                 })
             })
             .map_err(err)?;
@@ -335,7 +359,49 @@ fn read_raw(conn: &Connection, run_id: RunId) -> Result<Option<RawRun>, String> 
             .map_err(err)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(err)?
     };
+    let recovery = if summary.status == "interrupted" {
+        Some(
+            tx.query_row(
+                "SELECT
+                   EXISTS(SELECT 1 FROM workflow_workspaces WHERE run_id = ?1 AND state = 'reserved'),
+                   (SELECT COUNT(*) FROM workflow_processes
+                    WHERE run_id = ?1 AND state IN ('running', 'unknown')),
+                   (SELECT COUNT(*) FROM workflow_events WHERE run_id = ?1 AND type = 'recovery')",
+                [run_id],
+                |r| {
+                    Ok(RecoveryView {
+                        workspace_reserved: r.get(0)?,
+                        processes_unconfirmed: r.get(1)?,
+                        unconfirmed_pids: Vec::new(),
+                        attempts: r.get(2)?,
+                    })
+                },
+            )
+            .map_err(err)
+            .and_then(|view| {
+                let mut st = tx
+                    .prepare(
+                        "SELECT pid FROM workflow_processes
+                         WHERE run_id = ?1 AND state IN ('running', 'unknown')
+                         ORDER BY recorded_at, execution_id",
+                    )
+                    .map_err(err)?;
+                let pids = st
+                    .query_map([run_id], |r| r.get(0))
+                    .map_err(err)?
+                    .collect::<Result<Vec<u32>, _>>()
+                    .map_err(err)?;
+                Ok(RecoveryView {
+                    unconfirmed_pids: pids,
+                    ..view
+                })
+            })?,
+        )
+    } else {
+        None
+    };
     Ok(Some(RawRun {
+        recovery,
         summary,
         goal,
         definition,
@@ -429,5 +495,6 @@ pub fn run_detail(db: &Db, run_id: RunId, now: i64) -> Result<Option<RunDetail>,
         agent_ms,
         waiting_ms,
         tokens: None,
+        recovery: raw.recovery,
     }))
 }

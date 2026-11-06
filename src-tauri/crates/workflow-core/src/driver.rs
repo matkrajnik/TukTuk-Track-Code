@@ -33,6 +33,8 @@ pub use messages::{MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_PAYLOAD_BYTES, RU
 pub const POLL_INTERVAL: Duration = Duration::from_millis(20);
 /// Czas, jaki runner ma na reakcję na anulowanie (przez użytkownika albo po limicie kroku).
 pub const CANCEL_GRACE: Duration = Duration::from_secs(5);
+/// Zapas na odpowiedź wątku roboczego po upływie limitu kontrolowanego zatrzymania.
+const GRACEFUL_REPLY_MARGIN: Duration = Duration::from_secs(5);
 /// Ile razy ponawiamy zapis po konflikcie sekwencji (po ponownym wczytaniu stanu).
 pub const MAX_APPEND_RETRIES: u32 = 3;
 
@@ -105,7 +107,24 @@ enum Command {
     Decide(DecideRequest, Sender<Result<DecideResult, DecideError>>),
     Cancel(RunId),
     Wake,
+    /// Jednorazowe ponowne sprawdzenie zgód po starcie (E6).
+    Revalidate,
+    /// Kontrolowane zatrzymanie: anuluje krok w toku i czeka najwyżej `Duration`.
+    ShutdownGraceful(Duration, Sender<ShutdownReport>),
     Shutdown,
+}
+
+/// Wynik kontrolowanego zatrzymania sterownika.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShutdownReport {
+    /// Przebiegi, których krok zakończył się w czasie i zapisano `Interrupted`.
+    pub interrupted: Vec<RunId>,
+    /// Przebieg, którego runner nie potwierdził końca w limicie (nic nie zapisano;
+    /// po restarcie `Recover` da `Interrupted`, a rekonsyliacja sprawdzi proces).
+    pub unconfirmed: Option<RunId>,
+    /// Wątek roboczy nie odpowiedział w limicie: stan przebiegów jest nieznany
+    /// (nie mylić z „nic nie było w toku”); rekonsyliacja po restarcie go wyjaśni.
+    pub timed_out: bool,
 }
 
 /// Licznik komend jeszcze nie rozliczonych; pozwala testom poczekać na bezczynność.
@@ -129,7 +148,9 @@ impl Idle {
 pub struct RuntimeHandle {
     tx: Sender<Command>,
     idle: Arc<Idle>,
-    join: Option<JoinHandle<()>>,
+    /// Za blokadą, żeby kontrolowane zatrzymanie działało przez `&self`
+    /// (handle żyje w stanie aplikacji, a nie jako wartość na własność).
+    join: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl RuntimeHandle {
@@ -181,14 +202,52 @@ impl RuntimeHandle {
         true
     }
 
+    /// Czy sterownik jest zatrzymany (po `shutdown_graceful`): kolejne komendy są
+    /// ignorowane, więc host odrzuca nowe przebiegi zamiast zostawić je w kolejce.
+    pub fn is_stopped(&self) -> bool {
+        lock(&self.join).is_none()
+    }
+
     /// Zatrzymuje wątek roboczy; krok w toku zostaje bez wyniku (po restarcie: Interrupted).
-    pub fn shutdown(mut self) {
+    pub fn shutdown(self) {
         self.stop();
     }
 
-    fn stop(&mut self) {
+    /// Kontrolowane zatrzymanie (wyjście z aplikacji, aktualizacja): krok w toku jest
+    /// anulowany, a sterownik czeka na koniec runnera najwyżej `limit`. Po końcu
+    /// zapisuje `Interrupted` i nie startuje kolejnego kroku. Bez końca w limicie
+    /// nie zapisuje nic (`unconfirmed`). Brak odpowiedzi wątku roboczego w limicie
+    /// daje `timed_out` (stan nieznany), a nie pusty raport. Po zatrzymaniu
+    /// kolejne komendy są ignorowane; ponowne wywołanie zwraca od razu.
+    pub fn shutdown_graceful(&self, limit: Duration) -> ShutdownReport {
+        let stopped = lock(&self.join).is_none();
+        if stopped {
+            return ShutdownReport::default();
+        }
+        let (reply, answer) = mpsc::channel();
+        self.send(Command::ShutdownGraceful(limit, reply));
+        let report = match answer.recv_timeout(limit + GRACEFUL_REPLY_MARGIN) {
+            Ok(report) => report,
+            Err(_) => ShutdownReport {
+                timed_out: true,
+                ..ShutdownReport::default()
+            },
+        };
+        if !report.timed_out {
+            self.stop();
+        } else {
+            // Wątek roboczy wisi: nie czekamy na niego (wyjście z aplikacji nie może
+            // się zawiesić); prosimy tylko o zatrzymanie.
+            let _ = self.tx.send(Command::Shutdown);
+            drop(lock(&self.join).take());
+        }
+        report
+    }
+
+    fn stop(&self) {
         let _ = self.tx.send(Command::Shutdown);
-        if let Some(join) = self.join.take() {
+        let join = lock(&self.join).take();
+        if let Some(join) = join {
             let _ = join.join();
         }
     }
@@ -224,17 +283,19 @@ impl Runtime {
             rx,
             queue: VecDeque::new(),
             current: None,
+            graceful: None,
             consumed: 0,
             stopping: false,
             idle: Arc::clone(&idle),
         };
-        let mut handle = RuntimeHandle {
+        let handle = RuntimeHandle {
             tx,
             idle,
-            join: None,
+            join: Mutex::new(None),
         };
         handle.send(Command::Wake);
-        handle.join = thread::Builder::new()
+        handle.send(Command::Revalidate);
+        *lock(&handle.join) = thread::Builder::new()
             .name("workflow-runtime".into())
             .spawn(move || worker.main_loop())
             .ok();
@@ -249,6 +310,11 @@ struct InFlight {
     user_cancelled: bool,
 }
 
+struct Graceful {
+    until: Instant,
+    reply: Sender<ShutdownReport>,
+}
+
 struct Worker {
     repo: Arc<dyn RunRepository>,
     runner: Arc<dyn AgentRunner>,
@@ -258,6 +324,7 @@ struct Worker {
     rx: Receiver<Command>,
     queue: VecDeque<RunId>,
     current: Option<InFlight>,
+    graceful: Option<Graceful>,
     consumed: usize,
     stopping: bool,
     idle: Arc<Idle>,
@@ -272,6 +339,10 @@ enum RunnerMessage {
 enum StepEnd {
     /// Sterownik się zatrzymuje; krok zostaje bez wyniku (po restarcie: Interrupted).
     Stopping,
+    /// Kontrolowane zatrzymanie: runner skończył w limicie.
+    ShutdownDone,
+    /// Kontrolowane zatrzymanie: runner nie skończył w limicie.
+    ShutdownStubborn,
     /// Runner zwrócił wynik.
     Finished(RunnerOutcome),
     /// Limit kroku minął albo użytkownik anulował, a runner skończył w czasie łaski.
@@ -326,6 +397,8 @@ impl Worker {
                 Ok(runs) => runs.into_iter().for_each(|id| self.enqueue(id)),
                 Err(e) => self.report(&format!("Nie udało się wczytać aktywnych przebiegów: {e}")),
             },
+            Command::Revalidate => self.revalidate_approvals(),
+            Command::ShutdownGraceful(limit, reply) => self.begin_graceful(limit, reply),
             Command::Cancel(run_id) => self.cancel_run(run_id),
             Command::Decide(request, reply) => {
                 let result = self.decide_approval(&request);
@@ -333,6 +406,87 @@ impl Worker {
             }
             Command::Shutdown => self.stopping = true,
         }
+    }
+
+    /// Po restarcie sprawdza skrót artefaktu każdej oczekującej zgody (5.4). Różny skrót
+    /// unieważnia zgodę i tworzy nową; błąd odczytu idzie na magistralę, a przebieg czeka.
+    fn revalidate_approvals(&self) {
+        let runs = match self.repo.active_runs() {
+            Ok(runs) => runs,
+            Err(e) => {
+                return self.report(&format!("Nie udało się wczytać aktywnych przebiegów: {e}"))
+            }
+        };
+        for run_id in runs {
+            match self.load(run_id) {
+                Ok((_, state)) if state.status == RunStatus::WaitingForApproval => {}
+                _ => continue,
+            }
+            // Odczyt skrótu (git) poza blokadą repozytorium.
+            let current_hash = match self.workspace.artifact_hash(run_id) {
+                Ok(hash) => hash,
+                Err(message) => {
+                    self.sink.fault(
+                        run_id,
+                        &format!("Nie sprawdzono artefaktu zgody po restarcie: {message}"),
+                    );
+                    continue;
+                }
+            };
+            let result = self.step_with(run_id, |state| {
+                state
+                    .approvals
+                    .iter()
+                    .rev()
+                    .find(|a| a.status == crate::run::ApprovalStatus::Pending)
+                    .filter(|_| state.status == RunStatus::WaitingForApproval)
+                    .map(|a| Input::ApprovalRevalidated {
+                        approval_id: a.id.clone(),
+                        current_hash: current_hash.clone(),
+                    })
+            });
+            if let Err(e) = result {
+                self.sink
+                    .fault(run_id, &format!("Nie sprawdzono zgody po restarcie: {e}"));
+            }
+        }
+    }
+
+    fn begin_graceful(&mut self, limit: Duration, reply: Sender<ShutdownReport>) {
+        match self.current.as_ref() {
+            None => {
+                let _ = reply.send(ShutdownReport::default());
+                self.stopping = true;
+            }
+            Some(current) => {
+                current.cancel.store(true, Ordering::SeqCst);
+                self.graceful = Some(Graceful {
+                    until: Instant::now() + limit,
+                    reply,
+                });
+            }
+        }
+    }
+
+    /// Kończy kontrolowane zatrzymanie po kroku w toku: zapisuje `Interrupted`
+    /// (gdy runner skończył) i odpowiada wołającemu.
+    fn finish_graceful(&mut self, run_id: RunId, confirmed: bool) {
+        let mut report = ShutdownReport::default();
+        if confirmed {
+            match self.step_with(run_id, |_| Some(Input::Recover)) {
+                Ok(_) => report.interrupted.push(run_id),
+                Err(e) => {
+                    self.report(&format!("Przebieg {run_id}: zamknięcie aplikacji: {e}"));
+                    report.unconfirmed = Some(run_id);
+                }
+            }
+        } else {
+            report.unconfirmed = Some(run_id);
+        }
+        if let Some(graceful) = self.graceful.take() {
+            let _ = graceful.reply.send(report);
+        }
+        self.stopping = true;
     }
 
     fn load(&self, run_id: RunId) -> Result<(WorkflowGraph, RunState), RepoError> {
@@ -396,9 +550,9 @@ impl Worker {
                 (RunStatus::Queued, _) => Some(Input::Start),
                 (RunStatus::Running, false) => Some(Input::Continue),
                 (RunStatus::Running | RunStatus::Cancelling, true) => Some(Input::Recover),
+                (RunStatus::Cancelling, false) => Some(Input::Recover),
                 (
-                    RunStatus::Cancelling
-                    | RunStatus::WaitingForApproval
+                    RunStatus::WaitingForApproval
                     | RunStatus::Cancelled
                     | RunStatus::Succeeded
                     | RunStatus::Rejected
@@ -510,6 +664,8 @@ impl Worker {
         let user_cancelled = self.current.take().is_some_and(|c| c.user_cancelled);
         let outcome = match end {
             StepEnd::Stopping => return,
+            StepEnd::ShutdownDone => return self.finish_graceful(run_id, true),
+            StepEnd::ShutdownStubborn => return self.finish_graceful(run_id, false),
             StepEnd::Finished(outcome) => outcome,
             StepEnd::TimedOut if user_cancelled => RunnerOutcome::Cancelled,
             StepEnd::TimedOut => RunnerOutcome::Failed {
@@ -643,6 +799,10 @@ impl Worker {
                 self.flush(run_id, &mut buffer);
                 return StepEnd::Stopping;
             }
+            if let Some(graceful) = &self.graceful {
+                // Kontrolowane zatrzymanie ma własny limit zamiast czasu łaski kroku.
+                grace_until = Some(graceful.until);
+            }
             let now = Instant::now();
             // Anulowanie przez użytkownika ma własny, krótki limit (8.3): czas łaski
             // liczy się od anulowania, a nie dopiero po limicie kroku.
@@ -664,6 +824,9 @@ impl Worker {
                 }
                 Ok(RunnerMessage::Done(outcome)) => {
                     self.flush(run_id, &mut buffer);
+                    if self.graceful.is_some() {
+                        return StepEnd::ShutdownDone;
+                    }
                     return if grace_until.is_some() {
                         StepEnd::TimedOut
                     } else {
@@ -680,6 +843,12 @@ impl Worker {
                         }
                         Some(until) if now >= until => {
                             // Wynik mógł przyjść tuż przed końcem łaski.
+                            if self.graceful.is_some() {
+                                return match rx.try_recv() {
+                                    Ok(RunnerMessage::Done(_)) => StepEnd::ShutdownDone,
+                                    _ => StepEnd::ShutdownStubborn,
+                                };
+                            }
                             return match rx.try_recv() {
                                 Ok(RunnerMessage::Done(_)) => StepEnd::TimedOut,
                                 _ => StepEnd::Unresponsive(rx),

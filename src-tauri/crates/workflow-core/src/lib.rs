@@ -24,4 +24,6 @@ pub use model::{
     WorkflowGraph, SCHEMA_VERSION,
 };
 pub use run::{consistent, ApprovalStatus, Decision, ExecutionStatus, FailureCode, RunStatus};
+/// Odtworzenie stanu przebiegu z zapisanych zdarzeń (host: rekonsyliacja po starcie).
+pub use support::replay_stored;
 pub use validation::{validate, Issue, IssueCode};

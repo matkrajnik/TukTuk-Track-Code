@@ -13,6 +13,7 @@ use tauri::{Emitter, Manager};
 use workflow_core::driver::{DriverConfig, Runtime, RuntimeHandle};
 use workflow_core::ports::{EventSink, StoredEvent};
 
+use super::processes::{SqliteLedger, SystemProcesses};
 use super::runners::guard::GuardedRunner;
 use super::runners::process::RealSpawner;
 use super::runners::{CliPaths, CliRunner};
@@ -25,18 +26,55 @@ pub const EVENT: &str = "workflow-event";
 /// Zdarzenie o błędzie, którego nie dało się zapisać w historii przebiegu.
 pub const FAULT_EVENT: &str = "workflow-fault";
 
+/// Ile wyjście z aplikacji i aktualizacja czekają na koniec kroku w toku (8.3).
+pub const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(8);
+
+/// Powód odmowy aktualizacji: przebieg z procesami w toku (`Queued`, `Running`,
+/// `Cancelling`); sam `WaitingForApproval` nie blokuje. Wołać pod blokadą bazy.
+pub fn update_blocker(conn: &rusqlite::Connection) -> Result<Option<String>, String> {
+    super::backup::active_work(conn)
+        .map(|work| work.map(|m| format!("Aktualizacja wstrzymana. {m}")))
+        .map_err(|e| e.to_string())
+}
+
+/// Kontrolowane zatrzymanie sterownika przy wyjściu z aplikacji i przed
+/// aktualizacją: krok w toku jest anulowany, a koniec potwierdzony najwyżej w
+/// [`EXIT_GRACE`]. Niepotwierdzony koniec trafia do logu; po restarcie
+/// rekonsyliacja sprawdzi proces po PID i czasie utworzenia.
+pub fn shutdown(app: &tauri::AppHandle) {
+    let Some(state) = app.try_state::<RuntimeState>() else {
+        return;
+    };
+    let Some(handle) = state.inner().0.get() else {
+        return;
+    };
+    let report = handle.shutdown_graceful(EXIT_GRACE);
+    if report.timed_out || report.unconfirmed.is_some() {
+        eprintln!("Workflows: zamknięcie bez potwierdzenia końca kroku: {report:?}");
+    }
+}
+
 /// Stan zarządzany przez Tauri: handle sterownika po jego uruchomieniu.
 #[derive(Default)]
 pub struct RuntimeState(OnceLock<RuntimeHandle>);
 
-/// Handle sterownika albo czytelny błąd, gdy jeszcze się uruchamia.
+/// Komunikat, gdy sterownik został zatrzymany (wyjście z aplikacji).
+pub const ERR_RUNTIME_STOPPED: &str =
+    "Silnik przebiegów jest zatrzymany. Uruchom aplikację ponownie.";
+
+/// Handle sterownika albo czytelny błąd, gdy jeszcze się uruchamia albo jest
+/// już zatrzymany (wtedy start przebiegu zostałby bez wykonania).
 pub fn runtime_handle(app: &tauri::AppHandle) -> Result<&RuntimeHandle, String> {
     let state = app.state::<RuntimeState>();
-    state
-        .inner()
-        .0
-        .get()
-        .ok_or_else(|| "Silnik przebiegów jeszcze się uruchamia.".to_owned())
+    live_handle(state.inner().0.get())
+}
+
+pub(crate) fn live_handle(handle: Option<&RuntimeHandle>) -> Result<&RuntimeHandle, String> {
+    let handle = handle.ok_or_else(|| "Silnik przebiegów jeszcze się uruchamia.".to_owned())?;
+    if handle.is_stopped() {
+        return Err(ERR_RUNTIME_STOPPED.to_owned());
+    }
+    Ok(handle)
 }
 
 fn shared(app: &tauri::AppHandle) -> SharedDb {
@@ -248,6 +286,46 @@ fn cli_paths(app: &tauri::AppHandle, app_data: &PathBuf) -> CliPaths {
     }
 }
 
+/// Rekonsyliacja procesów i przebiegów oraz retencja artefaktów przy starcie.
+/// Błędy trafiają do logu; nie zatrzymują startu sterownika.
+fn startup_maintenance(
+    db: &SharedDb,
+    app_data: &std::path::Path,
+    sink: &TauriSink,
+    retention_days: u32,
+) {
+    let emit = |event: &StoredEvent| sink.emit(event);
+    let tmp = super::recovery::remove_orphan_tmp(app_data);
+    if tmp.removed > 0 {
+        eprintln!(
+            "Workflows: usunięto pliki tymczasowe artefaktów: {}",
+            tmp.removed
+        );
+    }
+    let report =
+        super::recovery::reconcile_at_startup(db, &SystemProcesses, &emit, crate::db::now())
+            .unwrap_or_else(|e| super::recovery::StartupReport {
+                errors: vec![format!("rekonsyliacja nie powiodła się: {e}")],
+                ..Default::default()
+            });
+    if report.killed + report.unknown + report.failed_runs.len() > 0 {
+        eprintln!("Workflows: rekonsyliacja po starcie: {report:?}");
+    }
+    // Problemy trafiają do interfejsu przez FAULT_EVENT (i do logu).
+    for (run_id, message) in super::recovery::startup_faults(&report, &tmp) {
+        eprintln!("Workflows: po starcie: {message}");
+        sink.fault(run_id, &message);
+    }
+    match super::retention::purge_expired(db, app_data, crate::db::now(), retention_days) {
+        Ok(report) => {
+            for error in &report.errors {
+                eprintln!("Workflows: retencja artefaktów: {error}");
+            }
+        }
+        Err(e) => eprintln!("Workflows: retencja artefaktów nie powiodła się: {e}"),
+    }
+}
+
 /// Uruchamia sterownik przebiegów w wątku w tle. Wołać po `manage(Database)`.
 pub fn setup(app: &tauri::AppHandle) {
     app.manage(RuntimeState::default());
@@ -262,6 +340,11 @@ pub fn setup(app: &tauri::AppHandle) {
                 return;
             };
             let db = shared(&app);
+            let sink = sink_for(&app);
+            // Rekonsyliacja przed startem sterownika (E6): żaden przerwany krok nie
+            // rusza ponownie, a przebieg bez pewnego katalogu roboczego nie startuje.
+            let retention_days = crate::settings::current(&app).workflow_retention_days;
+            startup_maintenance(&db, &app_data, &sink, retention_days);
             let git = Arc::new(GitWorkspace::new(db.clone()).with_app_data(app_data.clone()));
             let provider_app = app.clone();
             let provider_dir = app_data.clone();
@@ -270,11 +353,12 @@ pub fn setup(app: &tauri::AppHandle) {
                 cli_paths(&app, &app_data),
                 git.clone(),
             )
-            .with_paths_provider(Arc::new(move || cli_paths(&provider_app, &provider_dir)));
+            .with_paths_provider(Arc::new(move || cli_paths(&provider_app, &provider_dir)))
+            .with_ledger(Arc::new(SqliteLedger::new(db.clone(), crate::db::now)));
             let handle = Runtime::start(
                 Arc::new(SqliteRunRepository::new(db)),
                 Arc::new(GuardedRunner::new(Arc::new(cli), git.clone())),
-                Arc::new(sink_for(&app)),
+                Arc::new(sink),
                 git,
                 DriverConfig::default(),
             );

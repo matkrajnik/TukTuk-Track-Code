@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::identity::ProcessIdentity;
 use crate::lines::{read_lines, LineItem};
 use crate::spec::{command_with, Spec};
 use crate::tree::{kill_tree_by_pid, Job, KillResult};
@@ -86,6 +87,7 @@ pub struct StreamingProcess;
 
 pub struct RunningProcess {
     pid: u32,
+    identity: Option<ProcessIdentity>,
     events: Receiver<ProcessEvent>,
     child: Arc<Mutex<Child>>,
     job: Option<Job>,
@@ -142,7 +144,9 @@ impl StreamingProcess {
         let child = Arc::new(Mutex::new(child));
         let exited = Arc::new(AtomicBool::new(false));
         spawn_waiter(Arc::clone(&child), Arc::clone(&exited), tx, done_rx);
+        let identity = ProcessIdentity::capture(pid, job.is_some());
         Ok(RunningProcess {
+            identity,
             pid,
             events,
             child,
@@ -232,6 +236,12 @@ fn spawn_waiter(
 impl RunningProcess {
     pub fn pid(&self) -> u32 {
         self.pid
+    }
+
+    /// Tożsamość procesu (PID i czas utworzenia) do rejestru procesów; `None`, gdy
+    /// systemu nie dało się zapytać.
+    pub fn identity(&self) -> Option<ProcessIdentity> {
+        self.identity
     }
 
     pub fn events(&self) -> &Receiver<ProcessEvent> {

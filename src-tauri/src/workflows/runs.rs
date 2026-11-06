@@ -87,6 +87,30 @@ fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Resul
                 ],
             )
             .map_err(storage)?;
+            // Rezerwacja katalogu roboczego znika w tej samej transakcji co stan końcowy.
+            // `Interrupted` zachowuje ją do `workflow_recover` (niepewny stan trzyma blokadę).
+            if to.is_terminal() && *to != RunStatus::Interrupted {
+                tx.execute(
+                    "UPDATE workflow_workspaces
+                     SET state = 'released', released_at = ?1, release_reason = 'terminal'
+                     WHERE run_id = ?2 AND state = 'reserved'",
+                    params![now, run_id],
+                )
+                .map_err(storage)?;
+            }
+        }
+        RunEvent::Reconciled {
+            workspace_released: true,
+            ..
+        } => {
+            // `workflow_recover`: zwolnienie w tej samej transakcji co ślad audytowy.
+            tx.execute(
+                "UPDATE workflow_workspaces
+                 SET state = 'released', released_at = ?1, release_reason = 'recovered'
+                 WHERE run_id = ?2 AND state = 'reserved'",
+                params![now, run_id],
+            )
+            .map_err(storage)?;
         }
         RunEvent::ExecutionPlanned {
             execution_id,
@@ -175,6 +199,10 @@ fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Resul
         | RunEvent::RepairRoundCounted { .. }
         | RunEvent::NodesSkipped { .. }
         | RunEvent::CancelRequested
+        | RunEvent::Reconciled {
+            workspace_released: false,
+            ..
+        }
         | RunEvent::Message { .. }
         | RunEvent::Tool { .. } => {}
     }
@@ -434,7 +462,7 @@ impl RunRepository for SqliteRunRepository {
 }
 
 mod query;
-pub use query::{list_runs, run_detail, RunDetail, RunFilter, RunSummary};
+pub use query::{list_runs, run_detail, ApprovalView, RunDetail, RunFilter, RunSummary};
 
 #[cfg(test)]
 mod tests;

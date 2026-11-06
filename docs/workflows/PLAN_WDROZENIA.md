@@ -420,10 +420,10 @@ Odbiór: pełny scenariusz działa z UI; nie podwaja czasu i nie zmienia automat
 
 ### E6 — recovery, backup i odporność
 
-- [ ] Dodać rekonsyliację procesów i przebiegów po starcie aplikacji.
-- [ ] Obsłużyć przerwanie w trakcie zapisu wyniku, oczekiwania i anulowania.
-- [ ] Dodać backup/restore artefaktów, retencję i obsługę braku miejsca.
-- [ ] Zablokować restore i aktualizację podczas aktywnych procesów albo przeprowadzić kontrolowane zakończenie przed operacją.
+- [x] Dodać rekonsyliację procesów i przebiegów po starcie aplikacji.
+- [x] Obsłużyć przerwanie w trakcie zapisu wyniku, oczekiwania i anulowania.
+- [x] Dodać backup/restore artefaktów, retencję i obsługę braku miejsca.
+- [x] Zablokować restore i aktualizację podczas aktywnych procesów albo przeprowadzić kontrolowane zakończenie przed operacją.
 - [ ] Zweryfikować zamknięcie okna do traya versus faktyczne wyjście z aplikacji.
 
 Odbiór: restart nie gubi historii i zgód, nie uruchamia ponownie zmian w ciemno, nie pozostawia niekontrolowanego writera. Restore nie wznawia starych poleceń.
@@ -1010,3 +1010,109 @@ Pozostałe blokery:
   w `cancel_of_queued_run_is_processed_before_dequeue`; `concurrent_start_same_request_id_creates_one_run`
   i `failed_fail_queued_run_is_reported_not_swallowed` bez potwierdzenia.
 - Uzupełnienie `E4_TEST_RECZNY.md` i sekcje 4-5 na prawdziwych CLI (robi użytkownik).
+
+### 2026-11-06 — E6 (poprawki po review, runda 1)
+
+Zakres: rejestr procesów (`workflows/processes.rs`, `CliRunner::with_ledger`), rekonsyliacja przed
+`Runtime::start` i `workflow_recover` (`workflows/recovery.rs`, `RunDetail.recovery`, zwolnienie
+rezerwacji w transakcji zdarzenia `recovery`), tożsamość procesu z trzymanym uchwytem
+(`agent-cli/src/identity.rs`: `Confirmed` tylko po udanym `taskkill /T` i potwierdzonym końcu
+procesu głównego), `ShutdownReport.timed_out`, kontrolowane zatrzymanie przy wyjściu, `--prepare-update`
+i `prepare_update` (`workflows::runtime::shutdown`, `EXIT_GRACE`), blokada aktualizacji i restore przy
+przebiegu `queued`/`running`/`cancelling`, neutralizacja przywróconej kopii (`Input::Abandon`, rezerwacje
+`restored`), odrzucenie nowszego schematu, diffy w kopii z weryfikacją (`workflows/backup.rs`),
+retencja (`workflows/retention.rs`, `workflowRetentionDays`, `ArtifactError::Purged`), kontrola
+miejsca (`workflows/disk.rs`, `ArtifactError::DiskFull`), TS: `workflow_recover`, monitor
+(„Odzyskaj przebieg”), fixture IPC, `tests/workflow-recovery.spec.ts`. Checklista ręczna:
+`E6_TEST_RECZNY.md`; A03 w `E0_ANALIZA.md` zaktualizowane.
+
+Testy ukierunkowane (zielone): `cargo test --bin tuktuk-track tests::` 1009, `workflows::recovery` 15,
+`backup` 26, workflow-core (driver, engine, run_states), agent-cli 22, `naming`, `cargo fmt --check`,
+`cargo clippy -p agent-cli -p workflow-core` bez uwag, `vue-tsc --noEmit`; Playwright:
+`workflow-recovery` 9, `workflow-runs`/`workflows-ui`/`workflow-definitions`/`backup`/`updater`/
+`settings-tab` 92, `visual` 90. Pełne `npm run check` wykonuje krok sprawdzenia etapu.
+
+### 2026-11-06 — E6 (poprawki po review, runda 2)
+
+Poprawki:
+- Przywracanie kopii odrzuca każdy nieskończony przebieg, także `waitingForApproval`
+  (`workflows::backup::restore_blocker`, użyte w `restore_locked`); aktualizację nadal blokują tylko
+  `queued`/`running`/`cancelling` (`active_work`). Odwołuje to decyzję z rundy 1 („przebieg czekający
+  na zgodę nie blokuje”), która była sprzeczna z kryterium. Podgląd kopii (`inspect_backup`,
+  `Preview.workflowBlocker`) ostrzega o tym z góry. Fixture: osobna `workflowRestoreBlocker`.
+- Diffy z kopii: `prepare_restore` tylko weryfikuje wpisy (`take_artifacts`) i usuwa tabelę;
+  pliki zapisuje `PreparedRestore::write_artifacts` po udanym `restore_locked`, bez blokady bazy.
+  Odrzucone przywrócenie nie zostawia plików z kopii.
+- Eksport zwraca `ExportResult { path, skippedArtifacts, overLimitArtifacts }`; `LibraryView.vue`
+  podaje liczby pominiętych diffów.
+- `workflow_recover`: PID procesów bez potwierdzonego końca w notatce zdarzenia
+  (`recovery::unconfirmed_note`), w `RecoverOutcome.unconfirmedPids` i `RecoveryView.unconfirmedPids`;
+  monitor pokazuje komunikat z PID jako `role=alert`. Przycisk „Odzyskaj przebieg” otwiera
+  `ConfirmDialog` („Sprawdź procesy i zwolnij katalog”). Podgląd ma przykładowy przerwany przebieg (id 2).
+- `prepare_update` nie zatrzymuje już sterownika (nieudana instalacja zostawiała martwy sterownik);
+  zatrzymanie robią tylko `RunEvent::Exit` i `--prepare-update`. Dodatkowo `RuntimeHandle::is_stopped`
+  i `runtime_handle` odrzuca nowe przebiegi przy zatrzymanym sterowniku (`ERR_RUNTIME_STOPPED`).
+- Start aplikacji: `recovery::remove_orphan_tmp` usuwa `diff-*.tmp` w `workflows/runs/*`;
+  `recovery::startup_faults` zgłasza procesy bez potwierdzonego końca (z PID), przebiegi zakończone
+  `workspaceUnavailable` i błędy przez `FAULT_EVENT`. Frontend nie słucha jeszcze `workflow-fault`
+  (zgłoszenie trafia też do logu).
+- `workflow_run_get` sprawdza pliki diffów po odczycie z bazy (`artifacts::with_file_availability`);
+  monitor mówi o brakującym pliku (`artifact-unavailable`).
+- Retencja diffów: zakres 7–365 dni (Rust, TS, pole w Ustawieniach).
+
+Nowe albo zmienione testy: `restore_is_refused_while_any_run_is_unfinished`,
+`restored_active_runs_become_interrupted_and_runtime_never_calls_runner` (zgoda → `invalidated`,
+krok w toku → `interrupted`, `runner.total_calls() == 0`), `restore_writes_verified_artifacts_only_after_replace`,
+`refused_restore_writes_no_artifact_files`, `recover_keeps_reservation_when_process_still_alive` (PID 4242),
+`orphan_tmp_artifact_is_removed_and_final_files_kept`, `startup_faults_cover_failed_runs_and_errors_but_not_routine_cleanup`,
+`missing_artifact_file_shows_artifact_unavailable_in_detail`, `unconfirmed_kill_marks_unknown`,
+`spawn_is_recorded_before_any_output_is_read`, `ledger_rows_survive_restart_of_repository`,
+`stopped_runtime_rejects_new_work_with_message`, driver `graceful_shutdown_when_idle_returns_immediately`
+(`is_stopped`), test źródła `prepare_update` (bez `shutdown`), retencja 1 i 6 odrzucone;
+Playwright: potwierdzenie odzyskania, podwójne kliknięcie (1 wywołanie), Esc z przesuniętym zegarem,
+alert z PID, podgląd odzyskania, przebieg zakończony bez sekcji, restore przy `waitingForApproval`,
+brak pliku diffu, eksport z pominiętymi diffami, ostrzeżenie w podglądzie kopii.
+
+Wyniki (2026-11-06): `cargo test --manifest-path src-tauri/Cargo.toml --locked` (cały workspace)
+exit 0: aplikacja 1017 (2 ignorowane), agent-cli 7 + 22, workflow-core driver 38, engine 38,
+run_states 8 i pozostałe zestawy bez porażek. `-p workflow-core --features testing --test driver`
+10 razy z rzędu: 10 × 38/38 (ok. 5 s każde). `cargo fmt --check` zielone, `cargo clippy -p agent-cli
+-p workflow-core` bez uwag, `naming` 3, `workflows` 227, `backup` 27, `vue-tsc --noEmit` zielone.
+Playwright: `workflow-recovery` + `backup` 21/21, `workflow-runs`/`workflows-ui`/`workflow-definitions`/
+`updater`/`settings-tab` 90/90, `visual` (1 worker) 90/90.
+
+Niewykonane: pełne `npm run check` (zgodnie z poleceniem rundy wykonuje je krok sprawdzenia etapu;
+wynik do dopisania tam), test ręczny `E6_TEST_RECZNY.md` (użytkownik).
+
+### 2026-11-06 — E6
+
+Wynik etapu po dwóch rundach poprawek po review (szczegóły wyżej). Pozostałe uwagi review: brak.
+
+Zmienione pliki (git status, bez commitu): crate `agent-cli` (`identity.rs`, `fs_space.rs` nowe; `lib.rs`,
+`process.rs`, `tree.rs`, `Cargo.toml`, test `process.rs`), `workflow-core` (`driver.rs`, `engine*.rs`, `lib.rs`,
+`run.rs`, testy driver/engine/run_states), host (`workflows/backup.rs`, `disk.rs`, `processes.rs`, `recovery.rs`,
+`retention.rs`, `test_db.rs` nowe; `artifacts`, `mod`, `run_commands`, `runners`, `runs`, `runtime`, `service`,
+`store`, `workspace` zmienione; `backup.rs`, `main.rs`, `settings.rs`), frontend (`LibraryView.vue`,
+`SettingsPanel.vue`, `settings/WorkflowsSection.vue`, `workflows/WorkflowRunMonitor.vue`, `api/workflowRuns.ts`,
+`preview/workflowRuns.ts`, `settings.ts`, `workflowRuns.ts`), testy (`tests/workflow-recovery.spec.ts` nowy,
+`tests/backup.spec.ts`, `tests/fixtures/tauri.ts`), dokumenty (`E6_TEST_RECZNY.md` nowy, `E0_ANALIZA.md`,
+ten plik) oraz `.claude/launch.json` i `.claude/workflows/workflows-stage.js`.
+
+Decyzje: rejestr procesów zapisywany przez runner przed odczytem strumieni; rekonsyliacja przed startem
+runtime, bez wznawiania starych poleceń; przywrócona kopia neutralizuje przebiegi (zgody `invalidated`, kroki
+`interrupted`); restore odrzuca każdy nieskończony przebieg, aktualizację blokują `queued`/`running`/`cancelling`;
+artefakty diffów w kopii jako BLOB z weryfikacją, retencja `workflowRetentionDays` (7–365), brak miejsca
+(kody 112 i 39, `MIN_FREE_BYTES`) zgłaszany jako `DiskFull`; kontrolowane zatrzymanie przy wyjściu i
+`--prepare-update`.
+
+Wynik `npm run check`: zielone (370 s, exit 0): build OK, Playwright 783 passed, `cargo fmt --check` OK,
+`cargo test --locked` bez porażek (aplikacja 1017 passed / 2 ignored, ok. 156 w pozostałych zestawach).
+
+Checkboxy E6 w rozdz. 10: zaznaczone cztery z dowodem w testach (rekonsyliacja, przerwanie w trakcie
+zapisu/oczekiwania/anulowania, backup/retencja/brak miejsca, blokada restore i aktualizacji). Niezaznaczone:
+zamknięcie okna do traya versus faktyczne wyjście (wymaga ręcznego sprawdzenia).
+
+Pozostałe blokery (poza zakresem automatycznych testów): ręczny test `E6_TEST_RECZNY.md` na prawdziwych
+Claude i Codex, zamknięcie do traya a „Zakończ”, aktualizacja przez instalator, zabicie procesu w Menedżerze
+zadań; decyzje użytkownika (Running na granicy kroków, WaitingForApproval a restore, okno potwierdzenia przy
+„Zakończ”). Frontend nie słucha jeszcze zdarzenia `workflow-fault`.

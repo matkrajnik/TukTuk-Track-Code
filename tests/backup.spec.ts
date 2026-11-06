@@ -108,3 +108,84 @@ test("backup restore: cancelling the file dialog shows no summary", async ({
   await expect(page.getByRole("alert")).toHaveCount(0);
   expect(await restoreCalls(page)).toBe(0);
 });
+
+test("backup export reports Workflows diffs left out of the copy", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    backupExport: {
+      path: "C:\Kopie\TukTuk-Track-2026-10-01.sqlite",
+      skippedArtifacts: 2,
+      overLimitArtifacts: 1,
+    },
+  });
+  await openBackups(page);
+  await page.getByRole("button", { name: "Eksportuj kopię" }).click();
+  const message = page.getByText(/Zapisano kopię:/);
+  await expect(message).toContainText(
+    "Zapisano kopię: C:\Kopie\TukTuk-Track-2026-10-01.sqlite.",
+  );
+  await expect(message).toContainText(
+    "Pominięto diffy Workflows bez pliku albo z niezgodną treścią: 2.",
+  );
+  await expect(message).toContainText(
+    "Diffy Workflows ponad limit 256 MB kopii nie trafiły do niej: 1.",
+  );
+});
+
+test("backup export without skipped diffs shows only the path", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    backupExport: {
+      path: "C:\Kopie\kopia.sqlite",
+      skippedArtifacts: 0,
+      overLimitArtifacts: 0,
+    },
+  });
+  await openBackups(page);
+  await page.getByRole("button", { name: "Eksportuj kopię" }).click();
+  await expect(page.getByText(/Zapisano kopię:/)).toHaveText(
+    "Zapisano kopię: C:\Kopie\kopia.sqlite.",
+  );
+});
+
+test("backup restore summary warns up front about an unfinished Workflows run", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    backup: { preview, snapshot: restored },
+    workflowRuns: {
+      runs: [
+        {
+          id: 1,
+          workflowId: 1,
+          workflowName: "Proces",
+          version: 1,
+          status: "waitingForApproval",
+        },
+      ],
+    },
+  });
+  await openBackups(page);
+  await page
+    .getByRole("button", { name: "Wybierz kopię do przywrócenia" })
+    .click();
+  await expect(page.getByTestId("restore-workflow-blocker")).toContainText(
+    "Przywrócenie zostanie odrzucone. Nieskończone przebiegi Workflows: 1.",
+  );
+});
+
+test("backup restore summary has no Workflows warning without unfinished runs", async ({
+  page,
+}) => {
+  await openDesktop(page, { backup: { preview, snapshot: restored } });
+  await openBackups(page);
+  await page
+    .getByRole("button", { name: "Wybierz kopię do przywrócenia" })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "TukTuk-Track-2026-10-01.sqlite" }),
+  ).toBeVisible();
+  await expect(page.getByTestId("restore-workflow-blocker")).toHaveCount(0);
+});

@@ -94,7 +94,10 @@ onUnmounted(() => {
       v-model:settings="settings"
       :shortcut-errors="info.shortcutErrors"
     />
-    <WorkflowsSection v-if="section === 'workflows'" />
+    <WorkflowsSection
+      v-if="section === 'workflows'"
+      v-model:settings="settings"
+    />
     <StartupSection
       v-if="section === 'startup'"
       v-model:settings="settings"

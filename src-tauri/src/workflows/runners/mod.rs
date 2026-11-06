@@ -30,6 +30,8 @@ use workflow_core::FailureCode;
 
 use process::{Proc, Spawner};
 
+use super::processes::{ProcState, ProcessLedger};
+
 /// Jak często runner sprawdza `cancel`.
 const POLL: Duration = Duration::from_millis(50);
 /// Czas na potwierdzenie końca procesu po `kill`.
@@ -57,6 +59,8 @@ pub struct CliRunner {
     paths_provider: Option<Arc<dyn Fn() -> CliPaths + Send + Sync>>,
     workspace: Arc<dyn WorkspaceAccess>,
     unconfirmed_max_wait: Duration,
+    /// Rejestr procesów (E6): bez niego proces po awarii hosta nie dałby się sprawdzić.
+    ledger: Option<Arc<dyn ProcessLedger>>,
 }
 
 impl CliRunner {
@@ -71,7 +75,14 @@ impl CliRunner {
             paths_provider: None,
             workspace,
             unconfirmed_max_wait: UNCONFIRMED_MAX_WAIT,
+            ledger: None,
         }
+    }
+
+    /// Zapisuje każdy uruchomiony proces (PID i czas utworzenia) oraz jego koniec.
+    pub fn with_ledger(mut self, ledger: Arc<dyn ProcessLedger>) -> Self {
+        self.ledger = Some(ledger);
+        self
     }
 
     /// Ścieżki liczone przy każdym kroku zamiast jednorazowo przy starcie.
@@ -346,7 +357,70 @@ impl AgentRunner for CliRunner {
                 )
             }
         };
-        self.drive(request, cancel, on_event, proc.as_ref(), &prepared)
+        let recorded = match self.record_spawn(request, proc.as_ref()) {
+            Ok(recorded) => recorded,
+            Err(outcome) => return outcome,
+        };
+        let outcome = self.drive(request, cancel, on_event, proc.as_ref(), &prepared);
+        if recorded {
+            self.record_end(request, &outcome);
+        }
+        outcome
+    }
+}
+
+/// Stan rejestru po wyniku kroku: anulowanie z potwierdzonym końcem to `Killed`,
+/// niepotwierdzony koniec (`Interrupted`) to `Unknown`, reszta to zwykłe wyjście.
+fn ledger_state(outcome: &RunnerOutcome) -> ProcState {
+    match outcome {
+        RunnerOutcome::Cancelled => ProcState::Killed,
+        RunnerOutcome::Failed {
+            code: FailureCode::Interrupted,
+            ..
+        } => ProcState::Unknown,
+        _ => ProcState::Exited,
+    }
+}
+
+impl CliRunner {
+    /// Zapis procesu w rejestrze przed czytaniem strumienia. Gdy zapis się nie uda,
+    /// proces jest kończony, a krok kończy się błędem zapisu: proces bez wpisu nie
+    /// dałby się sprawdzić po awarii hosta.
+    fn record_spawn(&self, request: &RunRequest, proc: &dyn Proc) -> Result<bool, RunnerOutcome> {
+        let (Some(ledger), Some(identity)) = (&self.ledger, proc.identity()) else {
+            return Ok(false);
+        };
+        match ledger.spawned(request.run_id, &request.execution_id, &identity) {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                let ended = proc.kill(KILL_CONFIRM);
+                let message = match ended {
+                    agent_cli::KillResult::Confirmed => {
+                        format!("Nie zapisano procesu agenta w rejestrze ({e}); proces zakończono.")
+                    }
+                    agent_cli::KillResult::Unconfirmed => {
+                        return Err(failed(
+                            FailureCode::Interrupted,
+                            format!("Nie zapisano procesu agenta w rejestrze ({e}) i nie potwierdzono jego końca."),
+                        ))
+                    }
+                };
+                Err(failed(FailureCode::StorageError, message))
+            }
+        }
+    }
+
+    /// Błąd zapisu końca zostawia wpis `running`; rekonsyliacja przy starcie sprawdzi
+    /// go po PID i czasie utworzenia, więc tu wystarczy zgłoszenie w logu.
+    fn record_end(&self, request: &RunRequest, outcome: &RunnerOutcome) {
+        if let Some(ledger) = &self.ledger {
+            if let Err(e) = ledger.ended(&request.execution_id, ledger_state(outcome)) {
+                eprintln!(
+                    "Workflows: nie zapisano końca procesu kroku {}: {e}",
+                    request.execution_id
+                );
+            }
+        }
     }
 }
 

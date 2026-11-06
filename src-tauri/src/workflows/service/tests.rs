@@ -125,6 +125,7 @@ impl Env {
                 app_data: &sb.app_data(),
                 detected,
                 read_codex_config: config_ok,
+                free_bytes: agent_cli::available_bytes,
                 now: 100,
                 enqueue: &enqueue,
                 emit: &emit,
@@ -221,6 +222,7 @@ fn dirty_repo_creates_no_run_and_no_worktree() {
     assert_eq!(env.count("SELECT COUNT(*) FROM workflow_runs"), 0);
     assert_eq!(worktree_count(&repo), 1);
     assert!(!worktrees_dir(&sb.app_data()).join("1").exists());
+    assert_eq!(worktree_count(&repo), 1, "tylko repozytorium główne");
 }
 
 #[test]
@@ -367,6 +369,7 @@ fn concurrent_start_same_request_id_creates_one_run() {
                         app_data: &app_data,
                         detected: &detected,
                         read_codex_config: config_ok,
+                        free_bytes: agent_cli::available_bytes,
                         now: 100,
                         enqueue: &enqueue,
                         emit: &emit,
@@ -383,4 +386,34 @@ fn concurrent_start_same_request_id_creates_one_run() {
     assert_eq!(env.count("SELECT COUNT(*) FROM workflow_runs"), 1);
     assert_eq!(worktree_count(&repo), 2, "repo główne + jeden worktree");
     assert_eq!(*enqueued.lock().unwrap(), [results[0].run_id]);
+}
+
+/// Kryterium 11 E6: prawie pełny dysk blokuje start przed utworzeniem przebiegu
+/// i worktree, z czytelnym komunikatem.
+#[test]
+fn start_is_refused_when_disk_is_almost_full() {
+    let sb = Sandbox::new();
+    let repo = sb.sample_repo();
+    let env = Env::from_connection(true);
+    let enqueue = |id: i64| env.enqueued.borrow_mut().push(id);
+    let emit = |_: &StoredEvent| {};
+    let err = start(
+        &StartDeps {
+            db: &env.db,
+            app_data: &sb.app_data(),
+            detected: &detected_ok(),
+            read_codex_config: config_ok,
+            free_bytes: |_| Some(1024),
+            now: 100,
+            enqueue: &enqueue,
+            emit: &emit,
+        },
+        env.request(&repo, "full-disk"),
+    )
+    .unwrap_err();
+    assert!(err.contains("Za mało miejsca na dysku"), "{err}");
+    assert_eq!(env.count("SELECT COUNT(*) FROM workflow_runs"), 0);
+    assert!(env.enqueued.borrow().is_empty());
+    assert!(!worktrees_dir(&sb.app_data()).join("1").exists());
+    assert_eq!(worktree_count(&repo), 1, "tylko repozytorium główne");
 }

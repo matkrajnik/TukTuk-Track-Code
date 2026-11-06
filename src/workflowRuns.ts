@@ -11,6 +11,7 @@ import type {
   DecideRunRequest,
   DecideRunResult,
   DiffArtifact,
+  RecoverOutcome,
   RunDetail,
   RunFilter,
   RunSummary,
@@ -59,6 +60,12 @@ export async function workflowRunEvents(
 export async function cancelWorkflowRun(runId: number): Promise<void> {
   if (desktop) return invoke("workflow_cancel", { runId });
   return sim.cancel(runId);
+}
+
+/** Świadome odzyskanie przerwanego przebiegu (E6): bez klucza, nie wznawia grafu. */
+export async function recoverWorkflowRun(runId: number): Promise<RecoverOutcome> {
+  if (desktop) return invoke("workflow_recover", { runId });
+  return sim.recover(runId);
 }
 
 export async function decideWorkflowRun(

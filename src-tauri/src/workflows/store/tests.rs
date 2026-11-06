@@ -30,8 +30,10 @@ fn init_is_idempotent_and_records_module_schema() {
             r.get(0)
         })
         .unwrap();
-    // Wersje 1 (definicje), 2 (przebiegi, E3), 3 (katalogi robocze, E4) i 4 (cel, artefakty, E5).
-    assert_eq!(versions, 4);
+    // Wersje 1 (definicje), 2 (przebiegi, E3), 3 (katalogi robocze, E4), 4 (cel,
+    // artefakty, E5) i 5 (rejestr procesów, retencja, powód zwolnienia, E6).
+    assert_eq!(versions, 5);
+    assert_eq!(module_schema_of(&db), 5);
 }
 
 #[test]
@@ -406,4 +408,126 @@ fn migration_4_keeps_existing_tasks_sessions_and_runs() {
         })
         .unwrap();
     assert_eq!(goal, None);
+}
+
+#[test]
+fn migration_5_is_idempotent() {
+    let db = db();
+    init_tables(&db).unwrap();
+    init_tables(&db).unwrap();
+    assert!(has_column(&db, "workflow_processes", "created_ft"));
+    assert!(has_column(&db, "workflow_artifacts", "purged_at"));
+    assert!(has_column(&db, "workflow_workspaces", "release_reason"));
+    assert!(has_migration(&db, 5));
+}
+
+#[test]
+fn process_state_check_rejects_unknown_value() {
+    let db = db();
+    let id = template(&db);
+    publish(&db, id, 1, 2).unwrap();
+    db.execute(
+        "INSERT INTO workflow_runs(version_id, request_id, definition_json, definition_hash, status, created_at, updated_at) VALUES((SELECT id FROM workflow_versions), 'r', '{}', 'h', 'running', 1, 2)",
+        [],
+    )
+    .unwrap();
+    let insert = |state: &str| {
+        db.execute(
+            "INSERT INTO workflow_processes(execution_id, run_id, pid, created_ft, job_attached, state, recorded_at) VALUES(?1, 1, 10, 20, 1, ?2, 3)",
+            rusqlite::params![format!("e-{state}"), state],
+        )
+    };
+    assert!(insert("running").is_ok());
+    assert!(insert("zombie").is_err());
+}
+
+/// Baza w stanie E5 (bez migracji 5) z zadaniem, wpisem czasu, przebiegiem, zdarzeniami
+/// i artefaktem: migracja 5 (także powtórzona) zachowuje treść i zapisuje wersję 5.
+#[test]
+fn migration_5_from_e5_database_keeps_tasks_sessions_runs_and_events() {
+    let mut db = db();
+    crate::db::change(&mut db, "add", None, Some("Zadanie".into()), 0).unwrap();
+    let task: i64 = db
+        .query_row("SELECT id FROM tasks", [], |r| r.get(0))
+        .unwrap();
+    db.execute(
+        "INSERT INTO sessions(task_id, started_at, ended_at) VALUES(?1, 1000, 61000)",
+        [task],
+    )
+    .unwrap();
+    let id = template(&db);
+    publish(&db, id, 1, 2).unwrap();
+    let version: i64 = db
+        .query_row("SELECT id FROM workflow_versions", [], |r| r.get(0))
+        .unwrap();
+    db.execute(
+        "INSERT INTO workflow_runs(version_id, request_id, definition_json, definition_hash, task_id, task_title, repo, status, created_at, updated_at) VALUES(?1, 'r', '{}', 'h', ?2, 'Zadanie', 'C:/repo', 'running', 1, 2)",
+        rusqlite::params![version, task],
+    )
+    .unwrap();
+    let run: i64 = db
+        .query_row("SELECT id FROM workflow_runs", [], |r| r.get(0))
+        .unwrap();
+    for (sequence, kind) in [(1, "runCreated"), (2, "runStateChanged")] {
+        db.execute(
+            "INSERT INTO workflow_events(run_id, sequence, type, payload_json, created_at) VALUES(?1, ?2, ?3, '{}', ?2)",
+            rusqlite::params![run, sequence, kind],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO workflow_artifacts(run_id, kind, hash, rel_path, size, created_at) VALUES(?1, 'diff', 'h', 'workflows/runs/1/diff-h.patch', 5, 1)",
+        [run],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at) VALUES(?1, 'C:/repo', 'C:/wt', 'abc', 'reserved', 1)",
+        [run],
+    )
+    .unwrap();
+    // Stan E5: bez tabeli procesów, kolumn E6 i wpisu migracji 5.
+    db.execute("DROP TABLE workflow_processes", []).unwrap();
+    db.execute("ALTER TABLE workflow_artifacts DROP COLUMN purged_at", [])
+        .unwrap();
+    db.execute(
+        "ALTER TABLE workflow_workspaces DROP COLUMN release_reason",
+        [],
+    )
+    .unwrap();
+    db.execute(
+        "DELETE FROM workflow_schema_migrations WHERE version = 5",
+        [],
+    )
+    .unwrap();
+    assert!(!has_migration(&db, 5));
+    let tables = [
+        "tasks",
+        "sessions",
+        "workflow_runs",
+        "workflow_events",
+        "workflow_artifacts",
+        "workflow_workspaces",
+    ];
+    let before: Vec<(Vec<String>, Vec<Vec<String>>)> = tables
+        .iter()
+        .map(|t| {
+            let cols = columns(&db, t);
+            let rows = dump(&db, t, &cols);
+            (cols, rows)
+        })
+        .collect();
+    assert!(before.iter().all(|(_, rows)| !rows.is_empty()));
+
+    init_tables(&db).unwrap();
+    init_tables(&db).unwrap();
+
+    assert!(has_migration(&db, 5));
+    assert!(has_column(&db, "workflow_processes", "pid"));
+    for (table, (cols, rows)) in tables.iter().zip(&before) {
+        assert_eq!(&dump(&db, table, cols), rows, "{table}");
+    }
+    let purged: Option<i64> = db
+        .query_row("SELECT purged_at FROM workflow_artifacts", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(purged, None);
 }

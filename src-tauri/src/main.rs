@@ -228,8 +228,18 @@ fn prepare_update(app: tauri::AppHandle) -> Result<(), String> {
     {
         let state = app.state::<Database>();
         let db = state.0.lock().map_err(|e| e.to_string())?;
+        // Przebieg Workflows z procesem w toku blokuje aktualizację (E6); baner
+        // pokazuje komunikat przez `installError`.
+        if let Some(message) = workflows::runtime::update_blocker(&db)? {
+            return Err(message);
+        }
         db::stop(&db, db::now()).map_err(|e| e.to_string())?;
     }
+    // Sterownika Workflows tu nie zatrzymujemy: pobranie albo instalacja mogą się
+    // nie udać, a aplikacja działa dalej. Procesu w toku nie ma (blokada wyżej);
+    // przebieg zaczęty przed końcem procesu wyjaśni rekonsyliacja po restarcie.
+    // Zatrzymanie należy do ścieżek, które na pewno kończą proces
+    // (`RunEvent::Exit`, `--prepare-update`).
     window_state::save(&app);
     let _ = app.emit("data-changed", ());
     Ok(())
@@ -456,6 +466,8 @@ fn main() {
                 match result {
                     Ok(()) => {
                         window_state::save(app);
+                        // Instalator już działa: krok w toku kończy się kontrolowanie.
+                        workflows::runtime::shutdown(app);
                         app.exit(0);
                     }
                     Err(e) => {
@@ -715,6 +727,7 @@ fn main() {
             workflows::run_commands::workflow_cancel,
             workflows::run_commands::workflow_decide,
             workflows::run_commands::workflow_artifact_read,
+            workflows::run_commands::workflow_recover,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,
@@ -847,6 +860,9 @@ fn main() {
             // Zamknięcie aplikacji kończy rozmowę czatu i jej proces CLI (A3).
             if let tauri::RunEvent::Exit = event {
                 ai_chat::shutdown(app);
+                // Kontrolowane zatrzymanie przebiegów Workflows (E6): zamknięcie okna
+                // tylko chowa je do traya, a dopiero wyjście kończy krok w toku.
+                workflows::runtime::shutdown(app);
             }
         });
 }
@@ -955,6 +971,53 @@ mod tests {
             .find("gap_error.take()")
             .expect("brak zgłoszenia błędu gap::recover");
         assert!(report > windows);
+    }
+
+    /// Wyjście z aplikacji zatrzymuje sterownik Workflows kontrolowanie (E6).
+    #[test]
+    fn exit_event_shuts_down_workflow_runtime_gracefully() {
+        let source = include_str!("main.rs");
+        let run = &source[source.find(".run(|app, event| {").unwrap()..];
+        let exit = &run[run.find("tauri::RunEvent::Exit").unwrap()..];
+        let end = exit.find("});").unwrap();
+        assert!(exit[..end].contains("workflows::runtime::shutdown(app);"));
+    }
+
+    /// Zamknięcie okna chowa je do traya i nie dotyka sterownika przebiegów.
+    #[test]
+    fn close_requested_hides_without_touching_workflow_runtime() {
+        let source = include_str!("main.rs");
+        let close = &source[source.find("tauri::WindowEvent::CloseRequested").unwrap()..];
+        let end = close.find("tauri::WindowEvent::Focused").unwrap();
+        let block = &close[..end];
+        assert!(block.contains("api.prevent_close();"));
+        assert!(block.contains("window.hide()"));
+        assert!(
+            !block.contains("workflows::"),
+            "zamknięcie okna to nie wyjście"
+        );
+    }
+
+    /// `--prepare-update` przy działającej aplikacji zatrzymuje sterownik przed `exit`.
+    #[test]
+    fn prepare_update_cli_path_shuts_down_runtime_before_exit() {
+        let source = include_str!("main.rs");
+        let single = &source[source.find("tauri_plugin_single_instance::init").unwrap()..];
+        let branch = &single[..single.find("} else if").unwrap()];
+        let shutdown = branch
+            .find("workflows::runtime::shutdown(app);")
+            .expect("brak zatrzymania sterownika");
+        assert!(shutdown < branch.find("app.exit(0);").unwrap());
+        // Komenda `prepare_update` sprawdza blokadę, ale sterownika nie zatrzymuje.
+        let command = &source[source.find("fn prepare_update(").unwrap()..];
+        let body = &command[..command.find("fn app_info(").unwrap()];
+        let blocker = body
+            .find("workflows::runtime::update_blocker(&db)?")
+            .unwrap();
+        assert!(blocker < body.find("db::stop(").unwrap());
+        // Nieudana instalacja zostawia działającą aplikację: sterownik nie może
+        // być wtedy zatrzymany (start przebiegu zostałby bez wykonania).
+        assert!(!body.contains("workflows::runtime::shutdown("));
     }
 
     /// Przerwa w pracy aplikacji (gap.rs): zatrzymanie pomiaru po `db::init` i po

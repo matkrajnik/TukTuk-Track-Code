@@ -16,6 +16,8 @@ use workflow_core::ports::StoredEvent;
 use workflow_core::{ApprovalStatus, Decision, RunStatus};
 
 use super::artifacts::{read_diff, DiffView, MAX_DIFF_VIEW_BYTES};
+use super::processes::{ProcessControl, SystemProcesses};
+use super::recovery::RecoverOutcome;
 use super::require_unlocked;
 use super::runs::{
     list_runs, run_detail, RunDetail, RunFilter, RunSummary, SqliteRunRepository, MAX_EVENTS_PAGE,
@@ -149,6 +151,18 @@ pub fn cancel(db: &SharedDb, handle: &RuntimeHandle, run_id: i64) -> Result<(), 
     Ok(())
 }
 
+/// Świadome odzyskanie przerwanego przebiegu (5.2, 7.3); bez klucza, jak
+/// anulowanie: przy odzyskiwaniu dostępu da się zwolnić katalog roboczy.
+pub fn recover_run(
+    db: &SharedDb,
+    control: &dyn ProcessControl,
+    emit: &dyn Fn(&StoredEvent),
+    run_id: i64,
+    now: i64,
+) -> Result<RecoverOutcome, String> {
+    super::recovery::recover(db, control, emit, run_id, now)
+}
+
 /// Diff do zgody: tylko po odblokowaniu, wyłącznie przez (przebieg, skrót).
 pub fn artifact_read(
     db: &SharedDb,
@@ -187,6 +201,7 @@ pub async fn workflow_start(
                 app_data: &data,
                 detected: &detected,
                 read_codex_config: super::preflight::read_codex_config,
+                free_bytes: agent_cli::available_bytes,
                 now: crate::db::now(),
                 enqueue: &enqueue,
                 emit: &emit,
@@ -212,9 +227,14 @@ pub async fn workflow_runs(
 #[tauri::command]
 pub async fn workflow_run_get(app: tauri::AppHandle, run_id: i64) -> Result<RunDetail, String> {
     let db = shared(&app);
-    tauri::async_runtime::spawn_blocking(move || history_get(&db, run_id, crate::db::now()))
-        .await
-        .map_err(|e| e.to_string())?
+    let data = app_data(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // Plik diffu sprawdzany po odczycie z bazy, bez jej blokady (E6).
+        history_get(&db, run_id, crate::db::now())
+            .map(|detail| super::artifacts::with_file_availability(detail, &data))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -247,6 +267,22 @@ pub async fn workflow_decide(
     tauri::async_runtime::spawn_blocking(move || decide(&db, runtime_handle(&app)?, command))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Sprawdzanie i kończenie procesów oraz Git poza wątkiem interfejsu.
+#[tauri::command]
+pub async fn workflow_recover(
+    app: tauri::AppHandle,
+    run_id: i64,
+) -> Result<RecoverOutcome, String> {
+    let db = shared(&app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let sink = super::runtime::sink_for(&app);
+        let emit = |event: &StoredEvent| workflow_core::ports::EventSink::emit(&sink, event);
+        recover_run(&db, &SystemProcesses, &emit, run_id, crate::db::now())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

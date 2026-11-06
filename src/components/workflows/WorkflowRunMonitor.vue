@@ -30,6 +30,9 @@ import {
   getWorkflowRun,
   listenWorkflowEvents,
   readWorkflowArtifact,
+  recoverWorkflowRun,
+  recoveryMessage,
+  unconfirmedNote,
   workflowRunEvents,
   type DiffArtifact,
   type RunDetail,
@@ -49,6 +52,8 @@ const diffError = ref("");
 const diffLoading = ref(false);
 const comment = ref("");
 const deciding = ref(false);
+const recovering = ref(false);
+const confirmRecover = ref(false);
 /**
  * Jeden identyfikator żądania na zgodę: podwójne kliknięcie ma jeden skutek, a
  * kolejna zgoda w tym samym przebiegu (nowe id, także po unieważnieniu) dostaje
@@ -278,6 +283,43 @@ async function stop() {
   }
 }
 
+/** Odzyskanie przerwanego przebiegu: nic nie wznawia, tylko zwalnia katalog po potwierdzeniu. */
+const canRecover = computed(() => {
+  const view = detail.value?.recovery;
+  return !!view && (view.workspaceReserved || view.processesUnconfirmed > 0);
+});
+
+/**
+ * Po potwierdzeniu w oknie: jedno wywołanie naraz (podwójne kliknięcie nie
+ * wysyła drugiego). Niepotwierdzony koniec procesu to alert z PID, żeby
+ * użytkownik mógł zakończyć proces ręcznie.
+ */
+async function recover() {
+  confirmRecover.value = false;
+  if (recovering.value) return;
+  recovering.value = true;
+  error.value = "";
+  notice.value = "";
+  try {
+    const outcome = await recoverWorkflowRun(props.runId);
+    if (outcome.unconfirmedPids.length > 0) error.value = unconfirmedNote(outcome.unconfirmedPids);
+    else if (outcome.workspaceReleased)
+      notice.value = "Przebieg odzyskany: katalog roboczy zwolniony. Przebieg nie jest wznawiany.";
+    else
+      error.value =
+        "Nie potwierdzono końca procesu agenta; katalog roboczy pozostaje zablokowany.";
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    recovering.value = false;
+    try {
+      await refreshDetail();
+    } catch (e) {
+      error.value = String(e);
+    }
+  }
+}
+
 function output(value: Record<string, unknown> | null): string {
   return value ? JSON.stringify(value, null, 2) : "";
 }
@@ -328,6 +370,25 @@ onBeforeUnmount(() => {
           Zatrzymaj
         </button>
       </div>
+
+      <section
+        v-if="detail.recovery"
+        class="wf-recovery"
+        aria-labelledby="wf-recovery-title"
+      >
+        <h3 id="wf-recovery-title">Odzyskanie przebiegu</h3>
+        <p data-testid="run-recovery">{{ recoveryMessage(detail.recovery) }}</p>
+        <button
+          v-if="canRecover"
+          type="button"
+          class="today-button"
+          :disabled="recovering"
+          :aria-busy="recovering"
+          @click="confirmRecover = true"
+        >
+          {{ recovering ? "Sprawdzanie procesów…" : "Odzyskaj przebieg" }}
+        </button>
+      </section>
 
       <h3>Graf przebiegu</h3>
       <WorkflowGraphView
@@ -417,6 +478,22 @@ onBeforeUnmount(() => {
       <p v-for="a in detail.approvals.filter((x) => x.comment)" :key="a.id" class="hint">
         Komentarz do zgody: {{ a.comment }}
       </p>
+      <p
+        v-if="detail.approvals.some((x) => x.artifactPurged)"
+        class="hint"
+        data-testid="artifact-purged"
+      >
+        Diff zgody usunięto po okresie przechowywania (Ustawienia → Workflows);
+        historia przebiegu zostaje.
+      </p>
+      <p
+        v-if="detail.approvals.some((x) => !x.artifactAvailable && !x.artifactPurged)"
+        class="hint"
+        data-testid="artifact-unavailable"
+      >
+        Pliku diffu zgody nie ma na dysku (np. przywrócona kopia go nie
+        zawierała); historia przebiegu zostaje.
+      </p>
 
       <h3>Dziennik agentów</h3>
       <button
@@ -446,6 +523,19 @@ onBeforeUnmount(() => {
       @confirm="stop"
     >
       <p>Bieżący krok zostanie przerwany, a kolejne nie ruszą.</p>
+    </ConfirmDialog>
+    <ConfirmDialog
+      v-if="confirmRecover"
+      title="Odzyskać przebieg?"
+      confirm-label="Sprawdź procesy i zwolnij katalog"
+      @close="confirmRecover = false"
+      @confirm="recover"
+    >
+      <p>
+        Aplikacja sprawdzi procesy agenta tego przebiegu i zakończy te, które
+        nadal działają. Katalog roboczy zostanie zwolniony dopiero po
+        potwierdzonym końcu procesów. Przebieg nie zostanie wznowiony.
+      </p>
     </ConfirmDialog>
   </section>
 </template>

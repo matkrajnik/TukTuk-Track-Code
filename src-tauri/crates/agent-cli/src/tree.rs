@@ -36,6 +36,9 @@ mod imp {
         /// zdążył utworzyć potomka przed przypisaniem; drugie przejście
         /// `taskkill /T` w [`kill_tree_by_pid`] kończy takie drzewo. Błąd jest
         /// zwracany (nie połykany): bez jobu koniec drzewa potwierdza tylko `taskkill`.
+        // `HANDLE` jest nieprzezroczystym uchwytem jądra, nie wskaźnikiem do pamięci:
+        // funkcja go nie dereferuje, a zły uchwyt kończy się błędem API.
+        #[allow(clippy::not_unsafe_ptr_arg_deref)]
         pub fn attach(process: HANDLE) -> Result<Job, String> {
             // SAFETY: tworzenie anonimowego jobu bez atrybutów zabezpieczeń.
             let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };

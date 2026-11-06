@@ -10,7 +10,7 @@ serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 # Wersja już obecna w Cargo.lock (zależność tauri i winreg): Job Object do kończenia drzewa procesów.
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_Storage_FileSystem"] }
 
 # Testowa binarka procesu zastępczego; nie łączy się z siecią ani z prawdziwymi CLI.
 [[bin]]

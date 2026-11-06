@@ -32,8 +32,9 @@ impl RunStatus {
         RunStatus::Interrupted,
     ];
 
-    /// Stan końcowy: przebieg nie ma już wyjść. `Interrupted` jest końcowy w E3;
-    /// wznawianie przerwanych przebiegów dochodzi w E6.
+    /// Stan końcowy: przebieg nie ma już wyjść. `Interrupted` zostaje stanem końcowym
+    /// także po E6: odzyskanie (`workflow_recover`) tylko zwalnia zasoby i dopisuje
+    /// ślad audytowy, a graf i krok nie są wznawiane.
     pub fn is_terminal(self) -> bool {
         match self {
             RunStatus::Queued
@@ -51,7 +52,7 @@ impl RunStatus {
     pub fn can_transition_to(self, next: RunStatus) -> bool {
         use RunStatus::*;
         match self {
-            Queued => matches!(next, Running | Cancelled | Failed),
+            Queued => matches!(next, Running | Cancelled | Failed | Interrupted),
             Running => matches!(
                 next,
                 WaitingForApproval | Cancelling | Succeeded | Rejected | Failed | Interrupted

@@ -315,6 +315,13 @@ impl RunState {
             }
             RunEvent::NodesSkipped { node_ids } => self.skipped = node_ids.clone(),
             RunEvent::CancelRequested => self.cancel_requested = true,
+            RunEvent::Reconciled { .. } => {
+                if self.status != RunStatus::Interrupted {
+                    return Err(ReplayError::Contradiction(
+                        "odzyskanie dotyczy tylko przerwanego przebiegu".into(),
+                    ));
+                }
+            }
             RunEvent::Message { .. } | RunEvent::Tool { .. } => {}
         }
         self.event_count += 1;

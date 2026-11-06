@@ -1072,3 +1072,304 @@ fn goal_read_error_fails_the_step_without_starting_the_agent() {
     assert_eq!(runner.total_calls(), 0, "agent bez celu nie startuje");
     assert!(GOAL_ERRORS.load(Ordering::SeqCst) >= 1);
 }
+
+// ---- E6: odzyskiwanie po restarcie i kontrolowane zatrzymanie ----
+
+use workflow_core::driver::ShutdownReport;
+use workflow_core::ports::RunnerOutcome;
+
+fn completed(output: serde_json::Value) -> RunnerOutcome {
+    RunnerOutcome::Completed {
+        output,
+        exit_code: 0,
+        session_id: None,
+    }
+}
+
+/// Historia do kroku zgody bez przygotowanej zgody (awaria tuż po `ExecutionPlanned`).
+fn history_to_unprepared_approval(env: &Env, run: RunId) -> Vec<Effect> {
+    let outputs = [
+        samples::analysis(),
+        samples::implementation(),
+        samples::review_approved(),
+    ];
+    apply_inputs(&*env.repo, run, vec![Input::Start]).unwrap();
+    for output in outputs {
+        let effects = apply_inputs(&*env.repo, run, vec![Input::Continue]).unwrap();
+        let Some(Effect::LaunchAgent { execution_id, .. }) = effects.first().cloned() else {
+            panic!("brak LaunchAgent");
+        };
+        apply_inputs(
+            &*env.repo,
+            run,
+            vec![Input::ExecutionResult {
+                execution_id,
+                outcome: completed(output),
+            }],
+        )
+        .unwrap();
+    }
+    apply_inputs(&*env.repo, run, vec![Input::Continue]).unwrap()
+}
+
+#[test]
+fn restart_with_cancelling_run_without_step_ends_cancelled_without_runner() {
+    let env = Env::new();
+    let run = env.create("r1");
+    let effects = apply_inputs(&*env.repo, run, vec![Input::Start, Input::Continue]).unwrap();
+    let Some(Effect::LaunchAgent { execution_id, .. }) = effects.first().cloned() else {
+        panic!("brak LaunchAgent");
+    };
+    apply_inputs(&*env.repo, run, vec![Input::CancelRequested]).unwrap();
+    let state = env.state(run);
+    env.repo
+        .append(
+            run,
+            state.next_sequence(),
+            &[RunEvent::ExecutionFinished {
+                execution_id,
+                status: ExecutionStatus::Cancelled,
+                output: None,
+                code: Some(FailureCode::Cancelled),
+                message: None,
+                exit_code: None,
+                session_id: None,
+            }],
+            0,
+        )
+        .unwrap();
+    assert_eq!(env.state(run).status, RunStatus::Cancelling);
+    let runner = Arc::new(ScriptedRunner::new());
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    assert_eq!(env.state(run).status, RunStatus::Cancelled);
+    assert_eq!(runner.total_calls(), 0);
+}
+
+#[test]
+fn restart_with_unprepared_approval_prepares_it_and_never_calls_runner() {
+    let env = Env::new();
+    let run = env.create("r1");
+    let effects = history_to_unprepared_approval(&env, run);
+    assert!(matches!(
+        effects.first(),
+        Some(Effect::RequestApproval { .. })
+    ));
+    assert_eq!(env.state(run).status, RunStatus::Running);
+    let runner = Arc::new(ScriptedRunner::new());
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::WaitingForApproval);
+    assert_eq!(state.approvals.len(), 1);
+    assert_eq!(state.approvals[0].artifact_hash, "h1");
+    assert_eq!(runner.total_calls(), 0);
+    let result = env
+        .decide(&handle, run, Decision::Approve, "d1")
+        .expect("decyzja po restarcie");
+    assert_eq!(result.approval_status, ApprovalStatus::Approved);
+}
+
+fn waiting_run_e6(env: &Env) -> (RunId, Arc<ScriptedRunner>) {
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let run = env.create("r1");
+    handle.start_run(run);
+    settle(&handle);
+    assert_eq!(env.state(run).status, RunStatus::WaitingForApproval);
+    drop(handle);
+    (run, runner)
+}
+
+#[test]
+fn waiting_approval_is_revalidated_once_on_start_and_unchanged_hash_keeps_ids() {
+    let env = Env::new();
+    let (run, runner) = waiting_run_e6(&env);
+    let before = env.state(run);
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let after = env.state(run);
+    assert_eq!(after.event_count, before.event_count);
+    assert_eq!(after.approvals, before.approvals);
+    assert!(env.sink.faults().is_empty());
+    assert!(env.decide(&handle, run, Decision::Approve, "d1").is_ok());
+}
+
+#[test]
+fn changed_artifact_on_start_invalidates_and_requests_new_approval() {
+    let env = Env::new();
+    let (run, runner) = waiting_run_e6(&env);
+    let old_id = env.state(run).approvals[0].id.clone();
+    env.workspace.set_hash("h2");
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::WaitingForApproval);
+    assert_eq!(state.approvals.len(), 2);
+    assert_eq!(state.approvals[0].status, ApprovalStatus::Invalidated);
+    assert_eq!(state.approvals[1].status, ApprovalStatus::Pending);
+    assert_eq!(state.approvals[1].artifact_hash, "h2");
+    assert_ne!(state.approvals[1].id, old_id);
+}
+
+#[test]
+fn missing_artifact_on_start_reports_fault_and_keeps_waiting() {
+    let env = Env::new();
+    let (run, runner) = waiting_run_e6(&env);
+    let before = env.state(run);
+    env.workspace.fail_next(true);
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let after = env.state(run);
+    assert_eq!(after.status, RunStatus::WaitingForApproval);
+    assert_eq!(after.event_count, before.event_count);
+    let faults = env.sink.faults();
+    assert_eq!(faults.len(), 1);
+    assert_eq!(faults[0].0, run);
+}
+
+#[test]
+fn graceful_shutdown_cancels_step_waits_and_records_interrupted() {
+    let env = Env::new();
+    let runner = Arc::new(ScriptedRunner::new().script("analysis", vec![Step::hang()]));
+    let handle = env.run(&runner, config());
+    let run = env.create("r1");
+    handle.start_run(run);
+    wait_until("start kroku", || runner.calls("analysis") == 1);
+    let report = handle.shutdown_graceful(Duration::from_secs(5));
+    assert_eq!(
+        report,
+        ShutdownReport {
+            interrupted: vec![run],
+            unconfirmed: None,
+            timed_out: false,
+        }
+    );
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Interrupted);
+    assert_eq!(state.failure, Some(FailureCode::Interrupted));
+    assert!(runner.saw_cancel("analysis"));
+    assert_eq!(runner.total_calls(), 1);
+    // Po restarcie nic nie rusza.
+    let fresh = Arc::new(ScriptedRunner::new());
+    let handle = env.run(&fresh, config());
+    settle(&handle);
+    assert_eq!(fresh.total_calls(), 0);
+    assert_eq!(env.state(run).status, RunStatus::Interrupted);
+}
+
+#[test]
+fn graceful_shutdown_with_stubborn_runner_returns_after_limit_and_reports_unconfirmed() {
+    let env = Env::new();
+    let runner = Arc::new(ScriptedRunner::new().script(
+        "analysis",
+        vec![Step::stubborn(Duration::from_millis(1_500))],
+    ));
+    let handle = env.run(&runner, config());
+    let run = env.create("r1");
+    handle.start_run(run);
+    wait_until("start kroku", || runner.calls("analysis") == 1);
+    let started = Instant::now();
+    let report = handle.shutdown_graceful(Duration::from_millis(100));
+    assert!(started.elapsed() < Duration::from_millis(1_200));
+    assert_eq!(report.unconfirmed, Some(run));
+    assert!(report.interrupted.is_empty());
+    // Nic nie zapisano: krok nadal bez wyniku, więc po restarcie Recover da Interrupted.
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Running);
+    assert!(state.unfinished().is_some());
+    assert_eq!(runner.total_calls(), 1);
+}
+
+#[test]
+fn graceful_shutdown_when_idle_returns_immediately() {
+    let env = Env::new();
+    let runner = Arc::new(ScriptedRunner::new());
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    assert!(!handle.is_stopped());
+    let started = Instant::now();
+    let report = handle.shutdown_graceful(Duration::from_secs(5));
+    assert_eq!(report, ShutdownReport::default());
+    assert!(started.elapsed() < Duration::from_secs(2));
+    // Po zatrzymaniu host widzi to i odrzuca nowe przebiegi (runtime_handle).
+    assert!(handle.is_stopped());
+}
+
+/// Kryterium 3 E6: anulowanie z krokiem w toku, a potem awaria hosta. Po restarcie
+/// krok i przebieg są `Interrupted` (koniec procesu nie jest potwierdzony), a runner
+/// nie jest wołany ponownie.
+#[test]
+fn restart_during_cancel_with_step_ends_interrupted() {
+    let env = Env::new();
+    let run = env.create("r1");
+    apply_inputs(&*env.repo, run, vec![Input::Start, Input::Continue]).unwrap();
+    apply_inputs(&*env.repo, run, vec![Input::CancelRequested]).unwrap();
+    let before = env.state(run);
+    assert_eq!(before.status, RunStatus::Cancelling);
+    assert!(before.unfinished().is_some(), "krok nadal w toku");
+    let runner = Arc::new(ScriptedRunner::new());
+    let handle = env.run(&runner, config());
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Interrupted);
+    assert_eq!(state.executions[0].status, ExecutionStatus::Interrupted);
+    assert_eq!(runner.total_calls(), 0);
+}
+
+/// Repozytorium, którego `active_runs` wisi: wątek roboczy nie odpowie na
+/// kontrolowane zatrzymanie w limicie.
+struct HangingRepo {
+    inner: Arc<MemoryRepository>,
+    hang: Duration,
+}
+
+impl RunRepository for HangingRepo {
+    fn create_run(&self, new: &NewRun) -> Result<CreatedRun, RepoError> {
+        self.inner.create_run(new)
+    }
+    fn graph(&self, run_id: RunId) -> Result<WorkflowGraph, RepoError> {
+        self.inner.graph(run_id)
+    }
+    fn append(
+        &self,
+        run_id: RunId,
+        expected_next_sequence: u64,
+        events: &[RunEvent],
+        now: i64,
+    ) -> Result<Vec<StoredEvent>, RepoError> {
+        self.inner
+            .append(run_id, expected_next_sequence, events, now)
+    }
+    fn load_events(&self, run_id: RunId, after: u64) -> Result<Vec<StoredEvent>, RepoError> {
+        self.inner.load_events(run_id, after)
+    }
+    fn last_sequence(&self, run_id: RunId) -> Result<u64, RepoError> {
+        self.inner.last_sequence(run_id)
+    }
+    fn active_runs(&self) -> Result<Vec<RunId>, RepoError> {
+        std::thread::sleep(self.hang);
+        self.inner.active_runs()
+    }
+}
+
+/// Uwaga 17: brak odpowiedzi wątku roboczego nie udaje „nic nie było w toku”.
+#[test]
+fn graceful_shutdown_without_worker_reply_reports_timed_out() {
+    let env = Env::new();
+    let runner = Arc::new(ScriptedRunner::new());
+    let repo = Arc::new(HangingRepo {
+        inner: env.repo.clone(),
+        hang: Duration::from_secs(8),
+    });
+    let handle = env.run_on(repo, &runner, config());
+    let started = Instant::now();
+    let report = handle.shutdown_graceful(Duration::from_millis(50));
+    assert!(report.timed_out, "{report:?}");
+    assert!(report.interrupted.is_empty());
+    assert!(started.elapsed() < Duration::from_secs(7));
+    // Drugie wywołanie nie czeka ponownie.
+    let again = Instant::now();
+    let _ = handle.shutdown_graceful(Duration::from_millis(50));
+    assert!(again.elapsed() < Duration::from_secs(1));
+}

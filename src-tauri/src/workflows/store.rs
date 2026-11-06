@@ -16,8 +16,9 @@ use workflow_core::{validate, Issue, WorkflowGraph, SCHEMA_VERSION};
 pub const UNLOCKED_KEY: &str = "workflows_unlocked";
 /// Wersja schematu tabel modułu (niezależna od formatu grafu). 2 dodaje
 /// tabele przebiegów (E3), 3 rezerwacje katalogów roboczych (E4), 4 cel przebiegu i
-/// indeks artefaktów (E5); `init_tables` zapisuje wszystkie wersje do tej włącznie.
-const MODULE_SCHEMA: i64 = 4;
+/// indeks artefaktów (E5), 5 rejestr procesów, retencję artefaktów i powód zwolnienia
+/// rezerwacji (E6); `init_tables` zapisuje wszystkie wersje do tej włącznie.
+pub(crate) const MODULE_SCHEMA: i64 = 5;
 /// Najdłuższa nazwa i opis procesu w znakach.
 const MAX_NAME_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 2_000;
@@ -43,6 +44,7 @@ pub fn init_tables(db: &Connection) -> rusqlite::Result<()> {
     init_run_tables(db)?;
     init_workspace_tables(db)?;
     init_artifact_tables(db)?;
+    init_process_tables(db)?;
     for version in 1..=MODULE_SCHEMA {
         db.execute(
             "INSERT OR IGNORE INTO workflow_schema_migrations(version, applied_at) VALUES(?1, ?2)",
@@ -92,6 +94,48 @@ fn init_artifact_tables(db: &Connection) -> rusqlite::Result<()> {
         "CREATE TABLE IF NOT EXISTS workflow_artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, kind TEXT NOT NULL CHECK(kind IN ('diff')), hash TEXT NOT NULL, rel_path TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE(run_id, kind, hash));
         CREATE INDEX IF NOT EXISTS workflow_artifacts_run ON workflow_artifacts(run_id);",
     )
+}
+
+/// Migracja 5 (E6): rejestr procesów agentów (PID i czas utworzenia chronią przed
+/// ponownym użyciem PID), `workflow_artifacts.purged_at` (retencja) oraz
+/// `workflow_workspaces.release_reason` ('terminal', 'recovered', 'restored').
+fn init_process_tables(db: &Connection) -> rusqlite::Result<()> {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workflow_processes (execution_id TEXT PRIMARY KEY, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, pid INTEGER NOT NULL, created_ft INTEGER NOT NULL, job_attached INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('running','exited','killed','unknown')), recorded_at INTEGER NOT NULL, ended_at INTEGER);
+        CREATE INDEX IF NOT EXISTS workflow_processes_run ON workflow_processes(run_id);",
+    )?;
+    ensure_column(db, "workflow_artifacts", "purged_at", "INTEGER")?;
+    ensure_column(db, "workflow_workspaces", "release_reason", "TEXT")
+}
+
+fn ensure_column(
+    db: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> rusqlite::Result<()> {
+    let present = db
+        .prepare(&format!(
+            "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}'"
+        ))?
+        .exists([])?;
+    if !present {
+        db.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+/// Najwyższa zapisana wersja schematu modułu (0, gdy tabeli migracji nie ma).
+pub fn module_schema_of(db: &Connection) -> i64 {
+    db.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM workflow_schema_migrations",
+        [],
+        |r| r.get(0),
+    )
+    .unwrap_or(0)
 }
 
 #[derive(Debug)]

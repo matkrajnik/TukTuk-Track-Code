@@ -63,9 +63,17 @@ fn artifact_write_is_atomic_no_partial_file_on_error() {
     let app = temp_app("atomic");
     let bytes = b"diff --git a/x b/x\n+zmiana\n";
     let hash = hex_of(bytes);
-    let err = store_diff_with(&db, &app, run, bytes, &hash, 1, |_, _| {
-        Err(std::io::Error::other("rename zawiódł"))
-    })
+    let err = store_diff_with(
+        &db,
+        &app,
+        run,
+        DiffBytes { bytes, hash: &hash },
+        1,
+        &FileOps {
+            write: &write_file,
+            rename: &|_, _| Err(std::io::Error::other("rename zawiódł")),
+        },
+    )
     .unwrap_err();
     assert!(matches!(err, ArtifactError::Storage(_)), "{err:?}");
     let dir = app.join(format!("workflows/runs/{run}"));
@@ -89,10 +97,21 @@ fn parallel_writes_of_the_same_hash_use_distinct_temp_files() {
         for _ in 0..4 {
             let (db, app, bytes, hash, seen) = (&db, &app, &bytes, &hash, seen.clone());
             scope.spawn(move || {
-                store_diff_with(db, app, run, bytes, hash, 1, |from, to| {
+                let rename = |from: &Path, to: &Path| {
                     seen.lock().unwrap().push(from.to_path_buf());
                     std::fs::rename(from, to)
-                })
+                };
+                store_diff_with(
+                    db,
+                    app,
+                    run,
+                    DiffBytes { bytes, hash },
+                    1,
+                    &FileOps {
+                        write: &write_file,
+                        rename: &rename,
+                    },
+                )
                 .unwrap();
             });
         }
@@ -136,4 +155,46 @@ fn diff_view_masks_secrets_but_file_and_hash_stay_raw() {
 fn redaction_keeps_ordinary_code_and_paths() {
     let text = "+fn main() {\n+    let path = \"C:/Users/abcdefghijklmnopqrstuvwxyz\";\n+}\n";
     assert_eq!(redact_for_view(text), (text.to_owned(), 0));
+}
+
+/// Kryterium 11 E6: pełny dysk (błąd 112) w połowie zapisu diffu kończy się
+/// czytelnym komunikatem, bez pliku częściowego i bez wiersza indeksu.
+#[test]
+fn disk_full_during_diff_write_fails_step_with_clear_message_and_no_partial_file() {
+    let (db, run) = db_with_run();
+    let app = temp_app("disk-full");
+    let bytes = b"diff --git a/x b/x
++duzy diff
+";
+    let hash = hex_of(bytes);
+    let half_then_full = |path: &Path, bytes: &[u8]| {
+        std::fs::write(path, &bytes[..bytes.len() / 2])?;
+        Err(std::io::Error::from_raw_os_error(if cfg!(windows) {
+            112
+        } else {
+            28
+        }))
+    };
+    let err = store_diff_with(
+        &db,
+        &app,
+        run,
+        DiffBytes { bytes, hash: &hash },
+        1,
+        &FileOps {
+            write: &half_then_full,
+            rename: &|from, to| std::fs::rename(from, to),
+        },
+    )
+    .unwrap_err();
+    assert_eq!(err, ArtifactError::DiskFull);
+    assert!(err.to_string().contains("Brak miejsca na dysku"), "{err}");
+    let dir = app.join(format!("workflows/runs/{run}"));
+    assert_eq!(
+        files_in(&dir),
+        Vec::<String>::new(),
+        "bez pliku częściowego"
+    );
+    assert_eq!(rows(&db), 0);
+    let _ = std::fs::remove_dir_all(&app);
 }

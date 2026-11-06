@@ -39,6 +39,15 @@ export interface TauriOptions {
   now?: string | number;
   /** Wynik `inspect_backup` (null = anulowany wybór pliku) i dane po przywróceniu. */
   backup?: { preview: unknown; snapshot: unknown } | null;
+  /**
+   * Wynik `export_backup` (`backup::ExportResult`): ścieżka i liczby diffów
+   * Workflows pominiętych w kopii. Domyślnie anulowany wybór pliku (null).
+   */
+  backupExport?: {
+    path: string;
+    skippedArtifacts: number;
+    overLimitArtifacts: number;
+  } | null;
   /** Szablony zadań (`task_templates`) na starcie. */
   templates?: unknown[];
   /** Propozycje przełączenia (`agent_suggestions`) na starcie. */
@@ -121,6 +130,12 @@ export interface TauriOptions {
     invalidate?: boolean;
     /** Po decyzji przebieg prosi o kolejną zgodę (drugi węzeł zgody w tym samym przebiegu). */
     followUpApproval?: boolean;
+    /**
+     * `workflow_recover` nie potwierdza końca procesu (rezerwacja zostaje); PID
+     * procesu to `recoverUnconfirmedPid` (domyślnie 4242).
+     */
+    recoverUnconfirmed?: boolean;
+    recoverUnconfirmedPid?: number;
   };
   /** Odpowiedź `workflow_preflight` (gotowość agentów zadana przez test). */
   preflight?: unknown[];
@@ -137,6 +152,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     data: options.data ?? seed(),
     settings: { ...defaultSettings, ...options.settings },
     backup: options.backup ?? null,
+    backupExport: options.backupExport ?? null,
     jira: options.jira ?? null,
     templates: options.templates ?? [],
     suggestions: options.suggestions ?? [],
@@ -186,6 +202,7 @@ function install(init: {
   data: any;
   settings: any;
   backup: { preview: any; snapshot: any } | null;
+  backupExport: any;
   jira: { boards: any[]; issues: any[] } | null;
   templates: any[];
   suggestions: any[];
@@ -631,6 +648,32 @@ function install(init: {
   // Historia powiadomień (`inbox.rs`): `notify` jak `notify::show` w Rust.
   let inbox: any[] = structuredClone(init.notifications);
   let workflowsUnlocked = init.workflows.unlocked;
+  function workflowRunsIn(statuses: string[]): number {
+    const byId = new Map<number, string>();
+    for (const r of init.workflowRuns.runs ?? []) byId.set(r.id, r.status);
+    for (const [id, d] of Object.entries(init.workflowRuns.details ?? {}))
+      byId.set(Number(id), (d as any).summary.status);
+    return [...byId.values()].filter((s) => statuses.includes(s)).length;
+  }
+  /** Jak `workflows::backup::active_work`: przebiegi z procesem w toku albo null. */
+  function workflowActiveWork(): string | null {
+    const count = workflowRunsIn(["queued", "running", "cancelling"]);
+    return count > 0
+      ? `Przebiegi Workflows w toku: ${count}. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).`
+      : null;
+  }
+  /** Jak `workflows::backup::restore_blocker`: każdy nieskończony przebieg, także czekający na zgodę. */
+  function workflowRestoreBlocker(): string | null {
+    const count = workflowRunsIn([
+      "queued",
+      "running",
+      "cancelling",
+      "waitingForApproval",
+    ]);
+    return count > 0
+      ? `Nieskończone przebiegi Workflows: ${count}. Poczekaj na ich koniec, zatwierdź albo odrzuć zgody lub zatrzymaj przebiegi.`
+      : null;
+  }
   const inboxChanged = () => {
     emit("notification-log-changed", clone(inbox));
     return clone(inbox);
@@ -849,6 +892,70 @@ function install(init: {
           if (created) seen[args.request.requestId] = args.request.versionId;
           const base = init.workflowRuns.startResult ?? { runId: 1, created: true };
           return { runId: base.runId, created };
+        }
+        // Jak `recovery::recover` (E6): bez klucza, tylko przerwany przebieg; po
+        // potwierdzonym końcu procesów zwalnia katalog i dopisuje zdarzenie `recovery`.
+        // `recoverUnconfirmed` odtwarza proces, którego końca nie potwierdzono.
+        case "workflow_recover": {
+          const detail = init.workflowRuns.details?.[args.runId];
+          if (!detail) throw "Nie znaleziono przebiegu.";
+          if (detail.summary.status !== "interrupted")
+            throw "Odzyskać można tylko przerwany przebieg.";
+          const view = (detail.recovery ??= {
+            workspaceReserved: true,
+            processesUnconfirmed: 0,
+            unconfirmedPids: [],
+            attempts: 0,
+          });
+          view.unconfirmedPids ??= [];
+          w.__workflowRecovers = (w.__workflowRecovers ?? 0) + 1;
+          if (!view.workspaceReserved && view.processesUnconfirmed === 0)
+            return {
+              processesConfirmed: true,
+              workspaceReleased: true,
+              alreadyRecovered: true,
+              unconfirmedPids: [],
+            };
+          const confirmed = !init.workflowRuns.recoverUnconfirmed;
+          const pids: number[] = confirmed
+            ? []
+            : [init.workflowRuns.recoverUnconfirmedPid ?? 4242];
+          const hadReservation = view.workspaceReserved;
+          view.attempts += 1;
+          if (confirmed) {
+            view.workspaceReserved = false;
+            view.processesUnconfirmed = 0;
+            view.unconfirmedPids = [];
+          } else {
+            view.processesUnconfirmed = pids.length;
+            view.unconfirmedPids = pids;
+          }
+          detail.revision += 1;
+          // Jak `recovery::unconfirmed_note`.
+          const note = `Nie potwierdzono końca procesu agenta (PID ${pids.join(", ")}); katalog roboczy pozostaje zablokowany. Zakończ proces ręcznie i spróbuj ponownie.`;
+          const event = {
+            runId: args.runId,
+            sequence: detail.revision,
+            executionId: null,
+            type: "recovery",
+            timestamp: now,
+            payload: {
+              type: "reconciled",
+              processesConfirmed: confirmed,
+              workspaceReleased: confirmed && hadReservation,
+              ...(confirmed ? {} : { note }),
+            },
+          };
+          (init.workflowRuns.events ??= {})[args.runId] = (
+            init.workflowRuns.events[args.runId] ?? []
+          ).concat(event);
+          emit("workflow-event", event);
+          return {
+            processesConfirmed: confirmed,
+            workspaceReleased: confirmed || !hadReservation,
+            alreadyRecovered: false,
+            unconfirmedPids: pids,
+          };
         }
         case "workflow_artifact_read": {
           if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
@@ -1479,25 +1586,39 @@ function install(init: {
           deliver(3, { event: "Finished" });
           return 2;
         }
-        case "prepare_update":
+        // Jak `workflows::runtime::update_blocker`: przebieg z procesem w toku
+        // (queued, running, cancelling) blokuje; sam waitingForApproval nie.
+        case "prepare_update": {
+          const blocker = workflowActiveWork();
+          if (blocker) throw `Aktualizacja wstrzymana. ${blocker}`;
           stopAll(now);
           emit("data-changed");
           return null;
+        }
         case "plugin:updater|install":
           if (args.updateRid !== 1 || args.bytesRid !== 2)
             throw "Instalacja bez pobranej aktualizacji w teście.";
           return null;
         case "plugin:process|restart":
           return null;
+        // Jak `backup::inspect_backup`: ostrzeżenie z `restore_blocker` z góry.
         case "inspect_backup":
-          return init.backup ? clone(init.backup.preview) : null;
-        case "restore_backup":
+          return init.backup
+            ? { ...clone(init.backup.preview), workflowBlocker: workflowRestoreBlocker() }
+            : null;
+        case "export_backup":
+          return init.backupExport ? clone(init.backupExport) : null;
+        case "restore_backup": {
           if (!init.backup) throw "Najpierw wybierz i sprawdź kopię.";
+          // Jak `backup::restore_locked`: odmowa przy każdym nieskończonym przebiegu.
+          const blocker = workflowRestoreBlocker();
+          if (blocker) throw `Nie można teraz przywrócić kopii. ${blocker}`;
           snapshot = clone(init.backup.snapshot);
           snapshot.trash ??= [];
           snapshot.trashSessions ??= [];
           emit("data-changed");
           return clone(snapshot);
+        }
       }
       if (cmd.startsWith("plugin:")) return null;
       throw "Nieobsługiwana komenda w teście: " + cmd;

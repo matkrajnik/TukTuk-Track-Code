@@ -101,6 +101,13 @@ pub enum RunEvent {
         execution_id: String,
         payload: Value,
     },
+    /// Ślad audytowy odzyskania przerwanego przebiegu (E6): stan się nie zmienia.
+    Reconciled {
+        processes_confirmed: bool,
+        workspace_released: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        note: Option<String>,
+    },
 }
 
 impl RunEvent {
@@ -117,6 +124,7 @@ impl RunEvent {
             | RunEvent::RepairRoundCounted { .. }
             | RunEvent::ApprovalResolved { .. }
             | RunEvent::NodesSkipped { .. }
+            | RunEvent::Reconciled { .. }
             | RunEvent::CancelRequested => None,
         }
     }
@@ -137,6 +145,7 @@ impl RunEvent {
             },
             RunEvent::ApprovalRequested { .. } => "approvalRequested",
             RunEvent::ApprovalResolved { .. } => "approvalResolved",
+            RunEvent::Reconciled { .. } => "recovery",
             RunEvent::Message { .. } => "message",
             RunEvent::Tool { payload, .. } => {
                 if payload.get("phase").and_then(Value::as_str) == Some("finished") {
@@ -180,7 +189,25 @@ pub enum Input {
         current_hash: String,
     },
     /// Restart: krok bez wyniku oznacza przerwany przebieg (bez ponownego startu).
+    /// Wyjątki bez skutków ubocznych: niezłożona jeszcze zgoda jest przygotowywana
+    /// ponownie, a `Cancelling` bez kroku kończy się jako `Cancelled`.
     Recover,
+    /// Restart w `WaitingForApproval`: ponowne sprawdzenie skrótu artefaktu zgody.
+    ApprovalRevalidated {
+        approval_id: String,
+        current_hash: String,
+    },
+    /// Przywrócona kopia: każdy nieskończony przebieg przechodzi w `Interrupted`
+    /// bez wznawiania; nic nie jest uruchamiane.
+    Abandon {
+        message: String,
+    },
+    /// Audyt `workflow_recover`: tylko dla przebiegu `Interrupted`.
+    Reconcile {
+        processes_confirmed: bool,
+        workspace_released: bool,
+        note: Option<String>,
+    },
     /// Runner nie zakończył się po anulowaniu i czasie łaski: koniec kroku jest
     /// niepotwierdzony, więc przebieg kończy się `Interrupted`, nie `Cancelled` ani `Failed`
     /// (PLAN_WDROZENIA.md, 8.3).

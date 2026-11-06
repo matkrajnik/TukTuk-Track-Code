@@ -283,3 +283,63 @@ fn sink_that_locks_db_does_not_deadlock_driver() {
     assert_eq!(status, "waitingForApproval");
     assert!(*sink.seen.lock().unwrap() > 5);
 }
+
+/// Kryterium 12 E6: aktualizację blokuje przebieg z procesem (`queued`, `running`,
+/// `cancelling`), ale nie sam przebieg czekający na zgodę.
+#[test]
+fn update_blocker_rejects_queued_running_cancelling_but_not_waiting() {
+    let t = crate::workflows::test_db::TestDb::new();
+    let run = t.create("u");
+    for (status, blocked) in [
+        ("queued", true),
+        ("running", true),
+        ("cancelling", true),
+        ("waitingForApproval", false),
+        ("interrupted", false),
+        ("succeeded", false),
+    ] {
+        let conn = t.db.lock().unwrap();
+        conn.execute(
+            "UPDATE workflow_runs SET status = ?1 WHERE id = ?2",
+            rusqlite::params![status, run],
+        )
+        .unwrap();
+        let blocker = update_blocker(&conn).unwrap();
+        assert_eq!(blocker.is_some(), blocked, "{status}");
+        if let Some(message) = blocker {
+            assert!(message.starts_with("Aktualizacja wstrzymana."), "{message}");
+        }
+    }
+}
+
+/// Runda 2 E6: zatrzymany sterownik nie przyjmuje nowych przebiegów. Bez tego
+/// `workflow_start` zapisałby przebieg, a komenda startu przepadłaby po cichu.
+#[test]
+fn stopped_runtime_rejects_new_work_with_message() {
+    use std::time::Duration;
+    use workflow_core::driver::{DriverConfig, Runtime};
+    use workflow_core::model::AgentConfig;
+    use workflow_core::testing::{FixedWorkspace, RecordingSink, ScriptedRunner};
+
+    assert!(live_handle(None).is_err());
+    let t = crate::workflows::test_db::TestDb::new();
+    let handle = Runtime::start(
+        Arc::new(t.repo.clone()),
+        Arc::new(ScriptedRunner::new()),
+        Arc::new(RecordingSink::new()),
+        Arc::new(FixedWorkspace::new("h1")),
+        DriverConfig {
+            step_timeout: |_: &AgentConfig| Duration::from_secs(20),
+            cancel_grace: Duration::from_millis(300),
+            poll_interval: Duration::from_millis(5),
+            now: || 1_000,
+            on_error: |m| panic!("błąd sterownika: {m}"),
+        },
+    );
+    assert!(live_handle(Some(&handle)).is_ok());
+    handle.shutdown_graceful(Duration::from_secs(5));
+    assert_eq!(
+        live_handle(Some(&handle)).err().as_deref(),
+        Some(ERR_RUNTIME_STOPPED)
+    );
+}

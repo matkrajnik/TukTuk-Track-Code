@@ -6,6 +6,7 @@ const ALLOWED: &[(RunStatus, RunStatus)] = &[
     (Queued, Running),
     (Queued, Cancelled),
     (Queued, Failed),
+    (Queued, Interrupted),
     (Running, WaitingForApproval),
     (Running, Cancelling),
     (Running, Succeeded),
