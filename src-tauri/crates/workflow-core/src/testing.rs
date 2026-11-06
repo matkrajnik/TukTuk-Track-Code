@@ -549,5 +549,6 @@ pub fn apply_inputs(
 pub fn message(text: &str) -> RunnerEvent {
     RunnerEvent::Message {
         text: text.to_owned(),
+        parent: None,
     }
 }

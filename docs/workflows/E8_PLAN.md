@@ -63,7 +63,11 @@ Logika zmieniana w Rust idzie 1:1 do `tests/fixtures/tauri.ts` i `src/api/*.ts`.
 (`Agent`/`Task`, obsługujemy oba), decyzja o `DYNAMIC_SUBAGENTS_CONFIRMED` i o `Workflow`.
 Do czasu rozpoznania próbki są syntetyczne (wg `claude --help`) i tak oznaczone.
 
+> Stan: checklista czeka na użytkownika; fixture w E8a są syntetyczne.
+
 ### E8.1 — czytelny dziennik narzędzi (oba tryby)
+> Zrealizowano w E8a (2026-11-06).
+
 - `ports.rs`: `RunnerEvent::ToolStarted` dostaje `args: Option<Value>`; `driver/messages.rs`
   dopisuje `"args"` tylko gdy `Some`.
 - nowy `runners/activity.rs::tool_args(name, &input, worktree)`: allowlista kluczy
@@ -84,6 +88,8 @@ Do czasu rozpoznania próbki są syntetyczne (wg `claude --help`) i tak oznaczon
   identyfikatorów narzędzi wyświetla się bez błędu”.
 
 ### E8.2 — parser z rodzicem i parowanie po `tool_use_id`
+> Zrealizowano w E8a (2026-11-06); fixture syntetyczne.
+
 - `agent-cli/src/parse.rs`: `pub struct Traced { parent: Option<String>, tool_use_id: Option<String>,
   item: Parsed }`, `parse_claude_line_traced(line) -> Vec<Traced>`; `parse_claude_line_raw` bez zmian.
 - `ports.rs`: `Message { text, parent }`, `ToolStarted { name, id, parent, args }`,

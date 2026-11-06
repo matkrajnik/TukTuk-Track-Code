@@ -936,15 +936,17 @@ test("dziennik agentów pokazuje tekst komunikatu z prawdziwego kształtu zdarze
   });
   await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
   const log = page.getByRole("list", { name: "Dziennik agentów" });
-  await expect(log.getByRole("listitem")).toHaveCount(2);
+  // E8.1: narzędzie ma własną, czytelną linię (wcześniej toolStarted było pomijane).
+  await expect(log.getByRole("listitem")).toHaveCount(3);
   await expect(log.getByRole("listitem").first()).toHaveText("Analizuję repozytorium.");
   await expect(log).not.toContainText("{");
   await expect(log).not.toContainText("executionId");
-  await expect(log.getByRole("listitem").nth(1)).toHaveText(
+  await expect(log.getByRole("listitem").nth(1)).toHaveText("Czyta plik");
+  await expect(log.getByRole("listitem").nth(2)).toHaveText(
     "[komunikat przycięty: 70000 B]",
   );
   await emitEvent(page, hostMessage(4, "Poprawiam operator odejmowania."));
-  await expect(log.getByRole("listitem").nth(2)).toHaveText(
+  await expect(log.getByRole("listitem").nth(3)).toHaveText(
     "Poprawiam operator odejmowania.",
   );
   await expect(log).not.toContainText("{");

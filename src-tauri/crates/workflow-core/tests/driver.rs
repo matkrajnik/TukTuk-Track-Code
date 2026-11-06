@@ -730,6 +730,76 @@ fn runner_messages_are_stored_with_an_explicit_truncation_marker() {
     );
 }
 
+#[test]
+fn tool_payload_keeps_optional_args() {
+    let env = Env::new();
+    let events = vec![
+        RunnerEvent::ToolStarted {
+            name: "Read".into(),
+            id: Some("toolu_1".into()),
+            parent: None,
+            args: Some(serde_json::json!({"file_path": "src/a.ts"})),
+        },
+        RunnerEvent::ToolStarted {
+            name: "Bash".into(),
+            id: None,
+            parent: None,
+            args: None,
+        },
+        RunnerEvent::ToolFinished {
+            name: "Read".into(),
+            id: Some("toolu_1".into()),
+            parent: Some("toolu_A".into()),
+            ok: false,
+        },
+        RunnerEvent::Message {
+            text: "z subagenta".into(),
+            parent: Some("toolu_A".into()),
+        },
+        message("zwykły"),
+    ];
+    let runner = Arc::new(ScriptedRunner::new().script(
+        "analysis",
+        vec![Step::complete(samples::analysis()).with_events(events)],
+    ));
+    let handle = env.run(&runner, config());
+    let run = env.create("r1");
+    handle.start_run(run);
+    wait_until("koniec kroku", || env.state(run).executions.len() >= 2);
+    settle(&handle);
+    let stored = env.repo.load_events(run, 0).unwrap();
+    let rows: Vec<&StoredEvent> = stored
+        .iter()
+        .filter(|e| ["toolStarted", "toolFinished", "message"].contains(&e.kind.as_str()))
+        .collect();
+    let kinds: Vec<&str> = rows.iter().map(|e| e.kind.as_str()).collect();
+    assert_eq!(
+        kinds,
+        [
+            "toolStarted",
+            "toolStarted",
+            "toolFinished",
+            "message",
+            "message"
+        ]
+    );
+    let p = |i: usize| &rows[i].payload["payload"];
+    assert_eq!(
+        *p(0),
+        serde_json::json!({"phase":"started","name":"Read","toolUseId":"toolu_1","args":{"file_path":"src/a.ts"}})
+    );
+    assert_eq!(*p(1), serde_json::json!({"phase":"started","name":"Bash"}));
+    assert_eq!(
+        *p(2),
+        serde_json::json!({"phase":"finished","name":"Read","ok":false,"toolUseId":"toolu_1","parentToolUseId":"toolu_A"})
+    );
+    assert_eq!(
+        *p(3),
+        serde_json::json!({"text":"z subagenta","parentToolUseId":"toolu_A"})
+    );
+    assert_eq!(*p(4), serde_json::json!({"text":"zwykły"}));
+}
+
 fn quiet() -> DriverConfig {
     DriverConfig {
         on_error: |_| {},

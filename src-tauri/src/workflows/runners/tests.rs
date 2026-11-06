@@ -757,14 +757,168 @@ fn correct_review_result_completes_with_the_session() {
         }
         other => panic!("{other:?}"),
     }
-    assert!(events.contains(&RunnerEvent::ToolStarted {
-        name: "Read".into()
-    }));
-    assert!(events.contains(&RunnerEvent::ToolFinished {
-        name: "Read".into(),
-        ok: true
-    }));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RunnerEvent::ToolStarted { name, .. } if name == "Read")));
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RunnerEvent::ToolFinished { name, ok: true, .. } if name == "Read")));
     assert!(matches!(events.first(), Some(RunnerEvent::Message { .. })));
+}
+
+fn started<'a>(events: &'a [RunnerEvent], wanted: &str) -> &'a RunnerEvent {
+    events
+        .iter()
+        .find(|e| matches!(e, RunnerEvent::ToolStarted { id: Some(id), .. } if id == wanted))
+        .unwrap_or_else(|| panic!("brak startu {wanted}"))
+}
+
+fn finished<'a>(events: &'a [RunnerEvent], wanted: &str) -> &'a RunnerEvent {
+    events
+        .iter()
+        .find(|e| matches!(e, RunnerEvent::ToolFinished { id: Some(id), .. } if id == wanted))
+        .unwrap_or_else(|| panic!("brak końca {wanted}"))
+}
+
+#[test]
+fn tool_finish_is_paired_by_tool_use_id_across_interleaved_subagents() {
+    let dir = temp_dir("stream-pair");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (_, events) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+    );
+    let expect = |id: &str, name: &str, ok: bool, parent: Option<&str>| {
+        assert_eq!(
+            finished(&events, id),
+            &RunnerEvent::ToolFinished {
+                name: name.into(),
+                id: Some(id.into()),
+                parent: parent.map(str::to_owned),
+                ok,
+            },
+            "{id}"
+        );
+    };
+    expect("toolu_A1", "Read", true, Some("toolu_A"));
+    expect("toolu_B1", "Grep", false, Some("toolu_B"));
+    expect("toolu_A", "Agent", true, None);
+    expect("toolu_B", "Task", true, None);
+}
+
+#[test]
+fn subagent_result_line_does_not_complete_the_step() {
+    let dir = temp_dir("stream-sub-result");
+    let lines = vec![
+        r#"{"type":"system","subtype":"init","session_id":"sess-root"}"#.to_owned(),
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"x","parent_tool_use_id":"toolu_A","structured_output":{"summary":"FAŁSZYWY"}}"#.to_owned(),
+    ];
+    let spawner = ScriptedSpawner::lines(lines);
+    let r = runner(&spawner, &dir, "h1");
+    let (outcome, _) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+    );
+    match outcome {
+        RunnerOutcome::Failed { code, message } => {
+            assert_eq!(code, FailureCode::ProtocolError);
+            assert!(
+                message.contains("nie zwrócił zdarzenia z wynikiem"),
+                "{message}"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    // Sesja subagenta nie podmienia sesji głównego agenta.
+    let mut stream = Stream::new(dir.clone());
+    let mut sink = |_: RunnerEvent| {};
+    stream.apply(
+        Provider::Claude,
+        r#"{"type":"system","subtype":"init","session_id":"sess-root"}"#,
+        &mut sink,
+    );
+    stream.apply(
+        Provider::Claude,
+        r#"{"type":"system","subtype":"init","session_id":"sess-sub","parent_tool_use_id":"toolu_A"}"#,
+        &mut sink,
+    );
+    stream.apply(
+        Provider::Claude,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"x","parent_tool_use_id":"toolu_A"}"#,
+        &mut sink,
+    );
+    assert_eq!(stream.session_id.as_deref(), Some("sess-root"));
+    assert!(!stream.done);
+    assert!(stream.structured.is_none());
+}
+
+#[test]
+fn unknown_subagent_event_shape_does_not_fail_the_step() {
+    let dir = temp_dir("stream-unknown");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_unknown.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (outcome, _) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+    );
+    assert!(
+        matches!(outcome, RunnerOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+}
+
+#[test]
+fn orchestrator_stream_completes_with_subagent_events() {
+    // Rola Implementation: Orchestrator dochodzi dopiero w E8b; strumień jest ten sam.
+    let dir = temp_dir("stream-dynamic");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (outcome, events) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+    );
+    match outcome {
+        RunnerOutcome::Completed {
+            output, session_id, ..
+        } => {
+            assert_eq!(output["summary"], "Zrobione przez subagentów");
+            assert_eq!(session_id.as_deref(), Some("sess-dyn-1"));
+        }
+        other => panic!("{other:?}"),
+    }
+    match started(&events, "toolu_A") {
+        RunnerEvent::ToolStarted { name, args, .. } => {
+            assert_eq!(name, "Agent");
+            assert_eq!(
+                args,
+                &Some(
+                    json!({"description": "Przeczytaj a.txt", "subagent_type": "general-purpose"})
+                )
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(events.iter().any(|e| matches!(
+        e,
+        RunnerEvent::Message { text, parent: Some(p) } if text == "Szukam w plikach." && p == "toolu_B"
+    )));
+    assert!(!format!("{events:?}").contains("SEKRETNY"));
+}
+
+#[test]
+fn start_without_id_falls_back_to_the_stack() {
+    let dir = temp_dir("stream-stack");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (_, events) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Review, Some(&dir)),
+    );
+    assert!(events.iter().any(|e| matches!(
+        e,
+        RunnerEvent::ToolFinished { name, parent: None, ok: true, .. } if name == "Read"
+    )));
 }
 
 #[test]

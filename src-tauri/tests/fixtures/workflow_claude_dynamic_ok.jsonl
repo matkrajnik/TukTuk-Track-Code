@@ -1,0 +1,13 @@
+{"type":"_fixture","synthetic":true,"source":"claude --help 2.1.319; E8_ROZPOZNANIE.md niewykonane"}
+{"type":"system","subtype":"init","session_id":"sess-dyn-1","tools":["Read","Grep","Agent"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Planuję pracę i deleguję do subagentów."},{"type":"tool_use","id":"toolu_A","name":"Agent","input":{"description":"Przeczytaj a.txt","subagent_type":"general-purpose","prompt":"SEKRETNY PROMPT"}}]},"parent_tool_use_id":null}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_B","name":"Task","input":{"description":"Znajdź foo","subagent_type":"general-purpose","prompt":"SEKRETNY PROMPT 2"}}]},"parent_tool_use_id":null}
+{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"myślę po cichu"},{"type":"tool_use","id":"toolu_A1","name":"Read","input":{"file_path":"a.txt"}}]},"parent_tool_use_id":"toolu_A"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Szukam w plikach."},{"type":"tool_use","id":"toolu_B1","name":"Grep","input":{"pattern":"foo","path":"src"}}]},"parent_tool_use_id":"toolu_B"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_A1","content":"zawartość"}]},"parent_tool_use_id":"toolu_A"}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_B1","is_error":true,"content":"błąd"}]},"parent_tool_use_id":"toolu_B"}
+{"type":"system","subtype":"init","session_id":"sess-sub-1","parent_tool_use_id":"toolu_A"}
+{"type":"result","subtype":"success","is_error":false,"result":"subagent gotowy","session_id":"sess-sub-1","parent_tool_use_id":"toolu_A","structured_output":{"summary":"FAŁSZYWY","changedFiles":[],"checks":[]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_A","content":"gotowe"},{"type":"tool_result","tool_use_id":"toolu_B","content":"gotowe"}]},"parent_tool_use_id":null}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Wszystko zebrane."}]},"parent_tool_use_id":null}
+{"type":"result","subtype":"success","is_error":false,"result":"koniec","session_id":"sess-dyn-1","parent_tool_use_id":null,"structured_output":{"summary":"Zrobione przez subagentów","changedFiles":[],"checks":[]}}

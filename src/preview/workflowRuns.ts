@@ -126,16 +126,42 @@ function eventList(): StoredEvent[] {
   // Komunikat runnera jak w hoście (`RunEvent::Message`): tekst w `payload.payload`.
   const message = (sequence: number, at: number, text: string, executionId: string) =>
     make(sequence, "message", at, { executionId, payload: { text } }, executionId);
+  // Narzędzie jak w hoście (`RunEvent::Tool`): `phase`, `name`, `toolUseId`, `args` w `payload.payload`.
+  const tool = (
+    sequence: number,
+    at: number,
+    phase: "started" | "finished",
+    name: string,
+    executionId: string,
+    extra: Record<string, unknown> = {},
+  ) =>
+    make(
+      sequence,
+      phase === "started" ? "toolStarted" : "toolFinished",
+      at,
+      { executionId, payload: { phase, name, ...extra } },
+      executionId,
+    );
   return [
     make(1, "runStateChanged", 0, { from: "queued", to: "queued", code: null }),
     make(2, "runStateChanged", 1_000, { from: "queued", to: "running", code: null }),
     message(3, 2_000, "Analizuję repozytorium.", "e-1"),
-    make(4, "nodeStateChanged", 5_000, { status: "completed" }, "e-1"),
-    message(5, 12_000, "Poprawiam operator odejmowania.", "e-2"),
-    make(6, "nodeStateChanged", 20_000, { status: "completed" }, "e-2"),
-    make(7, "nodeStateChanged", 30_000, { status: "completed" }, "e-3"),
-    make(8, "approvalRequested", 31_000, { approvalId: "ap-1", artifactHash: HASH }, "e-4"),
-    make(9, "runStateChanged", 31_000, {
+    tool(4, 3_000, "started", "Read", "e-1", {
+      toolUseId: "toolu_p1",
+      args: { file_path: "src/calc.ts" },
+    }),
+    tool(5, 3_500, "finished", "Read", "e-1", { toolUseId: "toolu_p1", ok: true }),
+    make(6, "nodeStateChanged", 5_000, { status: "completed" }, "e-1"),
+    message(7, 12_000, "Poprawiam operator odejmowania.", "e-2"),
+    tool(8, 13_000, "started", "Edit", "e-2", {
+      toolUseId: "toolu_p2",
+      args: { file_path: "src/calc.ts" },
+    }),
+    tool(9, 13_500, "finished", "Edit", "e-2", { toolUseId: "toolu_p2", ok: true }),
+    make(10, "nodeStateChanged", 20_000, { status: "completed" }, "e-2"),
+    make(11, "nodeStateChanged", 30_000, { status: "completed" }, "e-3"),
+    make(12, "approvalRequested", 31_000, { approvalId: "ap-1", artifactHash: HASH }, "e-4"),
+    make(13, "runStateChanged", 31_000, {
       from: "running",
       to: "waitingForApproval",
       code: null,

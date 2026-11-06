@@ -215,8 +215,6 @@ export const PAUSED_HINT =
 export const PREVIEW_NO_AGENTS = "Podgląd nie uruchamia agentów.";
 /** Najwięcej linii logu wyrenderowanych naraz (starsze za „Pokaż wcześniejsze”). */
 export const MAX_LOG_LINES_RENDERED = 500;
-/** Najdłuższa linia logu w znakach; reszta jest ucinana z wielokropkiem. */
-export const MAX_LOG_LINE_CHARS = 2_000;
 /** Limit komentarza do zgody (`MAX_APPROVAL_COMMENT_CHARS`). */
 export const MAX_APPROVAL_COMMENT_CHARS = 2_000;
 
@@ -284,39 +282,12 @@ export const FAILURE_MESSAGES: Record<WorkflowFailureCode, string> = {
   workspaceUnavailable: "Nie udało się przygotować katalogu roboczego przebiegu.",
 };
 
-/**
- * Dane komunikatu albo narzędzia runnera ze zdarzenia strumienia. Host zapisuje
- * w `StoredEvent.payload` cały `RunEvent` (`ports.rs`), więc `Message` i `Tool`
- * mają właściwe dane dopiero w `payload.payload` (`{"type":"message",
- * "executionId":…,"payload":{"text":…}}`). Płaski kształt (`payload.text`) to
- * zapas na dane sprzed tej poprawki; nigdy nie pochodzi z hosta.
- */
-export function runnerPayload(
-  event: Pick<StoredEvent, "payload">,
-): Record<string, unknown> {
-  const nested = event.payload.payload;
-  if (nested && typeof nested === "object" && !Array.isArray(nested))
-    return nested as Record<string, unknown>;
-  return event.payload;
-}
-
-/**
- * Linia dziennika agentów z komunikatu runnera: tekst, a dla znacznika
- * przycięcia (`driver/messages.rs`: `truncated` z `originalBytes` albo `reason`)
- * czytelna uwaga zamiast JSON-u.
- */
-export function messageLine(event: Pick<StoredEvent, "payload">): string {
-  const data = runnerPayload(event);
-  if (typeof data.text === "string") return data.text;
-  if (data.truncated) {
-    const detail =
-      typeof data.originalBytes === "number"
-        ? `${data.originalBytes} B`
-        : String(data.reason ?? "limit");
-    return `[komunikat przycięty: ${detail}]`;
-  }
-  return JSON.stringify(data);
-}
+// Dziennik agentów (E8.1) mieszka w `workflowActivity.ts`; reeksport zachowuje importy.
+export {
+  MAX_LOG_LINE_CHARS,
+  messageLine,
+  runnerPayload,
+} from "./workflowActivity";
 
 export interface MergedEvents {
   events: StoredEvent[];

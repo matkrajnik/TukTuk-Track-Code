@@ -14,20 +14,18 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import ConfirmDialog from "../ConfirmDialog.vue";
+import WorkflowActivityLog from "./WorkflowActivityLog.vue";
 import WorkflowGraphView from "./WorkflowGraphView.vue";
 import {
   EXECUTION_STATUS_LABELS,
   FAILURE_MESSAGES,
   INVALIDATED_PREFIX,
   MAX_APPROVAL_COMMENT_CHARS,
-  MAX_LOG_LINES_RENDERED,
-  MAX_LOG_LINE_CHARS,
   PAUSED_HINT,
   RUN_STATUS_LABELS,
   formatDuration,
   isTerminal,
   mergeEvents,
-  messageLine,
   newRequestId,
   cancelWorkflowRun,
   decideWorkflowRun,
@@ -50,7 +48,6 @@ const detail = ref<RunDetail | null>(null);
 const events = ref<StoredEvent[]>([]);
 const error = ref("");
 const notice = ref("");
-const showAll = ref(false);
 const confirmCancel = ref(false);
 const diff = ref<DiffArtifact | null>(null);
 const diffError = ref("");
@@ -80,7 +77,10 @@ let unlisten: (() => void) | null = null;
 let generation = 0;
 /** Numer odczytu szczegółów: odpowiedź starszego wywołania jest pomijana. */
 let refreshSeq = 0;
-/** Zdarzenia strumienia, które nie zmieniają stanu przebiegu ani zgody. */
+/**
+ * Zdarzenia strumienia, które nie zmieniają stanu przebiegu ani zgody; trafiają
+ * do dziennika agentów, a nie na oś zdarzeń (E8.1).
+ */
 const LOG_ONLY_EVENTS: ReadonlySet<string> = new Set([
   "message",
   "toolStarted",
@@ -102,34 +102,9 @@ const diffLoaded = computed(
 /** Cały diff wyświetlony: dopiero wtedy można zaakceptować. */
 const diffShown = computed(() => diffLoaded.value && !diff.value?.truncated);
 
-const logLines = computed(() =>
-  events.value
-    .filter((e) => e.type === "message")
-    .map((e) => {
-      const text = messageLine(e);
-      return {
-        sequence: e.sequence,
-        text:
-          text.length > MAX_LOG_LINE_CHARS
-            ? `${text.slice(0, MAX_LOG_LINE_CHARS)}…`
-            : text,
-      };
-    }),
-);
-const hiddenLines = computed(() =>
-  showAll.value
-    ? 0
-    : Math.max(0, logLines.value.length - MAX_LOG_LINES_RENDERED),
-);
-const visibleLines = computed(() =>
-  showAll.value
-    ? logLines.value
-    : logLines.value.slice(-MAX_LOG_LINES_RENDERED),
-);
-
 const timeline = computed(() =>
   events.value
-    .filter((e) => e.type !== "message" && e.type !== "toolStarted")
+    .filter((e) => !LOG_ONLY_EVENTS.has(e.type))
     .slice(-50),
 );
 
@@ -636,20 +611,10 @@ onBeforeUnmount(() => {
         </p>
 
         <h3>Dziennik agentów</h3>
-        <button
-          v-if="hiddenLines"
-          type="button"
-          class="text-link"
-          @click="showAll = true"
-        >
-          Pokaż wcześniejsze ({{ hiddenLines }})
-        </button>
-        <ol class="wf-log" aria-label="Dziennik agentów">
-          <li v-for="l in visibleLines" :key="l.sequence">{{ l.text }}</li>
-        </ol>
+        <WorkflowActivityLog :events="events" />
 
         <h3>Oś zdarzeń</h3>
-        <ol class="wf-timeline">
+        <ol class="wf-timeline" aria-label="Oś zdarzeń">
           <li v-for="e in timeline" :key="e.sequence">
             #{{ e.sequence }} {{ e.type }}
           </li>

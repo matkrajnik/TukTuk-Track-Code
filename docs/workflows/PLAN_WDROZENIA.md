@@ -453,10 +453,10 @@ czasu i zakończenie całego drzewa procesu, jeden aktywny przebieg.
 - [ ] E8.0 Rozpoznanie na prawdziwym CLI wykonane przez użytkownika i zapisane w
   `E8_ROZPOZNANIE.md` (kształt zdarzeń z `parent_tool_use_id`, dziedziczenie `--restricted`
   i `--tools` przez subagentów, `Workflow` w `-p`, zakończenie drzewa procesu).
-- [ ] E8.1 Czytelny dziennik narzędzi w monitorze dla obu trybów; dziennik czyta prawdziwy
+- [x] E8.1 Czytelny dziennik narzędzi w monitorze dla obu trybów; dziennik czyta prawdziwy
   kształt zdarzeń (`payload.payload.text`); oś zdarzeń bez zdarzeń narzędzi
-  (`workflow-activity.spec.ts`).
-- [ ] E8.2 Parser `parse_claude_line_traced` (rodzic, id narzędzi) i runner parujący narzędzia
+  (`workflow-activity.spec.ts`; `runners::activity::tests`; `workflow-core/tests/driver.rs::tool_payload_keeps_optional_args`).
+- [x] E8.2 Parser `parse_claude_line_traced` (rodzic, id narzędzi) i runner parujący narzędzia
   po `tool_use_id`, odporny na nieznane kształty; parser czatu bez zmian
   (`agent-cli/tests/parse.rs::traced_parser_*`, `runners::tests::*subagent*`; testy `ai_chat::` bez zmian).
 - [ ] E8.3 Domena: rola `orchestrator`, `maxSubagents`, `dynamic::{build, spec_of}`, walidacja
@@ -1259,3 +1259,34 @@ zestawie z E4. Preflight wymaga Claude Code 2.1.319+ (`CLAUDE_RESTRICTED`; stars
 sandbox). Strażnik worktree nie traktuje zmian kroku z zapisem jako naruszenia (jak dla Codexa). Prompt
 kroku Claude z zapisem mówi, że nie ma powłoki i ma wypisać testy do uruchomienia. Sprawdzenie natywne
 w `E7_TEST_RECZNY.md`.
+
+### 2026-11-06 — E8a
+
+Zakres: E8.1 i E8.2 z `E8_PLAN.md` (poprawka dziennika i parsera, bez trybu dynamicznego). E8.0 zostaje
+niezaznaczone: rozpoznanie na prawdziwym Claude Code wykonuje użytkownik (`E8_ROZPOZNANIE.md`), a próbki
+`workflow_claude_dynamic_*.jsonl` są syntetyczne (wg `claude --help` 2.1.319) i oznaczone linią `_fixture`;
+trzeba je zastąpić prawdziwymi.
+
+Zmienione pliki: `agent-cli/src/parse.rs`, `lib.rs`, `tests/parse.rs`; `workflow-core/src/ports.rs`,
+`driver/messages.rs`, `testing.rs`, `tests/driver.rs`, `tests/run_states.rs`; `src/workflows/runners/mod.rs`,
+`activity.rs` (nowy), `tests.rs`; fixture `workflow_claude_dynamic_ok.jsonl` i `_unknown.jsonl`;
+`src/api/workflowActivity.ts` (nowy), `src/api/workflowRuns.ts`, `src/workflowRuns.ts`,
+`src/components/workflows/WorkflowActivityLog.vue` (nowy), `WorkflowRunMonitor.vue`,
+`src/preview/workflowRuns.ts`; `tests/workflow-activity.spec.ts` (nowy), `tests/workflow-runs.spec.ts`.
+
+Decyzje wykonawcy: `parse_claude_line_traced` = `parse_claude_line_raw` plus metadane (zbieżność pilnuje
+test), a parser czatu AI jest bez zmian; nieliczbowy `parent_tool_use_id` nie jest root (linia nigdy nie
+udaje głównego agenta); ścieżka spoza katalogu roboczego daje w dzienniku tylko nazwę pliku i `outside: true`;
+`toolFinished` nie ma własnej linii dziennika, tylko oznacza sparowany start (niesparowany błąd daje linię
+„Narzędzie X — błąd”); narzędzia są parowane po `tool_use_id` ze stosem zapasowym dla linii bez id; tylko
+linie root ustawiają sesję, koniec, błędy i `structured_output`.
+
+Wynik `npm run check`: zielony, kod wyjścia 0 (421 s). Build OK; Playwright: 819 passed; `cargo fmt
+--check` OK; `cargo test --locked`: wszystkie zestawy ok, 0 niepowodzeń, 2 ignorowane (główny zestaw 1058
+testów plus mniejsze zestawy workspace). Ukierunkowane testy Rust i Playwright (workflow-activity,
+workflow-runs, workflow-recovery, workflows-ui, workflow-paused) przechodzą; stara historia z narzędziami bez
+id odtwarza się (`history_with_old_tool_events_replays_to_a_running_step`). Nie wykonano: przeglądów
+agentowych, grepa klucza Workflows ani clippy (poza `npm run check`); ręcznej weryfikacji dziennika w
+`npm run tauri dev` na prawdziwym przebiegu (lista użytkownika).
+
+Pozostałe blokery: E8.0 u użytkownika, E8b (tryb dynamiczny).

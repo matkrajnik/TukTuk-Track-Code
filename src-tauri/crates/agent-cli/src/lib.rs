@@ -17,7 +17,9 @@ pub use failure::{classify, codex_event_text, parse_version, Failure};
 pub use fs_space::available_bytes;
 pub use identity::{kill_tree_if_same, kill_tree_if_same_with, probe, Probe, ProcessIdentity};
 pub use lines::{read_lines, LineItem};
-pub use parse::{parse_claude_line_raw, parse_codex_line_raw, Parsed};
+pub use parse::{
+    parse_claude_line_raw, parse_claude_line_traced, parse_codex_line_raw, Parsed, Traced,
+};
 pub use process::{
     Options, ProcessEvent, RunningProcess, SpawnError, StderrTail, StreamingProcess,
     KILL_CONFIRM_TIMEOUT, MAX_LINE_BYTES, STDERR_TAIL_BYTES,

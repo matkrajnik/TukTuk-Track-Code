@@ -5,6 +5,7 @@
 //! dotyka bazy: wyniki zapisuje sterownik krótkimi transakcjami.
 #![cfg_attr(not(test), allow(dead_code))]
 
+pub mod activity;
 pub mod claude;
 pub mod codex;
 pub mod env;
@@ -12,13 +13,15 @@ pub mod guard;
 pub mod process;
 pub mod prompt;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_cli::{
-    parse_claude_line_raw, parse_codex_line_raw, Failure, Parsed, ProcessEvent, SpawnError, Spec,
+    parse_claude_line_traced, parse_codex_line_raw, Failure, Parsed, ProcessEvent, SpawnError,
+    Spec, Traced,
 };
 use serde_json::Value;
 use workflow_core::model::{AgentRole, Provider};
@@ -155,9 +158,12 @@ fn protocol_error(proc: &dyn Proc, what: &str) -> RunnerOutcome {
     failed(FailureCode::ProtocolError, message)
 }
 
+/// Narzędzie bez zakończenia: nazwa i rodzic (linia subagenta).
+type OpenTool = (String, Option<String>);
+
 /// Stan odczytu strumienia jednego kroku.
-#[derive(Default)]
 struct Stream {
+    worktree: PathBuf,
     session_id: Option<String>,
     structured: Option<Value>,
     last_text: Option<String>,
@@ -165,41 +171,100 @@ struct Stream {
     login_failed: bool,
     other_error: Option<Failure>,
     too_long: bool,
-    tools: Vec<String>,
+    /// Rozpoczęte narzędzia z `tool_use_id` (parowanie po id, także przy przeplocie subagentów).
+    open: HashMap<String, OpenTool>,
+    /// Rozpoczęte narzędzia bez id (Codex i stare strumienie): parowane stosem.
+    fallback: Vec<OpenTool>,
 }
 
 impl Stream {
+    fn new(worktree: PathBuf) -> Self {
+        Self {
+            worktree,
+            session_id: None,
+            structured: None,
+            last_text: None,
+            done: false,
+            login_failed: false,
+            other_error: None,
+            too_long: false,
+            open: HashMap::new(),
+            fallback: Vec::new(),
+        }
+    }
+
     fn apply(&mut self, provider: Provider, line: &str, on_event: &mut dyn FnMut(RunnerEvent)) {
         if provider == Provider::Claude {
             if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
-                if event["type"] == "result" && !event["structured_output"].is_null() {
+                // Wynik subagenta (`parent_tool_use_id` różne od null) nie kończy kroku.
+                if event["type"] == "result"
+                    && event["parent_tool_use_id"].is_null()
+                    && !event["structured_output"].is_null()
+                {
                     self.structured = Some(event["structured_output"].clone());
                 }
             }
         }
         let parsed = match provider {
-            Provider::Claude => parse_claude_line_raw(line),
-            Provider::Codex => parse_codex_line_raw(line),
+            Provider::Claude => parse_claude_line_traced(line),
+            Provider::Codex => parse_codex_line_raw(line)
+                .into_iter()
+                .map(Traced::root)
+                .collect(),
         };
-        for item in parsed {
-            match item {
-                Parsed::Session(id) => self.session_id = Some(id),
-                Parsed::Text(text) => {
+        for traced in parsed {
+            self.apply_item(traced, on_event);
+        }
+    }
+
+    fn apply_item(&mut self, traced: Traced, on_event: &mut dyn FnMut(RunnerEvent)) {
+        let Traced {
+            parent,
+            tool_use_id,
+            item,
+        } = traced;
+        let is_root = parent.is_none();
+        match item {
+            Parsed::Session(id) if is_root => self.session_id = Some(id),
+            Parsed::Text(text) => {
+                if is_root {
                     self.last_text = Some(text.clone());
-                    on_event(RunnerEvent::Message { text });
                 }
-                Parsed::Tool { name, .. } => {
-                    self.tools.push(name.clone());
-                    on_event(RunnerEvent::ToolStarted { name });
-                }
-                Parsed::ToolDone { error } => {
-                    let name = self.tools.pop().unwrap_or_default();
-                    on_event(RunnerEvent::ToolFinished { name, ok: !error });
-                }
-                Parsed::Done(_) => self.done = true,
-                Parsed::Error(Failure::NotLoggedIn) => self.login_failed = true,
-                Parsed::Error(other) => self.other_error = Some(other),
+                on_event(RunnerEvent::Message { text, parent });
             }
+            Parsed::Tool { name, input } => {
+                let args = activity::tool_args(&name, &input, &self.worktree);
+                match &tool_use_id {
+                    Some(id) => {
+                        self.open.insert(id.clone(), (name.clone(), parent.clone()));
+                    }
+                    None => self.fallback.push((name.clone(), parent.clone())),
+                }
+                on_event(RunnerEvent::ToolStarted {
+                    name,
+                    id: tool_use_id,
+                    parent,
+                    args,
+                });
+            }
+            Parsed::ToolDone { error } => {
+                let paired = tool_use_id
+                    .as_ref()
+                    .and_then(|id| self.open.remove(id))
+                    .or_else(|| self.fallback.pop());
+                let (name, started_parent) = paired.unwrap_or_default();
+                on_event(RunnerEvent::ToolFinished {
+                    name,
+                    id: tool_use_id,
+                    parent: started_parent.or(parent),
+                    ok: !error,
+                });
+            }
+            Parsed::Done(_) if is_root => self.done = true,
+            Parsed::Error(Failure::NotLoggedIn) if is_root => self.login_failed = true,
+            Parsed::Error(other) if is_root => self.other_error = Some(other),
+            // Sesja, koniec i błąd linii subagenta nie zmieniają stanu kroku.
+            Parsed::Session(_) | Parsed::Done(_) | Parsed::Error(_) => {}
         }
     }
 }
@@ -428,7 +493,9 @@ impl CliRunner {
         proc: &dyn Proc,
         prepared: &Prepared,
     ) -> RunnerOutcome {
-        let mut stream = Stream::default();
+        let mut stream = Stream::new(PathBuf::from(
+            request.workspace.as_deref().unwrap_or_default(),
+        ));
         let exit_code = loop {
             if cancel.load(Ordering::SeqCst) {
                 return match proc.kill(KILL_CONFIRM) {

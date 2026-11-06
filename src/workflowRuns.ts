@@ -23,6 +23,7 @@ import type {
 } from "./api/workflowRuns";
 
 export * from "./api/workflowRuns";
+export * from "./api/workflowActivity";
 
 export const WORKFLOW_EVENT = "workflow-event";
 export const WORKFLOW_FAULT_EVENT = "workflow-fault";

@@ -1,6 +1,6 @@
 //! Zdarzenia runnera (komunikaty i narzędzia) zbierane w partie z limitami.
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::engine::RunEvent;
 use crate::ports::RunnerEvent;
@@ -51,18 +51,62 @@ impl MessageBuffer {
             return;
         }
         self.pending.push(match event {
-            RunnerEvent::Message { text } => RunEvent::Message {
-                execution_id,
-                payload: Self::payload(json!({"text": text})),
-            },
-            RunnerEvent::ToolStarted { name } => RunEvent::Tool {
-                execution_id,
-                payload: Self::payload(json!({"phase": "started", "name": name})),
-            },
-            RunnerEvent::ToolFinished { name, ok } => RunEvent::Tool {
-                execution_id,
-                payload: Self::payload(json!({"phase": "finished", "name": name, "ok": ok})),
-            },
+            RunnerEvent::Message { text, parent } => {
+                let mut payload = Map::new();
+                payload.insert("text".into(), json!(text));
+                put_opt(&mut payload, "parentToolUseId", parent.map(Value::from));
+                RunEvent::Message {
+                    execution_id,
+                    payload: Self::payload(Value::Object(payload)),
+                }
+            }
+            RunnerEvent::ToolStarted {
+                name,
+                id,
+                parent,
+                args,
+            } => {
+                let mut payload = tool_payload("started", name, id, parent);
+                put_opt(&mut payload, "args", args);
+                RunEvent::Tool {
+                    execution_id,
+                    payload: Self::payload(Value::Object(payload)),
+                }
+            }
+            RunnerEvent::ToolFinished {
+                name,
+                id,
+                parent,
+                ok,
+            } => {
+                let mut payload = tool_payload("finished", name, id, parent);
+                payload.insert("ok".into(), json!(ok));
+                RunEvent::Tool {
+                    execution_id,
+                    payload: Self::payload(Value::Object(payload)),
+                }
+            }
         });
     }
+}
+
+/// Dopisuje pole tylko wtedy, gdy ma wartość (stary kształt zostaje bez zmian).
+fn put_opt(payload: &mut Map<String, Value>, key: &str, value: Option<Value>) {
+    if let Some(value) = value {
+        payload.insert(key.into(), value);
+    }
+}
+
+fn tool_payload(
+    phase: &str,
+    name: String,
+    id: Option<String>,
+    parent: Option<String>,
+) -> Map<String, Value> {
+    let mut payload = Map::new();
+    payload.insert("phase".into(), json!(phase));
+    payload.insert("name".into(), json!(name));
+    put_opt(&mut payload, "toolUseId", id.map(Value::from));
+    put_opt(&mut payload, "parentToolUseId", parent.map(Value::from));
+    payload
 }

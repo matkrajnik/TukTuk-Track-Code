@@ -58,10 +58,26 @@ pub struct Capabilities {
 
 /// Zdarzenie przekazywane przez runner w trakcie kroku (informacyjne).
 #[derive(Debug, Clone, PartialEq)]
+///
+/// `id` to `tool_use_id`, `parent` to `parent_tool_use_id` linii subagenta,
+/// a `args` to argumenty narzędzia po allowliście hosta (bez promptów i treści plików).
 pub enum RunnerEvent {
-    Message { text: String },
-    ToolStarted { name: String },
-    ToolFinished { name: String, ok: bool },
+    Message {
+        text: String,
+        parent: Option<String>,
+    },
+    ToolStarted {
+        name: String,
+        id: Option<String>,
+        parent: Option<String>,
+        args: Option<Value>,
+    },
+    ToolFinished {
+        name: String,
+        id: Option<String>,
+        parent: Option<String>,
+        ok: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
