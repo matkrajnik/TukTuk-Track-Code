@@ -7,7 +7,7 @@ default-members = [".", "crates/workflow-core", "crates/agent-cli"]
 
 [package]
 name = "tuktuk-track"
-version = "2.4.0"
+version = "2.5.0"
 edition = "2021"
 # Główny program aplikacji; `tuktuk-track-bridge` to host native messaging (W4).
 default-run = "tuktuk-track"
