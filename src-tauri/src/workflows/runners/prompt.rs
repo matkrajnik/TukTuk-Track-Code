@@ -32,19 +32,37 @@ fn contract(role: AgentRole) -> &'static str {
     }
 }
 
-/// `artifact_hash` jest wymagany tylko dla roli Review.
+/// `artifact_hash` jest wymagany tylko dla roli Review. Cel przebiegu pochodzi od
+/// użytkownika, ale może być wklejonym tekstem z zadania (np. z Jiry), więc trafia
+/// do bloku danych z ucieczką `<`, a nie do części z poleceniami.
 pub fn build(request: &RunRequest, artifact_hash: Option<&str>) -> Result<String, String> {
     let inputs: Vec<Value> = request
         .inputs
         .iter()
         .map(|i| json!({"nodeId": i.node_id, "executionId": i.execution_id, "output": i.output}))
         .collect();
-    let data = escape_markers(&serde_json::to_string_pretty(&inputs).map_err(|e| e.to_string())?);
+    let goal = request
+        .goal
+        .as_deref()
+        .map(str::trim)
+        .filter(|g| !g.is_empty());
+    let block = json!({"goal": goal, "inputs": inputs});
+    let data = escape_markers(&serde_json::to_string_pretty(&block).map_err(|e| e.to_string())?);
     let mut prompt = format!(
-        "{instruction}\n\n{contract}\n",
+        "{instruction}
+
+{contract}
+",
         instruction = request.instruction,
         contract = contract(request.role)
     );
+    if goal.is_some() {
+        prompt.push_str(
+            "
+Cel przebiegu podany przez użytkownika jest w bloku danych (pole goal).
+",
+        );
+    }
     if request.role == AgentRole::Review {
         let hash = artifact_hash.ok_or("Review wymaga skrótu artefaktu.")?;
         prompt.push_str(&format!("Skrót artefaktu do sprawdzenia: {hash}\n"));

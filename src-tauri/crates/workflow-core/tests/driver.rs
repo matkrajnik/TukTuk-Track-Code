@@ -82,6 +82,7 @@ impl Env {
             request_id: request.into(),
             expected_revision: state.event_count,
             artifact_hash: approval.artifact_hash.clone(),
+            comment: None,
         })
     }
 }
@@ -392,11 +393,15 @@ fn decision_is_idempotent_and_conflicting_decisions_are_rejected() {
         request_id: request_id.into(),
         expected_revision: revision,
         artifact_hash: approval.artifact_hash.clone(),
+        comment: (decision == Decision::Reject).then(|| "Do poprawy".to_owned()),
     };
+    // Nieaktualna rewizja: decyzja odrzucona jako nieaktualna, przebieg dalej czeka.
     assert_eq!(
         handle.decide(request(Decision::Approve, "d1", state.event_count + 7)),
-        Err(DecideError::Conflict)
+        Err(DecideError::Stale)
     );
+    assert_eq!(env.state(run).status, RunStatus::WaitingForApproval);
+    assert_eq!(env.state(run).event_count, state.event_count);
     let first = handle.decide(request(Decision::Approve, "d1", state.event_count));
     let again = handle.decide(request(Decision::Approve, "d1", 0));
     assert_eq!(
@@ -444,6 +449,7 @@ fn changed_artifact_invalidates_the_approval() {
             request_id: "d1".into(),
             expected_revision: 0,
             artifact_hash: "h1".into(),
+            comment: None,
         }),
         Err(DecideError::Invalidated)
     );
@@ -625,21 +631,25 @@ fn storage_error_that_also_blocks_the_failure_is_reported_on_the_bus() {
 }
 
 /// Krótki limit kroku i czas łaski; runner ignoruje anulowanie dłużej niż oba razem.
+/// Limit dotyczy też zdrowych kroków drugiego przebiegu: 300 ms raz na ok. 35
+/// przebiegów pakietu (przy równoległym pakiecie testów z Gitem) nie wystarczało
+/// na zwykły krok i drugi przebieg kończył się `Timeout`. 1,5 s daje zapas, a krok
+/// uparty (4 s) nadal przekracza limit razem z czasem łaski.
 fn unresponsive_config() -> DriverConfig {
     DriverConfig {
-        step_timeout: |_| Duration::from_millis(300),
+        step_timeout: |_| Duration::from_millis(1_500),
         cancel_grace: Duration::from_millis(500),
         ..quiet()
     }
 }
 
+/// Dłużej niż limit kroku i czas łaski razem (`unresponsive_config`).
+const STUBBORN: Duration = Duration::from_millis(4_000);
+
 #[test]
 fn unresponsive_runner_after_timeout_is_not_recorded_as_a_confirmed_end() {
     let env = Env::new();
-    let runner = Arc::new(ScriptedRunner::new().script(
-        "analysis",
-        vec![Step::stubborn(Duration::from_millis(3_000))],
-    ));
+    let runner = Arc::new(ScriptedRunner::new().script("analysis", vec![Step::stubborn(STUBBORN)]));
     let handle = env.run(&runner, unresponsive_config());
     let run = env.create("r1");
     handle.start_run(run);
@@ -682,7 +692,7 @@ fn queued_run_does_not_start_while_an_unresponsive_runner_is_alive() {
             .script(
                 "analysis",
                 vec![
-                    Step::stubborn(Duration::from_millis(3_000)),
+                    Step::stubborn(STUBBORN),
                     Step::complete(samples::analysis()),
                 ],
             )
@@ -742,4 +752,323 @@ fn runner_receives_the_role_of_the_node() {
             ("review".to_owned(), Review)
         ]
     );
+}
+
+#[test]
+fn step_request_carries_the_run_goal() {
+    use std::sync::Mutex;
+    let env = Env::new();
+    let seen: Arc<Mutex<Vec<Option<String>>>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let runner = Arc::new(
+        ScriptedRunner::new()
+            .template_script(vec![samples::review_approved()])
+            .with_probe(move |request| {
+                sink.lock().expect("blokada").push(request.goal.clone());
+            }),
+    );
+    let handle = env.run(&runner, config());
+    let run = env.repo.create_with_goal(
+        &analysis_implementation_review(),
+        "goal",
+        "Napraw odejmowanie",
+    );
+    handle.start_run(run);
+    settle(&handle);
+    let seen = seen.lock().expect("blokada").clone();
+    assert!(seen.len() >= 3);
+    assert!(seen
+        .iter()
+        .all(|g| g.as_deref() == Some("Napraw odejmowanie")));
+}
+
+#[test]
+fn decide_with_same_request_id_twice_records_one_resolution_with_comment() {
+    let env = Env::new();
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let run = env.create("c1");
+    handle.start_run(run);
+    settle(&handle);
+    let state = env.state(run);
+    let approval = state.approvals.last().unwrap().clone();
+    let request = |revision| DecideRequest {
+        run_id: run,
+        approval_id: approval.id.clone(),
+        decision: Decision::Reject,
+        request_id: "same".into(),
+        expected_revision: revision,
+        artifact_hash: approval.artifact_hash.clone(),
+        comment: Some("Do poprawy".into()),
+    };
+    let first = handle.decide(request(state.event_count));
+    let again = handle.decide(request(0));
+    assert_eq!(
+        first.map(|r| r.approval_status),
+        again.map(|r| r.approval_status)
+    );
+    settle(&handle);
+    let after = env.state(run);
+    assert_eq!(after.approvals.len(), 1);
+    assert_eq!(after.approvals[0].comment.as_deref(), Some("Do poprawy"));
+    assert_eq!(after.status, RunStatus::Rejected);
+}
+
+#[test]
+fn comment_over_limit_is_rejected_without_events() {
+    let env = Env::new();
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let run = env.create("c2");
+    handle.start_run(run);
+    settle(&handle);
+    let state = env.state(run);
+    let approval = state.approvals.last().unwrap().clone();
+    let result = handle.decide(DecideRequest {
+        run_id: run,
+        approval_id: approval.id.clone(),
+        decision: Decision::Reject,
+        request_id: "long".into(),
+        expected_revision: state.event_count,
+        artifact_hash: approval.artifact_hash.clone(),
+        comment: Some("x".repeat(2001)),
+    });
+    assert!(matches!(result, Err(DecideError::InvalidState(_))));
+    assert_eq!(env.state(run).event_count, state.event_count);
+}
+
+fn waiting_run(env: &Env, handle: &RuntimeHandle, request: &str) -> (RunId, RunState) {
+    let run = env.create(request);
+    handle.start_run(run);
+    settle(handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::WaitingForApproval);
+    (run, state)
+}
+
+#[test]
+fn reject_without_comment_is_rejected_by_the_driver_without_events() {
+    let env = Env::new();
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let (run, state) = waiting_run(&env, &handle, "nc");
+    let approval = state.approvals.last().unwrap().clone();
+    for comment in [
+        None,
+        Some(String::new()),
+        Some(
+            "   
+	"
+            .to_owned(),
+        ),
+    ] {
+        let result = handle.decide(DecideRequest {
+            run_id: run,
+            approval_id: approval.id.clone(),
+            decision: Decision::Reject,
+            request_id: "no-comment".into(),
+            expected_revision: state.event_count,
+            artifact_hash: approval.artifact_hash.clone(),
+            comment,
+        });
+        assert!(matches!(result, Err(DecideError::InvalidState(_))));
+    }
+    let after = env.state(run);
+    assert_eq!(after.event_count, state.event_count);
+    assert_eq!(after.status, RunStatus::WaitingForApproval);
+    assert_eq!(after.approvals[0].status, ApprovalStatus::Pending);
+}
+
+#[test]
+fn comment_is_trimmed_in_the_core() {
+    let env = Env::new();
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let (run, state) = waiting_run(&env, &handle, "trim");
+    let approval = state.approvals.last().unwrap().clone();
+    handle
+        .decide(DecideRequest {
+            run_id: run,
+            approval_id: approval.id.clone(),
+            decision: Decision::Approve,
+            request_id: "trim-1".into(),
+            expected_revision: state.event_count,
+            artifact_hash: approval.artifact_hash.clone(),
+            comment: Some("  Dobrze  ".into()),
+        })
+        .expect("decyzja");
+    settle(&handle);
+    assert_eq!(
+        env.state(run).approvals[0].comment.as_deref(),
+        Some("Dobrze")
+    );
+}
+
+#[test]
+fn stale_revision_is_reported_as_stale_and_the_run_keeps_waiting() {
+    let env = Env::new();
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run(&runner, config());
+    let (run, state) = waiting_run(&env, &handle, "stale");
+    let approval = state.approvals.last().unwrap().clone();
+    let result = handle.decide(DecideRequest {
+        run_id: run,
+        approval_id: approval.id.clone(),
+        decision: Decision::Approve,
+        request_id: "stale-1".into(),
+        expected_revision: state.event_count - 1,
+        artifact_hash: approval.artifact_hash.clone(),
+        comment: None,
+    });
+    assert_eq!(result, Err(DecideError::Stale));
+    let after = env.state(run);
+    assert_eq!(after.status, RunStatus::WaitingForApproval);
+    assert_eq!(after.event_count, state.event_count);
+    // Ten sam request_id z aktualną rewizją przechodzi (nic nie zostało zapisane).
+    assert!(handle
+        .decide(DecideRequest {
+            expected_revision: state.event_count,
+            ..DecideRequest {
+                run_id: run,
+                approval_id: approval.id.clone(),
+                decision: Decision::Approve,
+                request_id: "stale-1".into(),
+                expected_revision: 0,
+                artifact_hash: approval.artifact_hash.clone(),
+                comment: None,
+            }
+        })
+        .is_ok());
+}
+
+/// Repozytorium, którego pierwsze `active_runs` (początkowe `Wake` sterownika)
+/// czeka na sygnał testu; pozwala ustawić anulowanie w kanale, zanim przebieg
+/// trafi do kolejki. Opcjonalnie `run_goal` zawodzi błędem bazy.
+struct Gated {
+    inner: Arc<MemoryRepository>,
+    entered: std::sync::Mutex<Option<std::sync::mpsc::Sender<()>>>,
+    release: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    goal_fails: bool,
+}
+
+impl Gated {
+    fn new(
+        inner: Arc<MemoryRepository>,
+    ) -> (
+        Self,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let gated = Self {
+            inner,
+            entered: std::sync::Mutex::new(Some(entered_tx)),
+            release: std::sync::Mutex::new(Some(release_rx)),
+            goal_fails: false,
+        };
+        (gated, entered_rx, release_tx)
+    }
+
+    fn failing_goal(inner: Arc<MemoryRepository>) -> Self {
+        Self {
+            inner,
+            entered: std::sync::Mutex::new(None),
+            release: std::sync::Mutex::new(None),
+            goal_fails: true,
+        }
+    }
+}
+
+impl RunRepository for Gated {
+    fn create_run(&self, new: &NewRun) -> Result<CreatedRun, RepoError> {
+        self.inner.create_run(new)
+    }
+    fn graph(&self, run_id: RunId) -> Result<WorkflowGraph, RepoError> {
+        self.inner.graph(run_id)
+    }
+    fn append(
+        &self,
+        run_id: RunId,
+        expected_next_sequence: u64,
+        events: &[RunEvent],
+        now: i64,
+    ) -> Result<Vec<StoredEvent>, RepoError> {
+        self.inner
+            .append(run_id, expected_next_sequence, events, now)
+    }
+    fn load_events(&self, run_id: RunId, after: u64) -> Result<Vec<StoredEvent>, RepoError> {
+        self.inner.load_events(run_id, after)
+    }
+    fn last_sequence(&self, run_id: RunId) -> Result<u64, RepoError> {
+        self.inner.last_sequence(run_id)
+    }
+    fn active_runs(&self) -> Result<Vec<RunId>, RepoError> {
+        let runs = self.inner.active_runs();
+        if let Some(entered) = self.entered.lock().unwrap().take() {
+            let _ = entered.send(());
+        }
+        if let Some(release) = self.release.lock().unwrap().take() {
+            let _ = release.recv_timeout(WAIT);
+        }
+        runs
+    }
+    fn run_goal(&self, run_id: RunId) -> Result<Option<String>, RepoError> {
+        if self.goal_fails {
+            return Err(RepoError::Storage("baza zablokowana".into()));
+        }
+        self.inner.run_goal(run_id)
+    }
+}
+
+/// Rozstrzygnięcie wyścigu z E4 (`cancelling_a_queued_run_never_calls_the_runner`):
+/// przebieg utworzony przed startem sterownika trafia do kolejki przez początkowe
+/// `Wake`. Anulowanie, które jest już w kanale, gdy sterownik wybiera przebieg z
+/// kolejki, jest rozliczane wcześniej: przebieg kończy się `Cancelled` bez runnera.
+/// (Anulowanie wysłane dopiero po zdjęciu przebiegu z kolejki dotyczy przebiegu
+/// `Running` i zatrzymuje uruchomiony krok; to zgodne z 5.2.)
+#[test]
+fn cancel_of_queued_run_is_processed_before_dequeue() {
+    let env = Env::new();
+    let run = env.create("q1");
+    let (gated, entered, release) = Gated::new(env.repo.clone());
+    let runner = Arc::new(ScriptedRunner::new().template_script(vec![samples::review_approved()]));
+    let handle = env.run_on(Arc::new(gated), &runner, config());
+    // Sterownik jest w `Wake` i już widzi przebieg Queued, ale jeszcze go nie wziął.
+    entered.recv_timeout(WAIT).expect("początkowe Wake");
+    handle.cancel(run);
+    release.send(()).unwrap();
+    settle(&handle);
+    assert_eq!(env.state(run).status, RunStatus::Cancelled);
+    assert_eq!(runner.total_calls(), 0, "runner nie może wystartować");
+}
+
+static GOAL_ERRORS: AtomicUsize = AtomicUsize::new(0);
+
+/// Błąd bazy przy odczycie celu nie jest połykany: krok kończy się `StorageError`
+/// bez startu agenta, a błąd trafia do `on_error`.
+#[test]
+fn goal_read_error_fails_the_step_without_starting_the_agent() {
+    let env = Env::new();
+    let run = env.create("goal-err");
+    let runner = runner_for(vec![samples::review_approved()]);
+    let handle = env.run_on(
+        Arc::new(Gated::failing_goal(env.repo.clone())),
+        &runner,
+        DriverConfig {
+            on_error: |m| {
+                assert!(m.contains("cel przebiegu"), "{m}");
+                GOAL_ERRORS.fetch_add(1, Ordering::SeqCst);
+            },
+            ..config()
+        },
+    );
+    handle.start_run(run);
+    settle(&handle);
+    let state = env.state(run);
+    assert_eq!(state.status, RunStatus::Failed);
+    assert_eq!(state.executions[0].status, ExecutionStatus::Failed);
+    assert_eq!(state.executions[0].code, Some(FailureCode::StorageError));
+    assert_eq!(runner.total_calls(), 0, "agent bez celu nie startuje");
+    assert!(GOAL_ERRORS.load(Ordering::SeqCst) >= 1);
 }

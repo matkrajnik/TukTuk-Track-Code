@@ -5,10 +5,16 @@
 //! czy moduł odblokowano kluczem; ukrycie menu w interfejsie nie jest kontrolą.
 
 pub mod access;
+pub mod artifacts;
 pub mod preflight;
+pub mod run_commands;
 pub mod runners;
 pub mod runs;
+pub mod runtime;
+pub mod service;
 pub mod store;
+#[cfg(test)]
+pub(crate) mod test_git;
 pub mod workspace;
 
 use rusqlite::Connection;
@@ -196,6 +202,16 @@ pub async fn workflow_preflight(
     })
     .await
     .map_err(|e| e.to_string())
+}
+
+/// Graf opublikowanej wersji (formularz startu pokazuje kroki tego, co faktycznie
+/// ruszy, a nie szkicu); tylko po odblokowaniu.
+#[tauri::command]
+pub fn workflow_version_graph(
+    app: tauri::AppHandle,
+    version_id: i64,
+) -> Result<WorkflowGraph, String> {
+    with_db(&app, |db| preflight_graph(db, version_id))
 }
 
 /// Definicja do preflightu: tylko po odblokowaniu modułu (ścieżka komendy).

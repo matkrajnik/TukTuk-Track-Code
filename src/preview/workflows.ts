@@ -409,6 +409,15 @@ export async function importWorkflow(text: string): Promise<WorkflowDetail> {
   return detail(insert(state, file.name, description, graph));
 }
 
+/** Graf opublikowanej wersji (`workflows::workflow_version_graph`). */
+export async function versionGraph(versionId: number): Promise<WorkflowGraph> {
+  const stored = unlocked()
+    .workflows.flatMap((w) => w.versions)
+    .find((v) => v.id === versionId);
+  if (!stored) throw new Error("Nie znaleziono wersji procesu.");
+  return structuredClone(stored.graph);
+}
+
 /** Podgląd nie uruchamia agentów, więc nie udaje gotowości żadnego węzła. */
 export const PREVIEW_PREFLIGHT_BLOCK = "Podgląd nie uruchamia agentów";
 

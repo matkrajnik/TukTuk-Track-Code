@@ -27,6 +27,16 @@ pub fn suppressed(env_value: Option<&str>) -> bool {
     env_value.map(str::trim) == Some("1")
 }
 
+/// Zmienna ustawiana na krokach modułu Workflows (`<runId>:<executionId>`).
+/// Ich zdarzeń hook nie wysyła: czas i stan kroków pochodzą wyłącznie ze zdarzeń
+/// runtime, więc tablica agentów i czas pracy nie liczą ich drugi raz.
+pub const WORKFLOW_ENV: &str = "TUKTUK_TRACK_WORKFLOW";
+
+/// Czy zdarzenie pochodzi z kroku workflow: niepusta wartość po przycięciu.
+pub fn workflow_suppressed(env_value: Option<&str>) -> bool {
+    env_value.is_some_and(|v| !v.trim().is_empty())
+}
+
 /// Komunikat powiadomienia (`Notification`) ma najwyżej tyle znaków.
 pub const MESSAGE_MAX: usize = 200;
 /// Nazwa narzędzia (`PreToolUse`, `PermissionRequest`) ma najwyżej tyle znaków.
@@ -208,4 +218,21 @@ pub fn forward(pipe: &str, body: &[u8]) -> Result<(), FrameError> {
     write_frame(&mut file, body)?;
     read_frame(&mut file)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod workflow_env_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_env_suppresses_events() {
+        assert!(workflow_suppressed(Some("12:exec-3")));
+        assert!(!workflow_suppressed(None));
+    }
+
+    #[test]
+    fn empty_workflow_env_does_not_suppress() {
+        assert!(!workflow_suppressed(Some("")));
+        assert!(!workflow_suppressed(Some("   ")));
+    }
 }

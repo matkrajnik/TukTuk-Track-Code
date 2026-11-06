@@ -411,10 +411,10 @@ Odbiór: procesy zastępcze potwierdzają timeout, kill i ograniczenia; użytkow
 ### E5 — monitor, zadania i zgody
 
 - [ ] Dodać formularz startu z karty zadania i listy definicji.
-- [ ] Dodać monitor grafu, historię, filtrowanie, logi i artefakty.
-- [ ] Dodać diff, wyniki review oraz decyzję związaną z hashem artefaktu.
-- [ ] Połączyć przebiegi z tablicą agentów, czasem i powiadomieniami.
-- [ ] Dodać odtwarzanie zdarzeń po ponownym otwarciu widoku i ograniczenie renderowania dużych logów.
+- [x] Dodać monitor grafu, historię, filtrowanie, logi i artefakty.
+- [x] Dodać diff, wyniki review oraz decyzję związaną z hashem artefaktu.
+- [x] Połączyć przebiegi z tablicą agentów, czasem i powiadomieniami.
+- [x] Dodać odtwarzanie zdarzeń po ponownym otwarciu widoku i ograniczenie renderowania dużych logów.
 
 Odbiór: pełny scenariusz działa z UI; nie podwaja czasu i nie zmienia automatycznie timera ani zgłoszeń. Podwójne kliknięcie zgody ma jeden skutek.
 
@@ -800,3 +800,213 @@ Pozostałe blokery i uwagi po weryfikacji:
 - Wpięcie Runtime w `main.rs`, komendy start/cancel/decide i monitor (E5); recovery i artefakty
   logów na dysku (E6).
 - Brak commita (robi go osobny krok workflow).
+
+### E5 (dziennik)
+
+Pliki: `workflow-core` (`run.rs`, `engine*`, `ports.rs`, `driver*`, `testing.rs`), host
+`src-tauri/src/workflows/{artifacts,service,run_commands,runtime}.rs`, `runs/query.rs`, `store.rs`
+(migracja 4), `workspace.rs`, `runners/{mod,prompt,env}.rs`, `hook_wire.rs`, `bin/hook.rs`,
+`notify.rs` (`View.run`), `main.rs`; frontend `api/workflowRuns.ts`, `workflowRuns.ts`,
+`preview/workflowRuns.ts`, `views/WorkflowRunsView.vue`, `components/workflows/WorkflowRun{Form,Monitor}.vue`,
+fixture `tests/fixtures/tauri.ts`, `tests/workflow-runs.spec.ts`.
+
+Decyzje:
+- `Fault` działa też z `Queued` (Queued -> Failed) z nowym kodem `WorkspaceUnavailable`.
+- Komentarz zgody (`comment`, serde default, limit 2000) w zdarzeniu, stanie i `workflow_approvals.comment`.
+- Cel przebiegu (`goal`, migracja 4) trafia do promptu; limit 20 000 znaków.
+- Artefakt diffu adresowany skrótem w katalogu danych aplikacji; klient czyta tylko przez (runId, skrót).
+- `workflow_cancel` i historia działają bez klucza; start, decyzja i artefakt wymagają odblokowania.
+- Powiadomienia reużywają `agent_notify_waiting` i `agent_notify_done`; klucze `wf-approval:`/`wf-end:`.
+- Hook pomija zdarzenia z `TUKTUK_TRACK_WORKFLOW` (jeden tor czasu).
+- Modele i uprawnienia kroków przy starcie tylko do odczytu.
+
+Wyniki: workflow-core (driver, engine, run_states) zielone; `cargo test --bin tuktuk-track workflow` 151 OK;
+Playwright `workflow-runs`, `workflows-ui`, `workflow-definitions`, `visual` zielone.
+
+Niewykonane: karta zadania i tablica agentów (krok 12), `WorkflowGraphView` ze statusami, filtr
+repozytorium z podpowiedzią z `agent_bindings`, testy Playwright startu z formularza, przeglądy
+agentami, pełny `npm run check`, sekcje 4-5 E4_TEST_RECZNY na prawdziwych CLI.
+
+#### E5: runda 1 poprawek po review
+
+Przyczyny nieudanych testów `workflows` (to nie były losowe timeouty środowiska):
+- `validate_source` wołał `git submodule status`. W Git z MSYS2/Git for Windows to skrypt
+  powłoki: ok. 7 s na wywołanie bez obciążenia, a przy równoległych testach ponad 60 s
+  (dowód: pomiar z dodatkowym logowaniem; `PROC-TIMEOUT submodule`). Zastąpione przez
+  `git ls-files --stage -z` i szukanie trybu 160000 (test `gitlink_in_the_index_without_gitmodules_is_rejected`).
+- Po limicie `run_with_limit` zabijał tylko proces git; wnuk trzymał potoki, a wątki odczytu
+  wisiały. Teraz Git działa w Job Object, a po limicie i po wyjściu Gita ginie całe drzewo
+  (test `timeout_kills_the_whole_process_tree`).
+- Pomiar procesów na tej maszynie: 8 wywołań `git status` po kolei 1,3 s; 16 równoległych pętli
+  po 8 wywołań 30 s, czyli przepustowość tworzenia procesów nie rośnie z równoległością
+  (4-6 procesów/s na całą maszynę). Przebieg integracyjny to ok. 45 poleceń Git (ślad z
+  logowaniem), a krok review kilkanaście, więc przy 16 wątkach testów krok przekraczał 30 s.
+  Testy z Gitem (`runners`, `service`, `workspace`) biorą wspólny limit 3 naraz
+  (`workflows::test_git::GitPermit`); w aplikacji sterownik i tak prowadzi jeden przebieg.
+- Anulowanie w trakcie migawki strażnika nie było obsługiwane: polecenia Git kroku tylko
+  do odczytu trwały dłużej niż czas łaski i przebieg kończył się `Interrupted` zamiast
+  `Cancelled`. Strażnik przekazuje token anulowania do poleceń Git (zabicie drzewa,
+  `WorkspaceError::Cancelled`) i nie uruchamia agenta po anulowaniu (testy
+  `cancel_interrupts_a_running_command_quickly`, `guard_cancelled_during_snapshot_does_not_start_the_agent`).
+  Testy anulowania czekają na start procesu kroku zamiast `sleep(200 ms)`.
+- `queued_run_does_not_start_while_an_unresponsive_runner_is_alive` (sprzed E5) raz na ok. 35
+  przebiegów pakietu `driver` kończył drugi przebieg `Timeout`: limit 300 ms obejmował też
+  zdrowe kroki. Limit 1,5 s, krok uparty 4 s.
+- Wyścig z E4 (`cancelling_a_queued_run_never_calls_the_runner`): regresja
+  `cancel_of_queued_run_is_processed_before_dequeue` (50 iteracji). Sink blokujący bazę:
+  `sink_that_locks_db_does_not_deadlock_driver`.
+
+Poprawki uwag:
+- Odrzucenie bez komentarza odrzuca też silnik (`approval_decision`) i sterownik
+  (`decide_approval`); komentarz przycinany w core (`normalize_comment`).
+- Nieaktualna rewizja: `DecideError::Stale`, w IPC z prefiksem unieważnienia; przebieg czeka dalej.
+- Cel przebiegu w bloku danych promptu (pole `goal`, ucieczka `<`).
+- Formularz startu: graf najnowszej opublikowanej wersji (`workflow_version_graph`), nie szkic
+  (wcześniej brał też najstarszą wersję); nowy `requestId` po błędzie startu; wybór procesu,
+  gdy formularz otwiera karta zadania.
+- Karta zadania: „Uruchom proces…” tylko po odblokowaniu; po starcie monitor (`openRunRequest`).
+- Tablica agentów: sekcja „Przebiegi procesów w toku” (lista `workflow_runs`, odświeżana
+  `workflow-event`); przebieg nie tworzy `agent_sessions` ani `sessions`
+  (`workflow_run_creates_no_agent_session_and_no_time_entry`).
+- Monitor: graf tylko do odczytu ze statusem kroków tekstem i w opisie dostępności; nasłuch
+  przed snapshotem z buforem, odpięcie przy odmontowaniu w trakcie rejestracji; `requestId`
+  na zgodę; „Akceptuj” dopiero po wyświetleniu diffu, błąd diffu z ponowieniem.
+- Diff czytany strumieniowo (skrót z całości, w pamięci tylko pokazywany fragment).
+- `service::start`: pierwotna przyczyna zostaje, gdy zawiedzie też oznaczenie przebiegu.
+- `run_commands`: `start_run` z kontrolą klucza, historia (`history_*`) bez klucza z testem.
+- Fixture: `workflow_cancel` (stan końcowy, brak przebiegu), konflikt `requestId` z inną wersją,
+  `workflow_decide` jak `driver/decide.rs` (requestId przy innej zgodzie, rewizja, trim).
+- Powiadomienia: `try_claim_key` (błąd bazy zgłoszony), `should_show_toast` (klucz przed oknem).
+
+Wyniki (2026-11-06): `workflow-core --features testing` zielone; `driver` 10 razy domyślnie i
+15 razy `--test-threads=1` zielone po zmianie limitu (wcześniej 1 porażka na 35, opisana wyżej);
+`--bin tuktuk-track workflows` dwa razy z rzędu 161/161 (306 s i 341 s); `hook_wire`, `agent_board`,
+`ai`, `agent-cli`, `naming`, `cargo fmt --check` zielone; `--bin tuktuk-track workflows
+-- --test-threads=1` 161/161 (424 s); Playwright `workflow-runs` (33), `workflows-ui`,
+`workflow-definitions` zielone (68). `visual.spec.ts`: przy 16 workerach 30 z 90 testów
+przekroczyło 30 s (same timeouty, bez różnic w zrzutach; maszyna była przeciążona: 13,6 min
+zamiast zwykłej minuty); te 30 przy 2 workerach zielone, wzorce bez zmian.
+
+Niewykonane: 10 przebiegów pakietu `workflows` (jeden trwa 5-7 min; wykonano dwa domyślnie
+i jeden `--test-threads=1`), filtr repozytorium z podpowiedzią z `agent_bindings`,
+przeglądy agentami, pełny `npm run check`, sekcje 4-5 E4_TEST_RECZNY na prawdziwych CLI.
+
+#### E5: runda 2 poprawek po review
+
+Rozstrzygnięcia:
+- Wyścig z E4 (`cancelling_a_queued_run_never_calls_the_runner`) to wada testu, nie sterownika.
+  Test tworzył przebieg już po starcie sterownika, a początkowe `Wake` mogło go wczytać
+  z bazy i zdjąć z kolejki, zanim test wysłał anulowanie. Przebieg wzięty przez `Wake` jest
+  `Running`, więc anulowanie zatrzymuje uruchomiony krok, a wywołanie runnera jest zgodne
+  z 5.2 („Queued można anulować bez procesów” dotyczy przebiegu, który jeszcze czeka).
+  Sterownik rozlicza wszystkie komendy z kanału przed każdym zdjęciem z kolejki (`main_loop`:
+  `try_recv` przed `pop_front`). Nowy test `cancel_of_queued_run_is_processed_before_dequeue`
+  jest deterministyczny: przebieg powstaje przed startem sterownika, repozytorium wstrzymuje
+  początkowe `Wake` (`active_runs`), aż test wyśle anulowanie, więc przebieg jest w kolejce,
+  a anulowanie w kanale. Dowód, że test łapie błąd: po zamianie kolejności w `main_loop`
+  (najpierw `pop_front`, potem komendy) test pada (`runner.total_calls() == 1`). Poprzednia
+  pętla 50 iteracji usunięta (powtarzała naprawiony test).
+- Redakcja diffu (8.3), wariant A: plik `diff-<skrót>.patch` i skrót są surowe (zgoda dotyczy
+  bajtów worktree), a tekst zwracany do widoku przechodzi przez `artifacts::redact_for_view`
+  (ta sama reguła słowa co `runners::redact`, z zachowaniem układu linii i znaczników `+`/`-`).
+  `DiffView.redacted` podaje liczbę ukrytych fragmentów, a monitor pokazuje ją jawnie.
+  Testy: `diff_view_masks_secrets_but_file_and_hash_stay_raw`,
+  `redaction_keeps_ordinary_code_and_paths`, Playwright „diff z ukrytymi sekretami…”.
+- Odzyskiwanie dostępu (DoD 13 pkt 3), wariant A: bez klucza tablica agentów pokazuje aktywne
+  przebiegi z przyciskiem „Zatrzymaj” (z potwierdzeniem), bez otwierania monitora. Bez
+  aktywnych przebiegów sekcji nie ma, więc wygląd i zrzuty wzorcowe się nie zmieniają.
+  W podglądzie przykładowy przebieg jest częścią demonstracji odblokowanego modułu, więc
+  zablokowany podgląd nie ma historii. Do potwierdzenia przez użytkownika (wariant B:
+  odzyskiwanie tylko w backendzie).
+
+Poprawki:
+- Diff przycięty (powyżej 2 MB) nie pozwala zaakceptować: `diffShown` wymaga
+  `!truncated`, monitor pokazuje, że zmian nie można zaakceptować w aplikacji, a „Odrzuć”
+  działa (Playwright „przycięty diff nie pozwala zaakceptować, tylko odrzucić”).
+- Monitor odświeża szczegóły tylko po zdarzeniach zmieniających stan (bez `message`,
+  `toolStarted`, `toolFinished`, chyba że trzeba dociągnąć lukę), a `refreshDetail` ma numer
+  wywołania i pomija starszą odpowiedź. Test: 26 komunikatów bez `workflow_run_get`; odczyt
+  wstrzymany hakiem fixture `__runGetHold` wraca po nowszym i nie cofa rewizji (decyzja
+  idzie z `expectedRevision` 31).
+- Tablica agentów odświeża listę tylko przy `runStateChanged` (test: 20 komunikatów bez
+  `workflow_runs`). `TauriSink::emit` sprawdza typ zdarzenia (`may_notify`) przed odczytem
+  ustawień i bazy.
+- `run_goal` z błędem bazy kończy krok `StorageError` bez startu agenta i zgłasza błąd przez
+  `on_error` (`goal_read_error_fails_the_step_without_starting_the_agent`); brak celu
+  (`Ok(None)`) dalej dozwolony. `runtime::run_info` loguje błąd bazy (`try_run_info` zwraca
+  go jawnie; test `run_info_reports_db_errors_and_missing_runs_separately`).
+- Zapis artefaktu: plik tymczasowy z unikalną nazwą (pid i licznik), usuwany przy każdym
+  błędzie (strażnik `Drop`); błąd `rename` przy istniejącym pliku docelowym (równoległy zapis
+  tego samego skrótu) to sukces. Testy `artifact_write_is_atomic_no_partial_file_on_error`
+  (wymuszony błąd `rename`: brak `.patch`, `.tmp` i wiersza) i
+  `parallel_writes_of_the_same_hash_use_distinct_temp_files`.
+- Filtr repozytorium: `runs::query::repo_key` (ścieżka kanoniczna, gdy istnieje, `/` jak `\`,
+  bez końcowego separatora, małe litery ASCII) porównywany z tym samym kluczem w SQL; bez LIKE,
+  więc `%` i `_` są dosłowne. Fixture i podgląd liczą klucz tak samo. Testy
+  `repo_filter_matches_path_variants_and_treats_wildcards_literally`,
+  `repo_key_canonicalizes_existing_paths`, Playwright „filtr repozytorium nie zależy…”.
+- Migracja 4: test buduje bazę w stanie E4 (bez `goal`, bez `workflow_artifacts`, bez wpisu
+  wersji 4) z zadaniem, wpisem czasu (`sessions`), przebiegiem i zdarzeniami, wykonuje
+  `init_tables` dwa razy i porównuje pełną treść `tasks`, `sessions`, `workflow_runs`
+  i `workflow_events`; sprawdza wpis wersji 4.
+- Usunięta nieużywana `GitWorkspace::snapshot` (zastąpiona przez `snapshot_with`).
+
+Kryterium 1 (stabilność), 2026-11-06: jedna zbudowana binarka testowa, uruchomiona
+bezpośrednio, bez innych procesów testowych. Pakiet `--bin tuktuk-track workflows` (169 testów;
+obejmuje `workspace`, `service`, `run_commands`, `runtime`, `artifacts`, `runs`, `store`):
+10 razy z rzędu domyślnie, 169/169 za każdym razem (208-256 s), i 10 razy z rzędu
+`--test-threads=1`, 169/169 za każdym razem (72-427 s). Pakiet `driver` 10 razy domyślnie
+(ok. 4 s) i 10 razy `--test-threads=1` (ok. 11,5 s) zielony. Żadnej porażki do analizy.
+Rozrzut czasu jednego trybu (72-427 s) pochodzi z tempa tworzenia procesów na tej maszynie
+(zmierzone w rundzie 1), a nie z testów, które czekają na zdarzenia, a nie na stałe przerwy.
+
+Zrzuty wzorcowe (`visual.spec.ts`): przy 4 workerach 10 z 90 testów padło na
+`browserContext.newPage` albo `page.goto` po 30 s, a nie na różnicy zrzutu. Przyczynę
+sprawdzono: to samo na czystym drzewie z commitu E4 (a193a20, osobny worktree): 8 z 8 testów
+„widok zadania*” padło przy 4 workerach (`page.goto`/`locator.click` po 30 s), a te same 8 przy
+jednym workerze przechodzi w 5-9 s każdy. Uruchamianie kilku Chromium naraz jest tu
+nieproporcjonalnie wolne (to samo ograniczenie tworzenia procesów co przy Gicie), więc to
+nie regresja E5. Cały `visual.spec.ts` przy jednym workerze: 90/90, wzorce bez zmian.
+
+Wyniki pozostałe: `workflow-core --features testing` (w tym `driver` 28, `engine` 29,
+`run_states` 8), `agent-cli`, `naming`, `hook_wire` 2, `agent_board` 12, `ai` 156,
+`cargo fmt --check`, `vue-tsc --noEmit` zielone; Playwright `workflow-runs` 39,
+`workflows-ui` + `workflow-definitions` 35 zielone.
+
+Niewykonane: filtr repozytorium z podpowiedzią z `agent_bindings`, przeglądy agentami, pełny
+`npm run check`, sekcje 4-5 E4_TEST_RECZNY na prawdziwych CLI; potwierdzenie wariantu A
+odzyskiwania dostępu przez użytkownika.
+
+### 2026-11-05 — E5
+
+Zmienione pliki: patrz `git status` (workflow-core, host `src-tauri/src/workflows/`, `hook_wire.rs`,
+`bin/hook.rs`, `notify.rs`, `main.rs`, frontend `src/api/workflowRuns.ts`, `src/workflowRuns.ts`,
+`src/preview/workflowRuns.ts`, `views/WorkflowRunsView.vue`, `components/workflows/*`, fixture
+`tests/fixtures/tauri.ts`, `tests/workflow-runs.spec.ts`). Poza zakresem etapu i poza commitem E5:
+`.claude/launch.json`, `.claude/workflows/workflows-stage.js`.
+
+Decyzje: jak w sekcji „E5 (dziennik)” i rundach 1-2 wyżej.
+
+Wynik `npm run check`: zielony (exit 0, 323 s): `vue-tsc` i build Vite OK, Playwright 764 testów
+OK (3,9 min), `cargo fmt --check` i wszystkie zestawy `cargo test` (workflow-core, agent-cli, aplikacja,
+doc-tests) bez porażek. Zaznaczone są tylko pozycje z dowodem w testach Playwright
+(`tests/workflow-runs.spec.ts`).
+
+Pozostałe blokery:
+- Pozycja „formularz startu z karty zadania i listy definicji” niezaznaczona: kryterium jednego
+  przebiegu przy podwójnym kliknięciu ma test tylko dla listy definicji; test karty zadania klika raz.
+- Review (HIGH): brak testu podwójnego kliknięcia dla startu z karty zadania (test klika raz);
+  ścieżka listy definicji ma test (`tests/workflow-runs.spec.ts`, „podwójne kliknięcie Uruchom...”).
+  Oba wejścia używają tego samego `WorkflowRunForm`, ryzyko praktyczne niskie.
+- Niezrealizowane kroki planu poprawek: kroki 2-10 (m.in. testy kontroli dostępu IPC, powiadomień
+  i hooka `TUKTUK_TRACK_WORKFLOW`, testy artefaktu diffu), start z karty zadania, sekcja aktywnych
+  przebiegów na tablicy agentów, graf ze statusami w monitorze; `WorkflowRunForm` nadal pokazuje
+  kroki ze szkicu zamiast z opublikowanej wersji (krok 0b).
+- Testy regresji z planu kroku 1 bez potwierdzenia: `sink_that_locks_db_does_not_deadlock_driver`.
+- Pakiet `workflows` przy domyślnej równoległości nie przechodzi stabilnie przy obecnym narzucie
+  startu procesów (0,4-2 s na git): kryterium 10 razy z rzędu niespełnione w tym przebiegu.
+  Potrzebne ograniczenie liczby spawnów git w snapshotach albo budżet kroku od startu agenta.
+- Brak potwierdzenia RED testu wnuka trzymającego potoki na starym kodzie; niezbadany wyścig `Wake`
+  w `cancel_of_queued_run_is_processed_before_dequeue`; `concurrent_start_same_request_id_creates_one_run`
+  i `failed_fail_queued_run_is_reported_not_swallowed` bez potwierdzenia.
+- Uzupełnienie `E4_TEST_RECZNY.md` i sekcje 4-5 na prawdziwych CLI (robi użytkownik).

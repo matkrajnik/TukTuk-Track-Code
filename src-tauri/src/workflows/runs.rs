@@ -6,9 +6,8 @@
 //! źródłem prawdy; tabele `workflow_runs`, `workflow_node_executions` i
 //! `workflow_approvals` to projekcje liczone w tej samej transakcji.
 //!
-//! Moduł nie ma jeszcze komend IPC ani podpięcia do startu aplikacji: to E5
-//! (komendy, magistrala `workflow-event`) i E6 (recovery przy starcie).
-#![cfg_attr(not(test), allow(dead_code))]
+//! Komendy IPC i magistrala `workflow-event`: `run_commands.rs` i `runtime.rs` (E5);
+//! pełne odzyskiwanie po restarcie: E6.
 
 use std::fmt::Display;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -160,12 +159,14 @@ fn project(tx: &Transaction, run_id: RunId, now: i64, event: &RunEvent) -> Resul
             approval_id,
             status,
             request_id,
+            comment,
             ..
         } => {
             tx.execute(
-                "UPDATE workflow_approvals SET status = ?1, decision_request_id = ?2, decided_at = ?3
+                "UPDATE workflow_approvals SET status = ?1, decision_request_id = ?2, decided_at = ?3,
+                    comment = ?5
                  WHERE id = ?4",
-                params![enum_text(status), request_id, now, approval_id],
+                params![enum_text(status), request_id, now, approval_id, comment],
             )
             .map_err(storage)?;
         }
@@ -293,8 +294,8 @@ impl RunRepository for SqliteRunRepository {
         }
         tx.execute(
             "INSERT INTO workflow_runs(version_id, request_id, definition_json, definition_hash, task_id,
-                task_title, repo, workspace, base_commit, status, created_at, updated_at)
-             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'queued', ?10, ?10)",
+                task_title, repo, workspace, base_commit, goal, status, created_at, updated_at)
+             VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'queued', ?11, ?11)",
             params![
                 new.version_id,
                 request_id,
@@ -305,6 +306,7 @@ impl RunRepository for SqliteRunRepository {
                 new.repo,
                 new.workspace,
                 new.base_commit,
+                new.goal,
                 new.now
             ],
         )
@@ -395,6 +397,18 @@ impl RunRepository for SqliteRunRepository {
         Ok(last as u64)
     }
 
+    fn run_goal(&self, run_id: RunId) -> Result<Option<String>, RepoError> {
+        let db = self.conn()?;
+        db.query_row(
+            "SELECT goal FROM workflow_runs WHERE id = ?1",
+            [run_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(storage)?
+        .ok_or(RepoError::NotFound)
+    }
+
     fn active_runs(&self) -> Result<Vec<RunId>, RepoError> {
         let active: Vec<String> = RunStatus::ALL
             .iter()
@@ -418,6 +432,9 @@ impl RunRepository for SqliteRunRepository {
         Ok(ids)
     }
 }
+
+mod query;
+pub use query::{list_runs, run_detail, RunDetail, RunFilter, RunSummary};
 
 #[cfg(test)]
 mod tests;

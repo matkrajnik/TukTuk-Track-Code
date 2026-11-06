@@ -9,6 +9,11 @@ import { ref } from "vue";
 import { unlockWorkflows, workflowAccess } from "./workflows";
 
 export const workflowsUnlocked = ref(false);
+/**
+ * Przebieg do otwarcia w monitorze po starcie spoza widoku Workflows (np. z karty
+ * zadania); `App.vue` przełącza widok i zeruje wartość.
+ */
+export const openRunRequest = ref<number | null>(null);
 /** Animacja odsłonięcia czeka na odegranie (tylko po udanym odblokowaniu). */
 export const workflowsReveal = ref(false);
 

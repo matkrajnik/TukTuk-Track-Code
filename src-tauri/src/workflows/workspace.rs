@@ -9,13 +9,14 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use agent_cli::Spec;
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use workflow_core::ports::{RunId, WorkspaceAccess};
+use workflow_core::ports::{CancelToken, RunId, WorkspaceAccess};
 
 /// Najdłuższe wykonanie jednego polecenia Git.
 const GIT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -54,6 +55,8 @@ pub enum WorkspaceError {
     /// Katalog roboczy zmieniono tak, że Git mógłby czytać konfigurację spoza
     /// rezerwacji (np. podmieniony plik `.git`); kroku nie wolno zaakceptować.
     PermissionViolation(String),
+    /// Anulowanie przebiegu przerwało polecenie Git (strażnik kroku).
+    Cancelled,
 }
 
 impl std::fmt::Display for WorkspaceError {
@@ -64,6 +67,7 @@ impl std::fmt::Display for WorkspaceError {
             | WorkspaceError::Storage(m)
             | WorkspaceError::PermissionViolation(m) => f.write_str(m),
             WorkspaceError::Conflict => f.write_str("Katalog roboczy jest już zarezerwowany."),
+            WorkspaceError::Cancelled => f.write_str("Operację przerwało anulowanie przebiegu."),
         }
     }
 }
@@ -121,15 +125,17 @@ fn git_spec(cwd: &Path, args: &[&str], extra_env: &[(String, String)]) -> Spec {
     }
 }
 
-fn read_all(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+fn read_all(pipe: Option<impl Read + Send + 'static>) -> std::sync::mpsc::Receiver<Vec<u8>> {
+    let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut bytes = Vec::new();
         if let Some(pipe) = pipe {
             // Błąd odczytu kończy zbieranie; kod wyjścia Git i tak rozstrzyga o wyniku.
             let _ = pipe.take(GIT_MAX_OUTPUT_BYTES).read_to_end(&mut bytes);
         }
-        bytes
-    })
+        let _ = tx.send(bytes);
+    });
+    rx
 }
 
 /// Uruchamia Git w `cwd` (repozytorium użytkownika albo testu); zwraca stdout
@@ -143,40 +149,101 @@ fn run_git(
     args: &[&str],
     extra_env: &[(String, String)],
 ) -> Result<Vec<u8>, WorkspaceError> {
-    let mut command = agent_cli::command(&git_spec(cwd, args, extra_env));
-    let mut child = command
+    run_git_cancellable(cwd, args, extra_env, None)
+}
+
+fn run_git_cancellable(
+    cwd: &Path,
+    args: &[&str],
+    extra_env: &[(String, String)],
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<u8>, WorkspaceError> {
+    let label = args.first().copied().unwrap_or("");
+    run_with_cancel(&git_spec(cwd, args, extra_env), label, GIT_TIMEOUT, cancel)
+}
+
+/// Dołącza proces Git do Job Object (Windows): po przekroczeniu limitu i po
+/// zakończeniu Git ginie całe drzewo, także wnuk trzymający potoki. Bez jobu
+/// (błąd albo inny system) zostaje `kill` bezpośredniego potomka.
+#[cfg(windows)]
+fn attach_job(child: &std::process::Child) -> Option<agent_cli::Job> {
+    use std::os::windows::io::AsRawHandle;
+    agent_cli::Job::attach(child.as_raw_handle().cast()).ok()
+}
+
+#[cfg(not(windows))]
+fn attach_job(_child: &std::process::Child) -> Option<agent_cli::Job> {
+    None
+}
+
+/// Kończy drzewo procesu: przez job, a gdy go nie ma, sam proces.
+fn kill_tree(child: &mut std::process::Child, job: Option<&agent_cli::Job>) {
+    if !job.is_some_and(agent_cli::Job::terminate) {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+}
+
+/// Limit czasu obejmuje czekanie na proces ORAZ na zamknięcie jego potoków:
+/// wnuk dziedziczący stdout/stderr (np. demon w tle) nie może zawiesić wywołania.
+/// Po limicie ginie całe drzewo (Job Object), więc wątki czytające potoki kończą się.
+fn run_with_limit(spec: &Spec, label: &str, limit: Duration) -> Result<Vec<u8>, WorkspaceError> {
+    run_with_cancel(spec, label, limit, None)
+}
+
+/// Jak [`run_with_limit`]; ustawiony `cancel` kończy drzewo procesu od razu
+/// (błąd [`WorkspaceError::Cancelled`]), więc strażnik kroku reaguje na anulowanie
+/// w czasie łaski sterownika także w trakcie migawki dużego repozytorium.
+fn run_with_cancel(
+    spec: &Spec,
+    label: &str,
+    limit: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<u8>, WorkspaceError> {
+    let mut child = agent_cli::command(spec)
         .spawn()
         .map_err(|e| WorkspaceError::Git(format!("Nie udało się uruchomić polecenia git: {e}")))?;
+    let job = attach_job(&child);
     drop(child.stdin.take());
     let out = read_all(child.stdout.take());
     let err = read_all(child.stderr.take());
     let started = Instant::now();
+    let timeout_error =
+        || WorkspaceError::Git(format!("Polecenie git {label} przekroczyło limit czasu."));
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > GIT_TIMEOUT => {
-                // Po przekroczeniu czasu kończymy Git; wynik kill nie zmienia komunikatu.
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(WorkspaceError::Git(format!(
-                    "Polecenie git {} przekroczyło limit czasu.",
-                    args.first().copied().unwrap_or("")
-                )));
+            Ok(None) if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) => {
+                kill_tree(&mut child, job.as_ref());
+                return Err(WorkspaceError::Cancelled);
+            }
+            Ok(None) if started.elapsed() > limit => {
+                // Wynik kończenia nie zmienia komunikatu.
+                kill_tree(&mut child, job.as_ref());
+                return Err(timeout_error());
             }
             Ok(None) => std::thread::sleep(GIT_POLL),
-            Err(e) => return Err(WorkspaceError::Git(format!("Błąd czekania na git: {e}"))),
+            Err(e) => {
+                kill_tree(&mut child, job.as_ref());
+                return Err(WorkspaceError::Git(format!("Błąd czekania na git: {e}")));
+            }
         }
     };
-    let stdout = out.join().unwrap_or_default();
-    let stderr = err.join().unwrap_or_default();
+    // Git skończył; pozostałości drzewa (np. wnuk z odziedziczonymi potokami) giną,
+    // żeby odczyt potoków nie czekał na nie do końca limitu.
+    if let Some(job) = &job {
+        job.terminate();
+    }
+    let left = || limit.saturating_sub(started.elapsed());
+    let stdout = out.recv_timeout(left()).map_err(|_| timeout_error())?;
+    let stderr = err.recv_timeout(left()).map_err(|_| timeout_error())?;
     if status.success() {
         Ok(stdout)
     } else {
         let text = String::from_utf8_lossy(&stderr);
         let tail: String = text.trim().chars().take(300).collect();
         Err(WorkspaceError::Git(format!(
-            "git {} zakończył się błędem: {tail}",
-            args.first().copied().unwrap_or("")
+            "git {label} zakończył się błędem: {tail}"
         )))
     }
 }
@@ -195,7 +262,7 @@ fn is_network_path(text: &str) -> bool {
 }
 
 /// Ścieżka kanoniczna bez prefiksu `\\?\` (Git go nie lubi).
-fn canonical(path: &Path) -> Result<PathBuf, WorkspaceError> {
+pub(crate) fn canonical(path: &Path) -> Result<PathBuf, WorkspaceError> {
     let canon = std::fs::canonicalize(path).map_err(|e| {
         WorkspaceError::Rejected(format!(
             "Nie można odczytać ścieżki {}: {e}",
@@ -216,7 +283,7 @@ fn same_path(a: &Path, b: &Path) -> bool {
     a.to_string_lossy().to_lowercase() == b.to_string_lossy().to_lowercase()
 }
 
-fn is_under(path: &Path, parent: &Path) -> bool {
+pub(crate) fn is_under(path: &Path, parent: &Path) -> bool {
     let (p, q) = (
         path.to_string_lossy().to_lowercase(),
         parent.to_string_lossy().to_lowercase(),
@@ -299,6 +366,24 @@ fn reserved(db: &SharedDb, run_id: RunId) -> Result<Option<Workspace>, Workspace
 // Przygotowanie
 
 /// Sprawdza źródło i zwraca ścieżkę kanoniczną korzenia repozytorium oraz `HEAD`.
+pub(crate) fn check_source(
+    source: &Path,
+    app_data: &Path,
+) -> Result<(PathBuf, String), WorkspaceError> {
+    validate_source(source, app_data)
+}
+
+/// Czy indeks zawiera wpisy podmodułów (tryb 160000). To samo, co pokazuje
+/// `git submodule status`, ale bez skryptu powłoki: w MSYS2/Git for Windows
+/// `git submodule` uruchamia `sh` i kilkanaście procesów (sekundy na wywołanie,
+/// a pod obciążeniem ponad limit `GIT_TIMEOUT`).
+fn has_gitlinks(root: &Path) -> Result<bool, WorkspaceError> {
+    let staged = git(root, &["ls-files", "--stage", "-z"])?;
+    Ok(staged
+        .split(|b| *b == 0)
+        .any(|entry| entry.starts_with(b"160000 ")))
+}
+
 fn validate_source(source: &Path, app_data: &Path) -> Result<(PathBuf, String), WorkspaceError> {
     if is_network_path(&source.to_string_lossy()) {
         return Err(rejected(ERR_UNC));
@@ -317,7 +402,7 @@ fn validate_source(source: &Path, app_data: &Path) -> Result<(PathBuf, String), 
     if root.join(".gitmodules").exists() {
         return Err(rejected(ERR_SUBMODULES));
     }
-    if !git_text(&root, &["submodule", "status"])?.is_empty() {
+    if has_gitlinks(&root)? {
         return Err(rejected(ERR_SUBMODULES));
     }
     if !git_text(&root, &["status", "--porcelain"])?.is_empty() {
@@ -401,6 +486,32 @@ const SNAPSHOT_MAX_ENTRIES: usize = 500_000;
 /// Do tylu bajtów plik nieśledzony jest haszowany w całości (strumieniowo).
 const SNAPSHOT_CONTENT_LIMIT: u64 = 8 * 1024 * 1024;
 
+/// Wspólny katalog Git repozytorium źródłowego, pamiętany na czas procesu: bez
+/// tego każda operacja na worktree płaciła osobne uruchomienie `git rev-parse`
+/// (kilkanaście na przebieg), co na wolnym starcie procesów zjadało budżet kroku.
+/// Wpis jest sprawdzany (katalog nadal istnieje), a `verify` i tak pilnuje `.git`.
+fn git_common_dir(source_repo: &Path) -> Result<PathBuf, WorkspaceError> {
+    static CACHE: std::sync::OnceLock<Mutex<std::collections::HashMap<PathBuf, PathBuf>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache
+        .lock()
+        .ok()
+        .and_then(|map| map.get(source_repo).cloned())
+        .filter(|dir| dir.is_dir())
+    {
+        return Ok(hit);
+    }
+    let common = PathBuf::from(git_text(
+        source_repo,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?);
+    if let Ok(mut map) = cache.lock() {
+        map.insert(source_repo.to_path_buf(), common.clone());
+    }
+    Ok(common)
+}
+
 /// Git w worktree przebiegu z jawnym `GIT_DIR` i `GIT_WORK_TREE` wyliczonymi z
 /// rezerwacji (repozytorium źródłowe jest zaufane, worktree nie). Podmieniony
 /// przez agenta plik `<wt>/.git` (np. katalog z własnym `core.fsmonitor`) nie
@@ -410,14 +521,13 @@ const SNAPSHOT_CONTENT_LIMIT: u64 = 8 * 1024 * 1024;
 pub struct WorktreeGit {
     work_tree: PathBuf,
     git_dir: PathBuf,
+    /// Anulowanie kroku: przerywa bieżące polecenie Git i przeglądanie plików.
+    cancel: Option<CancelToken>,
 }
 
 impl WorktreeGit {
     pub fn for_workspace(ws: &Workspace) -> Result<Self, WorkspaceError> {
-        let common = git_text(
-            &ws.source_repo,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )?;
+        let common = git_common_dir(&ws.source_repo)?;
         let name = ws
             .worktree_path
             .file_name()
@@ -427,7 +537,21 @@ impl WorktreeGit {
         Ok(Self {
             work_tree: ws.worktree_path.clone(),
             git_dir,
+            cancel: None,
         })
+    }
+
+    /// Polecenia przerywane tokenem anulowania kroku.
+    pub fn with_cancel(mut self, cancel: CancelToken) -> Self {
+        self.cancel = Some(cancel);
+        self
+    }
+
+    fn cancelled(&self) -> Result<(), WorkspaceError> {
+        match &self.cancel {
+            Some(c) if c.load(Ordering::SeqCst) => Err(WorkspaceError::Cancelled),
+            _ => Ok(()),
+        }
     }
 
     /// `<wt>/.git` musi być zwykłym plikiem `gitdir: <oczekiwany katalog>`.
@@ -467,12 +591,18 @@ impl WorktreeGit {
                 self.work_tree.to_string_lossy().into_owned(),
             ),
         ];
-        run_git(&self.work_tree, args, &env)
+        run_git_cancellable(&self.work_tree, args, &env, self.cancel.as_deref())
     }
 
     /// SHA-256 tego, co użytkownik akceptuje: diff worktree względem `base_commit`
     /// (z nowymi plikami przez intent-to-add). Bez zewnętrznych diffów i textconv.
     pub fn artifact_hash(&self, base_commit: &str) -> Result<String, WorkspaceError> {
+        self.diff(base_commit).map(|(_, hash)| hash)
+    }
+
+    /// Bajty diffu i ich SHA-256 (to samo polecenie co skrót, więc zgoda dotyczy
+    /// dokładnie tych bajtów, które zapisano jako artefakt).
+    pub fn diff(&self, base_commit: &str) -> Result<(Vec<u8>, String), WorkspaceError> {
         self.run(&["add", "-N", "."])?;
         let diff = self.run(&[
             "diff",
@@ -481,7 +611,8 @@ impl WorktreeGit {
             "--no-textconv",
             base_commit,
         ])?;
-        Ok(hex(Sha256::digest(&diff)))
+        let hash = hex(Sha256::digest(&diff));
+        Ok((diff, hash))
     }
 
     /// Skrót stanu worktree: status, diff względem HEAD oraz pliki nieśledzone,
@@ -497,6 +628,7 @@ impl WorktreeGit {
         let untracked = self.run(&["ls-files", "--others", "-z"])?;
         let mut budget = SNAPSHOT_MAX_ENTRIES;
         for name in untracked.split(|b| *b == 0).filter(|n| !n.is_empty()) {
+            self.cancelled()?;
             let relative = String::from_utf8_lossy(name).into_owned();
             let path = self.work_tree.join(relative.trim_end_matches('/'));
             hash_entry(&mut hasher, &path, &relative, &mut budget)?;
@@ -566,11 +698,19 @@ fn hash_entry(
 /// Dostęp silnika do rezerwacji z bazy.
 pub struct GitWorkspace {
     db: SharedDb,
+    /// Katalog danych aplikacji: tu zapisywane są artefakty diffu (E5).
+    app_data: Option<PathBuf>,
 }
 
 impl GitWorkspace {
     pub fn new(db: SharedDb) -> Self {
-        Self { db }
+        Self { db, app_data: None }
+    }
+
+    /// Włącza zapis diffu jako artefaktu przy każdym liczeniu skrótu.
+    pub fn with_app_data(mut self, app_data: PathBuf) -> Self {
+        self.app_data = Some(app_data);
+        self
     }
 
     fn worktree(&self, run_id: RunId) -> Result<(WorktreeGit, Workspace), WorkspaceError> {
@@ -582,13 +722,46 @@ impl GitWorkspace {
 
     /// Skrót artefaktu z typowanym błędem (naruszenie odróżnione od błędu zapisu).
     pub fn artifact_hash_checked(&self, run_id: RunId) -> Result<String, WorkspaceError> {
-        let (git, ws) = self.worktree(run_id)?;
-        git.artifact_hash(&ws.base_commit)
+        self.artifact_hash_with(run_id, None)
     }
 
-    /// Migawka worktree przebiegu (strażnik kroków tylko do odczytu).
-    pub fn snapshot(&self, run_id: RunId) -> Result<String, WorkspaceError> {
-        self.worktree(run_id)?.0.snapshot()
+    /// Jak [`Self::artifact_hash_checked`], przerywane anulowaniem kroku.
+    pub fn artifact_hash_with(
+        &self,
+        run_id: RunId,
+        cancel: Option<&CancelToken>,
+    ) -> Result<String, WorkspaceError> {
+        let (git, ws) = self.worktree(run_id)?;
+        let git = match cancel {
+            Some(c) => git.with_cancel(c.clone()),
+            None => git,
+        };
+        let (bytes, hash) = git.diff(&ws.base_commit)?;
+        if let Some(app_data) = &self.app_data {
+            super::artifacts::store_diff(
+                &self.db,
+                app_data,
+                run_id,
+                &bytes,
+                &hash,
+                crate::db::now(),
+            )
+            .map_err(|e| WorkspaceError::Storage(e.to_string()))?;
+        }
+        Ok(hash)
+    }
+
+    /// Migawka worktree przebiegu (strażnik kroków tylko do odczytu), przerywana
+    /// anulowaniem kroku.
+    pub fn snapshot_with(
+        &self,
+        run_id: RunId,
+        cancel: &CancelToken,
+    ) -> Result<String, WorkspaceError> {
+        self.worktree(run_id)?
+            .0
+            .with_cancel(cancel.clone())
+            .snapshot()
     }
 }
 

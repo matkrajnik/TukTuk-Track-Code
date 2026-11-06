@@ -41,8 +41,8 @@ const ALLOWED: &[&str] = &[
 /// Zmienne proxy: przechodzą tylko bez danych logowania w adresie.
 const PROXY_VARS: &[&str] = &["HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY"];
 
-/// Zmienna oznaczająca przebieg i wykonanie (obsługa w hooku: E5).
-pub const WORKFLOW_VAR: &str = "TUKTUK_TRACK_WORKFLOW";
+/// Zmienna oznaczająca przebieg i wykonanie; hook ją rozpoznaje (`hook_wire`) i pomija zdarzenia.
+pub const WORKFLOW_VAR: &str = crate::hook_wire::WORKFLOW_ENV;
 
 fn allowed(name: &str) -> bool {
     ALLOWED.iter().any(|a| a.eq_ignore_ascii_case(name))

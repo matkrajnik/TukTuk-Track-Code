@@ -25,7 +25,7 @@ use crate::support::{lock, replay_stored};
 mod decide;
 mod messages;
 
-pub use decide::{DecideError, DecideRequest, DecideResult};
+pub use decide::{DecideError, DecideRequest, DecideResult, MAX_APPROVAL_COMMENT_CHARS};
 use messages::MessageBuffer;
 pub use messages::{MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_PAYLOAD_BYTES, RUNNER_EVENT_BATCH};
 
@@ -462,6 +462,22 @@ impl Worker {
         inputs: &[InputRef],
     ) {
         let timeout = (self.config.step_timeout)(config);
+        // Krótka transakcja przed startem runnera; nigdy w trakcie jego pracy.
+        // Błąd bazy kończy krok `StorageError` bez startu agenta: krok bez celu
+        // użytkownika pracowałby na niepełnym promptcie. Brak celu (`Ok(None)`) jest
+        // dozwolony.
+        let goal = match self.repo.run_goal(run_id) {
+            Ok(goal) => goal,
+            Err(e) => {
+                self.report(&format!("Przebieg {run_id}: cel przebiegu: {e}"));
+                let outcome = RunnerOutcome::Failed {
+                    code: FailureCode::StorageError,
+                    message: "Nie udało się odczytać celu przebiegu z bazy; agent nie został uruchomiony."
+                        .into(),
+                };
+                return self.record_outcome(run_id, &execution_id, outcome);
+            }
+        };
         let request = RunRequest {
             run_id,
             execution_id: execution_id.clone(),
@@ -481,6 +497,7 @@ impl Worker {
             access: config.access,
             timeout,
             session_id: None,
+            goal,
         };
         let cancel = Arc::new(AtomicBool::new(false));
         self.current = Some(InFlight {
@@ -503,9 +520,14 @@ impl Worker {
                 return self.unresponsive_runner(run_id, &execution_id, &rx)
             }
         };
+        self.record_outcome(run_id, &execution_id, outcome);
+    }
+
+    /// Zapisuje wynik kroku; trwały błąd zapisu kończy przebieg (`fail_after_error`).
+    fn record_outcome(&self, run_id: RunId, execution_id: &str, outcome: RunnerOutcome) {
         let result = self.step_with(run_id, |_| {
             Some(Input::ExecutionResult {
-                execution_id: execution_id.clone(),
+                execution_id: execution_id.to_owned(),
                 outcome: outcome.clone(),
             })
         });

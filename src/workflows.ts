@@ -108,6 +108,14 @@ export async function importWorkflow(text: string): Promise<WorkflowDetail> {
   return sim.importWorkflow(text);
 }
 
+/** Graf opublikowanej wersji (to, co uruchomi start), a nie szkic. */
+export async function getWorkflowVersionGraph(
+  versionId: number,
+): Promise<WorkflowGraph> {
+  if (desktop) return invoke("workflow_version_graph", { versionId });
+  return sim.versionGraph(versionId);
+}
+
 /** Gotowość agentów opublikowanej wersji (CLI, wersje, sandbox); nie wywołuje modeli. */
 export async function workflowPreflight(
   versionId: number,

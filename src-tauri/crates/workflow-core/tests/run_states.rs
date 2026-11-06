@@ -5,6 +5,7 @@ use RunStatus::*;
 const ALLOWED: &[(RunStatus, RunStatus)] = &[
     (Queued, Running),
     (Queued, Cancelled),
+    (Queued, Failed),
     (Running, WaitingForApproval),
     (Running, Cancelling),
     (Running, Succeeded),
@@ -142,5 +143,22 @@ fn every_failure_code_has_a_polish_message() {
         FailureCode::InvalidDefinition,
     ] {
         assert!(!code.message().is_empty());
+    }
+}
+
+#[test]
+fn approval_resolved_without_comment_still_replays() {
+    use workflow_core::engine::RunEvent;
+    let old = serde_json::json!({
+        "type": "approvalResolved",
+        "approvalId": "a1",
+        "decision": "reject",
+        "status": "rejected",
+        "requestId": "r1"
+    });
+    let event: RunEvent = serde_json::from_value(old).unwrap();
+    match event {
+        RunEvent::ApprovalResolved { comment, .. } => assert_eq!(comment, None),
+        other => panic!("{other:?}"),
     }
 }

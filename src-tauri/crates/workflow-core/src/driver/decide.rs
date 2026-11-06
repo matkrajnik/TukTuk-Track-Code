@@ -3,7 +3,7 @@
 use std::fmt;
 
 use super::{DriverError, Worker};
-use crate::engine::{Input, RunEvent};
+use crate::engine::{normalize_comment, Input, RunEvent};
 use crate::ports::{RepoError, RunId};
 use crate::run::{ApprovalStatus, Decision, RunStatus};
 
@@ -20,7 +20,11 @@ pub struct DecideRequest {
     pub expected_revision: u64,
     /// Skrót artefaktu, który zobaczył użytkownik.
     pub artifact_hash: String,
+    /// Komentarz do decyzji (do `MAX_APPROVAL_COMMENT_CHARS` znaków).
+    pub comment: Option<String>,
 }
+
+pub const MAX_APPROVAL_COMMENT_CHARS: usize = 2000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecideResult {
@@ -32,6 +36,9 @@ pub struct DecideResult {
 pub enum DecideError {
     NotFound,
     Conflict,
+    /// Klient widział starszą rewizję przebiegu: decyzja nie przechodzi, przebieg
+    /// dalej czeka, a interfejs odświeża zgodę (jak przy unieważnieniu).
+    Stale,
     /// Artefakt zmienił się: zgoda unieważniona, przebieg prosi o nową.
     Invalidated,
     InvalidState(String),
@@ -45,6 +52,9 @@ impl fmt::Display for DecideError {
             DecideError::Conflict => {
                 f.write_str("Zgoda została już rozstrzygnięta albo przebieg się zmienił.")
             }
+            DecideError::Stale => f.write_str(
+                "Przebieg zmienił się od ostatniego odczytu. Przejrzyj zgodę jeszcze raz.",
+            ),
             DecideError::Invalidated => f.write_str(
                 "Zmiany w katalogu roboczym unieważniły zgodę. Przejrzyj je jeszcze raz.",
             ),
@@ -68,6 +78,20 @@ impl Worker {
         &mut self,
         request: &DecideRequest,
     ) -> Result<DecideResult, DecideError> {
+        let comment = normalize_comment(request.comment.clone());
+        if comment
+            .as_deref()
+            .is_some_and(|c| c.chars().count() > MAX_APPROVAL_COMMENT_CHARS)
+        {
+            return Err(DecideError::InvalidState(format!(
+                "Komentarz jest za długi (limit {MAX_APPROVAL_COMMENT_CHARS} znaków)."
+            )));
+        }
+        if request.decision == Decision::Reject && comment.is_none() {
+            return Err(DecideError::InvalidState(
+                "Odrzucenie wymaga komentarza.".into(),
+            ));
+        }
         let (_, state) = self.load(request.run_id).map_err(storage)?;
         let approval = state
             .approval(&request.approval_id)
@@ -92,7 +116,7 @@ impl Worker {
             };
         }
         if request.expected_revision != state.event_count {
-            return Err(DecideError::Conflict);
+            return Err(DecideError::Stale);
         }
         let current_hash = self
             .workspace
@@ -104,6 +128,7 @@ impl Worker {
                     approval_id: request.approval_id.clone(),
                     decision: request.decision,
                     request_id: Some(request.request_id.clone()),
+                    comment: comment.clone(),
                     artifact_hash: request.artifact_hash.clone(),
                     current_hash: current_hash.clone(),
                 })

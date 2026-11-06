@@ -61,6 +61,8 @@ pub struct View {
     pub section: Option<&'static str>,
     /// Plan i historia → Zamknięcie dnia (dzisiaj).
     pub day_close: bool,
+    /// Przebieg Workflows do otwarcia w monitorze (`view: "workflow-runs"`).
+    pub run: Option<i64>,
 }
 
 impl View {
@@ -1733,7 +1735,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&m[1].open).unwrap(),
             json!({"view": "tasks", "filter": null, "task": 2, "split": null,
-                   "section": null, "dayClose": false})
+                   "section": null, "dayClose": false, "run": null})
         );
         assert_eq!(
             serde_json::to_value(View::day_close()).unwrap()["dayClose"],
@@ -1748,7 +1750,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&settings).unwrap(),
             json!({"view": "settings", "filter": null, "task": null, "split": null,
-                   "section": "notifications", "dayClose": false})
+                   "section": "notifications", "dayClose": false, "run": null})
         );
     }
 
@@ -2028,7 +2030,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&m.open).unwrap(),
             json!({"view": "journal", "filter": null, "task": null, "split": null,
-                   "section": "morning", "dayClose": false})
+                   "section": "morning", "dayClose": false, "run": null})
         );
         // Drugi raz tego dnia nie przychodzi, także po restarcie.
         assert!(morning(&db, &s, "2026-10-15 08:00").is_none());
@@ -2173,7 +2175,7 @@ mod tests {
         assert_eq!(
             serde_json::to_value(&m.open).unwrap(),
             json!({"view": "journal", "filter": null, "task": null, "split": null,
-                   "section": "week-review", "dayClose": false})
+                   "section": "week-review", "dayClose": false, "run": null})
         );
         // Drugi raz w tym tygodniu nie przychodzi, także po restarcie; weekend nic.
         assert!(week(&db, &s, "2026-10-16 17:00").is_none());
@@ -2567,5 +2569,21 @@ mod tests {
             .tick(&db, &s, &Warsaw, at("2026-10-14 16:57"))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn command_open_view_keeps_run_id() {
+        let view = View {
+            view: Some("workflow-runs"),
+            run: Some(42),
+            ..View::default()
+        };
+        let value = serde_json::to_value(&view).unwrap();
+        assert_eq!(value["view"], json!("workflow-runs"));
+        assert_eq!(value["run"], json!(42));
+        assert_eq!(
+            serde_json::to_value(View::default()).unwrap()["run"],
+            json!(null)
+        );
     }
 }

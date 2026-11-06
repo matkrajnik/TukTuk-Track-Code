@@ -97,7 +97,31 @@ export interface TauriOptions {
    * `detail` to jedna gotowa (np. opublikowana) definicja dla `workflow_list`
    * i `workflow_get`, żeby panel gotowości działał na zastępczym IPC.
    */
-  workflows?: { unlocked?: boolean; key?: string; detail?: unknown };
+  workflows?: {
+    unlocked?: boolean;
+    key?: string;
+    detail?: unknown;
+    /** Grafy opublikowanych wersji (`workflow_version_graph`); domyślnie szkic `detail`. */
+    versionGraphs?: Record<number, unknown>;
+  };
+  /**
+   * Przebiegi Workflows (E5, `workflows/run_commands.rs`): lista i szczegóły zadane
+   * przez test, zdarzenia i diff po `runId`, wynik `workflow_start` oraz błąd startu.
+   * `workflow_decide` wzorowany na `driver/decide.rs`: ten sam `requestId` zwraca
+   * zapisany wynik, inna decyzja albo nieaktualna rewizja to konflikt, a
+   * `invalidate` zwraca błąd unieważnienia. Zmiana logiki w Rust wymaga zmiany tu.
+   */
+  workflowRuns?: {
+    runs?: any[];
+    details?: Record<number, any>;
+    events?: Record<number, any[]>;
+    diffs?: Record<string, any>;
+    startResult?: { runId: number; created: boolean };
+    startError?: string;
+    invalidate?: boolean;
+    /** Po decyzji przebieg prosi o kolejną zgodę (drugi węzeł zgody w tym samym przebiegu). */
+    followUpApproval?: boolean;
+  };
   /** Odpowiedź `workflow_preflight` (gotowość agentów zadana przez test). */
   preflight?: unknown[];
   /** Odpowiedź `workflow_preflight` dla konkretnych `versionId` (pierwszeństwo przed `preflight`). */
@@ -127,10 +151,12 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     notifications: options.notifications ?? [],
     preflight: options.preflight ?? [],
     preflightByVersion: options.preflightByVersion ?? {},
+    workflowRuns: options.workflowRuns ?? {},
     workflows: {
       unlocked: options.workflows?.unlocked ?? false,
       key: options.workflows?.key ?? TEST_WORKFLOWS_KEY,
       detail: options.workflows?.detail ?? null,
+      versionGraphs: options.workflows?.versionGraphs ?? {},
     },
   });
   await page.goto("/");
@@ -172,9 +198,15 @@ function install(init: {
   hidden: boolean;
   heartbeat: number | null;
   notifications: any[];
-  workflows: { unlocked: boolean; key: string; detail: any };
+  workflows: {
+    unlocked: boolean;
+    key: string;
+    detail: any;
+    versionGraphs: Record<number, any>;
+  };
   preflight: unknown[];
   preflightByVersion: Record<number, unknown[]>;
+  workflowRuns: any;
 }) {
   const w = window as any;
   w.isTauri = true;
@@ -192,6 +224,9 @@ function install(init: {
   const findTemplate = (name: string) =>
     templates.find((t) => t.name.toLowerCase() === name.trim().toLowerCase());
   const clone = <T>(v: T): T => structuredClone(v);
+  /** Klucz repozytorium jak `runs::query::repo_key` (bez kanonikalizacji dysku). */
+  const repoKey = (path: string): string =>
+    path.trim().replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
 
   // Zdarzenia: `listen` rejestruje callback przez transformCallback.
   const callbacks = new Map<number, (payload: any) => void>();
@@ -623,6 +658,8 @@ function install(init: {
     snapshot: () => clone(snapshot),
     calls: () => clone(calls),
   };
+  /** Stan przebiegów fixture (test może zmienić status przed zdarzeniem `workflow-event`). */
+  w.__workflowRunsState = init.workflowRuns;
   w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   w.__TAURI_INTERNALS__ = {
     metadata: {
@@ -741,6 +778,136 @@ function install(init: {
           );
           if (hold) await hold;
           return result;
+        }
+        // Jak `workflows::workflow_version_graph`: tylko po odblokowaniu, wersja z `detail`.
+        case "workflow_version_graph": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          const detail = init.workflows.detail;
+          const known = detail?.versions?.some((v: any) => v.id === args.versionId);
+          if (!known) throw "Nie znaleziono wersji procesu.";
+          return clone(init.workflows.versionGraphs?.[args.versionId] ?? detail.draft);
+        }
+        // Przebiegi (`workflows::run_commands`): historia i anulowanie bez klucza,
+        // start, decyzja i artefakt po odblokowaniu. Żadna z tych komend nie rusza timera.
+        case "workflow_runs": {
+          const f = args.filter ?? {};
+          let list = clone(init.workflowRuns.runs ?? []);
+          if (f.status?.length) list = list.filter((r: any) => f.status.includes(r.status));
+          if (f.workflowId != null) list = list.filter((r: any) => r.workflowId === f.workflowId);
+          if (f.taskId != null) list = list.filter((r: any) => r.taskId === f.taskId);
+          // Jak `runs::query::repo_key`: bez wielkości liter, oba separatory
+          // równoważne, bez końcowego separatora; porównanie dosłowne (bez wzorców).
+          if (f.repo?.trim()) {
+            const key = repoKey(f.repo);
+            list = list.filter((r: any) => r.repo != null && repoKey(r.repo) === key);
+          }
+          if (f.from != null) list = list.filter((r: any) => r.createdAt >= f.from);
+          if (f.to != null) list = list.filter((r: any) => r.createdAt <= f.to);
+          if (f.beforeId != null) list = list.filter((r: any) => r.id < f.beforeId);
+          list.sort((a: any, b: any) => b.id - a.id);
+          return list.slice(0, Math.min(f.limit ?? 100, 100));
+        }
+        case "workflow_run_get": {
+          const detail = init.workflowRuns.details?.[args.runId];
+          if (!detail) throw "Nie znaleziono przebiegu.";
+          // Hak testu: odpowiedź ze stanu z chwili wywołania, oddana po `__runGetHold`
+          // (odtwarza wyprzedzenie starszej odpowiedzi przez nowszą).
+          const snapshot = clone(detail);
+          const hold = w.__runGetHold;
+          if (hold) await hold;
+          return snapshot;
+        }
+        case "workflow_run_events": {
+          const all = init.workflowRuns.events?.[args.runId] ?? [];
+          return clone(
+            all.filter((e: any) => e.sequence > args.after).slice(0, args.limit ?? 500),
+          );
+        }
+        // Jak `run_commands::cancel`: brak przebiegu i stan końcowy (lista z
+        // `RunStatus::is_terminal`) to błąd, `cancelling` to cichy sukces.
+        case "workflow_cancel": {
+          const detail = init.workflowRuns.details?.[args.runId];
+          const status =
+            detail?.summary.status ??
+            init.workflowRuns.runs?.find((r: any) => r.id === args.runId)?.status;
+          if (!status) throw "Nie znaleziono przebiegu.";
+          if (["succeeded", "rejected", "failed", "cancelled", "interrupted"].includes(status))
+            throw "Przebieg już się zakończył.";
+          w.__workflowCancels = (w.__workflowCancels ?? 0) + 1;
+          return null;
+        }
+        case "workflow_start": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          if (init.workflowRuns.startError) throw init.workflowRuns.startError;
+          w.__workflowStarts = (w.__workflowStarts ?? []).concat(clone(args.request));
+          // Jak `service::read_phase`: ten sam requestId z inną wersją to konflikt.
+          const seen: Record<string, number> = (w.__workflowRequestIds ??= {});
+          const previous = seen[args.request.requestId];
+          if (previous !== undefined && previous !== args.request.versionId)
+            throw "Ten identyfikator żądania został użyty przy innym procesie.";
+          const created = previous === undefined;
+          if (created) seen[args.request.requestId] = args.request.versionId;
+          const base = init.workflowRuns.startResult ?? { runId: 1, created: true };
+          return { runId: base.runId, created };
+        }
+        case "workflow_artifact_read": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          const diff = init.workflowRuns.diffs?.[args.artifactHash];
+          if (!diff) throw "Nie znaleziono artefaktu tego przebiegu.";
+          return { redacted: 0, ...clone(diff) };
+        }
+        // Jak `driver/decide.rs`: komentarz przycięty, odrzucenie bez niego to błąd,
+        // requestId użyty przy innej zgodzie to konflikt, powtórka zwraca zapisany
+        // wynik, a nieaktualna rewizja to błąd z prefiksem unieważnienia.
+        case "workflow_decide": {
+          if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
+          const c = args.command;
+          const comment = (c.comment ?? "").trim() || null;
+          if (c.decision === "reject" && !comment) throw "Odrzucenie wymaga komentarza.";
+          const detail = init.workflowRuns.details?.[c.runId];
+          const approval = detail?.approvals.find((a: any) => a.id === c.approvalId);
+          if (!approval) throw "Nie znaleziono zgody.";
+          const conflict = "Zgoda została już rozstrzygnięta albo przebieg się zmienił.";
+          const saved = (w.__workflowDecisions ??= {});
+          const known = saved[c.requestId];
+          if (known && known.approvalId !== c.approvalId) throw conflict;
+          if (approval.status !== "pending") {
+            if (!known) throw conflict;
+            return clone(known.result);
+          }
+          if (c.expectedRevision !== detail.revision)
+            throw "Zgoda unieważniona: Przebieg zmienił się od ostatniego odczytu. Przejrzyj zgodę jeszcze raz.";
+          if (init.workflowRuns.invalidate)
+            throw "Zgoda unieważniona: Zmiany w katalogu roboczym unieważniły zgodę. Przejrzyj je jeszcze raz.";
+          const approvalStatus = c.decision === "approve" ? "approved" : "rejected";
+          const followUp = init.workflowRuns.followUpApproval && c.decision === "approve";
+          const result = {
+            approvalStatus,
+            runStatus: followUp
+              ? "waitingForApproval"
+              : c.decision === "approve"
+                ? "succeeded"
+                : "rejected",
+          };
+          saved[c.requestId] = { approvalId: c.approvalId, result };
+          w.__workflowDecideCount = (w.__workflowDecideCount ?? 0) + 1;
+          w.__workflowDecideRequests = (w.__workflowDecideRequests ?? []).concat(c.requestId);
+          approval.status = approvalStatus;
+          approval.comment = comment;
+          detail.revision += 2;
+          if (followUp) {
+            init.workflowRuns.followUpApproval = false;
+            detail.approvals.push({
+              ...approval,
+              id: `${approval.id}-next`,
+              status: "pending",
+              comment: null,
+            });
+          } else {
+            detail.summary.status = result.runStatus;
+            detail.summary.waitingApproval = false;
+          }
+          return clone(result);
         }
         case "notification_log":
           return clone(inbox);

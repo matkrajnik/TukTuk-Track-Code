@@ -4,6 +4,8 @@
  * połączenia z nazwami wyjść, przeciąganie kroków, powiększenie i dopasowanie.
  * Pozycje nie mają znaczenia wykonawczego. Pełną edycję klawiaturą daje lista
  * kroków obok; tutaj kliknięcie wybiera krok, a przeciągnięcie go przesuwa.
+ * Tryb `readonly` (monitor przebiegu, E5): bez przeciągania i wyboru, ze statusem
+ * każdego kroku tekstem w węźle i w opisie dostępności grafu.
  */
 import { computed, nextTick, onMounted, ref } from "vue";
 import { Maximize2, ZoomIn, ZoomOut } from "lucide-vue-next";
@@ -19,6 +21,10 @@ const props = defineProps<{
   selected: string | null;
   /** Kroki z problemami walidacji (obramowanie i znak „!”). */
   problems: ReadonlySet<string>;
+  /** Tylko do odczytu: węzłów nie da się przeciągać ani wybierać. */
+  readonly?: boolean;
+  /** Status kroku tekstem (id węzła → etykieta), np. w monitorze przebiegu. */
+  statuses?: Readonly<Record<string, string>>;
 }>();
 const emit = defineEmits<{
   select: [id: string];
@@ -112,7 +118,7 @@ let start: { id: string; clientX: number; clientY: number; x: number; y: number 
   null;
 
 function onPointerDown(node: WorkflowNode, e: PointerEvent) {
-  if (e.button !== 0) return;
+  if (props.readonly || e.button !== 0) return;
   (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
   start = {
     id: node.id,
@@ -145,10 +151,18 @@ function onPointerUp() {
   else emit("select", id);
 }
 
-const summary = computed(
-  () =>
-    `Graf procesu: ${props.graph.nodes.length} kroków, ${props.graph.edges.length} połączeń. Edycja klawiaturą na liście kroków.`,
-);
+function statusOf(node: WorkflowNode): string | null {
+  return props.statuses?.[node.id] ?? null;
+}
+
+const summary = computed(() => {
+  const head = `Graf procesu: ${props.graph.nodes.length} kroków, ${props.graph.edges.length} połączeń.`;
+  if (!props.statuses) return `${head} Edycja klawiaturą na liście kroków.`;
+  const steps = props.graph.nodes
+    .map((n) => `${n.label}: ${statusOf(n) ?? "nie uruchomiony"}`)
+    .join("; ");
+  return `${head} Stan kroków: ${steps}.`;
+});
 </script>
 
 <template>
@@ -233,6 +247,7 @@ const summary = computed(
           :class="[
             `wf-node-${node.kind.type}`,
             {
+              readonly,
               selected: node.id === selected,
               problem: problems.has(node.id),
               dragging: dragging?.id === node.id,
@@ -243,7 +258,8 @@ const summary = computed(
         >
           <rect :width="NODE_W" :height="NODE_H" rx="8" />
           <text x="12" y="20" class="wf-node-type">
-            {{ nodeTypeNames[node.kind.type] }}{{ problems.has(node.id) ? " · !" : "" }}
+            {{ nodeTypeNames[node.kind.type] }}{{ problems.has(node.id) ? " · !" : ""
+            }}{{ statuses ? ` · ${statusOf(node) ?? "nie uruchomiony"}` : "" }}
           </text>
           <text x="12" y="39" class="wf-node-label">
             {{ node.label.length > 22 ? node.label.slice(0, 21) + "…" : node.label }}
@@ -304,6 +320,9 @@ svg {
 }
 .wf-node {
   cursor: grab;
+}
+.wf-node.readonly {
+  cursor: default;
 }
 .wf-node.dragging {
   cursor: grabbing;

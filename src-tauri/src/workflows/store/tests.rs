@@ -30,8 +30,8 @@ fn init_is_idempotent_and_records_module_schema() {
             r.get(0)
         })
         .unwrap();
-    // Wersje 1 (definicje), 2 (przebiegi, E3) i 3 (katalogi robocze, E4).
-    assert_eq!(versions, 3);
+    // Wersje 1 (definicje), 2 (przebiegi, E3), 3 (katalogi robocze, E4) i 4 (cel, artefakty, E5).
+    assert_eq!(versions, 4);
 }
 
 #[test]
@@ -277,4 +277,133 @@ fn copy_of_long_name_keeps_suffix() {
     let name = get(&db, copy).unwrap().summary.name;
     assert!(name.ends_with(" (kopia)"));
     assert_eq!(name.chars().count(), MAX_NAME_CHARS);
+}
+
+fn has_column(db: &Connection, table: &str, column: &str) -> bool {
+    db.prepare(&format!(
+        "SELECT 1 FROM pragma_table_info('{table}') WHERE name = '{column}'"
+    ))
+    .unwrap()
+    .exists([])
+    .unwrap()
+}
+
+#[test]
+fn migration_4_adds_goal_and_artifacts_and_is_idempotent() {
+    let db = db();
+    init_tables(&db).unwrap();
+    init_tables(&db).unwrap();
+    assert!(has_column(&db, "workflow_runs", "goal"));
+    assert!(has_column(&db, "workflow_artifacts", "rel_path"));
+    let bad = db.execute(
+        "INSERT INTO workflow_artifacts(run_id, kind, hash, rel_path, size, created_at) VALUES(1, 'zip', 'h', 'p', 1, 1)",
+        [],
+    );
+    assert!(bad.is_err(), "kind poza 'diff' jest odrzucany");
+}
+
+/// Wszystkie wiersze tabeli w podanych kolumnach jako tekst (porównanie treści).
+fn dump(db: &Connection, table: &str, columns: &[String]) -> Vec<Vec<String>> {
+    let sql = format!("SELECT {} FROM {table} ORDER BY rowid", columns.join(", "));
+    let mut statement = db.prepare(&sql).unwrap();
+    let rows = statement
+        .query_map([], |row| {
+            (0..columns.len())
+                .map(|i| {
+                    row.get::<_, rusqlite::types::Value>(i)
+                        .map(|v| format!("{v:?}"))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .unwrap();
+    rows.collect::<Result<Vec<_>, _>>().unwrap()
+}
+
+fn columns(db: &Connection, table: &str) -> Vec<String> {
+    let mut statement = db
+        .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+        .unwrap();
+    let names = statement.query_map([], |r| r.get(0)).unwrap();
+    names.collect::<Result<Vec<String>, _>>().unwrap()
+}
+
+fn has_migration(db: &Connection, version: i64) -> bool {
+    db.prepare("SELECT 1 FROM workflow_schema_migrations WHERE version = ?1")
+        .unwrap()
+        .exists([version])
+        .unwrap()
+}
+
+/// Baza w stanie E4 (bez `goal`, bez `workflow_artifacts`, bez wpisu migracji 4)
+/// z zadaniem, wpisem czasu, przebiegiem i jego zdarzeniami: migracja 4 (także
+/// powtórzona) zachowuje treść tych tabel i zapisuje wpis wersji 4.
+#[test]
+fn migration_4_keeps_existing_tasks_sessions_and_runs() {
+    let mut db = db();
+    crate::db::change(&mut db, "add", None, Some("Zadanie".into()), 0).unwrap();
+    let task: i64 = db
+        .query_row("SELECT id FROM tasks", [], |r| r.get(0))
+        .unwrap();
+    db.execute(
+        "INSERT INTO sessions(task_id, started_at, ended_at) VALUES(?1, 1000, 61000)",
+        [task],
+    )
+    .unwrap();
+    let id = template(&db);
+    publish(&db, id, 1, 2).unwrap();
+    let version: i64 = db
+        .query_row("SELECT id FROM workflow_versions", [], |r| r.get(0))
+        .unwrap();
+    db.execute(
+        "INSERT INTO workflow_runs(version_id, request_id, definition_json, definition_hash, task_id, task_title, repo, status, created_at, updated_at) VALUES(?1, 'r', '{}', 'h', ?2, 'Zadanie', 'C:/repo', 'running', 1, 2)",
+        rusqlite::params![version, task],
+    )
+    .unwrap();
+    let run: i64 = db
+        .query_row("SELECT id FROM workflow_runs", [], |r| r.get(0))
+        .unwrap();
+    for (sequence, kind) in [(1, "runCreated"), (2, "runStateChanged")] {
+        db.execute(
+            "INSERT INTO workflow_events(run_id, sequence, type, payload_json, created_at) VALUES(?1, ?2, ?3, '{}', ?2)",
+            rusqlite::params![run, sequence, kind],
+        )
+        .unwrap();
+    }
+    // Stan E4: bez kolumny `goal`, bez tabeli artefaktów i bez wpisu migracji 4.
+    db.execute("DROP TABLE workflow_artifacts", []).unwrap();
+    db.execute("ALTER TABLE workflow_runs DROP COLUMN goal", [])
+        .unwrap();
+    db.execute(
+        "DELETE FROM workflow_schema_migrations WHERE version = 4",
+        [],
+    )
+    .unwrap();
+    assert!(!has_column(&db, "workflow_runs", "goal"));
+    assert!(!has_migration(&db, 4));
+    let tables = ["tasks", "sessions", "workflow_runs", "workflow_events"];
+    let before: Vec<(Vec<String>, Vec<Vec<String>>)> = tables
+        .iter()
+        .map(|t| {
+            let cols = columns(&db, t);
+            let rows = dump(&db, t, &cols);
+            (cols, rows)
+        })
+        .collect();
+    assert!(before.iter().all(|(_, rows)| !rows.is_empty()));
+
+    init_tables(&db).unwrap();
+    init_tables(&db).unwrap();
+
+    assert!(has_column(&db, "workflow_runs", "goal"));
+    assert!(has_column(&db, "workflow_artifacts", "rel_path"));
+    assert!(has_migration(&db, 4));
+    for (table, (cols, rows)) in tables.iter().zip(&before) {
+        assert_eq!(&dump(&db, table, cols), rows, "{table}");
+    }
+    let goal: Option<String> = db
+        .query_row("SELECT goal FROM workflow_runs WHERE id = ?1", [run], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(goal, None);
 }

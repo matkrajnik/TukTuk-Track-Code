@@ -51,7 +51,7 @@ impl RunStatus {
     pub fn can_transition_to(self, next: RunStatus) -> bool {
         use RunStatus::*;
         match self {
-            Queued => matches!(next, Running | Cancelled),
+            Queued => matches!(next, Running | Cancelled | Failed),
             Running => matches!(
                 next,
                 WaitingForApproval | Cancelling | Succeeded | Rejected | Failed | Interrupted
@@ -150,6 +150,7 @@ pub enum FailureCode {
     ReviewLimitExceeded,
     Interrupted,
     InvalidDefinition,
+    WorkspaceUnavailable,
 }
 
 impl FailureCode {
@@ -173,6 +174,9 @@ impl FailureCode {
                  anulowanie); koniec kroku nie jest potwierdzony."
             }
             FailureCode::InvalidDefinition => "Definicja procesu jest niepoprawna.",
+            FailureCode::WorkspaceUnavailable => {
+                "Nie udało się przygotować katalogu roboczego przebiegu."
+            }
         }
     }
 }

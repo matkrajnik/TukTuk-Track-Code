@@ -229,7 +229,8 @@ export type WorkflowFailureCode =
   | "storageError"
   | "reviewLimitExceeded"
   | "interrupted"
-  | "invalidDefinition";
+  | "invalidDefinition"
+  | "workspaceUnavailable";
 
 /** `workflows::preflight::NodeReadiness`: gotowość jednego węzła agenta. */
 export interface NodeReadiness {

@@ -72,7 +72,6 @@ impl Database {
     }
 
     /// Ta sama blokada dla kodu poza komendami Tauri (np. `SqliteRunRepository`).
-    #[cfg_attr(not(test), allow(dead_code))]
     fn shared(&self) -> Arc<Mutex<rusqlite::Connection>> {
         Arc::clone(&self.0)
     }
@@ -553,6 +552,7 @@ fn main() {
             gap::setup(app.handle(), stopped_after_gap);
             agents::setup(app.handle());
             agent_board::setup(app.handle());
+            workflows::runtime::setup(app.handle());
             ai::setup(app.handle());
             assign::setup(app.handle());
             mcp::setup(app.handle());
@@ -707,6 +707,14 @@ fn main() {
             workflows::workflow_export,
             workflows::workflow_import,
             workflows::workflow_preflight,
+            workflows::workflow_version_graph,
+            workflows::run_commands::workflow_start,
+            workflows::run_commands::workflow_runs,
+            workflows::run_commands::workflow_run_get,
+            workflows::run_commands::workflow_run_events,
+            workflows::run_commands::workflow_cancel,
+            workflows::run_commands::workflow_decide,
+            workflows::run_commands::workflow_artifact_read,
             hooks::agent_hooks_status,
             api::external_api_info,
             browser::browser_status,
@@ -911,6 +919,7 @@ mod tests {
             "gap::setup(",
             "agents::setup(",
             "agent_board::setup(",
+            "workflows::runtime::setup(",
             "hooks::setup(",
             "notify::setup(",
         ] {
@@ -920,6 +929,19 @@ mod tests {
                 "{call} (manage) musi być przed create_windows"
             );
         }
+    }
+
+    /// Silnik przebiegów Workflows czyta bazę przez `Database::shared()`, więc jego
+    /// `setup` musi przyjść po `manage(Database)`.
+    #[test]
+    fn workflow_runtime_setup_runs_after_manage_database() {
+        let source = include_str!("main.rs");
+        let setup = &source[source.find(".setup(|app| {").unwrap()..];
+        let manage = setup.find("app.manage(Database::new(").unwrap();
+        let runtime = setup
+            .find("workflows::runtime::setup(")
+            .expect("brak workflows::runtime::setup");
+        assert!(runtime > manage);
     }
 
     /// Błąd `gap::recover` przy starcie trafia do okna (`storage-error`) dopiero

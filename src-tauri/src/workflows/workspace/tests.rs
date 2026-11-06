@@ -14,6 +14,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 /// Unikalny katalog testu; nazwa ze spacją i polskimi znakami.
 struct Sandbox {
     root: PathBuf,
+    _git: crate::workflows::test_git::GitPermit,
 }
 
 impl Sandbox {
@@ -21,7 +22,10 @@ impl Sandbox {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let root = std::env::temp_dir().join(format!("tuktuk wf żółć {}-{n}", std::process::id()));
         std::fs::create_dir_all(&root).expect("katalog testu");
-        Self { root }
+        Self {
+            root,
+            _git: crate::workflows::test_git::GitPermit::acquire(),
+        }
     }
 
     fn app_data(&self) -> PathBuf {
@@ -189,6 +193,43 @@ fn directory_without_git_and_repo_with_submodules_are_rejected() {
         1,
     ));
     assert!(text.contains("submodułami"));
+}
+
+/// Podmoduł zapisany tylko w indeksie (bez `.gitmodules`) też jest odrzucany:
+/// sprawdzenie idzie przez `ls-files --stage` (tryb 160000), nie przez skrypt
+/// `git submodule`, który pod obciążeniem przekraczał limit czasu.
+#[test]
+fn gitlink_in_the_index_without_gitmodules_is_rejected() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let repo = sb.repo("gitlink");
+    let head = g(&repo, &["rev-parse", "HEAD"]);
+    g(
+        &repo,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{head},modul"),
+        ],
+    );
+    g(&repo, &["commit", "-q", "-m", "gitlink"]);
+    assert!(!repo.join(".gitmodules").exists());
+    let text = rejected_text(prepare_workspace(
+        &env.db,
+        &repo,
+        &sb.app_data(),
+        env.run("gl"),
+        1,
+    ));
+    assert!(text.contains("submodułami"), "{text}");
+}
+
+#[test]
+fn source_validation_does_not_run_the_submodule_script() {
+    let sb = Sandbox::new();
+    let repo = sb.repo("bez-modulow");
+    assert!(!has_gitlinks(&repo).expect("ls-files"));
 }
 
 #[test]
@@ -463,4 +504,231 @@ fn failed_reservation_after_worktree_add_leaves_no_orphaned_worktree() {
     // Po zwolnieniu blokady ponowna próba się udaje (bez Conflict na target.exists()).
     release(&env.db, blocker, 3).expect("release");
     assert!(prepare_workspace(&env.db, &repo, &app, run, 4).is_ok());
+}
+
+// --- E5: artefakt diffu adresowany skrótem -------------------------------------
+
+use crate::workflows::artifacts::{read_diff, ArtifactError, MAX_DIFF_VIEW_BYTES};
+
+/// Worktree z jedną zmianą i `GitWorkspace` zapisujący artefakty.
+fn edited_workspace(sb: &Sandbox, env: &Env, request: &str) -> (RunId, Workspace, GitWorkspace) {
+    let repo = sb.repo(&format!("repo-{request}"));
+    let run = env.run(request);
+    let ws = prepare_workspace(&env.db, &repo, &sb.app_data(), run, 1).expect("ws");
+    std::fs::write(ws.worktree_path.join("a.txt"), "dwa\n").expect("zapis");
+    let access = GitWorkspace::new(env.db.clone()).with_app_data(sb.app_data());
+    (run, ws, access)
+}
+
+fn count_artifacts(env: &Env) -> i64 {
+    env.db
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM workflow_artifacts", [], |r| r.get(0))
+        .unwrap()
+}
+
+#[test]
+fn artifact_hash_equals_hash_of_stored_diff() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, _, access) = edited_workspace(&sb, &env, "h");
+    let hash = access.artifact_hash(run).expect("hash");
+    let view = read_diff(&env.db, &sb.app_data(), run, &hash, MAX_DIFF_VIEW_BYTES).expect("diff");
+    assert_eq!(view.hash, hash);
+    assert!(!view.truncated);
+    assert!(view.text.contains("+dwa"));
+    let bytes = std::fs::read(
+        sb.app_data()
+            .join(format!("workflows/runs/{run}/diff-{hash}.patch")),
+    )
+    .expect("plik");
+    assert_eq!(hex(Sha256::digest(&bytes)), hash);
+}
+
+#[test]
+fn stored_diff_is_written_once_per_hash() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, _, access) = edited_workspace(&sb, &env, "once");
+    let first = access.artifact_hash(run).expect("hash");
+    access.artifact_hash(run).expect("hash");
+    assert_eq!(count_artifacts(&env), 1);
+    let dir = sb.app_data().join(format!("workflows/runs/{run}"));
+    let files: Vec<_> = std::fs::read_dir(dir).unwrap().collect();
+    assert_eq!(files.len(), 1, "bez pozostałych plików tymczasowych");
+    assert!(first.len() == 64);
+}
+
+#[test]
+fn read_diff_rejects_unknown_hash_and_other_run() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, _, access) = edited_workspace(&sb, &env, "unk");
+    let hash = access.artifact_hash(run).expect("hash");
+    let other = env.run("inny");
+    let app = sb.app_data();
+    assert_eq!(
+        read_diff(&env.db, &app, other, &hash, 10).unwrap_err(),
+        ArtifactError::Unknown
+    );
+    assert_eq!(
+        read_diff(&env.db, &app, run, &"0".repeat(64), 10).unwrap_err(),
+        ArtifactError::Unknown
+    );
+    // Ścieżka zamiast skrótu nie jest akceptowana.
+    assert_eq!(
+        read_diff(&env.db, &app, run, "../../x", 10).unwrap_err(),
+        ArtifactError::Unknown
+    );
+}
+
+#[test]
+fn read_diff_reports_tampered_file() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, _, access) = edited_workspace(&sb, &env, "tamper");
+    let hash = access.artifact_hash(run).expect("hash");
+    let file = sb
+        .app_data()
+        .join(format!("workflows/runs/{run}/diff-{hash}.patch"));
+    std::fs::write(&file, "podmieniony").expect("zapis");
+    let err = read_diff(&env.db, &sb.app_data(), run, &hash, 100).unwrap_err();
+    assert_eq!(err, ArtifactError::Unavailable);
+    assert!(err.to_string().contains("niedostępny lub uszkodzony"));
+    std::fs::remove_file(&file).expect("usunięcie");
+    assert_eq!(
+        read_diff(&env.db, &sb.app_data(), run, &hash, 100).unwrap_err(),
+        ArtifactError::Unavailable
+    );
+}
+
+#[test]
+fn read_diff_truncates_with_flag() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, _, access) = edited_workspace(&sb, &env, "trunc");
+    let hash = access.artifact_hash(run).expect("hash");
+    let view = read_diff(&env.db, &sb.app_data(), run, &hash, 20).expect("diff");
+    assert!(view.truncated);
+    assert!(view.text.len() <= 20);
+    assert!(view.size > 20);
+}
+
+#[test]
+fn artifacts_live_under_app_data_not_source_repo() {
+    let sb = Sandbox::new();
+    let env = Env::new();
+    let (run, ws, access) = edited_workspace(&sb, &env, "clean");
+    access.artifact_hash(run).expect("hash");
+    assert_eq!(g(&ws.source_repo, &["status", "--porcelain"]), "");
+    assert!(!ws.source_repo.join("workflows").exists());
+}
+
+#[test]
+fn git_calls_disable_fsmonitor_and_auto_gc() {
+    let spec = git_spec(Path::new("."), &["status"], &[]);
+    for needed in [
+        "core.fsmonitor=false",
+        "gc.auto=0",
+        "maintenance.auto=false",
+    ] {
+        assert!(spec.args.iter().any(|a| a == needed), "brak {needed}");
+    }
+    assert!(spec
+        .env
+        .iter()
+        .any(|(k, v)| k == "GIT_TERMINAL_PROMPT" && v == "0"));
+}
+
+#[test]
+fn run_git_returns_within_limit_when_grandchild_keeps_pipes_open() {
+    // Proces zastępczy: powłoka kończy się od razu, a wnuk (ping) trzyma potoki.
+    let spec = Spec {
+        program: PathBuf::from("cmd"),
+        args: vec![
+            "/c".into(),
+            "start".into(),
+            "/b".into(),
+            "ping".into(),
+            "-n".into(),
+            "30".into(),
+            "127.0.0.1".into(),
+        ],
+        stdin: String::new(),
+        cwd: None,
+        env: vec![],
+    };
+    let started = Instant::now();
+    // Wynik zależy od tego, czy wnuk zdążył do jobu (wtedy ginie i potoki się
+    // zamykają); w obu przypadkach wywołanie nie czeka na koniec wnuka.
+    let _ = run_with_limit(&spec, "fake", Duration::from_secs(2));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "wisi bez limitu"
+    );
+}
+
+/// Po przekroczeniu limitu ginie całe drzewo, nie tylko bezpośredni potomek:
+/// wnuk, który po 3 s zapisałby znacznik, nie zdąży tego zrobić.
+#[cfg(windows)]
+#[test]
+fn timeout_kills_the_whole_process_tree() {
+    // Katalog ASCII: `cmd` czyta skrypt w stronie kodowej OEM, nie w UTF-8.
+    let dir = std::env::temp_dir().join(format!("tuktuk-wf-tree-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("katalog");
+    let marker = dir.join("wnuk-zyje.txt");
+    let _ = std::fs::remove_file(&marker);
+    let script = dir.join("drzewo.cmd");
+    std::fs::write(
+        &script,
+        format!(
+            "@echo off
+start \"\" /b cmd /d /c \"ping -n 4 127.0.0.1 >nul & echo x> \"{}\"\"
+ping -n 30 127.0.0.1 >nul
+",
+            marker.display()
+        ),
+    )
+    .expect("skrypt");
+    let spec = Spec {
+        program: PathBuf::from("cmd"),
+        args: vec!["/d".into(), "/c".into(), script.display().to_string()],
+        stdin: String::new(),
+        cwd: Some(dir.clone()),
+        env: vec![],
+    };
+    let result = run_with_limit(&spec, "fake", Duration::from_millis(1500));
+    assert!(result.is_err(), "wynik: {result:?}");
+    std::thread::sleep(Duration::from_secs(5));
+    let survived = marker.exists();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!survived, "wnuk przeżył zakończenie po limicie");
+}
+
+/// Anulowanie kroku przerywa trwające polecenie (np. migawkę dużego repozytorium)
+/// od razu, a nie dopiero po limicie `GIT_TIMEOUT`.
+#[test]
+fn cancel_interrupts_a_running_command_quickly() {
+    let spec = Spec {
+        program: PathBuf::from("ping"),
+        args: vec!["-n".into(), "30".into(), "127.0.0.1".into()],
+        stdin: String::new(),
+        cwd: None,
+        env: vec![],
+    };
+    let cancel = AtomicBool::new(false);
+    let started = Instant::now();
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(Duration::from_millis(300));
+            cancel.store(true, Ordering::SeqCst);
+        });
+        run_with_cancel(&spec, "fake", Duration::from_secs(60), Some(&cancel))
+    });
+    assert_eq!(result, Err(WorkspaceError::Cancelled));
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "anulowanie czekało na koniec"
+    );
 }

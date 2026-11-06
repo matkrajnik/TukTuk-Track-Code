@@ -7,6 +7,7 @@
  */
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import ConfirmDialog from "../components/ConfirmDialog.vue";
+import WorkflowRunForm from "../components/workflows/WorkflowRunForm.vue";
 import WorkflowEditor from "../components/workflows/WorkflowEditor.vue";
 import type { View } from "../components/AppNav.vue";
 import {
@@ -21,7 +22,9 @@ import {
 import { TEMPLATE_NAME } from "../api/workflowTemplates";
 
 const props = defineProps<{ section: "overview" | "definitions" }>();
-const emit = defineEmits<{ open: [view: View] }>();
+const emit = defineEmits<{ open: [view: View]; run: [runId: number] }>();
+/** Proces, dla którego otwarto formularz uruchomienia. */
+const runFor = ref<number | null>(null);
 
 /** Ile procesów pokazuje Przegląd w „Ostatnio zmienione”. */
 const RECENT = 5;
@@ -293,9 +296,8 @@ const dialogLabel = computed(() => {
           </ul>
         </section>
         <p class="hint">
-          Uruchamianie procesów na zadaniach, monitor przebiegów i akceptacje
-          pojawią się w kolejnych etapach. Teraz możesz projektować i publikować
-          definicje.
+          Opublikowany proces uruchomisz z listy definicji; przebiegi i zgody
+          zobaczysz w „Uruchomieniach”.
         </p>
       </template>
 
@@ -335,6 +337,15 @@ const dialogLabel = computed(() => {
               <td>{{ stateText(w) }}</td>
               <td>{{ formatDate(w.updatedAt) }}</td>
               <td class="wf-row-actions">
+                <button
+                  v-if="w.archivedAt === null && w.publishedVersion !== null"
+                  type="button"
+                  class="primary-button"
+                  :aria-label="`Uruchom ${w.name}`"
+                  @click="runFor = w.id"
+                >
+                  Uruchom
+                </button>
                 <button
                   v-if="w.archivedAt === null"
                   type="button"
@@ -384,6 +395,17 @@ const dialogLabel = computed(() => {
       </template>
     </template>
 
+    <WorkflowRunForm
+      v-if="runFor !== null"
+      :workflow-id="runFor"
+      @close="runFor = null"
+      @started="
+        (id) => {
+          runFor = null;
+          emit('run', id);
+        }
+      "
+    />
     <!-- Okno montowane na czas otwarcia (useModal w ConfirmDialog): fokus
          w oknie, pułapka Tab, Esc i powrót fokusu do przycisku, który je otworzył. -->
     <ConfirmDialog

@@ -43,7 +43,12 @@ pub struct RunRequest {
     pub access: AccessProfile,
     pub timeout: Duration,
     pub session_id: Option<String>,
+    /// Opis celu przebiegu z formularza startu (do `MAX_GOAL_CHARS` znaków).
+    pub goal: Option<String>,
 }
+
+/// Limit opisu celu przebiegu (tak jak instrukcja kroku).
+pub const MAX_GOAL_CHARS: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Capabilities {
@@ -118,6 +123,7 @@ pub struct NewRun {
     pub repo: Option<String>,
     pub workspace: Option<String>,
     pub base_commit: Option<String>,
+    pub goal: Option<String>,
     pub now: i64,
 }
 
@@ -183,6 +189,10 @@ pub trait RunRepository: Send + Sync {
     fn last_sequence(&self, run_id: RunId) -> Result<u64, RepoError>;
     /// Przebiegi, które nie są w stanie końcowym, rosnąco po id.
     fn active_runs(&self) -> Result<Vec<RunId>, RepoError>;
+    /// Opis celu przebiegu; krótka transakcja, wołana przed startem runnera.
+    fn run_goal(&self, _run_id: RunId) -> Result<Option<String>, RepoError> {
+        Ok(None)
+    }
 }
 
 /// Magistrala zdarzeń: dostaje zdarzenie dopiero po udanym zapisie.

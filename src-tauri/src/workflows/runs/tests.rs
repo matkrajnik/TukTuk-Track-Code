@@ -167,6 +167,7 @@ impl Fixture {
             request_id: request.into(),
             expected_revision: state.event_count,
             artifact_hash: approval.artifact_hash.clone(),
+            comment: None,
         })
     }
 }
@@ -202,7 +203,7 @@ fn migration_of_a_v1_database_keeps_data_and_adds_run_tables() {
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_versions"), 1);
     assert_eq!(
         f.column("SELECT CAST(version AS TEXT) FROM workflow_schema_migrations ORDER BY version"),
-        ["1", "2", "3"]
+        ["1", "2", "3", "4"]
     );
     f.create("po-migracji");
     assert_eq!(f.scalar::<i64>("SELECT COUNT(*) FROM workflow_runs"), 1);
@@ -266,7 +267,7 @@ fn migration_2_to_3_keeps_runs_and_definitions_and_is_idempotent() {
     );
     assert_eq!(
         f.scalar::<i64>("SELECT COUNT(*) FROM workflow_schema_migrations"),
-        3
+        4
     );
     assert_eq!(
         sessions_before,
@@ -476,6 +477,7 @@ fn repeated_decision_writes_one_resolution_and_other_decision_conflicts() {
         request_id: "d1".into(),
         expected_revision: 0,
         artifact_hash: "h1".into(),
+        comment: None,
     });
     assert_eq!(
         first.map(|r| r.approval_status),
@@ -488,6 +490,7 @@ fn repeated_decision_writes_one_resolution_and_other_decision_conflicts() {
         request_id: "d2".into(),
         expected_revision: 0,
         artifact_hash: "h1".into(),
+        comment: Some("Inna decyzja".into()),
     });
     assert_eq!(other, Err(DecideError::Conflict));
     assert_eq!(
@@ -743,4 +746,255 @@ fn runner_messages_over_the_limit_leave_one_truncation_marker() {
         ),
         1
     );
+}
+
+#[test]
+fn create_run_stores_goal_and_returns_it() {
+    let f = Fixture::new();
+    let mut new = f.new_run("goal-1");
+    new.goal = Some("Napraw odejmowanie".into());
+    let run = f.repo.create_run(&new).unwrap().run_id;
+    assert_eq!(
+        f.repo.run_goal(run).unwrap().as_deref(),
+        Some("Napraw odejmowanie")
+    );
+    let without = f.create("goal-2");
+    assert_eq!(f.repo.run_goal(without).unwrap(), None);
+    assert_eq!(f.repo.run_goal(999), Err(RepoError::NotFound));
+}
+
+#[test]
+fn same_request_id_with_different_goal_returns_the_existing_run() {
+    let f = Fixture::new();
+    let mut first = f.new_run("same");
+    first.goal = Some("Cel A".into());
+    let a = f.repo.create_run(&first).unwrap();
+    let mut second = f.new_run("same");
+    second.goal = Some("Cel B".into());
+    let b = f.repo.create_run(&second).unwrap();
+    assert!(a.created && !b.created);
+    assert_eq!(a.run_id, b.run_id);
+    assert_eq!(f.repo.run_goal(a.run_id).unwrap().as_deref(), Some("Cel A"));
+}
+
+// --- E5: historia i szczegóły ---------------------------------------------------
+
+fn run_with(f: &Fixture, request: &str, task: Option<(i64, &str)>, repo: &str, now: i64) -> RunId {
+    let mut new = f.new_run(request);
+    new.task_id = task.map(|t| t.0);
+    new.task_title = task.map(|t| t.1.to_owned());
+    new.repo = Some(repo.into());
+    new.now = now;
+    f.repo.create_run(&new).unwrap().run_id
+}
+
+fn set_status(f: &Fixture, run: RunId, status: &str) {
+    f.db.lock()
+        .unwrap()
+        .execute(
+            "UPDATE workflow_runs SET status = ?1 WHERE id = ?2",
+            params![status, run],
+        )
+        .unwrap();
+}
+
+#[test]
+fn list_runs_filters_by_status_workflow_task_repo_and_date() {
+    let f = Fixture::new();
+    let a = run_with(&f, "a", Some((1, "Zadanie A")), "C:/a", 100);
+    let b = run_with(&f, "b", Some((2, "Zadanie B")), "C:/b", 200);
+    let c = run_with(&f, "c", None, "C:/a", 300);
+    set_status(&f, b, "succeeded");
+    let ids = |filter: RunFilter| -> Vec<i64> {
+        list_runs(&f.db, &filter)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.id)
+            .collect()
+    };
+    assert_eq!(ids(RunFilter::default()), [c, b, a]);
+    assert_eq!(
+        ids(RunFilter {
+            status: vec!["succeeded".into()],
+            ..RunFilter::default()
+        }),
+        [b]
+    );
+    assert_eq!(
+        ids(RunFilter {
+            task_id: Some(1),
+            ..RunFilter::default()
+        }),
+        [a]
+    );
+    assert_eq!(
+        ids(RunFilter {
+            repo: Some("C:/a".into()),
+            ..RunFilter::default()
+        }),
+        [c, a]
+    );
+    assert_eq!(
+        ids(RunFilter {
+            from: Some(150),
+            to: Some(250),
+            ..RunFilter::default()
+        }),
+        [b]
+    );
+    let workflow_id = list_runs(&f.db, &RunFilter::default()).unwrap()[0].workflow_id;
+    assert_eq!(
+        ids(RunFilter {
+            workflow_id: Some(workflow_id + 1),
+            ..RunFilter::default()
+        }),
+        Vec::<i64>::new()
+    );
+}
+
+/// Filtr repozytorium porównuje ścieżki: wielkość liter, `/` zamiast `\` i końcowy
+/// separator nie mają znaczenia, a `%` i `_` są dosłowne (bez LIKE).
+#[test]
+fn repo_filter_matches_path_variants_and_treats_wildcards_literally() {
+    let f = Fixture::new();
+    let a = run_with(&f, "a", None, r"C:\Repos\Kalkulator", 100);
+    let _other = run_with(&f, "b", None, r"C:\Repos\Kalkulator2", 200);
+    let ids = |repo: &str| -> Vec<i64> {
+        list_runs(
+            &f.db,
+            &RunFilter {
+                repo: Some(repo.into()),
+                ..RunFilter::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|r| r.id)
+        .collect()
+    };
+    for variant in [
+        r"C:\Repos\Kalkulator",
+        r"c:\repos\kalkulator",
+        "C:/Repos/Kalkulator",
+        r"C:\Repos\Kalkulator\",
+        "  c:/REPOS/kalkulator/  ",
+    ] {
+        assert_eq!(ids(variant), [a], "{variant}");
+    }
+    assert_eq!(ids(r"C:\Repos\Kalkulator%"), Vec::<i64>::new());
+    assert_eq!(ids(r"C:\Repos\Kalkulato_"), Vec::<i64>::new());
+    assert_eq!(ids("%"), Vec::<i64>::new());
+}
+
+/// Istniejąca ścieżka z filtra jest kanonikalizowana jak przy starcie przebiegu.
+#[test]
+fn repo_key_canonicalizes_existing_paths() {
+    let dir = std::env::temp_dir().join(format!("tuktuk-wf-RepoKey-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let canonical = crate::workflows::workspace::canonical(&dir).unwrap();
+    let expected = canonical.to_string_lossy().to_ascii_lowercase();
+    let via_dots = dir.join("..").join(dir.file_name().unwrap());
+    assert_eq!(
+        super::query::repo_key(&via_dots.to_string_lossy()),
+        expected.trim_end_matches('\\')
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn list_runs_pages_with_cursor_without_duplicates() {
+    let f = Fixture::new();
+    for i in 0..7 {
+        run_with(&f, &format!("r{i}"), None, "C:/a", i);
+    }
+    let mut seen = Vec::new();
+    let mut before = None;
+    loop {
+        let page = list_runs(
+            &f.db,
+            &RunFilter {
+                limit: Some(3),
+                before_id: before,
+                ..RunFilter::default()
+            },
+        )
+        .unwrap();
+        if page.is_empty() {
+            break;
+        }
+        before = page.last().map(|r| r.id);
+        seen.extend(page.into_iter().map(|r| r.id));
+    }
+    assert_eq!(seen, [7, 6, 5, 4, 3, 2, 1]);
+    let huge = list_runs(
+        &f.db,
+        &RunFilter {
+            limit: Some(10_000),
+            ..RunFilter::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(huge.len(), 7, "limit nie przekracza MAX_RUNS_PAGE");
+}
+
+fn finished_template_run(f: &Fixture) -> (RunId, RuntimeHandle) {
+    let runner = template_runner(vec![samples::review_approved()]);
+    let handle = f.runtime(&runner);
+    let run = f.create("detail");
+    handle.start_run(run);
+    assert!(handle.wait_idle(WAIT));
+    (run, handle)
+}
+
+#[test]
+fn run_detail_counts_agent_and_waiting_time_separately() {
+    let f = Fixture::new();
+    let (run, _handle) = finished_template_run(&f);
+    {
+        let db = f.db.lock().unwrap();
+        db.execute(
+            "UPDATE workflow_node_executions SET started_at = 1000, finished_at = 1500
+             WHERE run_id = ?1 AND node_id IN ('analysis','implementation','review')",
+            [run],
+        )
+        .unwrap();
+    }
+    let detail = run_detail(&f.db, run, 10_000).unwrap().unwrap();
+    assert_eq!(detail.summary.status, "waitingForApproval");
+    assert!(detail.summary.waiting_approval);
+    assert_eq!(detail.agent_ms, 1500);
+    assert_eq!(detail.tokens, None);
+    // Zgoda otwarta od 1000 ms (zegar sterownika) liczy się do `now`.
+    assert_eq!(detail.waiting_ms, 9_000);
+    assert_eq!(detail.approvals.len(), 1);
+    assert_eq!(detail.approvals[0].status, "pending");
+}
+
+#[test]
+fn run_detail_revision_equals_last_sequence() {
+    let f = Fixture::new();
+    let (run, _handle) = finished_template_run(&f);
+    let detail = run_detail(&f.db, run, 2_000).unwrap().unwrap();
+    assert_eq!(detail.revision, f.repo.last_sequence(run).unwrap());
+    assert!(run_detail(&f.db, 9_999, 0).unwrap().is_none());
+    assert_eq!(detail.graph["nodes"].as_array().map(Vec::len), Some(9));
+}
+
+#[test]
+fn deleted_task_keeps_snapshot_title() {
+    let f = Fixture::new();
+    let run = run_with(&f, "t", Some((424_242, "Zadanie z migawki")), "C:/a", 1);
+    let summary = &list_runs(&f.db, &RunFilter::default()).unwrap()[0];
+    assert_eq!(summary.id, run);
+    assert!(!summary.task_exists);
+    assert_eq!(summary.task_title.as_deref(), Some("Zadanie z migawki"));
+}
+
+#[test]
+fn events_page_is_bounded() {
+    let f = Fixture::new();
+    let (run, _handle) = finished_template_run(&f);
+    let page = f.repo.events_since(run, 0, 1_000_000).unwrap();
+    assert!(page.len() <= MAX_EVENTS_PAGE);
+    assert_eq!(f.repo.events_since(run, 0, 2).unwrap().len(), 2);
 }

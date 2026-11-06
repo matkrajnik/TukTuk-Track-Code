@@ -10,7 +10,8 @@ export type View =
   | "library"
   | "settings"
   | "workflows"
-  | "workflow-definitions";
+  | "workflow-definitions"
+  | "workflow-runs";
 </script>
 
 <script setup lang="ts">
@@ -400,6 +401,15 @@ async function hide() {
           @click="go('workflow-definitions')"
         >
           <ListTree :size="20" aria-hidden="true" /><span class="nav-label">Definicje</span>
+        </button>
+        <button
+          class="nav-item"
+          :class="{ selected: view === 'workflow-runs' }"
+          :aria-current="view === 'workflow-runs' ? 'page' : undefined"
+          :title="paneCompact ? 'Workflows: uruchomienia' : undefined"
+          @click="go('workflow-runs')"
+        >
+          <Workflow :size="20" aria-hidden="true" /><span class="nav-label">Uruchomienia</span>
         </button>
       </div>
       <div class="nav-group" role="group" aria-labelledby="nav-group-integrations">

@@ -258,6 +258,7 @@ struct RunData {
     graph: WorkflowGraph,
     events: Vec<StoredEvent>,
     status: RunStatus,
+    goal: Option<String>,
 }
 
 #[derive(Default)]
@@ -296,6 +297,18 @@ impl MemoryRepository {
         let new = NewRun {
             version_id,
             request_id: request_id.to_owned(),
+            ..NewRun::default()
+        };
+        self.create_run(&new).expect("create_run").run_id
+    }
+
+    /// Jak `create`, z opisem celu przebiegu.
+    pub fn create_with_goal(&self, graph: &WorkflowGraph, request_id: &str, goal: &str) -> RunId {
+        self.register_graph(1, graph.clone());
+        let new = NewRun {
+            version_id: 1,
+            request_id: request_id.to_owned(),
+            goal: Some(goal.to_owned()),
             ..NewRun::default()
         };
         self.create_run(&new).expect("create_run").run_id
@@ -344,6 +357,7 @@ impl RunRepository for MemoryRepository {
                 graph,
                 events: vec![StoredEvent::new(run_id, 1, new.now, &created)],
                 status: RunStatus::Queued,
+                goal: new.goal.clone(),
             },
         );
         Ok(CreatedRun {
@@ -406,6 +420,14 @@ impl RunRepository for MemoryRepository {
             .runs
             .get(&run_id)
             .map(|r| r.events.len() as u64)
+            .ok_or(RepoError::NotFound)
+    }
+
+    fn run_goal(&self, run_id: RunId) -> Result<Option<String>, RepoError> {
+        lock(&self.inner)
+            .runs
+            .get(&run_id)
+            .map(|r| r.goal.clone())
             .ok_or(RepoError::NotFound)
     }
 

@@ -36,7 +36,12 @@ import AgentsView from "./views/AgentsView.vue";
 import JournalView from "./JournalView.vue";
 import SettingsView from "./views/SettingsView.vue";
 import WorkflowsView from "./views/WorkflowsView.vue";
-import { loadWorkflowAccess, workflowsUnlocked } from "./workflowAccess";
+import WorkflowRunsView from "./views/WorkflowRunsView.vue";
+import {
+  loadWorkflowAccess,
+  openRunRequest,
+  workflowsUnlocked,
+} from "./workflowAccess";
 import {
   isSettingsSection,
   readSettingsSection,
@@ -101,6 +106,17 @@ function toggleChat() {
   else openChat();
 }
 const view = ref<View>("tasks");
+/** Przebieg otwierany w monitorze (z powiadomienia albo po starcie). */
+const workflowRunId = ref<number | null>(null);
+function openRun(id: number) {
+  workflowRunId.value = id;
+  view.value = "workflow-runs";
+}
+watch(openRunRequest, (id) => {
+  if (id === null) return;
+  openRunRequest.value = null;
+  openRun(id);
+});
 /** Zakładka „Historia i kopie”. */
 const libraryTab = ref("history");
 /** Sekcja zakładki Ustawienia; zapamiętana między uruchomieniami. */
@@ -278,6 +294,7 @@ const views: View[] = [
   "agents",
   "workflows",
   "workflow-definitions",
+  "workflow-runs",
 ];
 /**
  * Kliknięcie treści powiadomienia lub „Podziel…”: Rust już pokazał okno, tu
@@ -297,11 +314,14 @@ async function navigate(
   if (!found) return;
   // Workflows przed odblokowaniem prowadzą do Ustawień → Workflows (klucz).
   const workflowsView =
-    found === "workflows" || found === "workflow-definitions";
+    found === "workflows" ||
+    found === "workflow-definitions" ||
+    found === "workflow-runs";
   if (workflowsView) await loadWorkflowAccess();
   const locked = workflowsView && !workflowsUnlocked.value;
   const target: View = locked ? "settings" : found;
   if (locked) request = { ...request, section: "workflows" };
+  if (found === "workflow-runs") workflowRunId.value = request.run ?? null;
   if (source !== "morning") userNavigated(source === "external");
   // Otwartego okna dialogowego nie zamykamy: niezapisane zmiany zostają, a
   // widok pod nim przełącza się normalnie. Edytor Podziel otwiera się tylko
@@ -773,6 +793,11 @@ onUnmounted(() => {
         "
         :section="view === 'workflows' ? 'overview' : 'definitions'"
         @open="navigate({ view: $event })"
+        @run="openRun"
+      />
+      <WorkflowRunsView
+        v-else-if="view === 'workflow-runs' && workflowsUnlocked"
+        :run-id="workflowRunId"
       />
     </main>
     <AiChat

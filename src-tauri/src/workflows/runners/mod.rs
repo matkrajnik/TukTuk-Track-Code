@@ -53,6 +53,8 @@ pub struct CliPaths {
 pub struct CliRunner {
     spawner: Arc<dyn Spawner>,
     paths: CliPaths,
+    /// Dostawca ścieżek: CLI zainstalowane po starcie aplikacji działa bez restartu.
+    paths_provider: Option<Arc<dyn Fn() -> CliPaths + Send + Sync>>,
     workspace: Arc<dyn WorkspaceAccess>,
     unconfirmed_max_wait: Duration,
 }
@@ -66,8 +68,25 @@ impl CliRunner {
         Self {
             spawner,
             paths,
+            paths_provider: None,
             workspace,
             unconfirmed_max_wait: UNCONFIRMED_MAX_WAIT,
+        }
+    }
+
+    /// Ścieżki liczone przy każdym kroku zamiast jednorazowo przy starcie.
+    pub fn with_paths_provider(
+        mut self,
+        provider: Arc<dyn Fn() -> CliPaths + Send + Sync>,
+    ) -> Self {
+        self.paths_provider = Some(provider);
+        self
+    }
+
+    fn paths(&self) -> CliPaths {
+        match &self.paths_provider {
+            Some(provider) => provider(),
+            None => self.paths.clone(),
         }
     }
 
@@ -85,6 +104,15 @@ fn failed(code: FailureCode, message: impl Into<String>) -> RunnerOutcome {
     }
 }
 
+/// Słowo przypominające token: długie, bez ścieżek, tylko znaki typowe dla kluczy.
+pub(crate) fn is_secret_word(word: &str) -> bool {
+    word.len() >= SECRET_MIN_LEN
+        && !word.contains(['\\', '/'])
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.=".contains(c))
+}
+
 /// Maskuje ciągi przypominające tokeny i nagłówki autoryzacji; skraca tekst.
 pub fn redact(text: &str) -> String {
     let mut words: Vec<String> = Vec::new();
@@ -96,12 +124,7 @@ pub fn redact(text: &str) -> String {
         } else if word.eq_ignore_ascii_case("bearer") || word.eq_ignore_ascii_case("token:") {
             words.push(word.to_owned());
             hide_next = true;
-        } else if word.len() >= SECRET_MIN_LEN
-            && !word.contains(['\\', '/'])
-            && word
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_.=".contains(c))
-        {
+        } else if is_secret_word(word) {
             words.push("[ukryte]".into());
         } else {
             words.push(word.to_owned());
@@ -214,9 +237,10 @@ impl CliRunner {
         let schema = json_schema(request.role);
         let worktree_path = PathBuf::from(worktree);
         let env = env::from_process(request.run_id, &request.execution_id);
+        let paths = self.paths();
         match request.provider {
             Provider::Claude => {
-                let program = self.paths.claude.clone().ok_or_else(|| {
+                let program = paths.claude.clone().ok_or_else(|| {
                     failed(FailureCode::CliMissing, FailureCode::CliMissing.message())
                 })?;
                 let session =
@@ -240,11 +264,10 @@ impl CliRunner {
                 })
             }
             Provider::Codex => {
-                let program = self.paths.codex.clone().ok_or_else(|| {
+                let program = paths.codex.clone().ok_or_else(|| {
                     failed(FailureCode::CliMissing, FailureCode::CliMissing.message())
                 })?;
-                let dir = self
-                    .paths
+                let dir = paths
                     .app_data
                     .join("workflows")
                     .join("runs")

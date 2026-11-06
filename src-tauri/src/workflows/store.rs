@@ -15,8 +15,9 @@ use workflow_core::{validate, Issue, WorkflowGraph, SCHEMA_VERSION};
 /// Klucz w `settings` ze znacznikiem odblokowania modułu.
 pub const UNLOCKED_KEY: &str = "workflows_unlocked";
 /// Wersja schematu tabel modułu (niezależna od formatu grafu). 2 dodaje
-/// tabele przebiegów (E3), 3 rezerwacje katalogów roboczych (E4); `init_tables` zapisuje wszystkie wersje do tej włącznie.
-const MODULE_SCHEMA: i64 = 3;
+/// tabele przebiegów (E3), 3 rezerwacje katalogów roboczych (E4), 4 cel przebiegu i
+/// indeks artefaktów (E5); `init_tables` zapisuje wszystkie wersje do tej włącznie.
+const MODULE_SCHEMA: i64 = 4;
 /// Najdłuższa nazwa i opis procesu w znakach.
 const MAX_NAME_CHARS: usize = 120;
 const MAX_DESCRIPTION_CHARS: usize = 2_000;
@@ -41,6 +42,7 @@ pub fn init_tables(db: &Connection) -> rusqlite::Result<()> {
     )?;
     init_run_tables(db)?;
     init_workspace_tables(db)?;
+    init_artifact_tables(db)?;
     for version in 1..=MODULE_SCHEMA {
         db.execute(
             "INSERT OR IGNORE INTO workflow_schema_migrations(version, applied_at) VALUES(?1, ?2)",
@@ -74,6 +76,21 @@ fn init_workspace_tables(db: &Connection) -> rusqlite::Result<()> {
         "CREATE TABLE IF NOT EXISTS workflow_workspaces (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, source_repo TEXT NOT NULL, worktree_path TEXT NOT NULL, base_commit TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('reserved','released')), created_at INTEGER NOT NULL, released_at INTEGER);
         CREATE UNIQUE INDEX IF NOT EXISTS workflow_workspaces_reserved_path ON workflow_workspaces(worktree_path) WHERE state = 'reserved';
         CREATE INDEX IF NOT EXISTS workflow_workspaces_run ON workflow_workspaces(run_id);",
+    )
+}
+
+/// Migracja 4 (E5): `workflow_runs.goal` oraz indeks artefaktów diffu (pliki leżą
+/// w katalogu danych aplikacji, w bazie tylko skrót i ścieżka względna).
+fn init_artifact_tables(db: &Connection) -> rusqlite::Result<()> {
+    let has_goal = db
+        .prepare("SELECT 1 FROM pragma_table_info('workflow_runs') WHERE name = 'goal'")?
+        .exists([])?;
+    if !has_goal {
+        db.execute("ALTER TABLE workflow_runs ADD COLUMN goal TEXT", [])?;
+    }
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS workflow_artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL REFERENCES workflow_runs(id) ON DELETE RESTRICT, kind TEXT NOT NULL CHECK(kind IN ('diff')), hash TEXT NOT NULL, rel_path TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL, UNIQUE(run_id, kind, hash));
+        CREATE INDEX IF NOT EXISTS workflow_artifacts_run ON workflow_artifacts(run_id);",
     )
 }
 

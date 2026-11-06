@@ -78,7 +78,7 @@ test("poprawny klucz odsłania Workflows raz, Escape pomija animację", async ({
   await expect(page.getByTestId("workflow-reveal")).toBeAttached();
   await expect(page.getByText("Workflows odblokowane.")).toBeVisible();
   const group = nav(page).getByRole("group", { name: "Workflows" });
-  await expect(group.getByRole("button")).toHaveText(["Przegląd", "Definicje"]);
+  await expect(group.getByRole("button")).toHaveText(["Przegląd", "Definicje", "Uruchomienia"]);
   // Formularz znika razem z przyciskiem wysyłki: fokus na następnej akcji.
   await expect(
     page.getByRole("button", { name: "Otwórz Workflows" }),
@@ -417,7 +417,7 @@ test.describe("podgląd: gotowość agentów (E4)", () => {
       `zablokowane węzły: ${agentCount}`,
     );
     await expect(blocked).toHaveCount(agentCount);
-    await expect(page.getByRole("button", { name: /Uruchom/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Uruchom", exact: true })).toHaveCount(0);
   });
 
   test("Sprawdź ponownie czyta wersję od nowa, dostępne klawiaturą", async ({
@@ -485,7 +485,7 @@ test.describe("aplikacja: workflow_preflight przez IPC (E4)", () => {
     await expect.poll(async () => (await calls()).count).toBe(2);
     expect((await calls()).args).toEqual([{ versionId: 42 }, { versionId: 42 }]);
     await expect(panel).toContainText("kontrola CLI");
-    await expect(page.getByRole("button", { name: /Uruchom/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Uruchom", exact: true })).toHaveCount(0);
   });
 
   test("publikacja w trakcie sprawdzania: panel pokazuje nową wersję, stara odpowiedź odpada", async ({

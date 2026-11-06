@@ -17,7 +17,7 @@ use crate::model::{AgentConfig, Port};
 use crate::ports::{RunId, RunnerOutcome};
 use crate::run::{ApprovalStatus, Decision, ExecutionStatus, FailureCode, RunStatus};
 
-pub use decide::{decide, UNRESPONSIVE_MESSAGE};
+pub use decide::{decide, normalize_comment, UNRESPONSIVE_MESSAGE};
 pub use state::{ApprovalRecord, ExecutionRecord, ReplayError, RunState, SequencedEvent};
 
 /// Odwołanie do wyniku wcześniejszego kroku użytego jako wejście.
@@ -83,6 +83,9 @@ pub enum RunEvent {
         decision: Option<Decision>,
         status: ApprovalStatus,
         request_id: Option<String>,
+        /// Komentarz użytkownika (wymagany przy odrzuceniu po stronie hosta).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        comment: Option<String>,
     },
     NodesSkipped {
         node_ids: Vec<String>,
@@ -170,6 +173,7 @@ pub enum Input {
         approval_id: String,
         decision: Decision,
         request_id: Option<String>,
+        comment: Option<String>,
         /// Skrót, który zobaczył użytkownik.
         artifact_hash: String,
         /// Skrót artefaktu w chwili decyzji.

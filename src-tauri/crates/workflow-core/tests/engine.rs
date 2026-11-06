@@ -151,6 +151,7 @@ fn decision(sim: &mut Sim, decision: Decision, request: &str) -> Result<(), Engi
         approval_id: approval,
         decision,
         request_id: Some(request.into()),
+        comment: (decision == Decision::Reject).then(|| "Do poprawy".to_owned()),
         artifact_hash: HASH.into(),
         current_hash: HASH.into(),
     })
@@ -487,6 +488,7 @@ fn stale_hash_invalidates_and_requests_a_new_approval() {
         approval_id: first.clone(),
         decision: Decision::Approve,
         request_id: Some("r1".into()),
+        comment: None,
         artifact_hash: HASH.into(),
         current_hash: "changed".into(),
     });
@@ -502,6 +504,7 @@ fn decision_on(sim: &mut Sim, approval: &str) -> Result<(), EngineError> {
         approval_id: approval.into(),
         decision: Decision::Approve,
         request_id: Some("again".into()),
+        comment: None,
         artifact_hash: HASH.into(),
         current_hash: HASH.into(),
     })
@@ -653,7 +656,6 @@ fn fault_fails_an_active_run_and_is_refused_outside_running() {
         code: FailureCode::StorageError,
         message: "zapis".into(),
     };
-    assert!(sim.try_feed(fault()).is_err(), "Queued nie przyjmuje Fault");
     launched(&mut sim);
     let t = sim.feed(fault());
     assert!(t.effects.is_empty());
@@ -664,4 +666,102 @@ fn fault_fails_an_active_run_and_is_refused_outside_running() {
         ExecutionStatus::Failed
     );
     assert!(sim.try_feed(fault()).is_err());
+}
+
+#[test]
+fn fault_on_a_queued_run_fails_it_without_executions() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    let t = sim.feed(Input::Fault {
+        code: FailureCode::WorkspaceUnavailable,
+        message: "brak worktree".into(),
+    });
+    assert!(t.effects.is_empty());
+    assert_eq!(sim.state.status, RunStatus::Failed);
+    assert_eq!(sim.state.failure, Some(FailureCode::WorkspaceUnavailable));
+    assert!(sim.state.executions.is_empty());
+}
+
+#[test]
+fn fault_on_a_finished_run_is_rejected() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    sim.feed(Input::CancelRequested);
+    assert_eq!(sim.state.status, RunStatus::Cancelled);
+    assert!(sim
+        .try_feed(Input::Fault {
+            code: FailureCode::StorageError,
+            message: "x".into(),
+        })
+        .is_err());
+}
+
+#[test]
+fn rejection_comment_is_kept_in_state() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    drive(&mut sim, &mut template_script(&[approved()]));
+    let approval = sim.state.approvals.last().unwrap().id.clone();
+    sim.feed(Input::ApprovalDecision {
+        approval_id: approval,
+        decision: Decision::Reject,
+        request_id: Some("r9".into()),
+        comment: Some("Zła nazwa funkcji".into()),
+        artifact_hash: HASH.into(),
+        current_hash: HASH.into(),
+    });
+    let record = sim.state.approvals.last().unwrap();
+    assert_eq!(record.comment.as_deref(), Some("Zła nazwa funkcji"));
+    // Odtworzenie z zapisanych zdarzeń daje ten sam komentarz.
+    let replayed = RunState::replay(&sim.graph, &sim.sequenced()).unwrap();
+    assert_eq!(replayed.approvals.last().unwrap().comment, record.comment);
+}
+
+#[test]
+fn reject_without_comment_is_rejected_by_engine() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    drive(&mut sim, &mut template_script(&[approved()]));
+    let approval = sim.state.approvals.last().unwrap().id.clone();
+    let before = sim.log.len();
+    for comment in [
+        None,
+        Some(String::new()),
+        Some(
+            "  
+ "
+            .to_owned(),
+        ),
+    ] {
+        let result = sim.try_feed(Input::ApprovalDecision {
+            approval_id: approval.clone(),
+            decision: Decision::Reject,
+            request_id: Some("r-empty".into()),
+            comment,
+            artifact_hash: HASH.into(),
+            current_hash: HASH.into(),
+        });
+        assert!(matches!(result, Err(EngineError::InvalidState(_))));
+    }
+    assert_eq!(
+        sim.log.len(),
+        before,
+        "odrzucenie bez komentarza dodało zdarzenia"
+    );
+    assert_eq!(sim.state.status, RunStatus::WaitingForApproval);
+}
+
+#[test]
+fn approval_comment_is_trimmed_by_engine() {
+    let mut sim = Sim::new(analysis_implementation_review());
+    drive(&mut sim, &mut template_script(&[approved()]));
+    let approval = sim.state.approvals.last().unwrap().id.clone();
+    sim.feed(Input::ApprovalDecision {
+        approval_id: approval,
+        decision: Decision::Reject,
+        request_id: Some("r-trim".into()),
+        comment: Some("  Zła nazwa  ".into()),
+        artifact_hash: HASH.into(),
+        current_hash: HASH.into(),
+    });
+    assert_eq!(
+        sim.state.approvals.last().unwrap().comment.as_deref(),
+        Some("Zła nazwa")
+    );
 }

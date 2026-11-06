@@ -500,6 +500,8 @@ export interface NavigateRequest {
   task?: number | null;
   /** Przedział do otwarcia w edytorze na zakładce Podziel. */
   split?: number | null;
+  /** Przebieg Workflows do otwarcia w monitorze (`view: "workflow-runs"`). */
+  run?: number | null;
   /**
    * Grupa listy zadań, do której przewinąć (np. „Nierozpoczęte”), przy
    * `view: "journal"` zakładka `morning` (Plan i historia → Rano) albo

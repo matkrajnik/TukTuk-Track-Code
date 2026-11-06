@@ -18,6 +18,7 @@ import {
   type WaitTime,
 } from "../agentboard";
 import { duration } from "../store";
+import AgentBoardRuns from "../components/workflows/AgentBoardRuns.vue";
 
 /**
  * Tablica sesji agentów: co czeka na użytkownika, co pracuje, co się skończyło
@@ -254,6 +255,7 @@ onUnmounted(() => {
     Brak sesji do pokazania. Tablica zapełnia się zdarzeniami hooków Claude
     Code i Codexa (Ustawienia → Agenci) i jest pusta po uruchomieniu aplikacji.
   </p>
+  <AgentBoardRuns />
   <div class="board">
     <section
       v-for="section in sections"

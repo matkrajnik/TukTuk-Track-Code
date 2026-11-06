@@ -29,6 +29,9 @@ fn main() {
     if hook_wire::suppressed(std::env::var(hook_wire::AI_ENV).ok().as_deref()) {
         return;
     }
+    if hook_wire::workflow_suppressed(std::env::var(hook_wire::WORKFLOW_ENV).ok().as_deref()) {
+        return;
+    }
     let mut raw = Vec::new();
     let _ = std::io::stdin()
         .lock()

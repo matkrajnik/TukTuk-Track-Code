@@ -24,7 +24,10 @@ import {
   RotateCcw,
   Square,
   Trash2,
+  Workflow,
 } from "lucide-vue-next";
+import WorkflowRunForm from "./workflows/WorkflowRunForm.vue";
+import { openRunRequest, workflowsUnlocked } from "../workflowAccess";
 import TaskPlanning from "../TaskPlanning.vue";
 import ReminderForm from "./ReminderForm.vue";
 import ReorderHandle from "./ReorderHandle.vue";
@@ -102,6 +105,15 @@ const openSession = computed(() =>
 const taskTime = computed(
   () => closedTime.value + (openSession.value ? elapsed(openSession.value) : 0),
 );
+/**
+ * „Uruchom proces…” (Workflows E5): tylko po odblokowaniu modułu; bez klucza
+ * karta wygląda jak dotąd. Start nie rusza timera: czas agentów liczy przebieg.
+ */
+const runFormOpen = ref(false);
+function onRunStarted(runId: number) {
+  runFormOpen.value = false;
+  openRunRequest.value = runId;
+}
 /** „Zapisz jako szablon”: formularz pod paskiem akcji. */
 const templateOpen = ref(false);
 /** Zgłoszenie zadania (Jira albo Redmine): klucz, status, link na kafelku. */
@@ -315,6 +327,15 @@ const issueWrite = computed(() =>
           <Bot :size="14" />Zapytaj asystenta
         </button>
         <button
+          v-if="workflowsUnlocked && !task.done"
+          class="action-button"
+          :aria-label="'Uruchom proces: ' + task.title"
+          title="Uruchom opublikowany proces agentów dla tego zadania"
+          @click="runFormOpen = true"
+        >
+          <Workflow :size="14" />Uruchom proces…
+        </button>
+        <button
           v-if="!task.done"
           class="action-button"
           :aria-label="'Przypomnij: ' + task.title"
@@ -375,6 +396,12 @@ const issueWrite = computed(() =>
           <Trash2 :size="14" />Usuń
         </button>
       </div>
+      <WorkflowRunForm
+        v-if="runFormOpen"
+        :task-id="task.id"
+        @close="runFormOpen = false"
+        @started="onRunStarted"
+      />
       <ReminderForm
         v-if="reminderOpen"
         :task="{ id: task.id, title: task.title }"

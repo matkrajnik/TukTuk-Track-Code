@@ -31,6 +31,7 @@ pub struct ApprovalRecord {
     pub status: ApprovalStatus,
     pub decision: Option<Decision>,
     pub request_id: Option<String>,
+    pub comment: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -276,6 +277,7 @@ impl RunState {
                     status: ApprovalStatus::Pending,
                     decision: None,
                     request_id: None,
+                    comment: None,
                 });
             }
             RunEvent::ApprovalResolved {
@@ -283,6 +285,7 @@ impl RunState {
                 decision,
                 status,
                 request_id,
+                comment,
             } => {
                 let approval = self
                     .approvals
@@ -299,6 +302,7 @@ impl RunState {
                 approval.status = *status;
                 approval.decision = *decision;
                 approval.request_id = request_id.clone();
+                approval.comment = comment.clone();
                 let execution_id = approval.execution_id.clone();
                 let port = match (status, decision) {
                     (ApprovalStatus::Approved, _) => Some(Port::Approve),

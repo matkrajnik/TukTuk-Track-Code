@@ -46,12 +46,14 @@ pub fn decide(
             approval_id,
             decision,
             request_id,
+            comment,
             artifact_hash,
             current_hash,
         } => work.approval_decision(
             &approval_id,
             decision,
             request_id,
+            comment,
             &artifact_hash,
             &current_hash,
         )?,
@@ -486,6 +488,7 @@ impl Work<'_> {
                         decision: None,
                         status: ApprovalStatus::Invalidated,
                         request_id: None,
+                        comment: None,
                     })?;
                 }
                 if let Some(id) = self.state.unfinished().map(|e| e.id.clone()) {
@@ -542,6 +545,7 @@ impl Work<'_> {
         approval_id: &str,
         decision: Decision,
         request_id: Option<String>,
+        comment: Option<String>,
         artifact_hash: &str,
         current_hash: &str,
     ) -> Result<(), EngineError> {
@@ -556,6 +560,12 @@ impl Work<'_> {
             return Err(invalid_state("zgoda jest już rozstrzygnięta"));
         }
         let execution_id = approval.execution_id.clone();
+        // Komentarz przycięty; pusty to brak. Odrzucenie bez uzasadnienia nie przechodzi
+        // także z pominięciem komend IPC (ta sama reguła co w `run_commands::decide`).
+        let comment = normalize_comment(comment);
+        if decision == Decision::Reject && comment.is_none() {
+            return Err(invalid_state("odrzucenie wymaga komentarza"));
+        }
         if artifact_hash != approval.artifact_hash || current_hash != approval.artifact_hash {
             // Artefakt zmienił się albo użytkownik widział inny: zgoda traci ważność,
             // a przebieg prosi o nową dla aktualnego artefaktu.
@@ -564,6 +574,7 @@ impl Work<'_> {
                 decision: Some(decision),
                 status: ApprovalStatus::Invalidated,
                 request_id,
+                comment,
             })?;
             let new_id = self.new_approval_id(&execution_id);
             return self.emit(RunEvent::ApprovalRequested {
@@ -581,6 +592,7 @@ impl Work<'_> {
             decision: Some(decision),
             status,
             request_id,
+            comment,
         })?;
         self.finish_execution(&execution_id, execution_status, None, None)?;
         self.set_status(RunStatus::Running, None)
@@ -616,6 +628,10 @@ impl Work<'_> {
     }
 
     fn fault(&mut self, code: FailureCode, message: String) -> Result<(), EngineError> {
+        if self.state.status == RunStatus::Queued {
+            // Przebieg nie ruszył (np. nie udało się przygotować katalogu roboczego).
+            return self.fail_run(code);
+        }
         if !matches!(
             self.state.status,
             RunStatus::Running | RunStatus::Cancelling
@@ -638,4 +654,11 @@ impl Work<'_> {
         )?;
         self.finish_run(RunStatus::Interrupted, Some(code))
     }
+}
+
+/// Przycina komentarz zgody; pusty po przycięciu to brak komentarza.
+pub fn normalize_comment(comment: Option<String>) -> Option<String> {
+    comment
+        .map(|c| c.trim().to_owned())
+        .filter(|c| !c.is_empty())
 }

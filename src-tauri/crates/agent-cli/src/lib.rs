@@ -19,4 +19,4 @@ pub use process::{
     KILL_CONFIRM_TIMEOUT, MAX_LINE_BYTES, STDERR_TAIL_BYTES,
 };
 pub use spec::{command, command_with, Spec};
-pub use tree::KillResult;
+pub use tree::{kill_tree_by_pid, Job, KillResult};

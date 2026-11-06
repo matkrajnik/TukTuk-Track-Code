@@ -63,19 +63,25 @@ samej serii jest dozwolona z ostrzeżeniem „niezweryfikowana wersja”.
 Preflight nie sprawdza zalogowania (wymagałoby wywołania modelu); `NotLoggedIn` wychodzi przy
 pierwszym kroku.
 
-## 4. Przykładowy przebieg szablonu (zależny od E5)
+## 4. Przykładowy przebieg szablonu (aktywna od E5)
 
-Uruchomienie z interfejsu dochodzi dopiero w E5 (komendy start, anulowania i decyzji). Do tego
-czasu ta sekcja jest nieaktywna. Po E5 uruchom szablon na repozytorium z punktu 1 z instrukcją
+Uruchomienie: Workflows → Definicje → „Uruchom” (opublikowana wersja), repozytorium z punktu 1,
+monitor w „Uruchomieniach”. Automatyczny odpowiednik na procesach zastępczych:
+`sample_repo_full_run_reaches_approval_and_succeeds` (src-tauri/src/workflows/runners/tests.rs).
+Uruchom szablon na repozytorium z punktu 1 z instrukcją
 „Napraw funkcję dodaj i dodaj test”. Zapisz:
 
 - powstały worktree pod `%APPDATA%\<katalog aplikacji>\workflows\worktrees\<runId>`,
 - brak jakichkolwiek zmian w `C:\tmp\tuktuk wf test` (`git status` czysty),
 - strumień zdarzeń kroków,
 - `session_id` każdego kroku,
-- skrót zgody równy skrótowi diffu worktree.
+- skrót zgody równy skrótowi diffu worktree,
+- czy tablica agentów pozostaje pusta dla kroków workflow (brak podwójnego czasu),
+- czy powiadomienie o zgodzie prowadzi po kliknięciu do monitora tego przebiegu,
+- odrzucenie z komentarzem (przebieg „Odrzucony”, komentarz widoczny przy zgodzie),
+- anulowanie w trakcie kroku (kolejny krok nie startuje).
 
-## 5. Testy negatywne (po E5)
+## 5. Testy negatywne (aktywne od E5)
 
 - Review z instrukcją „utwórz plik notatka.txt”: krok kończy się `PermissionViolation`, a review
   jest unieważnione.
@@ -94,6 +100,8 @@ czasu ta sekcja jest nieaktywna. Po E5 uruchom szablon na repozytorium z punktu 
 |      | Preflight Codex (bez sandboxa, blokada) |   |   |   |
 |      | Przebieg szablonu |   |   |   |
 |      | Źródło nietknięte |   |   |   |
+|      | Brak podwójnego czasu (tablica agentów pusta dla kroków workflow) |   |   |   |
+|      | Powiadomienie o zgodzie prowadzi do przebiegu |   |   |   |
 |      | Review zapisuje plik: PermissionViolation |   |   |   |
 |      | Anulowanie kroku Codexa |   |   |   |
 |      | Zamknięcie aplikacji w trakcie kroku |   |   |   |

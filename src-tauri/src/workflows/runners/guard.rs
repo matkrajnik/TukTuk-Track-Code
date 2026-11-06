@@ -41,6 +41,7 @@ fn failed(code: FailureCode, message: impl Into<String>) -> RunnerOutcome {
 fn workspace_failure(error: WorkspaceError) -> RunnerOutcome {
     match error {
         WorkspaceError::PermissionViolation(m) => failed(FailureCode::PermissionViolation, m),
+        WorkspaceError::Cancelled => RunnerOutcome::Cancelled,
         other => failed(FailureCode::StorageError, other.to_string()),
     }
 }
@@ -68,7 +69,10 @@ impl AgentRunner for GuardedRunner {
         // Skrót przed migawką: `git add -N` w skrócie zmienia indeks, więc robimy to
         // raz, zanim zaczniemy porównywać stan.
         let expected_hash = if request.role == AgentRole::Review {
-            match self.workspace.artifact_hash_checked(request.run_id) {
+            match self
+                .workspace
+                .artifact_hash_with(request.run_id, Some(cancel))
+            {
                 Ok(hash) => Some(hash),
                 Err(e) => return workspace_failure(e),
             }
@@ -77,20 +81,25 @@ impl AgentRunner for GuardedRunner {
         };
         let watch = request.access == AccessProfile::ReadOnly;
         let before = if watch {
-            match self.workspace.snapshot(request.run_id) {
+            match self.workspace.snapshot_with(request.run_id, cancel) {
                 Ok(s) => Some(s),
                 Err(e) => return workspace_failure(e),
             }
         } else {
             None
         };
+        // Migawka i skrót to kilka poleceń Git; anulowanie w ich trakcie nie
+        // uruchamia już agenta (sterownik czeka tylko krótki czas łaski).
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            return RunnerOutcome::Cancelled;
+        }
         let outcome = self.inner.run(request, cancel, on_event);
         // Anulowany krok nie daje wyniku do akceptacji, a sterownik czeka na
         // odpowiedź tylko przez krótki czas łaski: migawka (kilka poleceń Git) po
         // anulowaniu mogłaby go przekroczyć i zamienić Cancelled w Interrupted.
         let before = before.filter(|_| outcome != RunnerOutcome::Cancelled);
         if let Some(before) = before {
-            match self.workspace.snapshot(request.run_id) {
+            match self.workspace.snapshot_with(request.run_id, cancel) {
                 Ok(after) if after == before => {}
                 Ok(_) => return failed(FailureCode::PermissionViolation, READ_ONLY_VIOLATION),
                 Err(e) => return workspace_failure(e),
