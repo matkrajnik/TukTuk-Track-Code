@@ -12,6 +12,7 @@ import type {
   DecideRunResult,
   DiffArtifact,
   RecoverOutcome,
+  WorkflowFault,
   RunDetail,
   RunFilter,
   RunSummary,
@@ -23,6 +24,7 @@ import type {
 export * from "./api/workflowRuns";
 
 export const WORKFLOW_EVENT = "workflow-event";
+export const WORKFLOW_FAULT_EVENT = "workflow-fault";
 
 /** Nowy identyfikator żądania: jeden na otwarcie okna albo panel zgody. */
 export function newRequestId(): string {
@@ -88,5 +90,20 @@ export async function listenWorkflowEvents(
   handler: (event: StoredEvent) => void,
 ): Promise<() => void> {
   if (desktop) return listen<StoredEvent>(WORKFLOW_EVENT, (e) => handler(e.payload));
+  return () => {};
+}
+
+/** Problemy zgłoszone od startu aplikacji (bez klucza); podgląd nie ma silnika. */
+export async function workflowFaults(): Promise<WorkflowFault[]> {
+  if (desktop) return invoke("workflow_faults");
+  return [];
+}
+
+/** Nasłuch `workflow-fault` (w podglądzie brak strumienia). */
+export async function onWorkflowFault(
+  handler: (fault: WorkflowFault) => void,
+): Promise<() => void> {
+  if (desktop)
+    return listen<WorkflowFault>(WORKFLOW_FAULT_EVENT, (e) => handler(e.payload));
   return () => {};
 }

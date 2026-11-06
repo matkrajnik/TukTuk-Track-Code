@@ -584,3 +584,244 @@ test.describe("aplikacja: workflow_preflight przez IPC (E4)", () => {
     });
   });
 });
+
+// E7: wyłączenie modułu (workflows::workflow_lock).
+test.describe("wyłączenie Workflows", () => {
+  const runSummary = (status: string) => ({
+    id: 1,
+    workflowId: 1,
+    workflowName: "Proces testowy",
+    version: 1,
+    status,
+    taskId: null,
+    taskTitle: null,
+    taskExists: false,
+    repo: "C:\\repo",
+    createdAt: 1_700_000_000_001,
+    startedAt: null,
+    finishedAt: null,
+    errorCode: null,
+    waitingApproval: status === "waitingForApproval",
+  });
+  const locks = (page: Page) =>
+    page.evaluate(() => (window as any).__workflowLocks ?? 0);
+  const lockButton = (page: Page) =>
+    page.getByRole("button", { name: "Wyłącz Workflows" });
+  const keyField = (page: Page) => page.getByLabel("Klucz dostępu");
+
+  test("potwierdzenie: Esc zwraca fokus, podwójne kliknięcie wywołuje komendę raz", async ({
+    page,
+  }) => {
+    await openDesktop(page, { workflows: { unlocked: true } });
+    await openWorkflowSettings(page);
+    await expect(
+      nav(page).getByRole("group", { name: "Workflows" }),
+    ).toBeVisible();
+    // Odblokowany moduł: formularz klucza się nie pokazuje.
+    await expect(keyField(page)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Odblokuj Workflows" }),
+    ).toHaveCount(0);
+    await lockButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Wyłączyć Workflows?" });
+    await expect(dialog).toContainText(
+      "Historia i definicje zostają. Ponowne włączenie wymaga klucza.",
+    );
+    // Vue pomija handler przodka z tym samym znacznikiem czasu: zegar idzie dalej.
+    await page.clock.setFixedTime(new Date(new Date(NOW).getTime() + 1000));
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(lockButton(page)).toBeFocused();
+    expect(await locks(page)).toBe(0);
+    // Anulowanie zostawia moduł odblokowany, bez formularza klucza.
+    await expect(keyField(page)).toHaveCount(0);
+
+    await lockButton(page).click();
+    // Bez przebiegów czekających na zgodę okno nie ostrzega.
+    await expect(dialog).not.toContainText("Przebiegi czekające na zgodę");
+    // Wstrzymana odpowiedź: okno zostaje otwarte przez całe podwójne kliknięcie.
+    await page.evaluate(() => {
+      const w = window as any;
+      w.__workflowLockHold = new Promise((r) => (w.__releaseLock = r));
+    });
+    const confirm = dialog.getByRole("button", { name: "Wyłącz Workflows" });
+    await confirm.dblclick();
+    await expect(dialog).toBeVisible();
+    await expect(confirm).toBeDisabled();
+    expect(await locks(page)).toBe(1);
+    await page.evaluate(() => (window as any).__releaseLock());
+    await expect(dialog).toHaveCount(0);
+    expect(await locks(page)).toBe(1);
+    await expect(
+      nav(page).getByRole("group", { name: "Workflows" }),
+    ).toHaveCount(0);
+    await expect(keyField(page)).toBeVisible();
+    await expect(lockButton(page)).toHaveCount(0);
+    // Jeden komunikat w stałym regionie statusu, fokus na polu klucza.
+    await expect(
+      page.getByRole("status").filter({ hasText: "Workflows" }),
+    ).toHaveText("Workflows wyłączone. Historia i definicje zostają.");
+    await expect(keyField(page)).toBeFocused();
+  });
+
+  test("okno wyłączenia ostrzega o przebiegach czekających na zgodę", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      workflows: { unlocked: true },
+      workflowRuns: {
+        runs: [
+          runSummary("waitingForApproval"),
+          { ...runSummary("succeeded"), id: 2 },
+        ],
+      },
+    });
+    await openWorkflowSettings(page);
+    await lockButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Wyłączyć Workflows?" });
+    await expect(dialog).toContainText(
+      "Przebiegi czekające na zgodę: 1. Po wyłączeniu nie da się ich zatwierdzić ani odrzucić (tylko zatrzymać)",
+    );
+    // Ostrzeżenie nie blokuje: wyłączenie się udaje.
+    await dialog.getByRole("button", { name: "Wyłącz Workflows" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(keyField(page)).toBeVisible();
+  });
+
+  test("po wyłączeniu widok Workflows prowadzi do Ustawień z kluczem", async ({
+    page,
+  }) => {
+    await openDesktop(page, { workflows: { unlocked: true } });
+    await openWorkflowSettings(page);
+    await expect(keyField(page)).toHaveCount(0);
+    await lockButton(page).click();
+    await page
+      .getByRole("dialog", { name: "Wyłączyć Workflows?" })
+      .getByRole("button", { name: "Wyłącz Workflows" })
+      .click();
+    await expect(keyField(page)).toBeVisible();
+    // Z innego widoku: prośba o Workflows prowadzi z powrotem do Ustawień.
+    await nav(page).getByRole("button", { name: "Dashboard" }).click();
+    await expect(keyField(page)).toHaveCount(0);
+    await page.evaluate(async () => {
+      const nav: { openView: (r: { view: string }) => void } = await import(
+        /* @vite-ignore */ "/src/navigation.ts"
+      );
+      nav.openView({ view: "workflows" });
+    });
+    await expect(
+      nav(page).getByRole("button", { name: /^Ustawienia/ }),
+    ).toHaveAttribute("aria-current", "page");
+    await expect(
+      page.getByRole("tab", { name: "Workflows" }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(keyField(page)).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Workflows" }),
+    ).toHaveCount(0);
+  });
+
+  test("przebieg w toku blokuje wyłączenie komunikatem w alercie", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      workflows: { unlocked: true },
+      workflowRuns: { runs: [runSummary("running")] },
+    });
+    await openWorkflowSettings(page);
+    await lockButton(page).click();
+    const dialog = page.getByRole("dialog", { name: "Wyłączyć Workflows?" });
+    await dialog.getByRole("button", { name: "Wyłącz Workflows" }).click();
+    await expect(dialog.getByRole("alert")).toContainText(
+      "Wyłączenie wstrzymane. Przebiegi Workflows w toku: 1.",
+    );
+    await page.keyboard.press("Escape");
+    await expect(
+      nav(page).getByRole("group", { name: "Workflows" }),
+    ).toBeVisible();
+  });
+
+  test("po wyłączeniu tablica agentów nadal pozwala zatrzymać przebieg", async ({
+    page,
+  }) => {
+    await openDesktop(page, {
+      workflows: { unlocked: true },
+      workflowRuns: { runs: [runSummary("waitingForApproval")] },
+    });
+    await openWorkflowSettings(page);
+    await lockButton(page).click();
+    await page
+      .getByRole("dialog", { name: "Wyłączyć Workflows?" })
+      .getByRole("button", { name: "Wyłącz Workflows" })
+      .click();
+    await expect(keyField(page)).toBeVisible();
+    await nav(page).getByRole("button", { name: /Agenci|Sesje agentów/ }).first().click();
+    const section = page.getByRole("region", {
+      name: /Przebiegi procesów w toku/,
+    });
+    await section.getByRole("button", { name: "Zatrzymaj przebieg 1" }).click();
+    await page
+      .getByRole("dialog", { name: "Zatrzymać przebieg?" })
+      .getByRole("button", { name: "Zatrzymaj" })
+      .click();
+    await expect(section.getByRole("status")).toContainText(
+      "Zatrzymywanie przebiegu 1",
+    );
+    expect(
+      await page.evaluate(() => (window as any).__workflowCancels),
+    ).toBe(1);
+    await expect(page.getByRole("alert")).toHaveCount(0);
+  });
+
+  // Jak `workflows::lock` (tekst pilnuje też test Rust `lock_is_refused_while_runs_are_active`).
+  test("podgląd: odmowa wyłączenia ma regułę i komunikat z Rust", async ({
+    page,
+  }) => {
+    await previewUnlocked(page);
+    const result = await page.evaluate(async () => {
+      const w: any = await import(/* @vite-ignore */ "/src/preview/workflows.ts");
+      const runs: any = await import(/* @vite-ignore */ "/src/preview/workflowRuns.ts");
+      return {
+        none: w.lockRefusal(0),
+        two: w.lockRefusal(2),
+        active: runs.activeRunCount(),
+      };
+    });
+    expect(result.none).toBeNull();
+    expect(result.two).toBe(
+      "Wyłączenie wstrzymane. Przebiegi Workflows w toku: 2. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).",
+    );
+    // Przykład czeka na zgodę albo jest przerwany: nie blokuje wyłączenia.
+    expect(result.active).toBe(0);
+  });
+
+  test("podgląd: wyłączenie zachowuje definicje, ponowne odblokowanie je pokazuje", async ({
+    page,
+  }) => {
+    await previewUnlocked(page);
+    await page.evaluate(
+      async ([key]) => {
+        const w: any = await import(/* @vite-ignore */ "/src/workflows.ts");
+        await w.createWorkflow("Zachowany", "", false);
+        await w.lockWorkflows();
+        const raw = JSON.parse(localStorage.getItem(key) ?? "{}");
+        (window as any).__after = {
+          unlocked: raw.unlocked,
+          count: raw.workflows.length,
+        };
+      },
+      [WORKFLOWS_KEY],
+    );
+    expect(await page.evaluate(() => (window as any).__after)).toEqual({
+      unlocked: false,
+      count: 1,
+    });
+    await page.evaluate((key) => {
+      const raw = JSON.parse(localStorage.getItem(key) ?? "{}");
+      localStorage.setItem(key, JSON.stringify({ ...raw, unlocked: true }));
+    }, WORKFLOWS_KEY);
+    await page.reload();
+    await nav(page).getByRole("button", { name: "Definicje" }).click();
+    await expect(page.getByText("Zachowany").first()).toBeVisible();
+  });
+});

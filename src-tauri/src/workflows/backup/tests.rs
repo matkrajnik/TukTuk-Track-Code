@@ -291,6 +291,22 @@ fn restore_keeps_workflows_unlocked_key() {
     assert!(crate::workflows::store::is_unlocked(&conn).unwrap());
 }
 
+#[test]
+fn restore_after_lock_keeps_module_locked() {
+    let dir = Dir::new("locked");
+    let source = TestDb::new();
+    crate::workflows::store::set_unlocked(&source.db.lock().unwrap()).unwrap();
+    let path = dir.0.join("kopia.sqlite");
+    save_copy(&source, &path);
+    let live = TestDb::new();
+    let staged = crate::backup::prepare_restore(&path, 5).unwrap().db;
+    let mut conn = live.db.lock().unwrap();
+    assert!(!crate::workflows::store::is_unlocked(&conn).unwrap());
+    let cache = crate::settings::Cache::default();
+    crate::backup::restore_locked(&mut conn, &staged, &dir.0.join("b"), &cache).unwrap();
+    assert!(!crate::workflows::store::is_unlocked(&conn).unwrap());
+}
+
 // ---------------------------------------------------------------------------
 // Kryterium 9: diffy w kopii
 

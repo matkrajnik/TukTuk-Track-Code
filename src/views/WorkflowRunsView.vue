@@ -5,6 +5,7 @@
  * po odblokowaniu (jak reszta modułu).
  */
 import { onMounted, ref, watch } from "vue";
+import WorkflowFaults from "../components/workflows/WorkflowFaults.vue";
 import WorkflowRunMonitor from "../components/workflows/WorkflowRunMonitor.vue";
 import {
   RUN_STATUS_LABELS,
@@ -69,6 +70,7 @@ onMounted(() => load(false));
 <template>
   <div class="wf-runs">
     <h1>Uruchomienia</h1>
+    <WorkflowFaults />
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <form class="wf-filters" @submit.prevent="load(false)">
       <label>

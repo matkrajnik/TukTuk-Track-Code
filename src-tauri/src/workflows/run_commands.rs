@@ -285,6 +285,15 @@ pub async fn workflow_recover(
     .map_err(|e| e.to_string())?
 }
 
+/// Problemy zgłoszone przez silnik od startu aplikacji; bez klucza, bo dotyczą
+/// odzyskiwania i muszą być widoczne także po wyłączeniu modułu.
+#[tauri::command]
+pub fn workflow_faults(app: tauri::AppHandle) -> Vec<super::runtime::Fault> {
+    app.try_state::<super::runtime::FaultLog>()
+        .map(|log| log.snapshot())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn workflow_artifact_read(
     app: tauri::AppHandle,

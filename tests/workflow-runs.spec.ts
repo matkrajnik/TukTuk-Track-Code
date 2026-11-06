@@ -891,3 +891,90 @@ test("filtr repozytorium nie zależy od wielkości liter i separatora", async ({
   await repo.fill("C:/rep%");
   await expect(page.getByRole("button", { name: "Otwórz przebieg 1" })).toHaveCount(0);
 });
+
+// E7: otwarte z E5 — podwójne kliknięcie Uruchom w formularzu z karty zadania.
+test("karta zadania: podwójne kliknięcie Uruchom wysyła jeden requestId i tworzy jeden przebieg", async ({
+  page,
+}) => {
+  await openStartable(page);
+  await taskCard(page).click();
+  await taskActions(page)
+    .getByRole("button", { name: "Uruchom proces: Analiza importu" })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Proces").selectOption({ label: "Proces E5 (v2)" });
+  await dialog.getByLabel(/Repozytorium/).fill("C:\\repo");
+  await dialog.getByRole("button", { name: "Uruchom", exact: true }).dblclick();
+  await expect(page.getByTestId("run-status")).toBeVisible();
+  const sent = await starts(page);
+  expect(sent.length).toBeGreaterThanOrEqual(1);
+  expect(new Set(sent.map((s: any) => s.requestId)).size).toBe(1);
+  expect(sent[0].repo).toBe("C:\\repo");
+  const created = await page.evaluate(
+    () => Object.keys((window as any).__workflowRequestIds ?? {}).length,
+  );
+  expect(created).toBe(1);
+});
+
+// E7: śledzenie bez klucza i po wyłączeniu modułu: żadnych komend z listy KEYED,
+// start i stop pomiaru działają tak samo (DoD 1).
+const KEYLESS_WORKFLOW = new Set([
+  "workflow_access",
+  "workflow_unlock",
+  "workflow_lock",
+  "workflow_runs",
+  "workflow_run_get",
+  "workflow_run_events",
+  "workflow_cancel",
+  "workflow_recover",
+  "workflow_faults",
+]);
+
+async function walkMenuAndMeasure(page: Page) {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  page.on("console", (m) => {
+    if (m.type() === "error") errors.push(m.text());
+  });
+  const before = (await mockCalls(page)).length;
+  const items = nav(page).getByRole("button");
+  const count = await items.count();
+  for (let i = 0; i < count; i++) {
+    await items.nth(i).click();
+    await page.waitForTimeout(50);
+  }
+  await nav(page).getByRole("button", { name: "Zadania" }).click();
+  await taskCard(page).click();
+  await page.getByRole("button", { name: "Start: Analiza importu" }).click();
+  await page.getByRole("button", { name: "Stop: Analiza importu" }).click();
+  await expect(
+    page.getByRole("button", { name: "Start: Analiza importu" }),
+  ).toBeVisible();
+  const calls = (await mockCalls(page)).slice(before);
+  const keyed = calls
+    .map((c: any) => c.cmd as string)
+    .filter((c) => c.startsWith("workflow_") && !KEYLESS_WORKFLOW.has(c));
+  return { errors, keyed, cmds: calls.map((c: any) => c.cmd as string) };
+}
+
+test("bez klucza nawigacja i pomiar nie wołają komend Workflows z kluczem", async ({
+  page,
+}) => {
+  await openDesktop(page, { workflows: { unlocked: false } });
+  const result = await walkMenuAndMeasure(page);
+  expect(result.errors).toEqual([]);
+  expect(result.keyed).toEqual([]);
+});
+
+test("po wyłączeniu modułu pomiar daje ten sam wynik co bez klucza", async ({
+  page,
+}) => {
+  await openDesktop(page, { workflows: { unlocked: true } });
+  await page.evaluate(async () => {
+    const m: any = await import(/* @vite-ignore */ "/src/workflowAccess.ts");
+    await m.lockModule();
+  });
+  const result = await walkMenuAndMeasure(page);
+  expect(result.errors).toEqual([]);
+  expect(result.keyed).toEqual([]);
+});

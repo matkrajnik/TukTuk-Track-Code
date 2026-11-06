@@ -42,3 +42,5 @@ Przygotuj repozytorium testowe jak w `E4_TEST_RECZNY.md` (sekcja 1).
 
 Do wykonania przez użytkownika; do tego czasu zachowanie na prawdziwym Windows i CLI jest
 niezweryfikowane.
+
+Zob. też `INSTRUKCJA.md` (użytkowanie i rozwiązywanie problemów) oraz `E7_TEST_RECZNY.md` (checklista natywna i pilotaż).

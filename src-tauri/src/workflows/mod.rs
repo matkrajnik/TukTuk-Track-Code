@@ -1,8 +1,11 @@
 //! Moduł Workflows: komendy Tauri nad trwałymi definicjami (etap E1).
 //!
 //! Plan: docs/workflows/PLAN_WDROZENIA.md, decyzje E0: docs/workflows/E0_ANALIZA.md.
-//! Każda komenda poza `workflow_access` i `workflow_unlock` sprawdza w Rust,
-//! czy moduł odblokowano kluczem; ukrycie menu w interfejsie nie jest kontrolą.
+//! Komendy bez klucza: `workflow_access`, `workflow_unlock`, `workflow_lock`,
+//! historia (`workflow_runs`, `workflow_run_get`, `workflow_run_events`),
+//! `workflow_cancel`, `workflow_recover` i `workflow_faults`. Pozostałe sprawdzają
+//! w Rust, czy moduł odblokowano kluczem; ukrycie menu w interfejsie nie jest
+//! kontrolą. Podział pilnuje test `tests/workflow_commands.rs`.
 
 pub mod access;
 pub mod artifacts;
@@ -55,6 +58,13 @@ pub(crate) fn require_unlocked(db: &Connection) -> Result<(), StoreError> {
     if !store::is_unlocked(db)? {
         return Err(StoreError::BadInput(LOCKED.into()));
     }
+    let schema = store::module_schema_of(db);
+    if schema > store::MODULE_SCHEMA {
+        return Err(StoreError::BadInput(format!(
+            "Baza Workflows pochodzi z nowszej wersji aplikacji (schemat {schema}, obsługiwany {}). Zaktualizuj aplikację.",
+            store::MODULE_SCHEMA
+        )));
+    }
     Ok(())
 }
 
@@ -89,6 +99,23 @@ pub fn workflow_unlock(app: tauri::AppHandle, key: String) -> Result<Access, Str
         store::set_unlocked(db)?;
         Ok(Access { unlocked: true })
     })
+}
+
+/// Wyłączenie modułu (E7): odmawia przy przebiegach w toku, inaczej usuwa flagę
+/// odblokowania. Historia i definicje zostają; ponowne włączenie wymaga klucza.
+pub(crate) fn lock(db: &Connection) -> Result<Access, StoreError> {
+    if let Some(reason) = backup::active_work(db)? {
+        return Err(StoreError::BadInput(format!(
+            "Wyłączenie wstrzymane. {reason}"
+        )));
+    }
+    store::set_locked(db)?;
+    Ok(Access { unlocked: false })
+}
+
+#[tauri::command]
+pub fn workflow_lock(app: tauri::AppHandle) -> Result<Access, String> {
+    with_db(&app, lock)
 }
 
 #[tauri::command]

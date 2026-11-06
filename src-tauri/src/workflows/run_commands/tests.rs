@@ -315,3 +315,208 @@ fn recover_works_without_unlock_key() {
     // Bez klucza nadal nie da się startować ani decydować.
     assert!(unlocked(&f.db).is_err());
 }
+
+fn count(f: &Fixture, table: &str) -> i64 {
+    f.db.lock()
+        .unwrap()
+        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+        .unwrap()
+}
+
+const MODULE_TABLES: [&str; 6] = [
+    "workflows",
+    "workflow_versions",
+    "workflow_runs",
+    "workflow_events",
+    "workflow_approvals",
+    "workflow_artifacts",
+];
+
+fn set_status(f: &Fixture, status: &str) {
+    f.db.lock()
+        .unwrap()
+        .execute("UPDATE workflow_runs SET status = ?1", [status])
+        .unwrap();
+}
+
+fn lock_now(f: &Fixture) -> Result<crate::workflows::Access, String> {
+    let conn = f.db.lock().unwrap();
+    crate::workflows::lock(&conn).map_err(|e| e.to_string())
+}
+
+#[test]
+fn lock_removes_flag_and_keeps_definitions_runs_and_events() {
+    let f = Fixture::new(true);
+    f.to_approval();
+    let app = std::env::temp_dir().join(format!("tuktuk-wf-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&app);
+    let diff = b"--- a/x
++++ b/x
++zmiana
+";
+    let hash = crate::workflows::artifacts::hex_of(diff);
+    crate::workflows::artifacts::store_diff(&f.db, &app, f.run, diff, &hash, 3).unwrap();
+    let file = app.join(crate::workflows::artifacts::rel_path(f.run, &hash));
+    assert!(file.exists());
+    let before: Vec<i64> = MODULE_TABLES.iter().map(|t| count(&f, t)).collect();
+    assert!(
+        before.iter().all(|&n| n > 0),
+        "każda tabela modułu ma dane: {before:?}"
+    );
+    assert!(!lock_now(&f).unwrap().unlocked);
+    assert!(!store::is_unlocked(&f.db.lock().unwrap()).unwrap());
+    let after: Vec<i64> = MODULE_TABLES.iter().map(|t| count(&f, t)).collect();
+    assert_eq!(before, after);
+    assert!(file.exists(), "plik diffu w workflows/runs zostaje");
+    let _ = std::fs::remove_dir_all(&app);
+}
+
+#[test]
+fn lock_is_refused_while_runs_are_active() {
+    for status in ["queued", "running", "cancelling"] {
+        let f = Fixture::new(true);
+        set_status(&f, status);
+        let err = lock_now(&f).unwrap_err();
+        assert!(err.starts_with("Wyłączenie wstrzymane."), "{status}: {err}");
+        // Ten sam tekst w podglądzie (`src/preview/workflows.ts`, `lockRefusal`) i fixture.
+        assert_eq!(
+            err,
+            "Wyłączenie wstrzymane. Przebiegi Workflows w toku: 1. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).",
+            "{status}"
+        );
+        assert!(
+            store::is_unlocked(&f.db.lock().unwrap()).unwrap(),
+            "{status}"
+        );
+    }
+    let f = Fixture::new(true);
+    set_status(&f, "waitingForApproval");
+    assert!(lock_now(&f).is_ok());
+}
+
+#[test]
+fn start_after_lock_is_refused_with_locked_message() {
+    let f = Fixture::new(true);
+    f.to_approval();
+    lock_now(&f).unwrap();
+    let dir = std::env::temp_dir();
+    let enqueued = std::cell::Cell::new(0);
+    let enqueue = |_: i64| enqueued.set(enqueued.get() + 1);
+    let emit = |_: &StoredEvent| {};
+    let detected = crate::ai::Detected::default();
+    let err = start_run(
+        &StartDeps {
+            db: &f.db,
+            app_data: &dir,
+            detected: &detected,
+            read_codex_config: || Ok(None),
+            free_bytes: agent_cli::available_bytes,
+            now: 1,
+            enqueue: &enqueue,
+            emit: &emit,
+        },
+        StartRequest {
+            version_id: 1,
+            request_id: "after-lock".into(),
+            task_id: None,
+            repo: dir.to_string_lossy().into_owned(),
+            goal: None,
+        },
+    )
+    .unwrap_err();
+    assert!(err.contains("nie jest odblokowany"), "{err}");
+    assert_eq!(enqueued.get(), 0);
+    assert_eq!(count(&f, "workflow_runs"), 1);
+}
+
+#[test]
+fn decide_after_lock_is_refused() {
+    let f = Fixture::new(true);
+    f.to_approval();
+    let command = f.command(Decision::Approve, "after-lock", None);
+    lock_now(&f).unwrap();
+    let err = decide(&f.db, &f.handle, command).unwrap_err();
+    assert!(err.contains("nie jest odblokowany"), "{err}");
+    assert_eq!(f.status(), "waitingForApproval");
+}
+
+#[test]
+fn history_and_cancel_work_after_lock() {
+    let f = Fixture::new(true);
+    f.to_approval();
+    lock_now(&f).unwrap();
+    assert_eq!(history_list(&f.db, &RunFilter::default()).unwrap().len(), 1);
+    assert_eq!(
+        history_get(&f.db, f.run, 2_000).unwrap().summary.status,
+        "waitingForApproval"
+    );
+    assert!(!history_events(&f.db, f.run, 0, 500).unwrap().is_empty());
+    cancel(&f.db, &f.handle, f.run).unwrap();
+    assert!(f.handle.wait_idle(WAIT));
+    assert_eq!(f.status(), "cancelled");
+}
+
+/// Odzyskanie przerwanego przebiegu działa po wyłączeniu modułu (E7).
+#[test]
+fn recover_works_after_lock() {
+    use workflow_core::engine::Input;
+    let f = Fixture::new(true);
+    f.to_approval();
+    f.db.lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at)
+             VALUES(?1, 'C:/repo', 'C:/wt/r', 'abc', 'reserved', 1)",
+            [f.run],
+        )
+        .unwrap();
+    let repo = SqliteRunRepository::new(f.db.clone());
+    workflow_core::testing::apply_inputs(
+        &repo,
+        f.run,
+        vec![Input::Abandon {
+            message: "awaria".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(f.status(), "interrupted");
+    lock_now(&f).unwrap();
+    let fake = crate::workflows::processes::fake::FakeProcesses::default();
+    let outcome = recover_run(&f.db, &fake, &|_| {}, f.run, 50).unwrap();
+    assert!(outcome.processes_confirmed && outcome.workspace_released);
+    assert!(!outcome.already_recovered);
+    assert!(!store::is_unlocked(&f.db.lock().unwrap()).unwrap());
+}
+
+#[test]
+fn newer_module_schema_blocks_mutations_but_not_history() {
+    let f = Fixture::new(true);
+    f.to_approval();
+    let newer = store::MODULE_SCHEMA + 1;
+    {
+        let conn = f.db.lock().unwrap();
+        conn.execute(
+            "INSERT INTO workflow_schema_migrations(version, applied_at) VALUES(?1, 1)",
+            [newer],
+        )
+        .unwrap();
+        // Ponowna inicjalizacja przechodzi i niczego nie usuwa.
+        store::init_tables(&conn).unwrap();
+    }
+    let before = count(&f, "workflow_runs");
+    let command = f.command(Decision::Approve, "newer", None);
+    let err = decide(&f.db, &f.handle, command).unwrap_err();
+    assert!(
+        err.starts_with(
+            "Baza Workflows pochodzi z nowszej wersji aplikacji (schemat 6, obsługiwany 5)."
+        ),
+        "{err}"
+    );
+    assert!(err.ends_with("Zaktualizuj aplikację."), "{err}");
+    assert!(unlocked(&f.db).is_err());
+    assert_eq!(history_list(&f.db, &RunFilter::default()).unwrap().len(), 1);
+    assert!(history_get(&f.db, f.run, 2_000).is_ok());
+    cancel(&f.db, &f.handle, f.run).unwrap();
+    assert!(f.handle.wait_idle(WAIT));
+    assert_eq!(count(&f, "workflow_runs"), before);
+}

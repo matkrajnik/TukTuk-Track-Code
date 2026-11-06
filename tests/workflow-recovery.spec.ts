@@ -402,3 +402,67 @@ test("bez klucza pola retencji nie ma", async ({ page }) => {
     page.getByLabel("Przechowywanie diffów zakończonych przebiegów (dni)"),
   ).toHaveCount(0);
 });
+
+// E7: problemy po starcie (workflows::workflow_faults + zdarzenie workflow-fault).
+const agentsLink = (page: Page) =>
+  nav(page).getByRole("button", { name: /^Agenci|Sesje agentów/ }).first();
+const faultsAlert = (page: Page) =>
+  page.getByRole("alert", { name: "Problemy Workflows" });
+const FAULT = {
+  runId: 7,
+  message: "Przebieg 7: nie udało się potwierdzić końca procesu (PID 4242).",
+  at: 1_700_000_000_000,
+};
+
+test("problem ze snapshotu jest widoczny na tablicy agentów bez klucza", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    workflows: { unlocked: false },
+    workflowRuns: { faults: [FAULT] },
+  });
+  await agentsLink(page).click();
+  await expect(faultsAlert(page)).toContainText("PID 4242");
+  // Bez klucza nie ma odnośnika do monitora.
+  await expect(faultsAlert(page).getByRole("button", { name: /Otwórz przebieg/ })).toHaveCount(0);
+});
+
+test("problem jest widoczny w widoku przebiegów, a Ukryj go chowa", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    workflows: { unlocked: true },
+    workflowRuns: { faults: [FAULT] },
+  });
+  await nav(page).getByRole("button", { name: "Uruchomienia" }).click();
+  await expect(faultsAlert(page)).toContainText("PID 4242");
+  await expect(
+    faultsAlert(page).getByRole("button", { name: "Otwórz przebieg 7" }),
+  ).toBeVisible();
+  await faultsAlert(page).getByRole("button", { name: "Ukryj" }).click();
+  await expect(faultsAlert(page)).toHaveCount(0);
+});
+
+test("zdarzenie workflow-fault dopisuje wpis, a duplikat ze snapshotu pokazuje raz", async ({
+  page,
+}) => {
+  await openDesktop(page, {
+    workflows: { unlocked: false },
+    workflowRuns: { faults: [FAULT] },
+  });
+  await agentsLink(page).click();
+  await expect(faultsAlert(page)).toContainText("PID 4242");
+  await page.evaluate(
+    (f) => (window as any).__tauriMock.emit("workflow-fault", f),
+    FAULT,
+  );
+  await page.evaluate(() =>
+    (window as any).__tauriMock.emit("workflow-fault", {
+      runId: 0,
+      message: "Silnik przebiegów nie wystartował.",
+      at: 1,
+    }),
+  );
+  await expect(faultsAlert(page).getByRole("listitem")).toHaveCount(2);
+  await expect(faultsAlert(page)).toContainText("Silnik przebiegów nie wystartował.");
+});

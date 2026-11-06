@@ -228,6 +228,50 @@ pub fn run_info(db: &SharedDb, run_id: i64) -> Option<RunInfo> {
     }
 }
 
+/// Ile ostatnich problemów pamięta `FaultLog`.
+pub const MAX_FAULTS: usize = 50;
+
+/// Problem zgłoszony przez silnik (np. po rekonsyliacji przy starcie).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Fault {
+    pub run_id: i64,
+    pub message: String,
+    pub at: i64,
+}
+
+/// Ograniczony dziennik problemów w pamięci: okno otwarte po starcie nie straci
+/// zgłoszeń wysłanych, zanim zaczęło nasłuchiwać. Nie jest blokadą bazy.
+#[derive(Default)]
+pub struct FaultLog(std::sync::Mutex<std::collections::VecDeque<Fault>>);
+
+impl FaultLog {
+    /// Dopisuje problem; ten sam (przebieg, komunikat) nie powtarza się, a po
+    /// przekroczeniu limitu odpada najstarszy.
+    pub fn record(&self, run_id: i64, message: &str, at: i64) {
+        let mut log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if log
+            .iter()
+            .any(|f| f.run_id == run_id && f.message == message)
+        {
+            return;
+        }
+        if log.len() >= MAX_FAULTS {
+            log.pop_front();
+        }
+        log.push_back(Fault {
+            run_id,
+            message: message.to_owned(),
+            at,
+        });
+    }
+
+    pub fn snapshot(&self) -> Vec<Fault> {
+        let log = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        log.iter().cloned().collect()
+    }
+}
+
 #[derive(Clone)]
 pub struct TauriSink {
     app: tauri::AppHandle,
@@ -270,7 +314,11 @@ impl EventSink for TauriSink {
     }
 
     fn fault(&self, run_id: i64, message: &str) {
-        let payload = serde_json::json!({"runId": run_id, "message": message});
+        let at = crate::db::now();
+        if let Some(log) = self.app.try_state::<FaultLog>() {
+            log.record(run_id, message, at);
+        }
+        let payload = serde_json::json!({"runId": run_id, "message": message, "at": at});
         if let Err(e) = self.app.emit(FAULT_EVENT, payload) {
             eprintln!("Workflows: nie udało się zgłosić błędu przebiegu {run_id}: {e}");
         }
@@ -329,6 +377,7 @@ fn startup_maintenance(
 /// Uruchamia sterownik przebiegów w wątku w tle. Wołać po `manage(Database)`.
 pub fn setup(app: &tauri::AppHandle) {
     app.manage(RuntimeState::default());
+    app.manage(FaultLog::default());
     let app = app.clone();
     let spawned = std::thread::Builder::new()
         .name("workflow-runtime-setup".into())

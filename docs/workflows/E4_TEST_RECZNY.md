@@ -105,3 +105,5 @@ Uruchom szablon na repozytorium z punktu 1 z instrukcją
 |      | Review zapisuje plik: PermissionViolation |   |   |   |
 |      | Anulowanie kroku Codexa |   |   |   |
 |      | Zamknięcie aplikacji w trakcie kroku |   |   |   |
+
+Zob. też `INSTRUKCJA.md` (użytkowanie i rozwiązywanie problemów) oraz `E7_TEST_RECZNY.md` (checklista natywna i pilotaż).

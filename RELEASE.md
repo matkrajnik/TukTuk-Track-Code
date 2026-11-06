@@ -247,6 +247,14 @@ Przy zmianie wersji Tauri CLI porównaj szablon NSIS z upstreamem (zob. README,
 „Instalacja i aktualizacje”), bo updater zależy od obsługi `/P`, `/UPDATE`, `/R` i `/ARGS`
 w `.onInit` oraz `.onInstSuccess`.
 
+## Wydanie z modułem Workflows
+
+Przed `npm run ship`: pełne `npm run check` i `npm run tauri build -- --no-bundle`. Po instalacji
+sprawdź: aktualizację z 2.4.0 (migracja schematu 1–5 na bazie z danymi), blokadę aktualizacji
+przy przebiegu w toku (`--prepare-update`) i to, że kopia z 2.4.0 przywraca się bez Workflows.
+Pełna checklista natywna i tabela pilotażu: `docs/workflows/E7_TEST_RECZNY.md`. Numer 2.5.0 jest
+propozycją; wersję podnosi `npm run ship`.
+
 ## Wydanie 2.0.0: zmiana nazwy Todo Track → TukTuk Track
 
 Od 2.0 aplikacja ma nazwę **TukTuk Track** i nowy identyfikator `pl.tuktuktrack.desktop`

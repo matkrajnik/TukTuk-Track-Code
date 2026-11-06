@@ -1,5 +1,6 @@
-TukTuk Track 2.4.0: historia powiadomień z dzwoneczkiem.
+TukTuk Track 2.5.0: Workflows (eksperymentalne) — procesy agentów odblokowywane kluczem.
 
-- Dzwoneczek w górnym pasku zbiera wszystkie powiadomienia: spotkania i przypomnienia, nowe zadania z Jiry i Redmine, terminy, przeglądy dnia i tygodnia, agentów. Licznik pokazuje nieprzeczytane, więc gdy przyjdzie ich kilka naraz, żadne nie ginie.
-- Kliknięcie wpisu oznacza go jako przeczytany i otwiera ten sam widok co powiadomienie Windows. Panel ma też „Oznacz wszystkie jako przeczytane” i „Wyczyść historię”.
-- Historia trzyma do 200 wpisów z ostatnich 30 dni i zostaje po restarcie aplikacji. Zaczyna się od powiadomień po aktualizacji.
+- Nowy moduł Workflows: proces agentów (analiza, implementacja, review) w osobnym katalogu roboczym, z Twoją zgodą na konkretny diff. Bez automatycznego merge.
+- Moduł włącza klucz dostępu w Ustawieniach → Workflows i można go tam wyłączyć; historia i definicje zostają.
+- Problemy po awarii lub restarcie są widoczne w alercie, także na tablicy agentów.
+- Bez klucza nic się nie zmienia: śledzenie czasu, raporty i integracje działają jak dotąd.

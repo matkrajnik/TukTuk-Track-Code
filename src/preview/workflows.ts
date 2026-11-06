@@ -15,6 +15,7 @@ import {
   type WorkflowVersion,
 } from "../api/workflows";
 import { validateWorkflow } from "../api/workflowValidate";
+import { activeRunCount } from "./workflowRuns";
 import { parseWorkflowGraph } from "../api/workflowParse";
 import {
   analysisImplementationReview,
@@ -232,6 +233,23 @@ export async function unlock(key: string): Promise<WorkflowAccess> {
     throw new Error("Nieprawidłowy klucz dostępu.");
   write({ ...read(), unlocked: true });
   return { unlocked: true };
+}
+
+/** Komunikat odmowy wyłączenia, jak `workflows::lock` z `backup::active_work`. */
+export function lockRefusal(active: number): string | null {
+  if (active <= 0) return null;
+  return `Wyłączenie wstrzymane. Przebiegi Workflows w toku: ${active}. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).`;
+}
+
+/**
+ * Jak `workflows::lock`: odmawia przy przebiegach queued, running albo
+ * cancelling w symulatorze przebiegów, inaczej usuwa tylko znacznik odblokowania.
+ */
+export async function lock(): Promise<WorkflowAccess> {
+  const refusal = lockRefusal(activeRunCount());
+  if (refusal) throw new Error(refusal);
+  write({ ...read(), unlocked: false });
+  return { unlocked: false };
 }
 
 export async function list(

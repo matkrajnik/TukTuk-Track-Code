@@ -18,6 +18,7 @@ import {
   type WaitTime,
 } from "../agentboard";
 import { duration } from "../store";
+import WorkflowFaults from "../components/workflows/WorkflowFaults.vue";
 import AgentBoardRuns from "../components/workflows/AgentBoardRuns.vue";
 
 /**
@@ -255,6 +256,7 @@ onUnmounted(() => {
     Brak sesji do pokazania. Tablica zapełnia się zdarzeniami hooków Claude
     Code i Codexa (Ustawienia → Agenci) i jest pusta po uruchomieniu aplikacji.
   </p>
+  <WorkflowFaults />
   <AgentBoardRuns />
   <div class="board">
     <section

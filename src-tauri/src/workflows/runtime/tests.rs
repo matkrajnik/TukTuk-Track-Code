@@ -343,3 +343,19 @@ fn stopped_runtime_rejects_new_work_with_message() {
         Some(ERR_RUNTIME_STOPPED)
     );
 }
+
+#[test]
+fn fault_log_keeps_bounded_recent_faults() {
+    let log = FaultLog::default();
+    log.record(1, "a", 10);
+    log.record(1, "a", 11);
+    log.record(2, "a", 12);
+    assert_eq!(log.snapshot().len(), 2, "deduplikacja po (runId, message)");
+    for i in 0..(MAX_FAULTS as i64 + 10) {
+        log.record(100 + i, "problem", i);
+    }
+    let all = log.snapshot();
+    assert_eq!(all.len(), MAX_FAULTS);
+    assert_eq!(all.last().unwrap().run_id, 100 + MAX_FAULTS as i64 + 9);
+    assert!(all.iter().all(|f| f.run_id >= 100), "najstarsze odpadły");
+}

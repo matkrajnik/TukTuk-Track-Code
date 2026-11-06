@@ -1,0 +1,31 @@
+# E7: checklista natywna i pilotaż
+
+Dokument dla użytkownika. Agent go nie wykonuje. Zob. też `INSTRUKCJA.md`,
+`E4_TEST_RECZNY.md` (prawdziwe CLI) i `E6_TEST_RECZNY.md` (odzyskiwanie).
+
+## 1. Windows, instalator i aktualizacja
+
+- [ ] Czysta instalacja NSIS: aplikacja startuje, bez klucza menu bez Workflows.
+- [ ] Aktualizacja przez updater z 2.4.0: zadania i czas zostają, migracja schematu 1–5 na bazie z danymi.
+- [ ] Kopia zapasowa z 2.4.0 przywraca się bez Workflows.
+- [ ] Instalacja starszej wersji na nowszej bazie: start, decyzja i zapis zwracają „Baza Workflows pochodzi z nowszej wersji aplikacji”, historia i „Zatrzymaj” działają.
+
+## 2. Moduł
+
+- [ ] Odblokowanie kluczem, wyłączenie i ponowne włączenie (wymaga klucza).
+- [ ] Wyłączenie przy przebiegu w toku: „Wyłączenie wstrzymane.”; przy czekającym na zgodę przechodzi.
+- [ ] Po wyłączeniu tablica agentów nadal pokazuje przebieg i pozwala go zatrzymać.
+- [ ] Zamknięcie do traya a „Zakończ” przy przebiegu w toku (otwarte z E6).
+- [ ] Restart w trakcie zgody: przebieg przerwany, „Odzyskaj przebieg”.
+- [ ] Zabicie procesu aplikacji w Menedżerze zadań w trakcie kroku: po starcie problem w alercie, odzyskanie działa.
+- [ ] Blokada aktualizacji (`--prepare-update`) przy przebiegu w toku.
+
+## 3. Pilotaż
+
+| Scenariusz | Wynik | Bloker (tak/nie) | Uwagi |
+|------------|-------|------------------|-------|
+| Analiza → implementacja → review na małym repozytorium | | | |
+| Odrzucenie diffu z komentarzem | | | |
+| Zatrzymanie w trakcie kroku | | | |
+| Restart i odzyskanie | | | |
+| Przywrócenie kopii | | | |

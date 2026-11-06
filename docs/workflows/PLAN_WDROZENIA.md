@@ -433,7 +433,7 @@ Odbiór: restart nie gubi historii i zgód, nie uruchamia ponownie zmian w ciemn
 - [ ] Przeprowadzić przegląd domeny, bezpieczeństwa, UI i migracji.
 - [ ] Wykonać pełne CI oraz testy natywne na Windows.
 - [ ] Uzupełnić README, instrukcję użytkownika, troubleshooting i release notes.
-- [ ] Udostępnić moduł początkowo jako funkcję eksperymentalną odblokowywaną kluczem w ustawieniach, zachowując pełne śledzenie bez klucza.
+- [x] Udostępnić moduł początkowo jako funkcję eksperymentalną odblokowywaną kluczem w ustawieniach, zachowując pełne śledzenie bez klucza.
 - [ ] Zebrać wynik pilotażu; poprawić blokery przed oznaczeniem MVP jako gotowego.
 - [ ] Przygotować wydanie według RELEASE.md; podpisanie i publikację uruchamia użytkownik.
 
@@ -1116,3 +1116,37 @@ Pozostałe blokery (poza zakresem automatycznych testów): ręczny test `E6_TEST
 Claude i Codex, zamknięcie do traya a „Zakończ”, aktualizacja przez instalator, zabicie procesu w Menedżerze
 zadań; decyzje użytkownika (Running na granicy kroków, WaitingForApproval a restore, okno potwierdzenia przy
 „Zakończ”). Frontend nie słucha jeszcze zdarzenia `workflow-fault`.
+
+### 2026-11-06 — E7
+
+Zakres: regresja i przygotowanie wydania (dokumentacja, wyłączenie modułu, fixture, checklista ręczna). Wersji w
+plikach nie podniesiono (wydanie 2.5.0 wymaga potwierdzenia użytkownika).
+
+Zmienione pliki (git status, bez commitu): host (`src-tauri/src/main.rs`, `workflows/mod.rs`, `run_commands.rs`,
+`runtime.rs`, `store.rs` oraz ich testy, `backup/tests.rs`; nowy `src-tauri/tests/workflow_commands.rs`), frontend
+(`src/workflows.ts`, `workflowRuns.ts`, `workflowAccess.ts`, `api/workflowRuns.ts`, `preview/workflows.ts`,
+`preview/workflowRuns.ts`, `views/AgentsView.vue`, `views/WorkflowRunsView.vue`, `components/settings/WorkflowsSection.vue`,
+nowy `components/workflows/WorkflowFaults.vue`), testy (`tests/fixtures/tauri.ts`, `workflow-recovery.spec.ts`,
+`workflow-runs.spec.ts`, `workflows-ui.spec.ts`), dokumenty (`README.md`, `RELEASE.md`, `notes.md`,
+`E4_TEST_RECZNY.md`, `E6_TEST_RECZNY.md`, nowe `E7_TEST_RECZNY.md` i `INSTRUKCJA.md`) oraz `.claude/launch.json`.
+
+Decyzje: odmowa `workflow_lock` przy aktywnych przebiegach zamiast ich anulowania (do potwierdzenia przez
+użytkownika); klucz dostępu nie występuje w żadnym pliku (sprawdzone grepem, w kodzie tylko SHA-256); logika
+zmieniona w Rust jest odzwierciedlona w fixture `tests/fixtures/tauri.ts`.
+
+Wynik `npm run check`: zielone (exit 0, 290 s): build i vue-tsc OK, Playwright 796 passed (3,6 min),
+`cargo fmt --check` OK, `cargo test --locked` OK (20 zestawów, 0 porażek).
+
+Checkboxy E7 w rozdz. 10: zaznaczony jeden z dowodem w testach (funkcja eksperymentalna odblokowywana kluczem,
+testy `workflows-ui.spec.ts`: menu bez klucza, błędny i poprawny klucz, wyłączenie zachowuje definicje).
+Niezaznaczone: przegląd (nie wykonany, patrz niżej), pełne CI wraz z testami natywnymi (natywnych brak),
+dokumentacja i release notes (napisane, bez dowodu w testach), pilotaż, przygotowanie wydania.
+
+Znane ograniczenia: Claude read-only to kontrola CLI, nie izolacja; jeden aktywny agent; brak merge.
+
+Pozostałe blokery: przegląd całego modułu nie został wykonany (limit 3 poprawek i `ReviewLimitExceeded`, spójność
+stanów, redakcja diffu i stderr, allowlista środowiska, reduced motion; bez agentów rust-reviewer,
+security-reviewer, vue-reviewer; sprawdzono tylko clippy i grep klucza). Testy natywne na Windows (instalator,
+aktualizacja z 2.4.0, tray a „Zakończ”, zabicie procesu), testy na prawdziwych Claude i Codex oraz pilotaż:
+checklista w `E7_TEST_RECZNY.md`, wykonuje ją użytkownik. Do potwierdzenia: numer 2.5.0. Poza zakresem E7: nowe
+zrzuty wzorcowe widoków Workflows, filtr repozytorium z `agent_bindings`, pomiar `cargo llvm-cov`.

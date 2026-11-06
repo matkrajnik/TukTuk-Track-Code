@@ -205,6 +205,13 @@ pub fn set_unlocked(db: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// Wyłącza moduł: usuwa tylko flagę odblokowania. Definicje, wersje, przebiegi,
+/// zdarzenia, zgody i pliki zostają; ponowne włączenie wymaga klucza.
+pub fn set_locked(db: &Connection) -> rusqlite::Result<()> {
+    db.execute("DELETE FROM settings WHERE key = ?1", [UNLOCKED_KEY])?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {

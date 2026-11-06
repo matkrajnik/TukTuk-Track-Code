@@ -122,6 +122,8 @@ export interface TauriOptions {
    */
   workflowRuns?: {
     runs?: any[];
+    /** Odpowiedź `workflow_faults` (problemy zgłoszone przez silnik po starcie). */
+    faults?: any[];
     details?: Record<number, any>;
     events?: Record<number, any[]>;
     diffs?: Record<string, any>;
@@ -778,6 +780,29 @@ function install(init: {
             throw "Nieprawidłowy klucz dostępu.";
           workflowsUnlocked = true;
           return { unlocked: true };
+        // Jak `workflows::workflow_lock`: odmowa przy przebiegach queued, running albo
+        // cancelling (`backup::active_work`; waitingForApproval nie blokuje), inaczej
+        // usuwa tylko znacznik odblokowania. `window.__workflowLockHold` (obietnica)
+        // wstrzymuje jedno, najbliższe wywołanie (okno zostaje otwarte i zajęte).
+        case "workflow_lock": {
+          w.__workflowLocks = (w.__workflowLocks ?? 0) + 1;
+          const hold = w.__workflowLockHold;
+          w.__workflowLockHold = null;
+          if (hold) await hold;
+          const all = [
+            ...(init.workflowRuns.runs ?? []),
+            ...Object.values<any>(init.workflowRuns.details ?? {}).map((d) => d.summary),
+          ];
+          const active = new Set(
+            all
+              .filter((r: any) => ["queued", "running", "cancelling"].includes(r.status))
+              .map((r: any) => r.id),
+          );
+          if (active.size > 0)
+            throw `Wyłączenie wstrzymane. Przebiegi Workflows w toku: ${active.size}. Poczekaj na ich koniec albo je zatrzymaj (przebieg czekający na zgodę nie blokuje).`;
+          workflowsUnlocked = false;
+          return { unlocked: false };
+        }
         // Definicje (`workflows::store`): logika w Rust i podglądzie; tu tylko
         // jedna zadana przez test definicja (`workflows.detail`), bez zapisu.
         case "workflow_list": {
@@ -879,6 +904,9 @@ function install(init: {
           w.__workflowCancels = (w.__workflowCancels ?? 0) + 1;
           return null;
         }
+        // Jak `run_commands::workflow_faults`: bez klucza, kopia dziennika problemów.
+        case "workflow_faults":
+          return clone(init.workflowRuns.faults ?? []);
         case "workflow_start": {
           if (!workflowsUnlocked) throw "Moduł Workflows nie jest odblokowany.";
           if (init.workflowRuns.startError) throw init.workflowRuns.startError;

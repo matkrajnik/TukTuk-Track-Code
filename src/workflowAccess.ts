@@ -6,7 +6,7 @@
  * Stan w interfejsie nie jest kontrolą dostępu: sprawdza ją backend.
  */
 import { ref } from "vue";
-import { unlockWorkflows, workflowAccess } from "./workflows";
+import { lockWorkflows, unlockWorkflows, workflowAccess } from "./workflows";
 
 export const workflowsUnlocked = ref(false);
 /**
@@ -41,6 +41,16 @@ export async function unlockWithKey(key: string): Promise<void> {
   const access = await unlockWorkflows(key);
   workflowsUnlocked.value = access.unlocked;
   if (access.unlocked) workflowsReveal.value = true;
+}
+
+/**
+ * Wyłącza moduł w backendzie (błąd, np. przebiegi w toku, trafia do wołającego)
+ * i dopiero potem chowa go w interfejsie.
+ */
+export async function lockModule(): Promise<void> {
+  const access = await lockWorkflows();
+  workflowsUnlocked.value = access.unlocked;
+  workflowsReveal.value = false;
 }
 
 /** Koniec (albo pominięcie) animacji odsłonięcia. */

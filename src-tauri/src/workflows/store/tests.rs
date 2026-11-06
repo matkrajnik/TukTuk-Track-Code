@@ -531,3 +531,160 @@ fn migration_5_from_e5_database_keeps_tasks_sessions_runs_and_events() {
         .unwrap();
     assert_eq!(purged, None);
 }
+
+#[test]
+fn set_locked_removes_only_the_flag() {
+    let db = db();
+    let id = template(&db);
+    publish(&db, id, 1, 2_000).unwrap();
+    db.execute("INSERT INTO settings(key,value) VALUES('theme','dark')", [])
+        .unwrap();
+    set_unlocked(&db).unwrap();
+    set_locked(&db).unwrap();
+    set_locked(&db).unwrap();
+    assert!(!is_unlocked(&db).unwrap());
+    assert_eq!(list(&db, true).unwrap().len(), 1);
+    let theme: String = db
+        .query_row("SELECT value FROM settings WHERE key='theme'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(theme, "dark");
+}
+
+/// Baza w pełnym schemacie z danymi w każdej tabeli modułu oraz w `tasks`,
+/// `sessions` i `settings`.
+fn seeded_full_db() -> Connection {
+    let mut db = db();
+    crate::db::change(&mut db, "add", None, Some("Zadanie".into()), 0).unwrap();
+    let task: i64 = db
+        .query_row("SELECT id FROM tasks", [], |r| r.get(0))
+        .unwrap();
+    db.execute(
+        "INSERT INTO sessions(task_id, started_at, ended_at) VALUES(?1, 1000, 61000), (?1, 70000, NULL)",
+        [task],
+    )
+    .unwrap();
+    db.execute(
+        "INSERT INTO settings(key, value) VALUES('test-ustawienie', 'wartość')",
+        [],
+    )
+    .unwrap();
+    let id = template(&db);
+    publish(&db, id, 1, 2).unwrap();
+    db.execute_batch(
+        "INSERT INTO workflow_runs(version_id, request_id, definition_json, definition_hash, task_id, task_title, repo, status, created_at, updated_at, goal)
+           VALUES((SELECT id FROM workflow_versions), 'r', '{}', 'h', 1, 'Zadanie', 'C:/repo', 'waitingForApproval', 1, 2, 'cel');
+         INSERT INTO workflow_node_executions(id, run_id, node_id, iteration, attempt, status) VALUES('e-1', 1, 'analysis', 1, 1, 'completed');
+         INSERT INTO workflow_events(run_id, sequence, type, payload_json, created_at) VALUES(1, 1, 'runCreated', '{}', 1), (1, 2, 'runStateChanged', '{}', 2);
+         INSERT INTO workflow_approvals(id, run_id, execution_id, artifact_hash, status) VALUES('a-1', 1, 'e-1', 'h', 'pending');
+         INSERT INTO workflow_workspaces(run_id, source_repo, worktree_path, base_commit, state, created_at) VALUES(1, 'C:/repo', 'C:/wt', 'abc', 'reserved', 1);
+         INSERT INTO workflow_artifacts(run_id, kind, hash, rel_path, size, created_at) VALUES(1, 'diff', 'h', 'workflows/runs/1/diff-h.patch', 5, 1);
+         INSERT INTO workflow_processes(execution_id, run_id, pid, created_ft, job_attached, state, recorded_at) VALUES('e-1', 1, 10, 20, 1, 'exited', 3);",
+    )
+    .unwrap();
+    db
+}
+
+/// Cofa bazę do stanu schematu modułu `state` (0 = wydanie 2.4.0 bez modułu),
+/// tak jak wyglądała po wydaniu danego etapu.
+fn downgrade_to(db: &Connection, state: i64) {
+    if state < 5 {
+        db.execute_batch(
+            "DROP TABLE workflow_processes;
+             ALTER TABLE workflow_artifacts DROP COLUMN purged_at;
+             ALTER TABLE workflow_workspaces DROP COLUMN release_reason;
+             DELETE FROM workflow_schema_migrations WHERE version = 5;",
+        )
+        .unwrap();
+    }
+    if state < 4 {
+        db.execute_batch(
+            "DROP TABLE workflow_artifacts;
+             ALTER TABLE workflow_runs DROP COLUMN goal;
+             DELETE FROM workflow_schema_migrations WHERE version = 4;",
+        )
+        .unwrap();
+    }
+    if state < 3 {
+        db.execute_batch(
+            "DROP TABLE workflow_workspaces;
+             DELETE FROM workflow_schema_migrations WHERE version = 3;",
+        )
+        .unwrap();
+    }
+    if state < 2 {
+        db.execute_batch(
+            "DROP TABLE workflow_approvals; DROP TABLE workflow_node_executions;
+             DROP TABLE workflow_events; DROP TABLE workflow_runs;
+             DELETE FROM workflow_schema_migrations WHERE version = 2;",
+        )
+        .unwrap();
+    }
+    if state < 1 {
+        db.execute_batch(
+            "DROP TABLE workflow_versions; DROP TABLE workflows;
+             DROP TABLE workflow_schema_migrations;",
+        )
+        .unwrap();
+    }
+}
+
+fn existing_tables(db: &Connection) -> Vec<String> {
+    let mut statement = db
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+        .unwrap();
+    let names = statement.query_map([], |r| r.get(0)).unwrap();
+    names.collect::<Result<Vec<String>, _>>().unwrap()
+}
+
+/// `db::init` (z `init_tables`) jest idempotentne z każdego stanu schematu 0–5,
+/// w tym z bazy wydania 2.4.0 bez żadnej tabeli modułu: dwa uruchomienia
+/// nie zmieniają treści istniejących tabel i kończą na pełnym schemacie.
+#[test]
+fn init_is_idempotent_from_each_schema_state_and_keeps_data() {
+    for state in 0..=MODULE_SCHEMA {
+        let db = seeded_full_db();
+        downgrade_to(&db, state);
+        assert_eq!(module_schema_of(&db), state, "stan {state}");
+        if state == 0 {
+            assert!(
+                existing_tables(&db)
+                    .iter()
+                    .all(|t| !t.starts_with("workflow")),
+                "2.4.0: bez tabel modułu"
+            );
+        }
+        let tables = existing_tables(&db);
+        let before: Vec<(Vec<String>, Vec<Vec<String>>)> = tables
+            .iter()
+            .map(|t| {
+                let cols = columns(&db, t);
+                let rows = dump(&db, t, &cols);
+                (cols, rows)
+            })
+            .collect();
+        for table in ["tasks", "sessions", "settings"] {
+            let i = tables.iter().position(|t| t == table).unwrap();
+            assert!(!before[i].1.is_empty(), "stan {state}: {table} ma dane");
+        }
+
+        crate::db::init(&db).unwrap();
+        crate::db::init(&db).unwrap();
+
+        assert_eq!(module_schema_of(&db), MODULE_SCHEMA, "stan {state}");
+        assert!(has_column(&db, "workflow_processes", "created_ft"));
+        assert!(has_column(&db, "workflow_runs", "goal"));
+        for (table, (cols, rows)) in tables.iter().zip(&before) {
+            let after = dump(&db, table, cols);
+            if table == "workflow_schema_migrations" {
+                // Dochodzą wpisy brakujących wersji; dotychczasowe zostają bez zmian.
+                assert_eq!(&after[..rows.len()], &rows[..], "stan {state}: {table}");
+                assert_eq!(after.len() as i64, MODULE_SCHEMA, "stan {state}: {table}");
+            } else {
+                assert_eq!(&after, rows, "stan {state}: {table}");
+            }
+        }
+        assert!(!is_unlocked(&db).unwrap(), "stan {state}: bez odblokowania");
+    }
+}

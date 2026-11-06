@@ -29,6 +29,15 @@ export async function unlockWorkflows(key: string): Promise<WorkflowAccess> {
   return sim.unlock(key);
 }
 
+/**
+ * Wyłączenie modułu (E7). Definicje i historia zostają, ponowne włączenie
+ * wymaga klucza; przy przebiegach w toku backend odmawia z komunikatem.
+ */
+export async function lockWorkflows(): Promise<WorkflowAccess> {
+  if (desktop) return invoke("workflow_lock");
+  return sim.lock();
+}
+
 export async function listWorkflows(
   includeArchived = false,
 ): Promise<WorkflowSummary[]> {

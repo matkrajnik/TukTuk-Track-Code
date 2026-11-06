@@ -139,6 +139,18 @@ function eventList(): StoredEvent[] {
   ];
 }
 
+/** Statusy blokujące wyłączenie modułu, jak `backup::ACTIVE_STATUSES` w Rust. */
+const ACTIVE_STATUSES: readonly RunSummary["status"][] = ["queued", "running", "cancelling"];
+
+/**
+ * Liczba przebiegów w toku w symulatorze (jak `backup::active_work`): czekający
+ * na zgodę nie blokuje. Bez sprawdzania klucza, bo woła ją wyłączenie modułu.
+ */
+export function activeRunCount(): number {
+  return [interruptedSummary, summary].filter((s) => ACTIVE_STATUSES.includes(s.status))
+    .length;
+}
+
 export function start(_request: StartRunRequest): Promise<StartRunResult> {
   return Promise.reject(PREVIEW_NO_AGENTS);
 }

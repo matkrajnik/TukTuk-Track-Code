@@ -179,6 +179,18 @@ export interface DiffArtifact {
 }
 
 /** Typ zdarzenia odzyskania przerwanego przebiegu (`RunEvent::Reconciled`). */
+/** Problem zgłoszony przez silnik (`workflows::runtime::Fault`), np. po rekonsyliacji. */
+export interface WorkflowFault {
+  runId: number;
+  message: string;
+  at: number;
+}
+
+/** Ten sam problem ze snapshotu i ze zdarzenia pokazujemy raz (przebieg + komunikat). */
+export function faultKey(fault: Pick<WorkflowFault, "runId" | "message">): string {
+  return `${fault.runId}|${fault.message}`;
+}
+
 export const RECOVERY_EVENT = "recovery";
 
 /** Komunikat o stanie odzyskania przerwanego przebiegu dla monitora. */
