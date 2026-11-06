@@ -123,12 +123,15 @@ function eventList(): StoredEvent[] {
     timestamp: T0 + at,
     payload: { type, ...payload },
   });
+  // Komunikat runnera jak w hoście (`RunEvent::Message`): tekst w `payload.payload`.
+  const message = (sequence: number, at: number, text: string, executionId: string) =>
+    make(sequence, "message", at, { executionId, payload: { text } }, executionId);
   return [
     make(1, "runStateChanged", 0, { from: "queued", to: "queued", code: null }),
     make(2, "runStateChanged", 1_000, { from: "queued", to: "running", code: null }),
-    make(3, "message", 2_000, { text: "Analizuję repozytorium." }, "e-1"),
+    message(3, 2_000, "Analizuję repozytorium.", "e-1"),
     make(4, "nodeStateChanged", 5_000, { status: "completed" }, "e-1"),
-    make(5, "message", 12_000, { text: "Poprawiam operator odejmowania." }, "e-2"),
+    message(5, 12_000, "Poprawiam operator odejmowania.", "e-2"),
     make(6, "nodeStateChanged", 20_000, { status: "completed" }, "e-2"),
     make(7, "nodeStateChanged", 30_000, { status: "completed" }, "e-3"),
     make(8, "approvalRequested", 31_000, { approvalId: "ap-1", artifactHash: HASH }, "e-4"),

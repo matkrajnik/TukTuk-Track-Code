@@ -139,5 +139,11 @@ przenoszenia). Kanonikalizacja przez `std::fs::canonicalize` przed porównaniem 
    (a) nowy crate `crates/agent-cli` jako wspólna warstwa procesu i parserów, wyjątek od układu
    z rozdz. 6; (b) Claude z profilem `workspaceWrite` jest w MVP blokowany w preflighcie, bo nie ma
    mechanizmu ograniczenia zapisu do workspace (8.3); implementację wykonuje Codex.
+   **Zmiana (b), decyzja użytkownika 2026-11-06:** Claude może działać w krokach z zapisem przez
+   `--restricted` (Claude Code 2.1.319+, zweryfikowane lokalnie w `claude --help`): bez narzędzi
+   uruchamiających kod i WebFetch, bez ustawień user/project/local, narzędzia plików tylko w
+   katalogu roboczym (cwd, bez `--add-dir`), bez `bypassPermissions`; zestaw `--tools
+   Read,Grep,Glob,Edit,Write` (świadomie bez Bash), `--permission-mode acceptEdits`,
+   `--permission-prompts none`. Starsza wersja jest blokowana w preflighcie. Read-only bez zmian.
 2. Weryfikacja konfiguracji sandboksa Codexa na tej maszynie (test ręczny w E4).
 3. Zachowanie Claude Code na Windows po `taskkill /T /F` (test procesów zastępczych w E4).

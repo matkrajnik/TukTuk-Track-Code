@@ -328,22 +328,79 @@ fn claude_read_only_has_exactly_the_accepted_flags() {
     assert!(spec.env.iter().any(|(k, _)| k == "TUKTUK_TRACK_WORKFLOW"));
 }
 
+/// Decyzja użytkownika 2026-11-06: Claude w krokach z zapisem przez `--restricted`
+/// (Claude Code 2.1.319+): bez narzędzi uruchamiających kod (świadomie bez Bash),
+/// narzędzia plików tylko w katalogu roboczym (cwd), zapis bez pytań przez
+/// `acceptEdits`; `--permission-prompts none` odrzuca resztę (np. pliki ustawień).
 #[test]
-fn claude_write_profile_is_not_available() {
-    let dir = temp_dir("claude-write");
-    let spawner = ScriptedSpawner::lines(Vec::new());
-    let r = runner(&spawner, &dir, "h1");
-    let mut req = request(Provider::Claude, AgentRole::Implementation, Some(&dir));
-    req.access = AccessProfile::WorkspaceWrite;
-    let (outcome, _) = run_collect(&r, &req);
-    assert!(matches!(
-        outcome,
-        RunnerOutcome::Failed {
-            code: FailureCode::PermissionViolation,
-            ..
+fn claude_write_has_exactly_the_restricted_flags() {
+    for role in [AgentRole::Implementation, AgentRole::Fix] {
+        let dir = temp_dir("claude-write");
+        let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+        let r = runner(&spawner, &dir, "h1");
+        let req = request(Provider::Claude, role, Some(&dir));
+        assert_eq!(req.access, AccessProfile::WorkspaceWrite, "{role:?}");
+        run_collect(&r, &req);
+        let spec = spawner.last_spec();
+        let args = &spec.args;
+        let schema = json_schema(role).to_string();
+        let session = arg_pair(args, "--session-id").expect("sesja");
+        let expected: Vec<String> = [
+            "-p",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--json-schema",
+            schema.as_str(),
+            "--session-id",
+            session.as_str(),
+            "--strict-mcp-config",
+            "--mcp-config",
+            r#"{"mcpServers":{}}"#,
+            "--permission-prompts",
+            "none",
+            "--restricted",
+            "--tools",
+            "Read,Grep,Glob,Edit,Write",
+            "--permission-mode",
+            "acceptEdits",
+        ]
+        .iter()
+        .map(|a| (*a).to_owned())
+        .collect();
+        assert_eq!(args, &expected, "{role:?}");
+        // Po elementach, nie po złączonym tekście: `--add-dir` jako osobny argument,
+        // a nazwy narzędzi i trybów w którymkolwiek elemencie.
+        for banned in ["Bash", "PowerShell", "bypassPermissions", "dangerously"] {
+            assert!(
+                !args.iter().any(|a| a.contains(banned)),
+                "{role:?}: {banned}"
+            );
         }
-    ));
-    assert!(spawner.specs.lock().unwrap().is_empty());
+        assert!(!args.iter().any(|a| a == "--add-dir"), "{role:?}");
+        assert_eq!(spec.cwd.as_deref(), Some(dir.as_path()));
+        assert!(spec.stdin.contains("Zrób zadanie."));
+    }
+}
+
+#[test]
+fn read_only_claude_keeps_the_e4_flags_without_restricted() {
+    let dir = temp_dir("claude-ro-no-restricted");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_review_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    for role in [AgentRole::Analysis, AgentRole::Review] {
+        run_collect(&r, &request(Provider::Claude, role, Some(&dir)));
+        let args = spawner.last_spec().args;
+        assert!(!args.contains(&"--restricted".to_owned()), "{role:?}");
+        assert_eq!(
+            arg_pair(&args, "--tools").as_deref(),
+            Some("Read,Grep,Glob")
+        );
+        assert_eq!(
+            arg_pair(&args, "--permission-mode").as_deref(),
+            Some("dontAsk")
+        );
+    }
 }
 
 #[test]
@@ -631,6 +688,33 @@ fn oversized_prompt_is_an_error_not_a_truncation() {
     let mut req = request(Provider::Claude, AgentRole::Analysis, None);
     req.instruction = "x".repeat(prompt::MAX_PROMPT_BYTES + 1);
     assert!(prompt::build(&req, None).is_err());
+}
+
+#[test]
+fn claude_write_prompt_says_it_cannot_run_commands() {
+    for role in [AgentRole::Implementation, AgentRole::Fix] {
+        let prompt = prompt::build(&request(Provider::Claude, role, None), None).unwrap();
+        assert!(prompt.contains(prompt::CLAUDE_NO_SHELL), "{role:?}");
+    }
+    // Codex ma polecenia powłoki (sandbox), a Claude tylko do odczytu niczego nie zapisuje.
+    let codex = prompt::build(
+        &request(Provider::Codex, AgentRole::Implementation, None),
+        None,
+    )
+    .unwrap();
+    assert!(!codex.contains(prompt::CLAUDE_NO_SHELL));
+    let review = prompt::build(
+        &request(Provider::Claude, AgentRole::Review, None),
+        Some("h"),
+    )
+    .unwrap();
+    assert!(!review.contains(prompt::CLAUDE_NO_SHELL));
+    assert!(prompt::CLAUDE_NO_SHELL.contains("nie uruchamiasz testów"));
+    // Testy do uruchomienia idą do `summary`, a `checks` zostaje puste: wynik nie
+    // wygląda dla Review jak nieudane testy (`passed: false`).
+    assert!(prompt::CLAUDE_NO_SHELL.contains("checks zostaw puste"));
+    assert!(prompt::CLAUDE_NO_SHELL.contains("Do uruchomienia:"));
+    assert!(!prompt::CLAUDE_NO_SHELL.contains("passed: false"));
 }
 
 #[test]
@@ -1115,6 +1199,30 @@ fn the_same_runner_in_an_implementation_step_completes() {
     req.run_id = run;
     let (outcome, _) = run_collect(&runner, &req);
     assert!(matches!(outcome, RunnerOutcome::Completed { .. }));
+}
+
+/// Krok z zapisem na Claude: zmiany w worktree to cel kroku, nie naruszenie
+/// (strażnik porównuje migawki tylko dla `ReadOnly`, niezależnie od dostawcy).
+#[test]
+fn claude_implementation_step_that_writes_completes() {
+    let env = Env::new();
+    let (run, wt) = env.run_with_workspace("g-claude-write");
+    let runner = guarded(
+        &env,
+        WritingRunner {
+            file: "nowy.txt",
+            output: json!({"summary": "s", "changedFiles": ["nowy.txt"], "checks": []}),
+        },
+    );
+    let mut req = request(Provider::Claude, AgentRole::Implementation, Some(&wt));
+    req.run_id = run;
+    assert_eq!(req.access, AccessProfile::WorkspaceWrite);
+    let (outcome, _) = run_collect(&runner, &req);
+    assert!(
+        matches!(outcome, RunnerOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert!(wt.join("nowy.txt").exists());
 }
 
 #[test]

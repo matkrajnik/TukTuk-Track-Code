@@ -67,14 +67,22 @@ function detail(id: number, over: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * Zdarzenie w kształcie hosta (`StoredEvent.payload` = zserializowany `RunEvent`):
+ * komunikat runnera ma tekst w `payload.payload.text`, pozostałe typy są płaskie.
+ */
 function ev(sequence: number, type = "message", payload: object = {}) {
+  const inner =
+    type === "message"
+      ? { executionId: "e-1", payload: { text: `linia ${sequence}`, ...payload } }
+      : payload;
   return {
     runId: 1,
     sequence,
     executionId: "e-1",
     type,
     timestamp: 1_700_000_000_000 + sequence,
-    payload: { type, text: `linia ${sequence}`, ...payload },
+    payload: { type, ...inner },
   };
 }
 
@@ -698,6 +706,7 @@ test("monitor pokazuje graf ze statusem kroków tekstem", async ({ page }) => {
     },
   });
   await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  await page.getByRole("tab", { name: "Graf" }).click();
   const graph = page.getByRole("img", { name: /Graf procesu/ });
   await expect(graph).toHaveAttribute("aria-label", /Analiza: Gotowy; Implementacja: W toku/);
   await expect(graph).toHaveAttribute("aria-label", /nie uruchomiony/);
@@ -707,6 +716,7 @@ test("monitor pokazuje graf ze statusem kroków tekstem", async ({ page }) => {
 test("graf w monitorze nie pozwala przeciągać węzłów", async ({ page }) => {
   await openRuns(page, approvalFixture());
   await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  await page.getByRole("tab", { name: "Graf" }).click();
   const node = page.locator(".wf-monitor .wf-node").first();
   const before = await node.getAttribute("transform");
   const box = await node.boundingBox();
@@ -716,6 +726,228 @@ test("graf w monitorze nie pozwala przeciągać węzłów", async ({ page }) => 
   await page.mouse.move(box.x + 120, box.y + 80, { steps: 5 });
   await page.mouse.up();
   await expect(node).toHaveAttribute("transform", before ?? "");
+});
+
+const monitorTabs = (page: Page) =>
+  page.getByRole("tablist", { name: "Widok przebiegu" });
+
+/** Oczekiwane powiększenie dużego widoku: dopasowanie do szerokości, 100–160%. */
+async function expectedGraphZoom(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const scroller = document.querySelector(".wf-canvas.large .wf-canvas-scroll");
+    const svg = scroller?.querySelector("svg");
+    if (!scroller || !svg) throw new Error("brak dużego grafu");
+    const width = Number(svg.getAttribute("viewBox")?.split(" ")[2]);
+    const ratio = (scroller.clientWidth - 16) / width;
+    return Math.min(160, Math.max(100, Math.floor(ratio * 10) * 10));
+  });
+}
+
+test("monitor ma zakładki Przebieg i Graf przełączane klawiaturą", async ({
+  page,
+}) => {
+  await openRuns(page, approvalFixture());
+  await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  const tabs = monitorTabs(page);
+  const runTab = tabs.getByRole("tab", { name: "Przebieg" });
+  const graphTab = tabs.getByRole("tab", { name: "Graf" });
+  // Przebieg czeka na zgodę: domyślnie „Przebieg” (tam są przyciski decyzji).
+  await expect(runTab).toHaveAttribute("aria-selected", "true");
+  await expect(graphTab).toHaveAttribute("aria-selected", "false");
+  await expect(runTab).toHaveAttribute("aria-controls", "wf-monitor-panel-run");
+  await expect(graphTab).toHaveAttribute("aria-controls", "wf-monitor-panel-graph");
+  const runPanel = page.getByRole("tabpanel", { name: "Przebieg" });
+  await expect(runPanel).toHaveAttribute("id", "wf-monitor-panel-run");
+  await expect(runPanel.getByRole("button", { name: "Akceptuj" })).toBeVisible();
+  await expect(runPanel.getByRole("img", { name: /Graf procesu/ })).toHaveCount(0);
+  // Panel grafu montuje się dopiero po wejściu w zakładkę.
+  await expect(page.locator("#wf-monitor-panel-graph")).toHaveCount(0);
+  await expect(page.getByRole("img", { name: /Graf procesu/ })).toHaveCount(0);
+
+  await runTab.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(graphTab).toBeFocused();
+  await expect(graphTab).toHaveAttribute("aria-selected", "true");
+  await expect(runTab).toHaveAttribute("aria-selected", "false");
+  await expect(runTab).toHaveAttribute("tabindex", "-1");
+  const graphPanel = page.getByRole("tabpanel", { name: "Graf" });
+  await expect(graphPanel).toHaveAttribute("id", "wf-monitor-panel-graph");
+  const graph = graphPanel.getByRole("img", { name: /Graf procesu/ });
+  await expect(graph).toBeVisible();
+  await expect(graph).toContainText("Implementacja");
+  await expect(graph).toContainText("Analiza");
+  await expect(page.getByRole("button", { name: "Akceptuj" })).toBeHidden();
+  // Graf zajmuje co najmniej ok. 60% wysokości okna.
+  const box = await graphPanel.locator(".wf-canvas-scroll").boundingBox();
+  const height = page.viewportSize()?.height ?? 0;
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(height * 0.59);
+  // Etykieta statusu węzła ma rozmiar jak reszta interfejsu (nie 11 px).
+  const font = await graph
+    .locator(".wf-node-status")
+    .first()
+    .evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
+  expect(font).toBeGreaterThanOrEqual(13);
+
+  // Skróty z modyfikatorem (np. Ctrl+strzałka) nie przełączają zakładki.
+  await page.keyboard.press("Control+ArrowLeft");
+  await expect(graphTab).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Alt+Home");
+  await expect(graphTab).toHaveAttribute("aria-selected", "true");
+
+  await page.keyboard.press("ArrowLeft");
+  await expect(runTab).toBeFocused();
+  await expect(runTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("#wf-monitor-panel-graph")).toHaveCount(0);
+  await page.keyboard.press("End");
+  await expect(graphTab).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("Home");
+  await expect(runTab).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("button", { name: "Akceptuj" })).toBeVisible();
+});
+
+/** Szablon z węzłami ułożonymi ciasno (szerokość ok. 700 px): mieści się z zapasem. */
+function compactGraph() {
+  const graph = analysisImplementationReview();
+  graph.nodes.forEach((n, i) => {
+    n.position = { x: (i % 3) * 220, y: Math.floor(i / 3) * 120 };
+  });
+  return graph;
+}
+
+test("zakładka Graf: graf węższy niż widok powiększa się do szerokości, szerszy zostaje na 100% z przewijaniem", async ({
+  page,
+}) => {
+  // Treść widoku ma stałą maksymalną szerokość (1120 px), więc o powiększeniu
+  // decyduje szerokość grafu, nie okna: ciasny graf dostaje > 100%.
+  await openRuns(page, {
+    ...approvalFixture(),
+    details: { 1: detail(1, { graph: compactGraph() }) },
+  });
+  await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  await monitorTabs(page).getByRole("tab", { name: "Graf" }).click();
+  const zoom = page.getByRole("tabpanel", { name: "Graf" }).locator(".wf-zoom");
+  const wide = await expectedGraphZoom(page);
+  expect(wide).toBeGreaterThan(100);
+  await expect(zoom).toHaveText(`${wide}%`);
+  const fits = await page
+    .locator(".wf-canvas.large .wf-canvas-scroll")
+    .evaluate((el) => el.scrollWidth <= el.clientWidth);
+  expect(fits).toBe(true);
+});
+
+test("zakładka Graf: w wąskim oknie graf szablonu zostaje na 100% i przewija się poziomo", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 700 });
+  await openRuns(page, approvalFixture());
+  await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  await monitorTabs(page).getByRole("tab", { name: "Graf" }).click();
+  const zoom = page.getByRole("tabpanel", { name: "Graf" }).locator(".wf-zoom");
+  expect(await expectedGraphZoom(page)).toBe(100);
+  await expect(zoom).toHaveText("100%");
+  const scrolls = await page
+    .locator(".wf-canvas.large .wf-canvas-scroll")
+    .evaluate((el) => el.scrollWidth > el.clientWidth);
+  expect(scrolls).toBe(true);
+  // Dopasowanie nie schodzi poniżej 100% także po ręcznym pomniejszeniu.
+  await page.getByRole("button", { name: "Pomniejsz" }).click();
+  await expect(zoom).toHaveText("80%");
+  await page.getByRole("button", { name: "Dopasuj widok" }).click();
+  await expect(zoom).toHaveText("100%");
+});
+
+test("zdarzenie na żywo zmienia status węzła w zakładce Graf", async ({
+  page,
+}) => {
+  await openRuns(page, approvalFixture());
+  await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  await monitorTabs(page).getByRole("tab", { name: "Graf" }).click();
+  const graph = page.getByRole("img", { name: /Graf procesu/ });
+  await expect(graph).toHaveAttribute("aria-label", /Implementacja: nie uruchomiony/);
+  // Backend zapisał nowy krok; zdarzenie `nodeStateChanged` każe monitorowi odczytać szczegóły.
+  await page.evaluate(() => {
+    const state = (window as any).__workflowRunsState;
+    state.details[1].executions.push({
+      id: "e-9",
+      nodeId: "implementation",
+      iteration: 1,
+      attempt: 1,
+      status: "running",
+      startedAt: 1,
+      finishedAt: null,
+      exitCode: null,
+      errorCode: null,
+      error: null,
+      output: null,
+      providerSessionId: null,
+    });
+    state.details[1].revision += 1;
+  });
+  await emitEvent(page, ev(4, "nodeStateChanged", { status: "running" }));
+  await expect(graph).toHaveAttribute("aria-label", /Implementacja: W toku/);
+  await expect(graph.locator(".wf-node-status").filter({ hasText: "W toku" })).toHaveCount(1);
+});
+
+/**
+ * Prawdziwy kształt zdarzenia hosta: `StoredEvent.payload` to zserializowany
+ * `RunEvent` (`ports.rs`), więc komunikat runnera ma tekst w `payload.payload.text`
+ * (`{"type":"message","executionId":…,"payload":{"text":…}}`), a narzędzie w
+ * `payload.payload.{phase,name}`.
+ */
+function hostMessage(sequence: number, text: string) {
+  return {
+    runId: 1,
+    sequence,
+    executionId: "e-1",
+    type: "message",
+    timestamp: 1_700_000_000_000 + sequence,
+    payload: { type: "message", executionId: "e-1", payload: { text } },
+  };
+}
+
+test("dziennik agentów pokazuje tekst komunikatu z prawdziwego kształtu zdarzenia (nie JSON)", async ({
+  page,
+}) => {
+  await openRuns(page, {
+    ...approvalFixture(),
+    events: {
+      1: [
+        hostMessage(1, "Analizuję repozytorium."),
+        {
+          ...hostMessage(2, ""),
+          type: "toolStarted",
+          payload: {
+            type: "tool",
+            executionId: "e-1",
+            payload: { phase: "started", name: "Read" },
+          },
+        },
+        // Znacznik przycięcia: komunikat bez tekstu (`driver/messages.rs`).
+        {
+          ...hostMessage(3, ""),
+          payload: {
+            type: "message",
+            executionId: "e-1",
+            payload: { truncated: true, originalBytes: 70000 },
+          },
+        },
+      ],
+    },
+  });
+  await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  const log = page.getByRole("list", { name: "Dziennik agentów" });
+  await expect(log.getByRole("listitem")).toHaveCount(2);
+  await expect(log.getByRole("listitem").first()).toHaveText("Analizuję repozytorium.");
+  await expect(log).not.toContainText("{");
+  await expect(log).not.toContainText("executionId");
+  await expect(log.getByRole("listitem").nth(1)).toHaveText(
+    "[komunikat przycięty: 70000 B]",
+  );
+  await emitEvent(page, hostMessage(4, "Poprawiam operator odejmowania."));
+  await expect(log.getByRole("listitem").nth(2)).toHaveText(
+    "Poprawiam operator odejmowania.",
+  );
+  await expect(log).not.toContainText("{");
 });
 
 const agentsNav = (page: Page) =>

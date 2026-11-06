@@ -18,6 +18,7 @@ Dokument dla użytkownika. Agent go nie wykonuje. Zob. też `INSTRUKCJA.md`,
 - [ ] Zamknięcie do traya a „Zakończ aplikację” przy kroku w toku: pytanie z nazwą procesu, „Anuluj”/Esc zostawia krok, „Zakończ” kończy (przebieg „Przerwany”); bez kroku bez pytania (E6, sekcja 2).
 - [ ] Restart na granicy kroków i w kolejce: przebieg „Wstrzymany”, jedno powiadomienie, „Wznów” uruchamia jeden krok, naruszony worktree daje „Błąd” (E6, sekcja 2a).
 - [ ] Przywracanie kopii przy przebiegu „Wstrzymany” jest zablokowane.
+- [ ] Claude (2.1.319+) w kroku Implementacja: „Gotowość agentów” pokazuje tryb restricted; krok zapisuje tylko w worktree przebiegu; próba zapisu poza worktree (np. cel „zapisz plik w C:\temp”) jest odrzucona; Claude nie ma Basha (nie uruchamia testów, wypisuje je w checks). Na 2.1.318 krok jest zablokowany z prośbą o aktualizację.
 - [ ] Restart w trakcie zgody: zgoda jest ponownie sprawdzana (skrót diffu); bez zmian w katalogu przebieg dalej „Czeka na zgodę”, a przy zmienionym diffie stara zgoda jest unieważniona i pojawia się nowa. Przerwanie i „Odzyskaj przebieg” dotyczą restartu w trakcie kroku agenta.
 - [ ] Zabicie procesu aplikacji w Menedżerze zadań w trakcie kroku: po starcie problem w alercie, odzyskanie działa.
 - [ ] Blokada aktualizacji (`--prepare-update`) przy przebiegu w toku.

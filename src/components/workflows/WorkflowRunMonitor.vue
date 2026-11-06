@@ -27,6 +27,7 @@ import {
   formatDuration,
   isTerminal,
   mergeEvents,
+  messageLine,
   newRequestId,
   cancelWorkflowRun,
   decideWorkflowRun,
@@ -105,7 +106,7 @@ const logLines = computed(() =>
   events.value
     .filter((e) => e.type === "message")
     .map((e) => {
-      const text = String(e.payload.text ?? JSON.stringify(e.payload));
+      const text = messageLine(e);
       return {
         sequence: e.sequence,
         text:
@@ -116,7 +117,9 @@ const logLines = computed(() =>
     }),
 );
 const hiddenLines = computed(() =>
-  showAll.value ? 0 : Math.max(0, logLines.value.length - MAX_LOG_LINES_RENDERED),
+  showAll.value
+    ? 0
+    : Math.max(0, logLines.value.length - MAX_LOG_LINES_RENDERED),
 );
 const visibleLines = computed(() =>
   showAll.value
@@ -139,8 +142,46 @@ const nodeStatuses = computed(() => {
 });
 const noProblems: ReadonlySet<string> = new Set();
 
+/**
+ * Zakładki monitora: „Przebieg” (stan, akcje, kroki, zgoda, dziennik, oś zdarzeń)
+ * i „Graf” na całą szerokość i wysokość widoku. Domyślnie „Przebieg”: tam są
+ * decyzje o zgodzie i „Wznów”. Wybór nie jest zapamiętywany.
+ */
+type MonitorTab = "run" | "graph";
+const TABS: readonly MonitorTab[] = ["run", "graph"];
+const tab = ref<MonitorTab>("run");
+const tabButtons = ref<Record<MonitorTab, HTMLButtonElement | null>>({
+  run: null,
+  graph: null,
+});
+
+/**
+ * Strzałki, Home i End przenoszą wybór i fokus (wzorzec ARIA tabs). Skróty
+ * z modyfikatorem (np. Ctrl+strzałka, Alt+Home) należą do aplikacji albo systemu.
+ */
+function onTabKey(e: KeyboardEvent) {
+  if (e.altKey || e.ctrlKey || e.metaKey) return;
+  const at = TABS.indexOf(tab.value);
+  const next =
+    e.key === "ArrowRight"
+      ? at + 1
+      : e.key === "ArrowLeft"
+        ? at - 1
+        : e.key === "Home"
+          ? 0
+          : e.key === "End"
+            ? TABS.length - 1
+            : null;
+  if (next === null) return;
+  e.preventDefault();
+  tab.value = TABS[(next + TABS.length) % TABS.length];
+  tabButtons.value[tab.value]?.focus();
+}
+
 function nodeLabel(nodeId: string): string {
-  return detail.value?.graph.nodes.find((n) => n.id === nodeId)?.label ?? nodeId;
+  return (
+    detail.value?.graph.nodes.find((n) => n.id === nodeId)?.label ?? nodeId
+  );
 }
 
 async function catchUp(after: number) {
@@ -337,9 +378,11 @@ async function recover() {
   notice.value = "";
   try {
     const outcome = await recoverWorkflowRun(props.runId);
-    if (outcome.unconfirmedPids.length > 0) error.value = unconfirmedNote(outcome.unconfirmedPids);
+    if (outcome.unconfirmedPids.length > 0)
+      error.value = unconfirmedNote(outcome.unconfirmedPids);
     else if (outcome.workspaceReleased)
-      notice.value = "Przebieg odzyskany: katalog roboczy zwolniony. Przebieg nie jest wznawiany.";
+      notice.value =
+        "Przebieg odzyskany: katalog roboczy zwolniony. Przebieg nie jest wznawiany.";
     else
       error.value =
         "Nie potwierdzono końca procesu agenta; katalog roboczy pozostaje zablokowany.";
@@ -374,198 +417,260 @@ onBeforeUnmount(() => {
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="notice" class="hint" role="status">{{ notice }}</p>
     <template v-if="detail && status">
-      <h2 id="wf-monitor-title">
-        {{ detail.summary.workflowName }} (v{{ detail.summary.version }})
-      </h2>
-      <p>
-        <strong data-testid="run-status"
-          ><span aria-hidden="true">{{ status.icon }}</span>
-          {{ status.label }}</strong
-        >
-        <span v-if="detail.summary.errorCode" class="hint">
-          — {{ FAILURE_MESSAGES[detail.summary.errorCode] }}
-        </span>
-      </p>
-      <p class="hint">
-        <template v-if="detail.summary.taskTitle"
-          >Zadanie: {{ detail.summary.taskTitle }}.
-        </template>
-        <template v-if="detail.goal">Cel: {{ detail.goal }}. </template>
-        Czas agentów: {{ formatDuration(detail.agentMs) }}; oczekiwanie na
-        zgody: {{ formatDuration(detail.waitingMs) }}; tokeny:
-        {{ detail.tokens ?? "brak danych" }}.
-      </p>
-      <p
-        v-if="detail.summary.status === 'paused'"
-        class="hint"
-        data-testid="run-paused"
+      <div
+        class="tabs wf-monitor-tabs"
+        role="tablist"
+        aria-label="Widok przebiegu"
+        @keydown="onTabKey"
       >
-        {{ PAUSED_HINT }}
-      </p>
-      <div class="wf-toolbar">
         <button
-          v-if="detail.summary.status === 'paused'"
+          id="wf-monitor-tab-run"
+          :ref="(el) => (tabButtons.run = el as HTMLButtonElement | null)"
           type="button"
-          class="primary-button"
-          :disabled="resuming"
-          :aria-busy="resuming"
-          @click="resume"
+          role="tab"
+          :aria-selected="tab === 'run'"
+          :tabindex="tab === 'run' ? 0 : -1"
+          aria-controls="wf-monitor-panel-run"
+          :class="{ selected: tab === 'run' }"
+          @click="tab = 'run'"
         >
-          {{ resuming ? "Wznawianie…" : "Wznów" }}
-        </button>
-        <button
-          v-if="!isTerminal(detail.summary.status)"
+          Przebieg</button
+        ><button
+          id="wf-monitor-tab-graph"
+          :ref="(el) => (tabButtons.graph = el as HTMLButtonElement | null)"
           type="button"
-          class="today-button"
-          @click="confirmCancel = true"
+          role="tab"
+          :aria-selected="tab === 'graph'"
+          :tabindex="tab === 'graph' ? 0 : -1"
+          aria-controls="wf-monitor-panel-graph"
+          :class="{ selected: tab === 'graph' }"
+          @click="tab = 'graph'"
         >
-          Zatrzymaj
+          Graf
         </button>
       </div>
-
-      <section
-        v-if="detail.recovery"
-        class="wf-recovery"
-        aria-labelledby="wf-recovery-title"
+      <div
+        v-show="tab === 'run'"
+        id="wf-monitor-panel-run"
+        role="tabpanel"
+        aria-labelledby="wf-monitor-tab-run"
       >
-        <h3 id="wf-recovery-title">Odzyskanie przebiegu</h3>
-        <p data-testid="run-recovery">{{ recoveryMessage(detail.recovery) }}</p>
-        <button
-          v-if="canRecover"
-          type="button"
-          class="today-button"
-          :disabled="recovering"
-          :aria-busy="recovering"
-          @click="confirmRecover = true"
-        >
-          {{ recovering ? "Sprawdzanie procesów…" : "Odzyskaj przebieg" }}
-        </button>
-      </section>
-
-      <h3>Graf przebiegu</h3>
-      <WorkflowGraphView
-        :graph="detail.graph"
-        :selected="null"
-        :problems="noProblems"
-        :statuses="nodeStatuses"
-        readonly
-      />
-
-      <h3>Kroki</h3>
-      <ol class="wf-steps">
-        <li v-for="e in detail.executions" :key="e.id">
-          <strong>{{ nodeLabel(e.nodeId) }}</strong>
-          (próba {{ e.attempt }}, runda {{ e.iteration }}):
-          <span aria-hidden="true">{{ EXECUTION_STATUS_LABELS[e.status].icon }}</span>
-          {{ EXECUTION_STATUS_LABELS[e.status].label }}
-          <span v-if="e.errorCode" class="hint">
-            — {{ FAILURE_MESSAGES[e.errorCode] }}
-          </span>
-          <details v-if="e.output">
-            <summary>Wynik</summary>
-            <pre>{{ output(e.output) }}</pre>
-          </details>
-        </li>
-      </ol>
-
-      <section
-        v-if="pending"
-        class="wf-approval"
-        aria-labelledby="wf-approval-title"
-      >
-        <h3 id="wf-approval-title">Zgoda na zmiany</h3>
-        <p v-if="detail.goal">Cel: {{ detail.goal }}</p>
-        <p class="hint">Skrót zmian: <code>{{ pending.artifactHash }}</code></p>
-        <p v-if="diffLoading" class="hint" role="status">Wczytuję zmiany…</p>
-        <p v-if="diffError" class="error" role="alert">
-          Nie udało się wczytać zmian: {{ diffError }}
-          <button type="button" class="text-link" @click="showDiff">
-            Spróbuj ponownie
-          </button>
-        </p>
-        <p v-else-if="!diffLoaded && !diffLoading" class="hint">
-          Akceptacja będzie możliwa po wyświetleniu zmian.
-        </p>
-        <template v-if="diffLoaded && diff">
-          <p v-if="diff.truncated" class="error" role="status">
-            Zmiany są za duże, żeby pokazać je w całości (pokazano
-            {{ Math.round(diff.text.length / 1024) }} KB z
-            {{ Math.round(diff.size / 1024) }} KB). Tych zmian nie można
-            zaakceptować w aplikacji; możesz je odrzucić z komentarzem.
-          </p>
-          <p v-if="diff.redacted > 0" class="hint" role="status">
-            Ukryte fragmenty przypominające sekrety: {{ diff.redacted }}
-            (oznaczone [ukryte]). Skrót zgody dotyczy pełnych zmian.
-          </p>
-          <pre class="wf-diff" tabindex="0" aria-label="Zmiany do zaakceptowania">{{
-            diff.text
-          }}</pre>
-        </template>
-        <label>
-          Komentarz (wymagany przy odrzuceniu)
-          <textarea
-            v-model="comment"
-            rows="2"
-            :maxlength="MAX_APPROVAL_COMMENT_CHARS"
-          />
-        </label>
-        <div class="modal-actions">
-          <button
-            type="button"
-            :disabled="deciding"
-            @click="decide('reject')"
+        <h2 id="wf-monitor-title">
+          {{ detail.summary.workflowName }} (v{{ detail.summary.version }})
+        </h2>
+        <p>
+          <strong data-testid="run-status"
+            ><span aria-hidden="true">{{ status.icon }}</span>
+            {{ status.label }}</strong
           >
-            Odrzuć
-          </button>
+          <span v-if="detail.summary.errorCode" class="hint">
+            — {{ FAILURE_MESSAGES[detail.summary.errorCode] }}
+          </span>
+        </p>
+        <p class="hint">
+          <template v-if="detail.summary.taskTitle"
+            >Zadanie: {{ detail.summary.taskTitle }}.
+          </template>
+          <template v-if="detail.goal">Cel: {{ detail.goal }}. </template>
+          Czas agentów: {{ formatDuration(detail.agentMs) }}; oczekiwanie na
+          zgody: {{ formatDuration(detail.waitingMs) }}; tokeny:
+          {{ detail.tokens ?? "brak danych" }}.
+        </p>
+        <p
+          v-if="detail.summary.status === 'paused'"
+          class="hint"
+          data-testid="run-paused"
+        >
+          {{ PAUSED_HINT }}
+        </p>
+        <div class="wf-toolbar">
           <button
+            v-if="detail.summary.status === 'paused'"
             type="button"
             class="primary-button"
-            :disabled="deciding || !diffShown"
-            @click="decide('approve')"
+            :disabled="resuming"
+            :aria-busy="resuming"
+            @click="resume"
           >
-            Akceptuj
+            {{ resuming ? "Wznawianie…" : "Wznów" }}
+          </button>
+          <button
+            v-if="!isTerminal(detail.summary.status)"
+            type="button"
+            class="today-button"
+            @click="confirmCancel = true"
+          >
+            Zatrzymaj
           </button>
         </div>
-      </section>
-      <p v-for="a in detail.approvals.filter((x) => x.comment)" :key="a.id" class="hint">
-        Komentarz do zgody: {{ a.comment }}
-      </p>
-      <p
-        v-if="detail.approvals.some((x) => x.artifactPurged)"
-        class="hint"
-        data-testid="artifact-purged"
-      >
-        Diff zgody usunięto po okresie przechowywania (Ustawienia → Workflows);
-        historia przebiegu zostaje.
-      </p>
-      <p
-        v-if="detail.approvals.some((x) => !x.artifactAvailable && !x.artifactPurged)"
-        class="hint"
-        data-testid="artifact-unavailable"
-      >
-        Pliku diffu zgody nie ma na dysku (np. przywrócona kopia go nie
-        zawierała); historia przebiegu zostaje.
-      </p>
 
-      <h3>Dziennik agentów</h3>
-      <button
-        v-if="hiddenLines"
-        type="button"
-        class="text-link"
-        @click="showAll = true"
-      >
-        Pokaż wcześniejsze ({{ hiddenLines }})
-      </button>
-      <ol class="wf-log" aria-label="Dziennik agentów">
-        <li v-for="l in visibleLines" :key="l.sequence">{{ l.text }}</li>
-      </ol>
+        <section
+          v-if="detail.recovery"
+          class="wf-recovery"
+          aria-labelledby="wf-recovery-title"
+        >
+          <h3 id="wf-recovery-title">Odzyskanie przebiegu</h3>
+          <p data-testid="run-recovery">
+            {{ recoveryMessage(detail.recovery) }}
+          </p>
+          <button
+            v-if="canRecover"
+            type="button"
+            class="today-button"
+            :disabled="recovering"
+            :aria-busy="recovering"
+            @click="confirmRecover = true"
+          >
+            {{ recovering ? "Sprawdzanie procesów…" : "Odzyskaj przebieg" }}
+          </button>
+        </section>
 
-      <h3>Oś zdarzeń</h3>
-      <ol class="wf-timeline">
-        <li v-for="e in timeline" :key="e.sequence">
-          #{{ e.sequence }} {{ e.type }}
-        </li>
-      </ol>
+        <h3>Kroki</h3>
+        <ol class="wf-steps">
+          <li v-for="e in detail.executions" :key="e.id">
+            <strong>{{ nodeLabel(e.nodeId) }}</strong>
+            (próba {{ e.attempt }}, runda {{ e.iteration }}):
+            <span aria-hidden="true">{{
+              EXECUTION_STATUS_LABELS[e.status].icon
+            }}</span>
+            {{ EXECUTION_STATUS_LABELS[e.status].label }}
+            <span v-if="e.errorCode" class="hint">
+              — {{ FAILURE_MESSAGES[e.errorCode] }}
+            </span>
+            <details v-if="e.output">
+              <summary>Wynik</summary>
+              <pre>{{ output(e.output) }}</pre>
+            </details>
+          </li>
+        </ol>
+
+        <section
+          v-if="pending"
+          class="wf-approval"
+          aria-labelledby="wf-approval-title"
+        >
+          <h3 id="wf-approval-title">Zgoda na zmiany</h3>
+          <p v-if="detail.goal">Cel: {{ detail.goal }}</p>
+          <p class="hint">
+            Skrót zmian: <code>{{ pending.artifactHash }}</code>
+          </p>
+          <p v-if="diffLoading" class="hint" role="status">Wczytuję zmiany…</p>
+          <p v-if="diffError" class="error" role="alert">
+            Nie udało się wczytać zmian: {{ diffError }}
+            <button type="button" class="text-link" @click="showDiff">
+              Spróbuj ponownie
+            </button>
+          </p>
+          <p v-else-if="!diffLoaded && !diffLoading" class="hint">
+            Akceptacja będzie możliwa po wyświetleniu zmian.
+          </p>
+          <template v-if="diffLoaded && diff">
+            <p v-if="diff.truncated" class="error" role="status">
+              Zmiany są za duże, żeby pokazać je w całości (pokazano
+              {{ Math.round(diff.text.length / 1024) }} KB z
+              {{ Math.round(diff.size / 1024) }} KB). Tych zmian nie można
+              zaakceptować w aplikacji; możesz je odrzucić z komentarzem.
+            </p>
+            <p v-if="diff.redacted > 0" class="hint" role="status">
+              Ukryte fragmenty przypominające sekrety: {{ diff.redacted }}
+              (oznaczone [ukryte]). Skrót zgody dotyczy pełnych zmian.
+            </p>
+            <pre
+              class="wf-diff"
+              tabindex="0"
+              aria-label="Zmiany do zaakceptowania"
+              >{{ diff.text }}</pre>
+          </template>
+          <label>
+            Komentarz (wymagany przy odrzuceniu)
+            <textarea
+              v-model="comment"
+              rows="2"
+              :maxlength="MAX_APPROVAL_COMMENT_CHARS"
+            />
+          </label>
+          <div class="modal-actions">
+            <button
+              type="button"
+              :disabled="deciding"
+              @click="decide('reject')"
+            >
+              Odrzuć
+            </button>
+            <button
+              type="button"
+              class="primary-button"
+              :disabled="deciding || !diffShown"
+              @click="decide('approve')"
+            >
+              Akceptuj
+            </button>
+          </div>
+        </section>
+        <p
+          v-for="a in detail.approvals.filter((x) => x.comment)"
+          :key="a.id"
+          class="hint"
+        >
+          Komentarz do zgody: {{ a.comment }}
+        </p>
+        <p
+          v-if="detail.approvals.some((x) => x.artifactPurged)"
+          class="hint"
+          data-testid="artifact-purged"
+        >
+          Diff zgody usunięto po okresie przechowywania (Ustawienia →
+          Workflows); historia przebiegu zostaje.
+        </p>
+        <p
+          v-if="
+            detail.approvals.some(
+              (x) => !x.artifactAvailable && !x.artifactPurged,
+            )
+          "
+          class="hint"
+          data-testid="artifact-unavailable"
+        >
+          Pliku diffu zgody nie ma na dysku (np. przywrócona kopia go nie
+          zawierała); historia przebiegu zostaje.
+        </p>
+
+        <h3>Dziennik agentów</h3>
+        <button
+          v-if="hiddenLines"
+          type="button"
+          class="text-link"
+          @click="showAll = true"
+        >
+          Pokaż wcześniejsze ({{ hiddenLines }})
+        </button>
+        <ol class="wf-log" aria-label="Dziennik agentów">
+          <li v-for="l in visibleLines" :key="l.sequence">{{ l.text }}</li>
+        </ol>
+
+        <h3>Oś zdarzeń</h3>
+        <ol class="wf-timeline">
+          <li v-for="e in timeline" :key="e.sequence">
+            #{{ e.sequence }} {{ e.type }}
+          </li>
+        </ol>
+      </div>
+      <div
+        v-if="tab === 'graph'"
+        id="wf-monitor-panel-graph"
+        class="wf-monitor-graph"
+        role="tabpanel"
+        aria-labelledby="wf-monitor-tab-graph"
+      >
+        <WorkflowGraphView
+          :graph="detail.graph"
+          :selected="null"
+          :problems="noProblems"
+          :statuses="nodeStatuses"
+          readonly
+          large
+        />
+      </div>
     </template>
     <ConfirmDialog
       v-if="confirmCancel"
@@ -591,3 +696,15 @@ onBeforeUnmount(() => {
     </ConfirmDialog>
   </section>
 </template>
+
+<style scoped>
+.wf-monitor-tabs {
+  margin-bottom: var(--space-3, 12px);
+  border-bottom: 1px solid var(--line);
+}
+.wf-monitor-graph {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+</style>

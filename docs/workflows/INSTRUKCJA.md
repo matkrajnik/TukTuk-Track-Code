@@ -11,6 +11,11 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 - Claude Code 2.1.318 i Codex 0.163.0 (szablon używa obu: Claude analizuje i robi
   review, Codex implementuje); nowsze wersje z tej samej serii działają z
   ostrzeżeniem „niezweryfikowana wersja”.
+- Claude w kroku z zapisem (Implementacja, Poprawki): Claude Code 2.1.319 lub nowszy
+  (tryb `--restricted`: zapis tylko w katalogu roboczym przebiegu, bez poleceń powłoki,
+  więc agent nie uruchamia testów). Testy i polecenia do uruchomienia Claude wypisuje w
+  podsumowaniu kroku (akapit „Do uruchomienia:”), a lista `checks` zostaje pusta, żeby
+  review nie czytał ich jako nieudanych testów.
 - Codex: w `config.toml` ustawienie `[windows] sandbox = "elevated"`.
 
 ## Krok po kroku
@@ -58,7 +63,7 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 | Nieprawidłowy klucz dostępu. | Błędny klucz. | Poproś właściciela o klucz. |
 | Silnik przebiegów jeszcze się uruchamia. | Tuż po starcie aplikacji. | Poczekaj kilka sekund i ponów. |
 | Silnik przebiegów jest zatrzymany. Uruchom aplikację ponownie. | Aplikacja się zamyka. | Uruchom aplikację ponownie. |
-| Claude nie ma w MVP egzekwowanego ograniczenia zapisu do katalogu roboczego. | Claude w kroku z zapisem. | Użyj Codexa w kroku implementacji. |
+| Krok z zapisem dla Claude wymaga Claude Code 2.1.319 lub nowszego (wykryto …). Zaktualizuj Claude Code albo użyj Codexa. | Claude w kroku z zapisem na starszej wersji. | Zaktualizuj Claude Code albo ustaw Codexa w kroku. |
 | Codex nie ma skonfigurowanego sandboxa Windows. Ustaw [windows] sandbox = "elevated" w config.toml Codexa. | Brak sandboxa Codexa. | Dopisz ustawienie w `config.toml`. |
 | Plik config.toml Codexa jest uszkodzony (niepoprawny TOML). | Błąd składni. | Napraw plik. |
 | Nie udało się przygotować katalogu roboczego przebiegu. | Kod `workspaceUnavailable`. | Sprawdź repozytorium i miejsce na dysku. |
@@ -77,7 +82,9 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 
 ## Znane ograniczenia
 
-- Claude „tylko do odczytu” to kontrola przez CLI, nie izolacja procesu.
+- Claude „tylko do odczytu” i Claude z zapisem (`--restricted`) to kontrola przez CLI, nie
+  izolacja procesu ani sandbox systemu. Claude w kroku z zapisem nie ma powłoki: testy
+  uruchamiasz sam albo w kroku Codexa.
 - Jeden aktywny agent naraz; brak automatycznego merge.
 - Czas agenta nie jest liczony w raportach pracy.
 - Funkcja jest eksperymentalna; sprawdzenie na prawdziwych CLI robi użytkownik

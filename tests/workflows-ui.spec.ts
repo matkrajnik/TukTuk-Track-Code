@@ -586,6 +586,101 @@ test.describe("aplikacja: workflow_preflight przez IPC (E4)", () => {
 });
 
 // E7: wyłączenie modułu (workflows::workflow_lock).
+/**
+ * Decyzja użytkownika 2026-11-06: Claude w kroku z zapisem (Implementacja) przez
+ * `--restricted`. Fixture liczy preflight jak `preflight.rs` (`detectedAgents`).
+ */
+test.describe("aplikacja: Claude w kroku z zapisem", () => {
+  function claudeImplementationGraph() {
+    const graph = analysisImplementationReview();
+    for (const n of graph.nodes)
+      if (n.kind.type === "agent" && n.id === "implementation")
+        n.kind.provider = "claude";
+    return graph;
+  }
+
+  async function openReadiness(
+    page: Page,
+    claude: string,
+    agents: Record<string, unknown> = {},
+  ) {
+    const graph = claudeImplementationGraph();
+    await openDesktop(page, {
+      workflows: {
+        unlocked: true,
+        detail: { ...publishedDetail, draft: graph },
+        versionGraphs: { 42: graph },
+      },
+      detectedAgents: { claude, codex: "0.163.0", codexSandbox: true, ...agents },
+    });
+    await nav(page).getByRole("button", { name: "Definicje" }).click();
+    await page.getByRole("button", { name: "Edytuj Proces E4" }).click();
+    const panel = page
+      .getByRole("region", { name: "Edytor procesu" })
+      .getByRole("region", { name: "Gotowość agentów" });
+    await expect(panel.getByRole("status")).toContainText("Gotowość sprawdzona");
+    return panel.getByRole("listitem").filter({ hasText: "Implementacja" });
+  }
+
+  test("Claude 2.1.319 w kroku Implementacja nie jest zablokowany (tryb restricted)", async ({
+    page,
+  }) => {
+    const item = await openReadiness(page, "2.1.319");
+    await expect(item).toContainText("zapis w katalogu roboczym");
+    await expect(item).toContainText(
+      "Egzekwowanie: kontrola CLI w trybie restricted: zapis tylko w katalogu roboczym przebiegu, bez poleceń powłoki (agent nie uruchomi testów)",
+    );
+    await expect(item).toContainText("niezweryfikowana wersja");
+    await expect(item).not.toContainText("Zablokowane");
+  });
+
+  test("Claude 2.1.318 w kroku Implementacja jest zablokowany z prośbą o aktualizację", async ({
+    page,
+  }) => {
+    const item = await openReadiness(page, "2.1.318");
+    // Tekst jak `preflight::msg_claude_write` (próg CLAUDE_RESTRICTED + wykryta wersja).
+    await expect(item).toContainText(
+      "Zablokowane: Krok z zapisem dla Claude wymaga Claude Code 2.1.319 lub nowszego (wykryto 2.1.318). Zaktualizuj Claude Code albo użyj Codexa.",
+    );
+    await expect(item).not.toContainText("restricted: zapis tylko");
+  });
+
+  test("Claude 2.2.0 w kroku Implementacja przechodzi z ostrzeżeniem o wersji", async ({
+    page,
+  }) => {
+    const item = await openReadiness(page, "2.2.0");
+    await expect(item).toContainText("kontrola CLI w trybie restricted");
+    await expect(item).toContainText("niezweryfikowana wersja");
+    await expect(item).not.toContainText("Zablokowane");
+  });
+
+  test("Claude 3.0.0 w kroku Implementacja pada na ogólnej blokadzie wersji", async ({
+    page,
+  }) => {
+    const item = await openReadiness(page, "3.0.0");
+    await expect(item).toContainText(
+      "Zablokowane: Wersja 3.0.0 nie jest obsługiwana (przetestowano 2.1.318 i nowsze z tej samej serii).",
+    );
+    await expect(item).not.toContainText("Krok z zapisem");
+  });
+
+  test("uszkodzony config.toml Codexa blokuje tylko węzły Codexa", async ({
+    page,
+  }) => {
+    const item = await openReadiness(page, "2.1.319", { codexConfigError: true });
+    // Implementacja na Claude jest gotowa, a węzły Codexa (poprawki) zablokowane
+    // komunikatem jak `preflight::codex_sandbox_configured`.
+    await expect(item).not.toContainText("Zablokowane");
+    const fix = page
+      .getByRole("region", { name: "Gotowość agentów" })
+      .getByRole("listitem")
+      .filter({ hasText: "Poprawki" });
+    await expect(fix).toContainText(
+      "Zablokowane: Plik config.toml Codexa jest uszkodzony (niepoprawny TOML).",
+    );
+  });
+});
+
 test.describe("wyłączenie Workflows", () => {
   const runSummary = (status: string) => ({
     id: 1,

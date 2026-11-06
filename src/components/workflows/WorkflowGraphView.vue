@@ -25,6 +25,12 @@ const props = defineProps<{
   readonly?: boolean;
   /** Status kroku tekstem (id węzła → etykieta), np. w monitorze przebiegu. */
   statuses?: Readonly<Record<string, string>>;
+  /**
+   * Duży widok (zakładka „Graf” w monitorze): canvas na całą szerokość i co
+   * najmniej ok. 60% wysokości okna, a dopasowanie nie schodzi poniżej 100%
+   * (czytelne etykiety; szerszy graf przewija się).
+   */
+  large?: boolean;
 }>();
 const emit = defineEmits<{
   select: [id: string];
@@ -33,6 +39,8 @@ const emit = defineEmits<{
 
 const NODE_W = 168;
 const NODE_H = 52;
+/** Węzeł ze statusem (monitor): trzeci wiersz na status kroku. */
+const NODE_H_STATUS = 74;
 const PADDING = 48;
 const MIN_ZOOM = 0.4;
 const MAX_ZOOM = 1.6;
@@ -43,6 +51,7 @@ const CANVAS_PADDING = 8;
 const DRAG_THRESHOLD = 3;
 
 const zoom = ref(1);
+const nodeH = computed(() => (props.statuses ? NODE_H_STATUS : NODE_H));
 /** Pozycja przeciąganego kroku przed zapisem (podgląd ruchu). */
 const dragging = ref<{ id: string; x: number; y: number } | null>(null);
 
@@ -58,7 +67,7 @@ const bounds = computed(() => {
   const minX = Math.min(...points.map((p) => p.x)) - PADDING;
   const minY = Math.min(...points.map((p) => p.y)) - PADDING;
   const maxX = Math.max(...points.map((p) => p.x)) + NODE_W + PADDING;
-  const maxY = Math.max(...points.map((p) => p.y)) + NODE_H + PADDING * 2;
+  const maxY = Math.max(...points.map((p) => p.y)) + nodeH.value + PADDING * 2;
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
 });
 
@@ -74,9 +83,9 @@ const edges = computed(() =>
     const s = position(source);
     const t = position(target);
     const sx = s.x + NODE_W;
-    const sy = s.y + NODE_H / 2;
+    const sy = s.y + nodeH.value / 2;
     const tx = t.x;
-    const ty = t.y + NODE_H / 2;
+    const ty = t.y + nodeH.value / 2;
     // Połączenie wstecz (pętla poprawek) łukiem pod krokami.
     const back = tx <= sx;
     const d = back
@@ -105,12 +114,18 @@ function setZoom(next: number) {
 }
 
 const scroller = ref<HTMLElement | null>(null);
-/** Dopasowanie: cały graf mieści się w szerokości canvasu. */
+/**
+ * Dopasowanie: cały graf mieści się w szerokości canvasu. W dużym widoku graf
+ * wypełnia szerokość (do `MAX_ZOOM`), ale nie jest mniejszy niż 100%.
+ */
 function fit() {
   const width = scroller.value?.clientWidth ?? 0;
   if (!width || !bounds.value.w) return;
   const inner = width - 2 * CANVAS_PADDING;
-  zoom.value = Math.min(1, Math.max(MIN_ZOOM, inner / bounds.value.w));
+  const ratio = inner / bounds.value.w;
+  zoom.value = props.large
+    ? Math.min(MAX_ZOOM, Math.max(1, Math.floor(ratio * 10) / 10))
+    : Math.min(1, Math.max(MIN_ZOOM, ratio));
 }
 onMounted(() => void nextTick(fit));
 
@@ -166,7 +181,7 @@ const summary = computed(() => {
 </script>
 
 <template>
-  <div class="wf-canvas">
+  <div class="wf-canvas" :class="{ large }">
     <div class="wf-canvas-tools" role="group" aria-label="Widok grafu">
       <button
         type="button"
@@ -256,13 +271,15 @@ const summary = computed(() => {
           :transform="`translate(${position(node).x} ${position(node).y})`"
           @pointerdown="onPointerDown(node, $event)"
         >
-          <rect :width="NODE_W" :height="NODE_H" rx="8" />
+          <rect :width="NODE_W" :height="nodeH" rx="8" />
           <text x="12" y="20" class="wf-node-type">
-            {{ nodeTypeNames[node.kind.type] }}{{ problems.has(node.id) ? " · !" : ""
-            }}{{ statuses ? ` · ${statusOf(node) ?? "nie uruchomiony"}` : "" }}
+            {{ nodeTypeNames[node.kind.type] }}{{ problems.has(node.id) ? " · !" : "" }}
           </text>
           <text x="12" y="39" class="wf-node-label">
             {{ node.label.length > 22 ? node.label.slice(0, 21) + "…" : node.label }}
+          </text>
+          <text v-if="statuses" x="12" y="61" class="wf-node-status">
+            {{ statusOf(node) ?? "nie uruchomiony" }}
           </text>
         </g>
       </svg>
@@ -297,6 +314,10 @@ const summary = computed(() => {
   overflow: auto;
   max-height: 460px;
   padding: var(--space-2);
+}
+.wf-canvas.large .wf-canvas-scroll {
+  max-height: none;
+  height: max(60vh, calc(100vh - 240px));
 }
 svg {
   display: block;
@@ -348,6 +369,11 @@ svg {
 .wf-node-type {
   fill: var(--muted);
   font-size: 11px;
+}
+/* Status kroku w monitorze: osobny wiersz, rozmiar jak tekst interfejsu. */
+.wf-node-status {
+  fill: var(--text);
+  font-size: 13px;
 }
 .wf-node-label {
   fill: var(--text);

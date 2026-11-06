@@ -2,11 +2,19 @@
 //! wyraźnie oznaczony blok danych niezaufanych. Idzie przez stdin, nigdy przez argumenty.
 
 use serde_json::{json, Value};
-use workflow_core::model::AgentRole;
+use workflow_core::model::{AccessProfile, AgentRole, Provider};
 use workflow_core::ports::RunRequest;
 
 /// Największy prompt w bajtach; przekroczenie to błąd, nie ciche obcięcie.
 pub const MAX_PROMPT_BYTES: usize = 512 * 1024;
+
+/// Krok z zapisem na Claude (`--restricted`, bez Bash): agent nie może uruchomić
+/// testów ani innych poleceń, więc wypisuje, co należy uruchomić. Szablonowe
+/// instrukcje (pisane pod Codexa) mówią „uruchom testy”; ta uwaga ma pierwszeństwo.
+/// Lista idzie do `summary` („Do uruchomienia: …”), a `checks` zostaje puste: Review
+/// dostaje ten wynik jako dane wejściowe i wpis `passed: false` czytałby jako
+/// nieudane testy (`checks` nigdzie indziej nie jest interpretowane).
+pub const CLAUDE_NO_SHELL: &str = "Uwaga: w tym kroku nie masz narzędzi do uruchamiania poleceń (brak powłoki), więc nie uruchamiasz testów ani innych programów, nawet jeśli instrukcja o to prosi. Zmieniaj tylko pliki w katalogu roboczym. Pole checks zostaw puste (nie wpisuj testów, których nie uruchomiono), a na końcu summary dopisz akapit „Do uruchomienia: ” z listą testów i poleceń, które użytkownik ma uruchomić.";
 
 const DATA_BEGIN: &str = "<<<DANE_NIEZAUFANE_POCZATEK>>>";
 const DATA_END: &str = "<<<DANE_NIEZAUFANE_KONIEC>>>";
@@ -56,6 +64,9 @@ pub fn build(request: &RunRequest, artifact_hash: Option<&str>) -> Result<String
         instruction = request.instruction,
         contract = contract(request.role)
     );
+    if request.provider == Provider::Claude && request.access == AccessProfile::WorkspaceWrite {
+        prompt.push_str(&format!("\n{CLAUDE_NO_SHELL}\n"));
+    }
     if goal.is_some() {
         prompt.push_str(
             "

@@ -151,6 +151,18 @@ export interface TauriOptions {
   quit?: { pending?: string | null; error?: string };
   /** Odpowiedź `workflow_preflight` (gotowość agentów zadana przez test). */
   preflight?: unknown[];
+  /**
+   * Wykryte CLI dla `workflow_preflight` liczonego jak `preflight.rs` (gdy test nie
+   * zadał gotowej odpowiedzi): wersje Claude/Codexa i czy config.toml Codexa ma
+   * dozwolony `[windows] sandbox` (parsowania TOML fixture nie odtwarza).
+   */
+  detectedAgents?: {
+    claude?: string | null;
+    codex?: string | null;
+    codexSandbox?: boolean;
+    /** config.toml Codexa nie daje się sparsować: węzły Codexa zablokowane jak w Rust. */
+    codexConfigError?: boolean;
+  };
   /** Odpowiedź `workflow_preflight` dla konkretnych `versionId` (pierwszeństwo przed `preflight`). */
   preflightByVersion?: Record<number, unknown[]>;
 }
@@ -180,6 +192,7 @@ export async function openDesktop(page: Page, options: TauriOptions = {}) {
     preflight: options.preflight ?? [],
     preflightByVersion: options.preflightByVersion ?? {},
     workflowRuns: options.workflowRuns ?? {},
+    detectedAgents: options.detectedAgents ?? null,
     quit: { pending: options.quit?.pending ?? null, error: options.quit?.error ?? "" },
     workflows: {
       unlocked: options.workflows?.unlocked ?? false,
@@ -237,6 +250,12 @@ function install(init: {
   preflight: unknown[];
   preflightByVersion: Record<number, unknown[]>;
   workflowRuns: any;
+  detectedAgents: {
+    claude?: string | null;
+    codex?: string | null;
+    codexSandbox?: boolean;
+    codexConfigError?: boolean;
+  } | null;
   quit: { pending: string | null; error: string };
 }) {
   const w = window as any;
@@ -659,6 +678,74 @@ function install(init: {
     visible = true;
     emit("tauri://focus");
   }
+  // Jak `workflows::preflight` (1:1): wersje przetestowane (`TESTED_CLAUDE`,
+  // `TESTED_CODEX`), próg `CLAUDE_RESTRICTED` dla Claude z zapisem i sandbox
+  // Codexa. Stałe i teksty komunikatów trzymaj w zgodzie z `preflight.rs`.
+  const TESTED: Record<string, number[]> = { claude: [2, 1, 318], codex: [0, 163, 0] };
+  const CLAUDE_RESTRICTED = [2, 1, 319];
+  // Jak `preflight::msg_claude_write(found)`.
+  const msgClaudeWrite = (found: string) =>
+    `Krok z zapisem dla Claude wymaga Claude Code ${CLAUDE_RESTRICTED.join(".")} lub nowszego (wykryto ${found}). Zaktualizuj Claude Code albo użyj Codexa.`;
+  const semver = (text: string): number[] | null => {
+    const parts = text.split(/[^0-9]+/).filter(Boolean).map(Number);
+    if (parts.length < 2) return null;
+    return [parts[0], parts[1], parts[2] ?? 0];
+  };
+  const cmp = (a: number[], b: number[]) =>
+    a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  function computePreflight(graph: any): any[] {
+    const d = init.detectedAgents ?? {};
+    return (graph?.nodes ?? [])
+      .filter((n: any) => n.kind.type === "agent")
+      .map((n: any) => {
+        const { provider, access } = n.kind;
+        const version: string | null = (d as any)[provider] ?? null;
+        const out: any = {
+          nodeId: n.id,
+          provider,
+          access,
+          cliFound: version !== null,
+          version,
+          supported: false,
+          enforcement: "none",
+          warning: null,
+          blocked: null,
+        };
+        const block = (code: string, message: string) => {
+          out.blocked = { code, message };
+          return out;
+        };
+        if (version === null)
+          return block("cliMissing", "Nie znaleziono programu agenta (claude lub codex).");
+        const found = semver(version);
+        const tested = TESTED[provider];
+        if (!found) return block("unsupportedVersion", `Nie rozpoznano wersji programu agenta: ${version}.`);
+        if (found[0] !== tested[0] || cmp(found, tested) < 0)
+          return block(
+            "unsupportedVersion",
+            `Wersja ${version} nie jest obsługiwana (przetestowano ${tested.join(".")} i nowsze z tej samej serii).`,
+          );
+        out.supported = true;
+        if (cmp(found, tested) > 0) out.warning = "niezweryfikowana wersja";
+        if (provider === "claude" && access === "readOnly") out.enforcement = "cliControl";
+        else if (provider === "claude") {
+          if (cmp(found, CLAUDE_RESTRICTED) >= 0) out.enforcement = "cliRestricted";
+          else block("unsupportedVersion", msgClaudeWrite(version));
+        } else if (d.codexConfigError)
+          // Jak `preflight::codex_sandbox_configured` przy niepoprawnym TOML.
+          block(
+            "permissionViolation",
+            "Plik config.toml Codexa jest uszkodzony (niepoprawny TOML).",
+          );
+        else if (d.codexSandbox) out.enforcement = "codexSandbox";
+        else
+          block(
+            "permissionViolation",
+            'Codex nie ma skonfigurowanego sandboxa Windows. Ustaw [windows] sandbox = "elevated" w config.toml Codexa.',
+          );
+        return out;
+      });
+  }
   // Historia powiadomień (`inbox.rs`): `notify` jak `notify::show` w Rust.
   let inbox: any[] = structuredClone(init.notifications);
   let workflowsUnlocked = init.workflows.unlocked;
@@ -859,8 +946,15 @@ function install(init: {
           w.__preflightCalls = (w.__preflightCalls ?? 0) + 1;
           const hold = w.__preflightHold;
           w.__preflightHold = null;
+          const given = init.preflightByVersion?.[args.versionId];
           const result = clone(
-            init.preflightByVersion?.[args.versionId] ?? init.preflight,
+            given ??
+              (init.detectedAgents
+                ? computePreflight(
+                    init.workflows.versionGraphs?.[args.versionId] ??
+                      init.workflows.detail?.draft,
+                  )
+                : init.preflight),
           );
           if (hold) await hold;
           return result;

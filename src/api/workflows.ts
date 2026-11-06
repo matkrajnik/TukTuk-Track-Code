@@ -213,7 +213,11 @@ export const portNames: Record<Port, string> = {
 };
 
 /** `workflows::preflight::Enforcement`. */
-export type WorkflowEnforcement = "cliControl" | "codexSandbox" | "none";
+export type WorkflowEnforcement =
+  | "cliControl"
+  | "cliRestricted"
+  | "codexSandbox"
+  | "none";
 
 /** Kody błędów kroku (`workflow_core::FailureCode`, camelCase). */
 export type WorkflowFailureCode =

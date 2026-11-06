@@ -16,14 +16,24 @@ use crate::ai::Detected;
 /// Przetestowane wersje (E0): Claude Code 2.1.318, codex-cli 0.163.0.
 const TESTED_CLAUDE: [u64; 3] = [2, 1, 318];
 const TESTED_CODEX: [u64; 3] = [0, 163, 0];
+/// Pierwsza wersja Claude Code zweryfikowana lokalnie z `--restricted` (decyzja
+/// użytkownika 2026-11-06): od niej Claude może działać w krokach z zapisem.
+/// Starsza (np. przetestowana w E0 2.1.318) obsługuje tylko kroki do odczytu.
+const CLAUDE_RESTRICTED: [u64; 3] = [2, 1, 319];
 
 /// Dozwolone wartości `[windows] sandbox` w config.toml Codexa. Domyślnie tylko
 /// `elevated` (jednorazowa konfiguracja administratora); lista do decyzji użytkownika.
 pub const ALLOWED_CODEX_SANDBOXES: [&str; 1] = ["elevated"];
 
 const WARN_UNVERIFIED: &str = "niezweryfikowana wersja";
-const MSG_CLAUDE_WRITE: &str =
-    "Claude nie ma w MVP egzekwowanego ograniczenia zapisu do katalogu roboczego.";
+/// Komunikat blokady kroku z zapisem na Claude starszym niż [`CLAUDE_RESTRICTED`].
+/// Ten sam tekst (z progiem i wykrytą wersją) odtwarza fixture `tests/fixtures/tauri.ts`.
+fn msg_claude_write(found: &str) -> String {
+    let [major, minor, patch] = CLAUDE_RESTRICTED;
+    format!(
+        "Krok z zapisem dla Claude wymaga Claude Code {major}.{minor}.{patch} lub nowszego (wykryto {found}). Zaktualizuj Claude Code albo użyj Codexa."
+    )
+}
 const MSG_CODEX_NO_SANDBOX: &str = "Codex nie ma skonfigurowanego sandboxa Windows. Ustaw [windows] sandbox = \"elevated\" w config.toml Codexa.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -31,6 +41,9 @@ const MSG_CODEX_NO_SANDBOX: &str = "Codex nie ma skonfigurowanego sandboxa Windo
 pub enum Enforcement {
     /// Claude read-only: narzędzia tylko do odczytu + wykrywanie zmian.
     CliControl,
+    /// Claude z zapisem: `--restricted` (zapis tylko w katalogu roboczym, bez
+    /// poleceń powłoki); kontrola CLI, nie sandbox systemu.
+    CliRestricted,
     CodexSandbox,
     None,
 }
@@ -146,7 +159,14 @@ fn readiness(
     }
     match (provider, access) {
         (Provider::Claude, AccessProfile::WorkspaceWrite) => {
-            out.blocked = block(FailureCode::PermissionViolation, MSG_CLAUDE_WRITE);
+            if parse_semver(&cli.version).is_some_and(|v| v >= CLAUDE_RESTRICTED) {
+                out.enforcement = Enforcement::CliRestricted;
+            } else {
+                out.blocked = block(
+                    FailureCode::UnsupportedVersion,
+                    msg_claude_write(&cli.version),
+                );
+            }
         }
         (Provider::Claude, AccessProfile::ReadOnly) => out.enforcement = Enforcement::CliControl,
         (Provider::Codex, _) => match codex_config

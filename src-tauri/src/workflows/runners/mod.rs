@@ -256,13 +256,8 @@ impl CliRunner {
                 })?;
                 let session =
                     claude::new_session_id().map_err(|e| failed(FailureCode::SpawnFailed, e))?;
-                let args = claude::args(&schema, &session, request.model.as_deref(), request.access)
-                    .ok_or_else(|| {
-                        failed(
-                            FailureCode::PermissionViolation,
-                            "Claude nie ma w MVP egzekwowanego ograniczenia zapisu do katalogu roboczego.",
-                        )
-                    })?;
+                let args =
+                    claude::args(&schema, &session, request.model.as_deref(), request.access);
                 Ok(Prepared {
                     spec: Spec {
                         program,

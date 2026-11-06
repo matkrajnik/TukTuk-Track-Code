@@ -2,6 +2,10 @@
 //!
 //! Dla kroków tylko do odczytu porównuje migawkę worktree przed krokiem i po
 //! nim. To „kontrola CLI + wykrywanie zmian”, nie izolacja systemu plików.
+//! Kroków z zapisem (Codex w sandboxie, Claude w `--restricted`) nie porównuje:
+//! zmiany w worktree są ich celem. Pilnuje ich tylko tryb CLI (sandbox Codexa,
+//! `--restricted` Claude ograniczone do cwd) oraz weryfikacja `.git` worktree
+//! przy liczeniu skrótu artefaktu i przy wznowieniu; migawek nie ma.
 //! Profil pochodzi wyłącznie z definicji grafu (`request.access`); tekst modelu
 //! go nie zmienia.
 

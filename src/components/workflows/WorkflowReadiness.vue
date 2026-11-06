@@ -23,6 +23,8 @@ const providerNames = { claude: "Claude Code", codex: "Codex" } as const;
 const enforcementText: Record<WorkflowEnforcement, string> = {
   cliControl:
     "kontrola CLI (narzędzia tylko do odczytu + wykrywanie zmian), nie izolacja systemu plików",
+  cliRestricted:
+    "kontrola CLI w trybie restricted: zapis tylko w katalogu roboczym przebiegu, bez poleceń powłoki (agent nie uruchomi testów); to nie jest sandbox systemu",
   codexSandbox: "sandbox Codexa",
   none: "brak egzekwowania dostępu",
 };

@@ -77,8 +77,7 @@ fn old_or_foreign_major_is_unsupported_and_newer_is_a_warning() {
     assert_eq!(review.warning.as_deref(), Some("niezweryfikowana wersja"));
 }
 
-#[test]
-fn claude_as_implementation_is_blocked() {
+fn claude_implementation_graph() -> WorkflowGraph {
     let mut graph = analysis_implementation_review();
     for n in &mut graph.nodes {
         if let NodeKind::Agent(c) = &mut n.kind {
@@ -87,17 +86,102 @@ fn claude_as_implementation_is_blocked() {
             }
         }
     }
+    graph
+}
+
+/// Decyzja użytkownika 2026-11-06: Claude w kroku z zapisem działa od wersji z
+/// `--restricted` (2.1.319); egzekwowanie to kontrola CLI w trybie restricted.
+#[test]
+fn claude_write_is_allowed_from_the_restricted_version() {
+    for version in ["2.1.319", "2.1.400 (Claude Code)"] {
+        let list = preflight(
+            &claude_implementation_graph(),
+            &detected(Some(version), Some("0.163.0")),
+            Some(SANDBOX_OK),
+        );
+        let item = node(&list, "implementation");
+        assert!(item.blocked.is_none(), "{version}: {:?}", item.blocked);
+        assert_eq!(item.enforcement, Enforcement::CliRestricted, "{version}");
+        assert!(item.supported);
+        // Wersja nowsza niż przetestowana 2.1.318: ostrzeżenie jak dotąd.
+        assert_eq!(item.warning.as_deref(), Some("niezweryfikowana wersja"));
+    }
+}
+
+#[test]
+fn claude_write_on_an_older_version_is_blocked_with_the_upgrade_message() {
     let list = preflight(
-        &graph,
+        &claude_implementation_graph(),
         &detected(Some("2.1.318"), Some("0.163.0")),
         Some(SANDBOX_OK),
     );
-    let blocked = node(&list, "implementation")
-        .blocked
-        .clone()
-        .expect("blokada");
-    assert_eq!(blocked.code, FailureCode::PermissionViolation);
-    assert!(blocked.message.contains("ograniczenia zapisu"));
+    let item = node(&list, "implementation");
+    let blocked = item.blocked.clone().expect("blokada");
+    assert_eq!(blocked.code, FailureCode::UnsupportedVersion);
+    // Tekst z progu `CLAUDE_RESTRICTED` i wykrytej wersji (ten sam w fixture Playwright).
+    assert_eq!(blocked.message, msg_claude_write("2.1.318"));
+    assert_eq!(
+        blocked.message,
+        "Krok z zapisem dla Claude wymaga Claude Code 2.1.319 lub nowszego (wykryto 2.1.318). Zaktualizuj Claude Code albo użyj Codexa."
+    );
+    assert!(
+        !blocked.message.contains("--restricted"),
+        "bez żargonu o fladze"
+    );
+    assert_eq!(item.enforcement, Enforcement::None);
+    // Ten sam Claude 2.1.318 w kroku tylko do odczytu jest gotowy.
+    let review = node(&list, "review");
+    assert!(review.blocked.is_none());
+    assert_eq!(review.enforcement, Enforcement::CliControl);
+}
+
+/// Przypadki brzegowe kroku z zapisem: nowsza seria 2.x przechodzi z ostrzeżeniem,
+/// inna seria główna i nierozpoznana wersja padają na `check_version` (ogólny
+/// komunikat o wersji), nie na komunikacie o kroku z zapisem.
+#[test]
+fn claude_write_edge_versions() {
+    let item_for = |version: &str| {
+        let list = preflight(
+            &claude_implementation_graph(),
+            &detected(Some(version), Some("0.163.0")),
+            Some(SANDBOX_OK),
+        );
+        node(&list, "implementation").clone()
+    };
+    let newer = item_for("2.2.0");
+    assert!(newer.blocked.is_none(), "{:?}", newer.blocked);
+    assert_eq!(newer.enforcement, Enforcement::CliRestricted);
+    assert_eq!(newer.warning.as_deref(), Some("niezweryfikowana wersja"));
+
+    let foreign = item_for("3.0.0");
+    let blocked = foreign.blocked.expect("blokada");
+    assert_eq!(blocked.code, FailureCode::UnsupportedVersion);
+    assert!(
+        blocked
+            .message
+            .starts_with("Wersja 3.0.0 nie jest obsługiwana"),
+        "{}",
+        blocked.message
+    );
+    assert!(!blocked.message.contains("Krok z zapisem"));
+    assert!(!foreign.supported);
+
+    let garbage = item_for("nightly");
+    let blocked = garbage.blocked.expect("blokada");
+    assert_eq!(blocked.code, FailureCode::UnsupportedVersion);
+    assert_eq!(
+        blocked.message,
+        "Nie rozpoznano wersji programu agenta: nightly."
+    );
+    assert!(!garbage.supported);
+}
+
+#[test]
+fn enforcement_serializes_for_the_interface() {
+    assert_eq!(
+        serde_json::to_string(&Enforcement::CliRestricted).unwrap(),
+        "\"cliRestricted\""
+    );
 }
 
 #[test]
