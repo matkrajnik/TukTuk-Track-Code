@@ -248,6 +248,9 @@ impl Stream {
                 });
             }
             Parsed::ToolDone { error } => {
+                // Nieznane id też sięga do stosu zapasowego: start bez id i wynik
+                // z id to kształt znany ze strumieni (fixture review_ok). Gdy
+                // wszystkie starty mają id, stos jest pusty i nic się nie sparuje.
                 let paired = tool_use_id
                     .as_ref()
                     .and_then(|id| self.open.remove(id))

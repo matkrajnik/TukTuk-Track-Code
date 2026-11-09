@@ -253,6 +253,12 @@ test("podgląd: przykładowy przebieg widoczny, start odrzucony komunikatem", as
     "Czeka na zgodę",
   );
   await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();
+  const log = page.getByRole("list", { name: "Dziennik agentów" });
+  await expect(log).toContainText("Czyta src/calc.ts");
+  await expect(log).toContainText("Edytuje src/calc.ts");
+  await expect(page.getByRole("list", { name: "Oś zdarzeń" })).not.toContainText(
+    "toolStarted",
+  );
   await page.getByLabel(/Komentarz/).fill("x");
   await page.getByRole("button", { name: "Akceptuj" }).click();
   await expect(page.getByRole("alert")).toHaveText(

@@ -26,7 +26,7 @@ const summary = {
   taskId: null,
   taskTitle: null,
   taskExists: false,
-  repo: "C:\repo",
+  repo: "C:/repo",
   createdAt: 1_700_000_000_001,
   startedAt: null,
   finishedAt: null,
@@ -178,11 +178,18 @@ test("stara historia bez identyfikatorów narzędzi wyświetla się bez błędu"
     tool(1, "started", "Read"),
     tool(2, "finished", "Read", { ok: false }),
     tool(3, "started", "mcp__x__y"),
+    // Start bez id i wynik z id (jak stos zapasowy runnera): jedna linia.
+    tool(4, "started", "Read"),
+    tool(5, "finished", "Read", { toolUseId: "t9", ok: false }),
+    // Zakończenie bez sparowanego startu i bez nazwy: bez podwójnej spacji.
+    tool(6, "finished", "", { toolUseId: "t10", ok: false }),
   ]);
   const log = page.getByRole("list", { name: "Dziennik agentów" });
   await expect(log.getByRole("listitem")).toHaveText([
     "Czyta plik — błąd",
     "Narzędzie mcp__x__y",
+    "Czyta plik — błąd",
+    "Narzędzie — błąd",
   ]);
   await expect(page.getByRole("alert")).toHaveCount(0);
 });

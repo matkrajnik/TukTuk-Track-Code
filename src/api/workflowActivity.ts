@@ -152,10 +152,34 @@ type Entry =
   | { kind: "orphan"; sequence: number; text: string; parent: string | null };
 
 /**
+ * Ostatni niezakończony start bez id o tej samej nazwie w tym samym kroku.
+ * Odpowiednik stosu zapasowego runnera (`runners/mod.rs`): sparowane przez
+ * hosta zakończenie niesie nazwę startu, a pusta nazwa znaczy, że host nie
+ * znalazł startu, więc niczego nie paruje.
+ */
+function lastUnfinished(
+  unnamed: readonly ToolEntry[],
+  name: string,
+  executionId: string | null,
+): ToolEntry | undefined {
+  for (let i = unnamed.length - 1; i >= 0; i--) {
+    const candidate = unnamed[i];
+    if (
+      !candidate.finished &&
+      candidate.name === name &&
+      candidate.executionId === executionId
+    )
+      return candidate;
+  }
+  return undefined;
+}
+
+/**
  * Dziennik z zapisanych zdarzeń: komunikaty i narzędzia chronologicznie.
  * Koniec narzędzia nie ma własnej linii, tylko oznacza sparowany start
- * (po `toolUseId`, a w starej historii bez id: ostatni niezakończony start tej
- * samej nazwy w tym samym kroku). Funkcja nie zmienia wejścia.
+ * (po `toolUseId`; gdy id brak albo jest nieznane, jak w starej historii lub
+ * przy starcie bez id: ostatni niezakończony start bez id tej samej nazwy
+ * w tym samym kroku). Funkcja nie zmienia wejścia.
  */
 export function buildActivityLog(events: readonly StoredEvent[]): ActivityLine[] {
   const entries: Entry[] = [];
@@ -190,20 +214,9 @@ export function buildActivityLog(events: readonly StoredEvent[]): ActivityLine[]
       const data = runnerPayload(e);
       const name = text(data.name);
       const id = text(data.toolUseId);
-      let start = id ? byId.get(id) : undefined;
-      if (!start && !id) {
-        for (let i = unnamed.length - 1; i >= 0; i--) {
-          const candidate = unnamed[i];
-          if (
-            !candidate.finished &&
-            candidate.name === name &&
-            candidate.executionId === e.executionId
-          ) {
-            start = candidate;
-            break;
-          }
-        }
-      }
+      const start =
+        (id ? byId.get(id) : undefined) ??
+        lastUnfinished(unnamed, name, e.executionId);
       const failed = data.ok === false;
       if (start && !start.finished) {
         start.finished = true;
@@ -212,7 +225,7 @@ export function buildActivityLog(events: readonly StoredEvent[]): ActivityLine[]
         entries.push({
           kind: "orphan",
           sequence: e.sequence,
-          text: `Narzędzie ${name} — błąd`,
+          text: name ? `Narzędzie ${name} — błąd` : "Narzędzie — błąd",
           parent: text(data.parentToolUseId) || null,
         });
       }
