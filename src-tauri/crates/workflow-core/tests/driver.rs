@@ -6,14 +6,14 @@ use std::time::{Duration, Instant};
 
 use workflow_core::driver::{
     DecideError, DecideRequest, DriverConfig, ResumeError, Runtime, RuntimeHandle,
-    MAX_RUNNER_EVENTS_PER_EXECUTION,
+    MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_EVENTS_PER_ORCHESTRATOR,
 };
 use workflow_core::engine::{Effect, Input, RunEvent, RunState};
 use workflow_core::model::AgentConfig;
 use workflow_core::ports::{
     CreatedRun, NewRun, RepoError, RunId, RunRepository, RunnerEvent, StoredEvent,
 };
-use workflow_core::template::analysis_implementation_review;
+use workflow_core::template::{analysis_implementation_review, dynamic_default};
 use workflow_core::testing::{
     apply_inputs, message, samples, FixedWorkspace, MemoryRepository, RecordingSink,
     ScriptedRunner, Step,
@@ -1581,4 +1581,66 @@ fn graceful_shutdown_without_worker_reply_reports_timed_out() {
     let again = Instant::now();
     let _ = handle.shutdown_graceful(Duration::from_millis(50));
     assert!(again.elapsed() < Duration::from_secs(1));
+}
+
+#[test]
+fn orchestrator_step_has_a_larger_event_budget() {
+    let env = Env::new();
+    let many: Vec<RunnerEvent> = (0..MAX_RUNNER_EVENTS_PER_ORCHESTRATOR + 100)
+        .map(|i| message(&format!("linia {i}")))
+        .collect();
+    let runner = Arc::new(ScriptedRunner::new().script(
+        "orchestrator",
+        vec![Step::complete(samples::implementation()).with_events(many)],
+    ));
+    let handle = env.run(&runner, config());
+    let run = env.repo.create(&dynamic_default(), "r1");
+    handle.start_run(run);
+    wait_until("koniec kroku", || env.state(run).executions.len() >= 2);
+    settle(&handle);
+    let events = env.repo.load_events(run, 0).unwrap();
+    let messages: Vec<&StoredEvent> = events.iter().filter(|e| e.kind == "message").collect();
+    assert_eq!(messages.len(), MAX_RUNNER_EVENTS_PER_ORCHESTRATOR + 1);
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|e| e.payload["payload"]["truncated"] == true)
+            .count(),
+        1
+    );
+    assert!(MAX_RUNNER_EVENTS_PER_ORCHESTRATOR > MAX_RUNNER_EVENTS_PER_EXECUTION);
+}
+
+#[test]
+fn run_request_carries_max_subagents_of_the_orchestrator() {
+    let env = Env::new();
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let runner = Arc::new(
+        ScriptedRunner::new()
+            .script(
+                "orchestrator",
+                vec![Step::complete(samples::implementation())],
+            )
+            .with_probe(move |r| {
+                sink.lock()
+                    .unwrap()
+                    .push((r.node_id.clone(), r.max_subagents))
+            }),
+    );
+    let handle = env.run(&runner, config());
+    let mut graph = dynamic_default();
+    for n in &mut graph.nodes {
+        if let workflow_core::NodeKind::Agent(a) = &mut n.kind {
+            if a.max_subagents.is_some() {
+                a.max_subagents = Some(5);
+            }
+        }
+    }
+    let run = env.repo.create(&graph, "r1");
+    handle.start_run(run);
+    wait_until("koniec kroku", || env.state(run).executions.len() >= 2);
+    settle(&handle);
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen[0], ("orchestrator".to_owned(), Some(5)));
 }

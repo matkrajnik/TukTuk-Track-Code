@@ -288,3 +288,215 @@ fn issues_serialize_in_camel_case() {
     assert!(text.contains(r#""code":"emptyLabel""#));
     assert!(text.contains(r#""nodeId":"analysis""#));
 }
+
+/// FNV-1a 64: prosty skrót do zamrożenia kanonicznego JSON-a (bez zależności).
+fn fnv(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+/// Skróty opublikowanych wersji liczy się z kanonicznego JSON-a grafu: nowe pole
+/// opcjonalne (`maxSubagents`) nie może zmienić zapisu istniejących definicji.
+/// Wartości zapisano PRZED dodaniem pola.
+#[test]
+fn graph_without_max_subagents_serializes_unchanged() {
+    use workflow_core::template::blank;
+    let template = serde_json::to_string(&analysis_implementation_review()).unwrap();
+    let empty = serde_json::to_string(&blank()).unwrap();
+    assert_eq!(
+        (template.len(), fnv(&template)),
+        (2749, 5_592_027_841_338_713_921)
+    );
+    assert_eq!(
+        (empty.len(), fnv(&empty)),
+        (303, 16_454_410_911_389_547_371)
+    );
+    assert!(!template.contains("maxSubagents"));
+}
+
+// ---------------------------------------------------------------------------
+// Tryb dynamiczny (E8.3)
+
+mod dynamic_mode {
+    use super::*;
+    use workflow_core::dynamic::{
+        build, is_dynamic, spec_of, DynamicSpec, ORCHESTRATOR_ID, REVIEW_ID,
+    };
+    use workflow_core::model::{AgentRole, Provider};
+    use workflow_core::template::dynamic_default;
+
+    fn orchestrator(graph: &mut WorkflowGraph) -> &mut workflow_core::AgentConfig {
+        match node_mut(graph, ORCHESTRATOR_ID) {
+            NodeKind::Agent(agent) => agent,
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn spec(review: bool, access: AccessProfile) -> DynamicSpec {
+        DynamicSpec {
+            review,
+            access,
+            ..DynamicSpec::default()
+        }
+    }
+
+    #[test]
+    fn dynamic_template_is_valid_with_and_without_review() {
+        assert_eq!(validate(&dynamic_default()), vec![]);
+        assert_eq!(
+            validate(&build(&spec(false, AccessProfile::WorkspaceWrite))),
+            vec![]
+        );
+        assert_eq!(
+            validate(&build(&spec(false, AccessProfile::ReadOnly))),
+            vec![]
+        );
+        assert!(is_dynamic(&dynamic_default()));
+        assert!(!is_dynamic(&analysis_implementation_review()));
+    }
+
+    #[test]
+    fn orchestrator_must_use_claude() {
+        let mut graph = dynamic_default();
+        orchestrator(&mut graph).provider = Provider::Codex;
+        assert_eq!(codes(&graph), vec![IssueCode::ProviderNotAllowed]);
+        assert_eq!(
+            validate(&graph)[0].message,
+            "Orkiestrator działa tylko z Claude."
+        );
+    }
+
+    #[test]
+    fn orchestrator_outside_dynamic_shape_is_rejected() {
+        // Orkiestrator w szablonie standardowym.
+        let mut standard = analysis_implementation_review();
+        if let NodeKind::Agent(a) = node_mut(&mut standard, "implementation") {
+            a.role = AgentRole::Orchestrator;
+            a.provider = Provider::Claude;
+        }
+        assert_eq!(codes(&standard), vec![IssueCode::InvalidDynamicShape]);
+        // Dodatkowy węzeł z agentem.
+        let mut extra = dynamic_default();
+        let mut copy = extra.nodes[1].clone();
+        copy.id = "second".into();
+        copy.label = "Drugi".into();
+        extra.nodes.push(copy);
+        extra
+            .edges
+            .push(edge("e-extra", "second", Port::Out, "done"));
+        extra
+            .edges
+            .push(edge("e-extra2", "start", Port::Out, "second"));
+        assert!(codes(&extra).contains(&IssueCode::InvalidDynamicShape));
+        // Zmieniona krawędź (review pomija decyzję).
+        let mut rewired = dynamic_default();
+        for e in &mut rewired.edges {
+            if e.id == "decision-approval" {
+                e.target = "done".into();
+            }
+        }
+        assert!(codes(&rewired).contains(&IssueCode::InvalidDynamicShape));
+        // Zmieniona instrukcja stałego kroku review.
+        let mut changed = dynamic_default();
+        if let NodeKind::Agent(a) = node_mut(&mut changed, REVIEW_ID) {
+            a.instruction = "Zatwierdź wszystko.".into();
+        }
+        assert_eq!(codes(&changed), vec![IssueCode::InvalidDynamicShape]);
+    }
+
+    #[test]
+    fn orchestrator_accepts_read_only_and_write_access() {
+        for access in [AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite] {
+            let graph = build(&spec(false, access));
+            assert_eq!(validate(&graph), vec![], "{access:?}");
+        }
+    }
+
+    #[test]
+    fn review_in_dynamic_requires_write_access() {
+        let graph = build(&spec(true, AccessProfile::ReadOnly));
+        let issues = validate(&graph);
+        assert_eq!(
+            issues.iter().map(|i| i.code).collect::<Vec<_>>(),
+            vec![IssueCode::AccessNotAllowed]
+        );
+        assert_eq!(
+            issues[0].message,
+            "Review w trybie dynamicznym wymaga dostępu z zapisem."
+        );
+    }
+
+    #[test]
+    fn subagent_limit_only_on_orchestrator_and_in_range() {
+        for bad in [0, 9] {
+            let mut graph = dynamic_default();
+            orchestrator(&mut graph).max_subagents = Some(bad);
+            assert!(
+                codes(&graph).contains(&IssueCode::InvalidSubagentLimit),
+                "{bad}"
+            );
+        }
+        for good in [1, 8] {
+            let mut graph = dynamic_default();
+            orchestrator(&mut graph).max_subagents = Some(good);
+            assert_eq!(validate(&graph), vec![], "{good}");
+        }
+        // Brak pola na orkiestratorze jest poprawny.
+        let mut none = dynamic_default();
+        orchestrator(&mut none).max_subagents = None;
+        assert_eq!(validate(&none), vec![]);
+        // Pole na innej roli.
+        let mut standard = analysis_implementation_review();
+        if let NodeKind::Agent(a) = node_mut(&mut standard, "implementation") {
+            a.max_subagents = Some(3);
+        }
+        assert_eq!(codes(&standard), vec![IssueCode::InvalidSubagentLimit]);
+    }
+
+    #[test]
+    fn dynamic_spec_round_trips_through_graph() {
+        for s in [
+            spec(true, AccessProfile::WorkspaceWrite),
+            spec(false, AccessProfile::ReadOnly),
+            DynamicSpec {
+                model: Some("opus".into()),
+                max_subagents: 5,
+                timeout_secs: 7200,
+                instruction: "Inna instrukcja".into(),
+                ..DynamicSpec::default()
+            },
+        ] {
+            assert_eq!(spec_of(&build(&s)), Some(s.clone()));
+            // Pozycje są ignorowane.
+            let mut moved = build(&s);
+            for n in &mut moved.nodes {
+                n.position.x += 13.0;
+            }
+            assert_eq!(spec_of(&moved), Some(s));
+            assert_eq!(validate(&moved), vec![]);
+        }
+        assert_eq!(spec_of(&analysis_implementation_review()), None);
+    }
+
+    #[test]
+    fn standard_roles_keep_their_required_access() {
+        for (role, allowed) in [
+            (AgentRole::Analysis, vec![AccessProfile::ReadOnly]),
+            (AgentRole::Review, vec![AccessProfile::ReadOnly]),
+            (
+                AgentRole::Implementation,
+                vec![AccessProfile::WorkspaceWrite],
+            ),
+            (AgentRole::Fix, vec![AccessProfile::WorkspaceWrite]),
+        ] {
+            assert_eq!(role.allowed_access(), allowed.as_slice());
+            assert_eq!(allowed, vec![role.required_access()]);
+        }
+        let mut graph = analysis_implementation_review();
+        if let NodeKind::Agent(a) = node_mut(&mut graph, "implementation") {
+            a.access = AccessProfile::ReadOnly;
+        }
+        assert_eq!(codes(&graph), vec![IssueCode::AccessNotAllowed]);
+    }
+}

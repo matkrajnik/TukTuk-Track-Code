@@ -13,10 +13,23 @@ export const MAX_TIMEOUT_SECS = 4 * 60 * 60;
 export const MAX_NODES = 200;
 export const MAX_EDGES = 400;
 export const MAX_INSTRUCTION_CHARS = 20_000;
+/** `workflow_core::model`: liczba subagentów orkiestratora to wskazówka 1–8. */
+export const MIN_SUBAGENTS_HINT = 1;
+export const MAX_SUBAGENTS_HINT = 8;
+export const DEFAULT_SUBAGENTS_HINT = 3;
+/** Domyślny limit czasu orkiestratora: godzina. */
+export const DYNAMIC_TIMEOUT_SECS = 3600;
 
 export type Port = "out" | "true" | "false" | "approve" | "reject";
 export type Provider = "claude" | "codex";
-export type AgentRole = "analysis" | "implementation" | "fix" | "review";
+export type AgentRole =
+  | "analysis"
+  | "implementation"
+  | "fix"
+  | "review"
+  | "orchestrator";
+/** Rodzaj nowego procesu (`workflows::TemplateKind`). */
+export type TemplateKind = "blank" | "standard" | "dynamic";
 export type AccessProfile = "readOnly" | "workspaceWrite";
 export type CompareOp = "equals" | "notEquals" | "greaterThan" | "lessThan";
 export type EndOutcome = "succeeded" | "rejected" | "failed";
@@ -29,6 +42,8 @@ export interface AgentConfig {
   instruction: string;
   access: AccessProfile;
   timeoutSecs: number;
+  /** Wskazówka dla orkiestratora (1–8); tylko rola `orchestrator`. */
+  maxSubagents?: number;
 }
 
 export interface FieldRef {
@@ -97,6 +112,9 @@ export type IssueCode =
   | "emptyModel"
   | "invalidTimeout"
   | "accessNotAllowed"
+  | "invalidDynamicShape"
+  | "providerNotAllowed"
+  | "invalidSubagentLimit"
   | "invalidFieldRef"
   | "unknownField"
   | "fieldNotAvailable"
@@ -173,6 +191,10 @@ export const outputFields: Record<
     ["verdict", { type: "choice", options: REVIEW_VERDICTS }],
     ["findingCount", { type: "number" }],
   ],
+  orchestrator: [
+    ["summary", { type: "text" }],
+    ["changedFileCount", { type: "number" }],
+  ],
 };
 
 /** `AgentRole::required_access`: analiza i review tylko czytają. */
@@ -180,6 +202,11 @@ export function requiredAccess(role: AgentRole): AccessProfile {
   return role === "analysis" || role === "review"
     ? "readOnly"
     : "workspaceWrite";
+}
+
+/** `AgentRole::allowed_access`: orkiestrator ma oba profile, reszta jeden. */
+export function allowedAccess(role: AgentRole): readonly AccessProfile[] {
+  return role === "orchestrator" ? ["readOnly", "workspaceWrite"] : [requiredAccess(role)];
 }
 
 export function outputPorts(kind: NodeKind): readonly Port[] {

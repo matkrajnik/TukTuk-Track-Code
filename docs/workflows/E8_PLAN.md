@@ -168,7 +168,8 @@ Do czasu rozpoznania próbki są syntetyczne (wg `claude --help`) i tak oznaczon
 - `workflowActivity.ts::buildActivityTree(events, executionId)` → `{ orchestrator: Lane; subagents:
   Lane[]; truncated }`, `Lane = { id, label, current, state, lines }`. Subagent = `toolStarted`
   `Agent`/`Task` bez rodzica; jego zdarzenia mają `parentToolUseId` = id tego narzędzia; koniec =
-  `toolFinished` z tym id. Głębsze zagnieżdżenie spłaszczane do drugiego poziomu.
+  `toolFinished` z tym id (host zapisuje go z `tool_result` subagenta synchronicznego albo z
+  `system/task_notification` subagenta w tle; samo „Async agent launched” nie jest końcem). Głębsze zagnieżdżenie spłaszczane do drugiego poziomu.
 - nowy `WorkflowAgentTree.vue` (lista zagnieżdżona, stan tekstem i ikoną, licznik „Subagenci: 2
   aktywnych / 5 łącznie” z `aria-live="polite"`); po limicie zdarzeń „Osiągnięto limit zapisanych
   zdarzeń kroku; bieżące czynności nie są już aktualizowane.”
@@ -208,6 +209,7 @@ dynamiczny z subagentami”; przejrzeć testy liczące przebiegi (`Otwórz przeb
 | Edytor: formularz, publikacja działa | „nowy proces dynamiczny otwiera formularz zamiast canvasu”, „formularz dynamiczny zapisuje i publikuje poprawny graf” |
 | Ostrzeżenie o koszcie | „formularz startu ostrzega o koszcie trybu dynamicznego” |
 | Drzewo z licznikiem, na żywo i po ponownym otwarciu | „monitor przebiegu dynamicznego pokazuje drzewo…”, „bieżąca czynność subagenta zmienia się…”, „drzewo po ponownym otwarciu…” |
+| Subagent w tle nie kończy się na „Async agent launched”, tylko na `task_notification` | `background_subagent_ends_on_task_notification_not_on_async_launch`, `tool_finish_is_paired_by_tool_use_id_across_interleaved_subagents`, „monitor przebiegu dynamicznego pokazuje drzewo…” (3 aktywnych / 3) |
 | Podgląd ma przykład | „podgląd pokazuje przykładowy przebieg dynamiczny z subagentami” |
 
 ## 4. Istniejące testy i pliki do zmiany
@@ -296,3 +298,20 @@ dostaje opcję `subagentsConfirmed` (odpowiednik stałej), żeby Playwright spra
 potwierdzeniu. Realizacja w dwóch częściach skryptu `workflows-stage`: **E8a** = E8.0–E8.2
 (poprawka wydania, nie wymaga decyzji), **E8b** = E8.3–E8.8 (po rozpoznaniu; `notes.E8b` ma
 zawierać wynik `E8_ROZPOZNANIE.md` albo „nie wykonano — tryb zostaje zablokowany”).
+
+## 10. Realizacja E8b (2026-11-09)
+
+Zrealizowano E8.3–E8.8 (szczegóły: `PLAN_WDROZENIA.md`, rozdz. 15). Zmiany względem decyzji:
+
+- **D2 zniesione:** `DYNAMIC_SUBAGENTS_CONFIRMED = true` (rozpoznanie 2026-11-09 i potwierdzenie
+  użytkownika). Stała zostaje i jest parametrem wewnętrznego `evaluate_with`, żeby gałąź blokady
+  dało się przetestować; fixture ma odpowiednik `subagentsConfirmed`.
+- **Workflow:** narzędzie usunięte z planu zamiast flagi (stała `ORCHESTRATOR_WORKFLOW_TOOL`
+  pominięta); test sprawdza, że argumenty go nie zawierają.
+- **Nazwy narzędzia:** `Agent` i `Task` rozpoznawane przez parser, runner, preflight init i monitor.
+- **Linie `task_*`:** parser je ignoruje; runner czyta z nich tylko start w tle
+  (`task_started.is_backgrounded`) i koniec subagenta w tle (`task_notification` z `tool_use_id`).
+  Claude Code sam przenosi równoległe wywołania Agent w tło (test E), a ich natychmiastowy
+  `tool_result` („Async agent launched”) nie kończy subagenta. Subagent synchroniczny kończy się
+  parą tool_use/tool_result. `system/task_summary` po `result` nie psuje kroku.
+- D8 = sam tekst, D4, D6, D7, D9, D10 według rekomendacji; D11 poza zakresem.

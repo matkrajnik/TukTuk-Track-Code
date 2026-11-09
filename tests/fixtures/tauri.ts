@@ -162,6 +162,8 @@ export interface TauriOptions {
     codexSandbox?: boolean;
     /** config.toml Codexa nie daje się sparsować: węzły Codexa zablokowane jak w Rust. */
     codexConfigError?: boolean;
+    /** Odpowiednik `DYNAMIC_SUBAGENTS_CONFIRMED` (Rust); domyślnie true. */
+    subagentsConfirmed?: boolean;
   };
   /** Odpowiedź `workflow_preflight` dla konkretnych `versionId` (pierwszeństwo przed `preflight`). */
   preflightByVersion?: Record<number, unknown[]>;
@@ -255,6 +257,7 @@ function install(init: {
     codex?: string | null;
     codexSandbox?: boolean;
     codexConfigError?: boolean;
+    subagentsConfirmed?: boolean;
   } | null;
   quit: { pending: string | null; error: string };
 }) {
@@ -683,6 +686,10 @@ function install(init: {
   // Codexa. Stałe i teksty komunikatów trzymaj w zgodzie z `preflight.rs`.
   const TESTED: Record<string, number[]> = { claude: [2, 1, 318], codex: [0, 163, 0] };
   const CLAUDE_RESTRICTED = [2, 1, 319];
+  // Tryb dynamiczny: `CLAUDE_DYNAMIC` i `msg_dynamic_version` z preflight.rs.
+  const CLAUDE_DYNAMIC = [2, 1, 319];
+  const msgDynamicVersion = (found: string) =>
+    `Tryb dynamiczny wymaga Claude Code ${CLAUDE_DYNAMIC.join(".")} lub nowszego (wykryto ${found}). Zaktualizuj Claude Code.`;
   // Jak `preflight::msg_claude_write(found)`.
   const msgClaudeWrite = (found: string) =>
     `Krok z zapisem dla Claude wymaga Claude Code ${CLAUDE_RESTRICTED.join(".")} lub nowszego (wykryto ${found}). Zaktualizuj Claude Code albo użyj Codexa.`;
@@ -699,6 +706,7 @@ function install(init: {
       .filter((n: any) => n.kind.type === "agent")
       .map((n: any) => {
         const { provider, access } = n.kind;
+        const orchestrator = n.kind.role === "orchestrator";
         const version: string | null = (d as any)[provider] ?? null;
         const out: any = {
           nodeId: n.id,
@@ -715,6 +723,8 @@ function install(init: {
           out.blocked = { code, message };
           return out;
         };
+        if (orchestrator && provider !== "claude")
+          return block("permissionViolation", "Tryb dynamiczny działa tylko z Claude.");
         if (version === null)
           return block("cliMissing", "Nie znaleziono programu agenta (claude lub codex).");
         const found = semver(version);
@@ -727,6 +737,17 @@ function install(init: {
           );
         out.supported = true;
         if (cmp(found, tested) > 0) out.warning = "niezweryfikowana wersja";
+        if (orchestrator) {
+          // Jak `readiness`: wersja, potem potwierdzenie dziedziczenia, potem `cliRestricted`.
+          if (cmp(found, CLAUDE_DYNAMIC) < 0) block("unsupportedVersion", msgDynamicVersion(version));
+          else if (d.subagentsConfirmed === false)
+            block(
+              "permissionViolation",
+              "Tryb dynamiczny jest zablokowany: nie potwierdzono, że subagenci dziedziczą ograniczenia orkiestratora (brak powłoki, zapis tylko w katalogu roboczym).",
+            );
+          else out.enforcement = "cliRestricted";
+          return out;
+        }
         if (provider === "claude" && access === "readOnly") out.enforcement = "cliControl";
         else if (provider === "claude") {
           if (cmp(found, CLAUDE_RESTRICTED) >= 0) out.enforcement = "cliRestricted";

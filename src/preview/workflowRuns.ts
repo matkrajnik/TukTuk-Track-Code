@@ -2,7 +2,8 @@
  * Podgląd przebiegów Workflows: jeden deterministyczny, przykładowy przebieg
  * szablonu „Analiza → implementacja → review” czekający na zgodę (repozytorium
  * z kalkulator.js) oraz drugi, przerwany przebieg z zarezerwowanym katalogiem
- * roboczym do pokazania odzyskania (E6). Wyniki mają kształt
+ * roboczym do pokazania odzyskania (E6) i trzeci, zakończony przebieg dynamiczny
+ * z dwoma subagentami (E8). Wyniki mają kształt
  * `workflow_core::samples`. Start, decyzja, wznowienie i anulowanie rzucają komunikat, bo
  * podgląd nie uruchamia agentów; odzyskanie tylko zwalnia przykładową rezerwację.
  */
@@ -20,7 +21,7 @@ import {
   type StartRunResult,
   type StoredEvent,
 } from "../api/workflowRuns";
-import { analysisImplementationReview } from "../api/workflowTemplates";
+import { analysisImplementationReview, dynamicDefault } from "../api/workflowTemplates";
 import { access } from "./workflows";
 
 const BACKSLASH = String.fromCharCode(92);
@@ -29,6 +30,8 @@ const TRAILING_SEPARATORS = /[\\/]+$/;
 const RUN_ID = 1;
 /** Przykładowy przebieg przerwany (awaria aplikacji w trakcie implementacji). */
 const INTERRUPTED_ID = 2;
+/** Przykładowy przebieg dynamiczny (orkiestrator z dwoma subagentami), zakończony. */
+const DYNAMIC_ID = 3;
 const T0 = Date.UTC(2026, 10, 5, 9, 0, 0);
 const HASH = "a".repeat(63) + "1";
 const DIFF = [
@@ -69,6 +72,18 @@ const interruptedSummary: RunSummary = {
   startedAt: T0 - 3_599_000,
   finishedAt: T0 - 3_580_000,
   errorCode: "interrupted",
+  waitingApproval: false,
+};
+
+const dynamicSummary: RunSummary = {
+  ...summary,
+  id: DYNAMIC_ID,
+  workflowName: "Dynamiczny (przykład)",
+  taskTitle: null,
+  status: "succeeded",
+  createdAt: T0 - 7_200_000,
+  startedAt: T0 - 7_199_000,
+  finishedAt: T0 - 7_100_000,
   waitingApproval: false,
 };
 
@@ -169,6 +184,104 @@ function eventList(): StoredEvent[] {
   ];
 }
 
+const dynamicExecutions: RunDetail["executions"] = [
+  ["orchestrator", 60_000, {
+    summary: "Dwóch subagentów sprawdziło pliki; zmiany nie były potrzebne.",
+    changedFiles: [],
+    checks: [],
+  }],
+  ["review", 70_000, { verdict: "approved", findings: [], checkedArtifactHash: HASH }],
+].map(([nodeId, at, output], i) => ({
+  id: `d-${i + 1}`,
+  nodeId: nodeId as string,
+  iteration: 1,
+  attempt: 1,
+  status: "completed" as const,
+  startedAt: dynamicSummary.createdAt + (at as number) - 20_000,
+  finishedAt: dynamicSummary.createdAt + (at as number),
+  exitCode: 0,
+  errorCode: null,
+  error: null,
+  output: output as Record<string, unknown>,
+  providerSessionId: null,
+}));
+
+/**
+ * Zdarzenia w prawdziwym kształcie (jak `_ok.jsonl`/`_parallel.jsonl`): bez promptów
+ * i thinking. Koniec subagenta przychodzi po jego narzędziach (dla startu w tle host
+ * zapisuje go dopiero z `task_notification`).
+ */
+function dynamicEvents(): StoredEvent[] {
+  const base = dynamicSummary.createdAt;
+  const make = (
+    sequence: number,
+    type: string,
+    at: number,
+    payload: Record<string, unknown>,
+    executionId: string | null = null,
+  ): StoredEvent => ({
+    runId: DYNAMIC_ID,
+    sequence,
+    executionId,
+    type,
+    timestamp: base + at,
+    payload: { type, ...payload },
+  });
+  const tool = (
+    sequence: number,
+    at: number,
+    phase: "started" | "finished",
+    name: string,
+    extra: Record<string, unknown>,
+  ) =>
+    make(
+      sequence,
+      phase === "started" ? "toolStarted" : "toolFinished",
+      at,
+      { executionId: "d-1", payload: { phase, name, ...extra } },
+      "d-1",
+    );
+  const agent = (sequence: number, at: number, id: string, description: string) =>
+    tool(sequence, at, "started", "Agent", {
+      toolUseId: id,
+      args: { description, subagent_type: "general-purpose" },
+    });
+  return [
+    make(1, "runStateChanged", 0, { from: "queued", to: "running", code: null }),
+    make(2, "message", 1_000, { executionId: "d-1", payload: { text: "Deleguję do dwóch subagentów." } }, "d-1"),
+    agent(3, 2_000, "toolu_agent1", "Sprawdź src/a.ts"),
+    agent(4, 2_100, "toolu_agent2", "Sprawdź src/b.ts"),
+    tool(5, 3_000, "started", "Read", { toolUseId: "toolu_read1", parentToolUseId: "toolu_agent1", args: { file_path: "src/a.ts" } }),
+    tool(6, 3_100, "started", "Read", { toolUseId: "toolu_read2", parentToolUseId: "toolu_agent2", args: { file_path: "src/b.ts" } }),
+    tool(7, 3_500, "finished", "Read", { toolUseId: "toolu_read1", parentToolUseId: "toolu_agent1", ok: true }),
+    tool(8, 3_600, "finished", "Read", { toolUseId: "toolu_read2", parentToolUseId: "toolu_agent2", ok: true }),
+    tool(9, 10_000, "finished", "Agent", { toolUseId: "toolu_agent1", ok: true }),
+    tool(10, 11_000, "finished", "Agent", { toolUseId: "toolu_agent2", ok: true }),
+    make(11, "nodeStateChanged", 60_000, { status: "completed" }, "d-1"),
+    make(12, "nodeStateChanged", 70_000, { status: "completed" }, "d-2"),
+    make(13, "runStateChanged", 100_000, { from: "running", to: "succeeded", code: null }),
+  ];
+}
+
+function dynamicDetail(): RunDetail {
+  return {
+    summary: { ...dynamicSummary },
+    goal: "Sprawdź pliki src/a.ts i src/b.ts",
+    graph: dynamicDefault(),
+    definitionHash: "przyklad-dynamiczny",
+    revision: dynamicEvents().length,
+    workspace: null,
+    baseCommit: null,
+    error: null,
+    executions: dynamicExecutions.map((e) => ({ ...e })),
+    approvals: [],
+    agentMs: 80_000,
+    waitingMs: 0,
+    tokens: null,
+    recovery: null,
+  };
+}
+
 /** Statusy blokujące wyłączenie modułu, jak `backup::ACTIVE_STATUSES` w Rust. */
 const ACTIVE_STATUSES: readonly RunSummary["status"][] = ["queued", "running", "cancelling"];
 
@@ -204,7 +317,8 @@ export function resume(_runId: number, _requestId: string): Promise<RunStatus> {
  * kolejne wywołanie nic nie zmienia.
  */
 export async function recover(runId: number): Promise<RecoverOutcome> {
-  if (runId !== RUN_ID && runId !== INTERRUPTED_ID) throw "Nie znaleziono przebiegu.";
+  if (runId !== RUN_ID && runId !== INTERRUPTED_ID && runId !== DYNAMIC_ID)
+    throw "Nie znaleziono przebiegu.";
   if (runId !== INTERRUPTED_ID) throw "Odzyskać można tylko przerwany przebieg.";
   const alreadyRecovered = interruptedRecovered;
   interruptedRecovered = true;
@@ -289,11 +403,12 @@ export async function list(filter: RunFilter): Promise<RunSummary[]> {
     (filter.workflowId == null || filter.workflowId === s.workflowId) &&
     (repo == null || repo === repoKey(s.repo ?? ""));
   // Od najnowszego (jak `runs::query::list`): przerwany przykład ma większe id.
-  return [interruptedSummary, summary].filter(match).map((s) => ({ ...s }));
+  return [dynamicSummary, interruptedSummary, summary].filter(match).map((s) => ({ ...s }));
 }
 
 export async function get(runId: number): Promise<RunDetail> {
   if (runId === INTERRUPTED_ID) return interruptedDetail();
+  if (runId === DYNAMIC_ID) return dynamicDetail();
   if (runId !== RUN_ID) throw "Nie znaleziono przebiegu.";
   return {
     summary: { ...summary },
@@ -329,8 +444,10 @@ export async function events(
   after: number,
   limit: number,
 ): Promise<StoredEvent[]> {
-  if (runId !== RUN_ID && runId !== INTERRUPTED_ID) return [];
-  return (runId === RUN_ID ? eventList() : interruptedEvents())
+  if (runId !== RUN_ID && runId !== INTERRUPTED_ID && runId !== DYNAMIC_ID) return [];
+  const source =
+    runId === RUN_ID ? eventList() : runId === DYNAMIC_ID ? dynamicEvents() : interruptedEvents();
+  return source
     .filter((e) => e.sequence > after)
     .slice(0, Math.min(Math.max(limit, 1), 500));
 }

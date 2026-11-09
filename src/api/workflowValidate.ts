@@ -16,7 +16,9 @@ import {
   outputFields,
   outputPorts,
   portNames,
-  requiredAccess,
+  allowedAccess,
+  MAX_SUBAGENTS_HINT,
+  MIN_SUBAGENTS_HINT,
   type ConditionConfig,
   type FieldType,
   type IssueCode,
@@ -24,6 +26,7 @@ import {
   type WorkflowIssue,
   type WorkflowNode,
 } from "./workflows";
+import { hasCanonicalShape, ORCHESTRATOR_ID, specOf } from "./workflowDynamic";
 
 const graphIssue = (code: IssueCode, message: string): WorkflowIssue => ({
   code,
@@ -65,6 +68,7 @@ export function validateWorkflow(graph: WorkflowGraph): WorkflowIssue[] {
   checkReachability(graph, index, issues);
   checkCycles(graph, index, issues);
   for (const node of graph.nodes) checkNodeConfig(node, index, issues);
+  checkDynamic(graph, issues);
   return issues;
 }
 
@@ -450,7 +454,7 @@ function checkNodeConfig(
           `Limit czasu musi wynosić od ${MIN_TIMEOUT_SECS / 60} min do ${MAX_TIMEOUT_SECS / 3600} h.`,
         ),
       );
-    if (kind.access !== requiredAccess(kind.role))
+    if (!allowedAccess(kind.role).includes(kind.access))
       issues.push(
         nodeIssue(
           "accessNotAllowed",
@@ -458,7 +462,52 @@ function checkNodeConfig(
           "Analiza i review działają tylko z odczytem; zapis mają implementacja i poprawki.",
         ),
       );
+    if (kind.maxSubagents !== undefined) {
+      const inRange =
+        Number.isInteger(kind.maxSubagents) &&
+        kind.maxSubagents >= MIN_SUBAGENTS_HINT &&
+        kind.maxSubagents <= MAX_SUBAGENTS_HINT;
+      if (kind.role !== "orchestrator" || !inRange)
+        issues.push(
+          nodeIssue(
+            "invalidSubagentLimit",
+            node.id,
+            "Liczba subagentów musi wynosić od 1 do 8 i dotyczy tylko orkiestratora.",
+          ),
+        );
+    }
   } else if (kind.type === "condition") checkCondition(node, kind, index, issues);
+}
+
+/** Lustro `check_dynamic` z Rust: orkiestrator tylko z Claude, kanoniczny kształt, review z zapisem. */
+function checkDynamic(graph: WorkflowGraph, issues: WorkflowIssue[]): void {
+  const orchestrators = graph.nodes.filter(
+    (n) => n.kind.type === "agent" && n.kind.role === "orchestrator",
+  );
+  if (orchestrators.length === 0) return;
+  for (const n of orchestrators)
+    if (n.kind.type === "agent" && n.kind.provider !== "claude")
+      issues.push(
+        nodeIssue("providerNotAllowed", n.id, "Orkiestrator działa tylko z Claude."),
+      );
+  if (orchestrators.length !== 1 || !hasCanonicalShape(graph)) {
+    issues.push(
+      graphIssue(
+        "invalidDynamicShape",
+        "Proces dynamiczny ma stały układ kroków; utwórz go z szablonu „Dynamiczny (Claude)”.",
+      ),
+    );
+    return;
+  }
+  const spec = specOf(graph);
+  if (spec && spec.review && spec.access === "readOnly")
+    issues.push(
+      nodeIssue(
+        "accessNotAllowed",
+        ORCHESTRATOR_ID,
+        "Review w trybie dynamicznym wymaga dostępu z zapisem.",
+      ),
+    );
 }
 
 function checkCondition(

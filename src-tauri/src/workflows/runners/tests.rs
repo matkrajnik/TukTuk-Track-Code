@@ -55,6 +55,7 @@ struct ScriptedSpawner {
     hang: bool,
     exit_delay: Duration,
     spawn_error: Option<SpawnError>,
+    kill_calls: Arc<AtomicU32>,
 }
 
 impl ScriptedSpawner {
@@ -77,6 +78,7 @@ impl ScriptedSpawner {
             hang: false,
             exit_delay: Duration::ZERO,
             spawn_error: None,
+            kill_calls: Arc::default(),
         })
     }
 
@@ -88,6 +90,20 @@ impl ScriptedSpawner {
             hang: true,
             exit_delay,
             spawn_error: None,
+            kill_calls: Arc::default(),
+        })
+    }
+
+    /// Strumień, po którym proces dalej działa (do anulowania w trakcie kroku).
+    fn hanging_after(lines: Vec<String>) -> Arc<Self> {
+        Arc::new(Self {
+            script: Arc::new(move |_| lines.iter().cloned().map(ProcessEvent::Line).collect()),
+            specs: Mutex::default(),
+            kill: KillResult::Confirmed,
+            hang: true,
+            exit_delay: Duration::ZERO,
+            spawn_error: None,
+            kill_calls: Arc::default(),
         })
     }
 
@@ -99,6 +115,7 @@ impl ScriptedSpawner {
             hang: false,
             exit_delay: Duration::ZERO,
             spawn_error: Some(error),
+            kill_calls: Arc::default(),
         })
     }
 
@@ -113,6 +130,7 @@ struct ScriptedProc {
     kill: KillResult,
     exit_delay: Duration,
     exit_at: Mutex<Option<Instant>>,
+    kill_calls: Arc<AtomicU32>,
 }
 
 impl Proc for ScriptedProc {
@@ -135,6 +153,7 @@ impl Proc for ScriptedProc {
 
     /// `exit_at` to chwila końca całego drzewa; ponowne `kill` potwierdza ją dopiero po czasie.
     fn kill(&self, confirm_timeout: Duration) -> KillResult {
+        self.kill_calls.fetch_add(1, Ordering::SeqCst);
         let at = {
             let mut exit_at = self.exit_at.lock().unwrap();
             match *exit_at {
@@ -188,6 +207,7 @@ impl Spawner for ScriptedSpawner {
             kill: self.kill,
             exit_delay: self.exit_delay,
             exit_at: Mutex::default(),
+            kill_calls: self.kill_calls.clone(),
         }))
     }
 }
@@ -215,6 +235,7 @@ fn request(provider: Provider, role: AgentRole, workspace: Option<&Path>) -> Run
         timeout: Duration::from_secs(30),
         session_id: None,
         goal: None,
+        max_subagents: None,
     }
 }
 
@@ -782,8 +803,9 @@ fn finished<'a>(events: &'a [RunnerEvent], wanted: &str) -> &'a RunnerEvent {
 
 #[test]
 fn tool_finish_is_paired_by_tool_use_id_across_interleaved_subagents() {
+    // Prawdziwy, skrócony strumień z testu E (3 subagenci, linie przeplecione).
     let dir = temp_dir("stream-pair");
-    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_parallel.jsonl"));
     let r = runner(&spawner, &dir, "h1");
     let (_, events) = run_collect(
         &r,
@@ -801,10 +823,104 @@ fn tool_finish_is_paired_by_tool_use_id_across_interleaved_subagents() {
             "{id}"
         );
     };
-    expect("toolu_A1", "Read", true, Some("toolu_A"));
-    expect("toolu_B1", "Grep", false, Some("toolu_B"));
-    expect("toolu_A", "Agent", true, None);
-    expect("toolu_B", "Task", true, None);
+    expect("toolu_glob1", "Glob", true, Some("toolu_agent1"));
+    expect("toolu_glob2", "Glob", true, Some("toolu_agent2"));
+    expect("toolu_read1", "Read", true, Some("toolu_agent2"));
+    expect("toolu_glob3", "Glob", true, Some("toolu_agent3"));
+    // Agent 1–3 wystartowały w tle (`is_backgrounded`, „Async agent launched”):
+    // natychmiastowy `tool_result` nie jest ich końcem, a próbka urywa się przed
+    // `task_notification`, więc żaden subagent nie jest zakończony.
+    for id in ["toolu_agent1", "toolu_agent2", "toolu_agent3"] {
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, RunnerEvent::ToolFinished { id: Some(got), .. } if got == id)),
+            "{id} zakończony po starcie w tle"
+        );
+    }
+}
+
+#[test]
+fn background_subagent_ends_on_task_notification_not_on_async_launch() {
+    let dir = temp_dir("stream-background");
+    let mut lines = fixture("workflow_claude_dynamic_parallel.jsonl");
+    lines.push(
+        r#"{"type":"system","subtype":"task_notification","task_id":"a-sub1","tool_use_id":"toolu_agent1","status":"completed","summary":"x"}"#.to_owned(),
+    );
+    lines.push(
+        r#"{"type":"system","subtype":"task_notification","task_id":"a-sub2","tool_use_id":"toolu_agent2","status":"failed","summary":"x"}"#.to_owned(),
+    );
+    // Powtórne powiadomienie i nieznane id nie dają kolejnych zdarzeń.
+    lines.push(
+        r#"{"type":"system","subtype":"task_notification","tool_use_id":"toolu_agent1","status":"completed"}"#.to_owned(),
+    );
+    lines.push(
+        r#"{"type":"system","subtype":"task_notification","tool_use_id":"toolu_obcy","status":"completed"}"#.to_owned(),
+    );
+    let spawner = ScriptedSpawner::lines(lines);
+    let r = runner(&spawner, &dir, "h1");
+    let (_, events) = run_collect(&r, &orchestrator_request(AccessProfile::ReadOnly, &dir));
+    let ends = |wanted: &str| {
+        events
+            .iter()
+            .filter(|e| matches!(e, RunnerEvent::ToolFinished { id: Some(id), .. } if id == wanted))
+            .count()
+    };
+    assert_eq!(
+        finished(&events, "toolu_agent1"),
+        &RunnerEvent::ToolFinished {
+            name: "Agent".into(),
+            id: Some("toolu_agent1".into()),
+            parent: None,
+            ok: true,
+        }
+    );
+    assert_eq!(
+        finished(&events, "toolu_agent2"),
+        &RunnerEvent::ToolFinished {
+            name: "Agent".into(),
+            id: Some("toolu_agent2".into()),
+            parent: None,
+            ok: false,
+        }
+    );
+    assert_eq!(ends("toolu_agent1"), 1);
+    assert_eq!(
+        ends("toolu_agent3"),
+        0,
+        "agent 3 bez powiadomienia pracuje dalej"
+    );
+    assert_eq!(ends("toolu_obcy"), 0);
+    // Koniec subagenta przychodzi po jego narzędziach, nie przed nimi.
+    let position = |pred: &dyn Fn(&RunnerEvent) -> bool| events.iter().position(pred).unwrap();
+    let agent1_end = position(
+        &|e| matches!(e, RunnerEvent::ToolFinished { id: Some(id), .. } if id == "toolu_agent1"),
+    );
+    let glob1 = position(
+        &|e| matches!(e, RunnerEvent::ToolStarted { id: Some(id), .. } if id == "toolu_glob1"),
+    );
+    assert!(glob1 < agent1_end);
+}
+
+#[test]
+fn synchronous_subagent_still_ends_on_its_tool_result() {
+    // Prawdziwa próbka z testu A/D: `is_backgrounded=false`, `task_notification`
+    // przed `tool_result` z raportem; koniec dokładnie raz, z `tool_result`.
+    let dir = temp_dir("stream-sync-sub");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (_, events) = run_collect(&r, &orchestrator_request(AccessProfile::ReadOnly, &dir));
+    let ends: Vec<_> = events
+        .iter()
+        .filter(
+            |e| matches!(e, RunnerEvent::ToolFinished { id: Some(id), .. } if id == "toolu_agent1"),
+        )
+        .collect();
+    assert_eq!(ends.len(), 1, "{ends:?}");
+    assert!(matches!(
+        ends[0],
+        RunnerEvent::ToolFinished { ok: true, .. }
+    ));
 }
 
 #[test]
@@ -831,7 +947,7 @@ fn subagent_result_line_does_not_complete_the_step() {
         other => panic!("{other:?}"),
     }
     // Sesja subagenta nie podmienia sesji głównego agenta.
-    let mut stream = Stream::new(dir.clone());
+    let mut stream = Stream::new(dir.clone(), AgentRole::Implementation);
     let mut sink = |_: RunnerEvent| {};
     stream.apply(
         Provider::Claude,
@@ -853,10 +969,42 @@ fn subagent_result_line_does_not_complete_the_step() {
     assert!(stream.structured.is_none());
 }
 
+/// Próbka `_unknown` pochodzi z uruchomienia bez `--json-schema`, więc jej `result` nie ma
+/// `structured_output`. Test dopisuje je literałem, by sprawdzić, że nowe linie `system/*`
+/// nie psują kroku (to jedyna syntetyczna zmiana tej próbki).
+fn with_structured_output(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|l| {
+            if l.contains(r#""subtype":"success""#) && l.ends_with(r#""type":"result"}"#) {
+                l.replace(
+                    r#""type":"result"}"#,
+                    r#""structured_output":{"summary":"ok"},"type":"result"}"#,
+                )
+            } else {
+                l
+            }
+        })
+        .collect()
+}
+
 #[test]
 fn unknown_subagent_event_shape_does_not_fail_the_step() {
+    // Kształty SYNTETYCZNE (literały, nie z prawdziwego CLI) plus prawdziwa próbka `_unknown`.
     let dir = temp_dir("stream-unknown");
-    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_unknown.jsonl"));
+    let mut lines = vec![
+        r#"{"type":"system","subtype":"init","session_id":"sess-unk-1"}"#.to_owned(),
+        r#"{"type":"assistant","message":{"content":"tekst jako string"},"parent_tool_use_id":"toolu_X"}"#.to_owned(),
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"liczbowy rodzic"}]},"parent_tool_use_id":42}"#.to_owned(),
+        r#"{"type":"stream_event","event":{"type":"content_block_delta"},"parent_tool_use_id":"toolu_X"}"#.to_owned(),
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"b.txt"}}]},"parent_tool_use_id":"toolu_X"}"#.to_owned(),
+        r#"{"type":"user","message":{"content":[{"type":"tool_result","content":"bez id"}]},"parent_tool_use_id":"toolu_X"}"#.to_owned(),
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"uszkodzona"#.to_owned(),
+    ];
+    lines.extend(with_structured_output(fixture(
+        "workflow_claude_dynamic_unknown.jsonl",
+    )));
+    let spawner = ScriptedSpawner::lines(lines);
     let r = runner(&spawner, &dir, "h1");
     let (outcome, _) = run_collect(
         &r,
@@ -870,7 +1018,7 @@ fn unknown_subagent_event_shape_does_not_fail_the_step() {
 
 #[test]
 fn orchestrator_stream_completes_with_subagent_events() {
-    // Rola Implementation: Orchestrator dochodzi dopiero w E8b; strumień jest ten sam.
+    // Prawdziwy strumień z testu D (Agent, Read subagenta, StructuredOutput roota).
     let dir = temp_dir("stream-dynamic");
     let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
     let r = runner(&spawner, &dir, "h1");
@@ -882,18 +1030,21 @@ fn orchestrator_stream_completes_with_subagent_events() {
         RunnerOutcome::Completed {
             output, session_id, ..
         } => {
-            assert_eq!(output["summary"], "Zrobione przez subagentów");
-            assert_eq!(session_id.as_deref(), Some("sess-dyn-1"));
+            assert_eq!(
+                output["summary"],
+                "Według subagenta plik a.txt ma jedną linię ze słowem „jeden”."
+            );
+            assert_eq!(session_id.as_deref(), Some("sess-e8-root"));
         }
         other => panic!("{other:?}"),
     }
-    match started(&events, "toolu_A") {
+    match started(&events, "toolu_agent1") {
         RunnerEvent::ToolStarted { name, args, .. } => {
             assert_eq!(name, "Agent");
             assert_eq!(
                 args,
                 &Some(
-                    json!({"description": "Przeczytaj a.txt", "subagent_type": "general-purpose"})
+                    json!({"description": "Summarize a.txt", "subagent_type": "general-purpose"})
                 )
             );
         }
@@ -901,9 +1052,63 @@ fn orchestrator_stream_completes_with_subagent_events() {
     }
     assert!(events.iter().any(|e| matches!(
         e,
-        RunnerEvent::Message { text, parent: Some(p) } if text == "Szukam w plikach." && p == "toolu_B"
+        RunnerEvent::Message { text, parent: Some(p) } if text.contains("jeden") && p == "toolu_agent1"
     )));
-    assert!(!format!("{events:?}").contains("SEKRETNY"));
+    // Prompt subagenta nie trafia do zdarzeń (ani w argumentach, ani w wiadomościach).
+    assert!(!format!("{events:?}").contains("Return only the one-sentence"));
+}
+
+#[test]
+fn lines_after_root_result_do_not_break_the_step() {
+    // Po linii `result` roota przychodzi jeszcze `system/task_summary` (próbki `_ok` i `_unknown`).
+    for name in [
+        "workflow_claude_dynamic_ok.jsonl",
+        "workflow_claude_dynamic_unknown.jsonl",
+    ] {
+        let dir = temp_dir("stream-after-result");
+        let lines = with_structured_output(fixture(name));
+        let last = lines.last().expect("ostatnia linia");
+        assert!(last.contains("task_summary"), "{name}");
+        let spawner = ScriptedSpawner::lines(lines);
+        let r = runner(&spawner, &dir, "h1");
+        let (outcome, _) = run_collect(
+            &r,
+            &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+        );
+        assert!(
+            matches!(outcome, RunnerOutcome::Completed { .. }),
+            "{name}: {outcome:?}"
+        );
+    }
+}
+
+#[test]
+fn real_agent_tool_result_with_text_blocks_closes_the_subagent() {
+    let dir = temp_dir("stream-agent-result");
+    let spawner = ScriptedSpawner::lines(fixture("workflow_claude_dynamic_ok.jsonl"));
+    let r = runner(&spawner, &dir, "h1");
+    let (_, events) = run_collect(
+        &r,
+        &request(Provider::Claude, AgentRole::Implementation, Some(&dir)),
+    );
+    assert_eq!(
+        finished(&events, "toolu_agent1"),
+        &RunnerEvent::ToolFinished {
+            name: "Agent".into(),
+            id: Some("toolu_agent1".into()),
+            parent: None,
+            ok: true,
+        }
+    );
+    assert_eq!(
+        finished(&events, "toolu_read1"),
+        &RunnerEvent::ToolFinished {
+            name: "Read".into(),
+            id: Some("toolu_read1".into()),
+            parent: Some("toolu_agent1".into()),
+            ok: true,
+        }
+    );
 }
 
 #[test]
@@ -2328,4 +2533,177 @@ fn ledger_rows_survive_restart_of_repository() {
     assert!(open_processes(&db, Some(run_id)).unwrap().is_empty());
     drop(db);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---------------------------------------------------------------------------
+// Orkiestrator (E8b)
+
+fn orchestrator_request(access: AccessProfile, dir: &Path) -> RunRequest {
+    let mut req = request(Provider::Claude, AgentRole::Orchestrator, Some(dir));
+    req.access = access;
+    req
+}
+
+fn orchestrator_args(access: AccessProfile) -> Vec<String> {
+    let schema = json_schema(AgentRole::Orchestrator);
+    claude::args(&schema, "sess", None, access, AgentRole::Orchestrator)
+}
+
+fn tail_after_session(args: &[String]) -> Vec<&str> {
+    let at = args
+        .iter()
+        .position(|a| a == "--permission-prompts")
+        .unwrap();
+    args[at + 2..].iter().map(String::as_str).collect()
+}
+
+#[test]
+fn orchestrator_args_add_agent_tool_and_forward_subagent_text() {
+    let args = orchestrator_args(AccessProfile::WorkspaceWrite);
+    assert_eq!(
+        tail_after_session(&args),
+        [
+            "--restricted",
+            "--tools",
+            "Read,Grep,Glob,Edit,Write,Agent",
+            "--permission-mode",
+            "acceptEdits",
+            "--forward-subagent-text"
+        ]
+    );
+}
+
+#[test]
+fn orchestrator_read_only_uses_restricted_without_edit_tools() {
+    let args = orchestrator_args(AccessProfile::ReadOnly);
+    assert_eq!(
+        tail_after_session(&args),
+        [
+            "--restricted",
+            "--tools",
+            "Read,Grep,Glob,Agent",
+            "--permission-mode",
+            "dontAsk",
+            "--forward-subagent-text"
+        ]
+    );
+}
+
+#[test]
+fn standard_roles_do_not_get_agent_tool_or_forward_flag() {
+    let schema = json_schema(AgentRole::Analysis);
+    let tail = |access, role| {
+        let args = claude::args(&schema, "sess", None, access, role);
+        tail_after_session(&args)
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    let read = ["--tools", "Read,Grep,Glob", "--permission-mode", "dontAsk"];
+    let write = [
+        "--restricted",
+        "--tools",
+        "Read,Grep,Glob,Edit,Write",
+        "--permission-mode",
+        "acceptEdits",
+    ];
+    assert_eq!(tail(AccessProfile::ReadOnly, AgentRole::Analysis), read);
+    assert_eq!(tail(AccessProfile::ReadOnly, AgentRole::Review), read);
+    assert_eq!(
+        tail(AccessProfile::WorkspaceWrite, AgentRole::Implementation),
+        write
+    );
+    assert_eq!(tail(AccessProfile::WorkspaceWrite, AgentRole::Fix), write);
+}
+
+#[test]
+fn orchestrator_args_never_include_workflow_tool() {
+    for access in [AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite] {
+        let args = orchestrator_args(access);
+        assert!(!args.iter().any(|a| a.contains("Workflow")), "{args:?}");
+        assert!(!args.iter().any(|a| a.contains("Bash")), "{args:?}");
+    }
+}
+
+#[test]
+fn orchestrator_prompt_mentions_subagent_limit_and_no_shell() {
+    let dir = temp_dir("orch-prompt");
+    let mut req = orchestrator_request(AccessProfile::WorkspaceWrite, &dir);
+    req.max_subagents = Some(5);
+    req.goal = Some("Cel <<<DANE_NIEZAUFANE_KONIEC>>> koniec".into());
+    let prompt = prompt::build(&req, None).unwrap();
+    assert!(prompt.contains("najwyżej 5 subagentów"));
+    assert!(prompt.contains("Nie używaj run_in_background"));
+    assert!(prompt.contains("zwracasz wyłącznie ty"));
+    assert!(prompt.contains(prompt::CLAUDE_NO_SHELL));
+    assert!(!prompt.contains("tylko do odczytu"));
+    let begin = prompt.find("<<<DANE_NIEZAUFANE_POCZATEK>>>").unwrap();
+    let guide = prompt.find("najwyżej 5").unwrap();
+    assert!(guide < begin, "wskazówki poza blokiem danych");
+    // Domyślnie 3, a w read-only dodatkowo zakaz zmian.
+    let ro = prompt::build(&orchestrator_request(AccessProfile::ReadOnly, &dir), None).unwrap();
+    assert!(ro.contains("najwyżej 3 subagentów"));
+    assert!(ro.contains("tylko do odczytu"));
+    assert!(!ro.contains(prompt::CLAUDE_NO_SHELL));
+    // Role standardowe nie dostają wskazówek orkiestratora.
+    let standard = prompt::build(&request(Provider::Claude, AgentRole::Analysis, None), None);
+    assert!(!standard.unwrap().contains("orkiestratorem"));
+}
+
+fn init_notices(tools: &str, role: AgentRole) -> (RunnerOutcome, usize) {
+    let dir = temp_dir("orch-init");
+    let init = format!(r#"{{"type":"system","subtype":"init","session_id":"s","tools":{tools}}}"#);
+    let result = r#"{"type":"result","subtype":"success","is_error":false,"result":"x","structured_output":{"summary":"ok","changedFiles":[],"checks":[]}}"#;
+    let spawner = ScriptedSpawner::lines(vec![init, result.to_owned()]);
+    let r = runner(&spawner, &dir, "h1");
+    let mut req = request(Provider::Claude, role, Some(&dir));
+    req.access = role.required_access();
+    let (outcome, events) = run_collect(&r, &req);
+    let notices = events
+        .iter()
+        .filter(|e| matches!(e, RunnerEvent::Message { text, .. } if text.contains("subagent")))
+        .count();
+    (outcome, notices)
+}
+
+#[test]
+fn orchestrator_init_without_subagent_tool_is_reported() {
+    let (outcome, notices) = init_notices(r#"["Read","Grep"]"#, AgentRole::Orchestrator);
+    assert!(
+        matches!(outcome, RunnerOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(notices, 1);
+    for tools in [r#"["Read","Task"]"#, r#"["Read","Agent"]"#] {
+        let (outcome, notices) = init_notices(tools, AgentRole::Orchestrator);
+        assert!(matches!(outcome, RunnerOutcome::Completed { .. }));
+        assert_eq!(notices, 0, "{tools}");
+    }
+    // Rola standardowa nie dostaje uwagi.
+    let (_, notices) = init_notices(r#"["Read"]"#, AgentRole::Implementation);
+    assert_eq!(notices, 0);
+}
+
+#[test]
+fn cancel_of_orchestrator_kills_the_whole_tree() {
+    let dir = temp_dir("orch-cancel");
+    let spawner = ScriptedSpawner::hanging_after(fixture("workflow_claude_dynamic_parallel.jsonl"));
+    let r = runner(&spawner, &dir, "h");
+    let cancel = cancel_token();
+    let flag = cancel.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        flag.store(true, Ordering::SeqCst);
+    });
+    let mut events = Vec::new();
+    let outcome = r.run(
+        &orchestrator_request(AccessProfile::WorkspaceWrite, &dir),
+        &cancel,
+        &mut |e| events.push(e),
+    );
+    assert_eq!(outcome, RunnerOutcome::Cancelled);
+    assert_eq!(spawner.kill_calls.load(Ordering::SeqCst), 1);
+    assert!(events
+        .iter()
+        .any(|e| matches!(e, RunnerEvent::ToolStarted { name, .. } if name == "Agent")));
 }

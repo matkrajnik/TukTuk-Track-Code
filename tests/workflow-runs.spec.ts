@@ -249,7 +249,9 @@ test("podgląd: przykładowy przebieg widoczny, start odrzucony komunikatem", as
   );
   await page.reload();
   await nav(page).getByRole("button", { name: "Uruchomienia" }).click();
-  await expect(page.getByRole("row", { name: /przykład/ })).toContainText(
+  await expect(
+    page.getByRole("row", { name: /Analiza → implementacja → review \(przykład\)/ }),
+  ).toContainText(
     "Czeka na zgodę",
   );
   await page.getByRole("button", { name: "Otwórz przebieg 1" }).click();

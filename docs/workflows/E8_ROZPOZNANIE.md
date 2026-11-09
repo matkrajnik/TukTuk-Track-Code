@@ -155,3 +155,9 @@ Próbki (skrócone):
 6. Zatrzymanie: wystarczy zabić jeden proces `claude.exe` (subagenci w procesie).
 7. Fixture `workflow_claude_dynamic_ok.jsonl` / `_unknown.jsonl` (syntetyczne) do zastąpienia
    skróconymi liniami z `a.jsonl`, `d.jsonl` i `e.jsonl`.
+
+### Decyzja użytkownika (2026-11-09)
+
+`DYNAMIC_SUBAGENTS_CONFIRMED = TAK`. E8b zrealizowane na tej podstawie; próbki
+`workflow_claude_dynamic_ok.jsonl`, `_unknown.jsonl` i `_parallel.jsonl` to zanonimizowane,
+skrócone linie z `d.jsonl`, `a.jsonl` i `e.jsonl` (bez sygnatur thinking).

@@ -23,6 +23,14 @@ pub const MAX_EDGES: usize = 400;
 /// Najdłuższa instrukcja agenta w znakach.
 pub const MAX_INSTRUCTION_CHARS: usize = 20_000;
 
+/// Liczba subagentów orkiestratora to wskazówka w prompcie (nie jest egzekwowana): 1–8.
+pub const MIN_SUBAGENTS_HINT: u32 = 1;
+pub const MAX_SUBAGENTS_HINT: u32 = 8;
+pub const DEFAULT_SUBAGENTS_HINT: u32 = 3;
+
+/// Domyślny limit czasu orkiestratora (tryb dynamiczny): godzina.
+pub const DYNAMIC_TIMEOUT_SECS: u32 = 3600;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkflowGraph {
@@ -132,14 +140,31 @@ pub enum AgentRole {
     Implementation,
     Fix,
     Review,
+    /// Tryb dynamiczny (E8): agent Claude, który sam deleguje do subagentów.
+    Orchestrator,
 }
 
 impl AgentRole {
     /// Profil dostępu wymagany dla roli (8.3): analiza i review tylko czytają.
+    /// Dla orkiestratora to wartość domyślna szablonu; dozwolone są oba profile.
     pub fn required_access(self) -> AccessProfile {
         match self {
             AgentRole::Analysis | AgentRole::Review => AccessProfile::ReadOnly,
-            AgentRole::Implementation | AgentRole::Fix => AccessProfile::WorkspaceWrite,
+            AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => {
+                AccessProfile::WorkspaceWrite
+            }
+        }
+    }
+
+    /// Profile dostępu, które walidator przepuszcza dla roli.
+    pub fn allowed_access(self) -> &'static [AccessProfile] {
+        const READ_ONLY: &[AccessProfile] = &[AccessProfile::ReadOnly];
+        const WRITE: &[AccessProfile] = &[AccessProfile::WorkspaceWrite];
+        const BOTH: &[AccessProfile] = &[AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite];
+        match self {
+            AgentRole::Analysis | AgentRole::Review => READ_ONLY,
+            AgentRole::Implementation | AgentRole::Fix => WRITE,
+            AgentRole::Orchestrator => BOTH,
         }
     }
 
@@ -159,7 +184,7 @@ impl AgentRole {
         ];
         match self {
             AgentRole::Analysis => ANALYSIS,
-            AgentRole::Implementation | AgentRole::Fix => IMPLEMENTATION,
+            AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => IMPLEMENTATION,
             AgentRole::Review => REVIEW,
         }
     }
@@ -192,6 +217,10 @@ pub struct AgentConfig {
     pub instruction: String,
     pub access: AccessProfile,
     pub timeout_secs: u32,
+    /// Wskazówka dla orkiestratora (1–8); tylko rola Orchestrator. Brak pola nie zmienia
+    /// zapisu istniejących definicji, więc skróty opublikowanych wersji zostają.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_subagents: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

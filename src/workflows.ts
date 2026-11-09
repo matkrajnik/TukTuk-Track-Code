@@ -8,6 +8,7 @@ import { desktop } from "./store";
 import * as sim from "./preview/workflows";
 import type {
   NodeReadiness,
+  TemplateKind,
   WorkflowAccess,
   WorkflowDetail,
   WorkflowGraph,
@@ -53,11 +54,11 @@ export async function getWorkflow(id: number): Promise<WorkflowDetail> {
 export async function createWorkflow(
   name: string,
   description: string,
-  fromTemplate: boolean,
+  template: TemplateKind,
 ): Promise<WorkflowDetail> {
   if (desktop)
-    return invoke("workflow_create", { name, description, fromTemplate });
-  return sim.create(name, description, fromTemplate);
+    return invoke("workflow_create", { name, description, template });
+  return sim.create(name, description, template);
 }
 
 /** Zapis szkicu; nieaktualna `expectedRevision` kończy się konfliktem. */

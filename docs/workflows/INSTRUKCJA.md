@@ -47,6 +47,31 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
     zostają; ponowne włączenie wymaga klucza. Wyłączenie jest wstrzymane, gdy są przebiegi w
     toku (kolejka, praca, zatrzymywanie); przebieg czekający na zgodę albo wstrzymany nie blokuje.
 
+## Tryb dynamiczny (Claude)
+
+Proces dynamiczny to jeden **orkiestrator** Claude, który sam deleguje pracę do subagentów
+(narzędzie `Agent`). Układ kroków jest stały: Start, Orkiestrator, opcjonalnie Review z poprawkami
+(do trzech rund), Decyzja użytkownika, Koniec.
+
+1. **Tworzenie.** Definicje → „Dynamiczny (Claude)” (także w Przeglądzie). Edytor pokazuje formularz
+   zamiast canvasu; kształt grafu zmienia się tylko przez formularz.
+2. **Pola formularza.** Instrukcja orkiestratora, model (puste: wybór przy uruchomieniu), limit czasu
+   w minutach (domyślnie 60), dostęp (tylko odczyt albo odczyt i zapis w katalogu roboczym), liczba
+   subagentów 1–8 (domyślnie 3; to wskazówka w prompcie, nie twardy limit) oraz „Dodaj review
+   i poprawki” (wymaga dostępu z zapisem).
+3. **Wymagania.** Claude Code 2.1.319 lub nowszy (starszy: komunikat z prośbą o aktualizację).
+   Orkiestrator działa tylko z Claude; Codex jest zablokowany.
+4. **Koszt.** Formularz startu ostrzega: każdy subagent zużywa tokeny osobno, więc koszt może być
+   wielokrotnie wyższy niż w zwykłym kroku. Ostrzeżenie nie wymaga potwierdzenia.
+5. **Bezpieczeństwo.** Orkiestrator zawsze działa z `--restricted`, także w trybie tylko do odczytu.
+   Subagenci dziedziczą to ograniczenie: nie mają powłoki i działają tylko w katalogu roboczym
+   przebiegu (potwierdzone na Claude Code 2.1.319). To kontrola CLI, nie sandbox systemu.
+   Narzędzie `Workflow` nie jest używane.
+6. **Monitor.** Przebieg pokazuje drzewo orkiestrator → subagenci: stan tekstem (w toku, zakończony,
+   błąd), bieżącą czynność i licznik „Subagenci: N aktywnych / M łącznie”. Drzewo odtwarza się ze
+   zdarzeń po ponownym otwarciu. Orkiestrator zapisuje do 3000 zdarzeń kroku (zwykły krok 500);
+   po przekroczeniu monitor pokazuje informację, że czynności nie są już aktualizowane.
+
 ## Dane, kopia i retencja
 
 - Diffy leżą w `workflows/runs/<runId>/` w katalogu danych aplikacji. Ustawienia → Workflows →
@@ -85,7 +110,10 @@ właściciel aplikacji; nie znajduje się w żadnym pliku repozytorium ani dokum
 - Claude „tylko do odczytu” i Claude z zapisem (`--restricted`) to kontrola przez CLI, nie
   izolacja procesu ani sandbox systemu. Claude w kroku z zapisem nie ma powłoki: testy
   uruchamiasz sam albo w kroku Codexa.
-- Jeden aktywny agent naraz; brak automatycznego merge.
+- Jeden aktywny agent naraz; brak automatycznego merge. W trybie dynamicznym subagenci działają
+  w jednym procesie orkiestratora (nie liczą się jako osobni agenci); Zatrzymaj kończy cały proces.
+- Tryb dynamiczny: subagenci w tle (`run_in_background`) nie są obsługiwani (prompt każe ich nie
+  używać), a liczba subagentów to wskazówka. Sprawdzenie na prawdziwym Claude: `E8_TEST_RECZNY.md`.
 - Czas agenta nie jest liczony w raportach pracy.
 - Funkcja jest eksperymentalna; sprawdzenie na prawdziwych CLI robi użytkownik
   (`E4_TEST_RECZNY.md`, `E6_TEST_RECZNY.md`, `E7_TEST_RECZNY.md`).

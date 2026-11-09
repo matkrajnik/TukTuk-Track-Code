@@ -6,6 +6,7 @@
 //! wątkach std (`driver`). Stan przebiegu odtwarza się wyłącznie ze zdarzeń.
 
 pub mod driver;
+pub mod dynamic;
 pub mod engine;
 pub mod model;
 pub mod output;

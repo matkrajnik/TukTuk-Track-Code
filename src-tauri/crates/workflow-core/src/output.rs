@@ -111,7 +111,7 @@ fn parse<T: for<'de> Deserialize<'de>>(value: &Value) -> Result<T, OutputError> 
     serde_json::from_value(value.clone()).map_err(|e| OutputError(e.to_string()))
 }
 
-/// Parsuje wynik według roli. Rola Fix używa schematu implementacji.
+/// Parsuje wynik według roli. Role Fix i Orchestrator używają schematu implementacji.
 pub fn parse_output(role: AgentRole, value: &Value) -> Result<AgentOutput, OutputError> {
     match role {
         AgentRole::Analysis => {
@@ -122,7 +122,7 @@ pub fn parse_output(role: AgentRole, value: &Value) -> Result<AgentOutput, Outpu
             check_list("risks", &out.risks)?;
             Ok(AgentOutput::Analysis(out))
         }
-        AgentRole::Implementation | AgentRole::Fix => {
+        AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => {
             let out: ImplementationOutput = parse(value)?;
             check_text("summary", &out.summary)?;
             check_list("changedFiles", &out.changed_files)?;
@@ -179,15 +179,17 @@ pub fn json_schema(role: AgentRole) -> Value {
             "acceptanceCriteria": list_schema(text_schema()),
             "risks": list_schema(text_schema()),
         })),
-        AgentRole::Implementation | AgentRole::Fix => object_schema(json!({
-            "summary": text_schema(),
-            "changedFiles": list_schema(text_schema()),
-            "checks": list_schema(object_schema(json!({
-                "name": text_schema(),
-                "passed": {"type": "boolean"},
-                "logRef": {"type": ["string", "null"]},
-            }))),
-        })),
+        AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => {
+            object_schema(json!({
+                "summary": text_schema(),
+                "changedFiles": list_schema(text_schema()),
+                "checks": list_schema(object_schema(json!({
+                    "name": text_schema(),
+                    "passed": {"type": "boolean"},
+                    "logRef": {"type": ["string", "null"]},
+                }))),
+            }))
+        }
         AgentRole::Review => object_schema(json!({
             "verdict": {"type": "string", "enum": ["approved", "changes_requested"]},
             "findings": list_schema(object_schema(json!({

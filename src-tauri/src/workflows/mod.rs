@@ -131,19 +131,34 @@ pub fn workflow_get(app: tauri::AppHandle, id: i64) -> Result<Detail, String> {
     with_unlocked(&app, |db| store::get(db, id))
 }
 
-/// Nowy proces: pusty (Start → Koniec) albo z szablonu „Analiza → implementacja → review”.
+/// Rodzaj nowego procesu: pusty, szablon standardowy albo dynamiczny (E8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TemplateKind {
+    Blank,
+    Standard,
+    Dynamic,
+}
+
+/// Graf startowy dla rodzaju procesu.
+pub fn template_graph(kind: TemplateKind) -> WorkflowGraph {
+    match kind {
+        TemplateKind::Blank => template::blank(),
+        TemplateKind::Standard => template::analysis_implementation_review(),
+        TemplateKind::Dynamic => template::dynamic_default(),
+    }
+}
+
+/// Nowy proces: pusty (Start → Koniec), z szablonu „Analiza → implementacja → review”
+/// albo z szablonu dynamicznego „Dynamiczny (Claude)”.
 #[tauri::command]
 pub fn workflow_create(
     app: tauri::AppHandle,
     name: String,
     description: String,
-    from_template: bool,
+    template: TemplateKind,
 ) -> Result<Detail, String> {
-    let graph = if from_template {
-        template::analysis_implementation_review()
-    } else {
-        template::blank()
-    };
+    let graph = template_graph(template);
     with_unlocked(&app, |db| {
         let id = store::create(db, &name, &description, &graph, crate::db::now())?;
         store::get(db, id)

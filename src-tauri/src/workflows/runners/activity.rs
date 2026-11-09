@@ -14,13 +14,78 @@ use super::redact;
 /// Najwięcej znaków jednej wartości argumentu w dzienniku.
 pub const MAX_ARG_CHARS: usize = 200;
 
+/// Nazwy narzędzia delegowania: `tool_use` nosi `Agent`, a `system/init.tools` podaje `Task`.
+pub const SUBAGENT_TOOL_NAMES: [&str; 2] = ["Agent", "Task"];
+
+pub fn is_subagent_tool(name: &str) -> bool {
+    SUBAGENT_TOOL_NAMES.contains(&name)
+}
+
+/// Początek wyniku `tool_result`, którym Claude Code potwierdza start subagenta w tle.
+const ASYNC_LAUNCH_PREFIX: &str = "Async agent launched";
+
+/// Tekst wyniku narzędzia: napis albo pierwszy blok tekstowy tablicy.
+fn result_text(content: &Value) -> &str {
+    match content {
+        Value::String(text) => text,
+        Value::Array(blocks) => blocks
+            .iter()
+            .find_map(|block| block["text"].as_str())
+            .unwrap_or_default(),
+        _ => "",
+    }
+}
+
+/// Identyfikatory narzędzi Agent uruchomionych w tle według tej linii.
+///
+/// Claude Code sam przenosi równoległe wywołania Agent w tło (test E na 2.1.319:
+/// `task_started.is_backgrounded=true` bez `run_in_background`), a ich
+/// `tool_result` („Async agent launched…”) przychodzi od razu, zanim subagent
+/// zacznie pracę. Taki wynik nie jest końcem subagenta; koniec niesie
+/// `system/task_notification` (zob. [`task_notification`]).
+pub fn background_launches(event: &Value) -> Vec<String> {
+    match event["type"].as_str() {
+        Some("system")
+            if event["subtype"] == "task_started" && event["is_backgrounded"] == true =>
+        {
+            event["tool_use_id"]
+                .as_str()
+                .map(|id| vec![id.to_owned()])
+                .unwrap_or_default()
+        }
+        Some("user") => event["message"]["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|block| block["type"] == "tool_result")
+            .filter(|block| {
+                result_text(&block["content"])
+                    .trim_start()
+                    .starts_with(ASYNC_LAUNCH_PREFIX)
+            })
+            .filter_map(|block| block["tool_use_id"].as_str().map(str::to_owned))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Koniec subagenta z `system/task_notification`: `(tool_use_id, ok)`;
+/// `ok` tylko dla `status == "completed"`.
+pub fn task_notification(event: &Value) -> Option<(String, bool)> {
+    if event["type"] != "system" || event["subtype"] != "task_notification" {
+        return None;
+    }
+    let id = event["tool_use_id"].as_str()?;
+    Some((id.to_owned(), event["status"] == "completed"))
+}
+
 /// Klucze dozwolone dla narzędzia (pozostałe narzędzia, także MCP i Codex: żadne).
 fn allowed_keys(tool: &str) -> &'static [&'static str] {
     match tool {
         "Read" | "Edit" | "Write" => &["file_path"],
         "Grep" => &["pattern", "path", "glob"],
         "Glob" => &["pattern", "path"],
-        "Agent" | "Task" => &["description", "subagent_type"],
+        name if is_subagent_tool(name) => &["description", "subagent_type"],
         _ => &[],
     }
 }
@@ -227,6 +292,39 @@ mod tests {
         assert_eq!(windows, json!({"file_path": "k.txt", "outside": true}));
         let relative = tool_args("Read", &json!({"file_path": "src/a.ts"}), none).unwrap();
         assert_eq!(relative, json!({"file_path": "src/a.ts"}));
+    }
+
+    #[test]
+    fn background_launch_is_read_from_task_started_and_async_result() {
+        let started = json!({"type":"system","subtype":"task_started","tool_use_id":"toolu_A",
+                             "is_backgrounded":true});
+        assert_eq!(background_launches(&started), ["toolu_A"]);
+        let sync = json!({"type":"system","subtype":"task_started","tool_use_id":"toolu_A",
+                          "is_backgrounded":false});
+        assert!(background_launches(&sync).is_empty());
+        let result = json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":"toolu_B",
+             "content":[{"type":"text","text":"Async agent launched successfully. agentId: x"}]},
+            {"type":"tool_result","tool_use_id":"toolu_C","content":"1\tjeden"}]}});
+        assert_eq!(background_launches(&result), ["toolu_B"]);
+        let report = json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":"toolu_D",
+             "content":[{"type":"text","text":"[Subagent hand-back] raport"}]}]}});
+        assert!(background_launches(&report).is_empty());
+    }
+
+    #[test]
+    fn task_notification_gives_id_and_status() {
+        let done = json!({"type":"system","subtype":"task_notification","tool_use_id":"toolu_A",
+                          "status":"completed"});
+        assert_eq!(task_notification(&done), Some(("toolu_A".into(), true)));
+        let failed = json!({"type":"system","subtype":"task_notification","tool_use_id":"toolu_A",
+                            "status":"failed"});
+        assert_eq!(task_notification(&failed), Some(("toolu_A".into(), false)));
+        let no_id = json!({"type":"system","subtype":"task_notification","status":"completed"});
+        assert_eq!(task_notification(&no_id), None);
+        let progress = json!({"type":"system","subtype":"task_progress","tool_use_id":"toolu_A"});
+        assert_eq!(task_notification(&progress), None);
     }
 
     #[test]

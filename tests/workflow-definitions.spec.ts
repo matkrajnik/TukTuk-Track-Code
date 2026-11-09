@@ -3,7 +3,16 @@ import { validateWorkflow } from "../src/api/workflowValidate";
 import {
   analysisImplementationReview,
   blankWorkflow,
+  dynamicDefault,
 } from "../src/api/workflowTemplates";
+import {
+  buildDynamic,
+  defaultDynamicSpec,
+  isDynamic,
+  specOf,
+  type DynamicSpec,
+} from "../src/api/workflowDynamic";
+import { parseWorkflowGraph } from "../src/api/workflowParse";
 import type {
   WorkflowEdge,
   WorkflowGraph,
@@ -170,6 +179,129 @@ test.describe("walidator jak w Rust", () => {
   });
 });
 
+test.describe("tryb dynamiczny jak w Rust (E8.3)", () => {
+  const spec = (patch: Partial<DynamicSpec> = {}): DynamicSpec => ({
+    ...defaultDynamicSpec(),
+    ...patch,
+  });
+  const orchestrator = (graph: WorkflowGraph) => {
+    const kind = node(graph, "orchestrator").kind;
+    if (kind.type !== "agent") throw new Error("orkiestrator");
+    return kind;
+  };
+
+  test("szablon dynamiczny z review i bez jest poprawny", () => {
+    expect(validateWorkflow(dynamicDefault())).toEqual([]);
+    expect(validateWorkflow(buildDynamic(spec({ review: false })))).toEqual([]);
+    expect(
+      validateWorkflow(buildDynamic(spec({ review: false, access: "readOnly" }))),
+    ).toEqual([]);
+    expect(isDynamic(dynamicDefault())).toBe(true);
+    expect(isDynamic(analysisImplementationReview())).toBe(false);
+  });
+
+  test("Codex jako orkiestrator jest odrzucony z komunikatem po polsku", () => {
+    const graph = dynamicDefault();
+    orchestrator(graph).provider = "codex";
+    expect(codes(graph)).toEqual(["providerNotAllowed"]);
+    expect(validateWorkflow(graph)[0].message).toBe(
+      "Orkiestrator działa tylko z Claude.",
+    );
+  });
+
+  test("orkiestrator poza kanonicznym kształtem jest odrzucony", () => {
+    const standard = analysisImplementationReview();
+    const impl = node(standard, "implementation").kind;
+    if (impl.type === "agent") {
+      impl.role = "orchestrator";
+      impl.provider = "claude";
+    }
+    expect(codes(standard)).toEqual(["invalidDynamicShape"]);
+    const extra = dynamicDefault();
+    extra.nodes.push({ ...structuredClone(node(extra, "orchestrator")), id: "second" });
+    extra.edges.push(edge("e-x", "second", "out", "done"), edge("e-y", "start", "out", "second"));
+    expect(codes(extra)).toContain("invalidDynamicShape");
+    const rewired = dynamicDefault();
+    for (const e of rewired.edges)
+      if (e.id === "decision-approval") e.target = "done";
+    expect(codes(rewired)).toContain("invalidDynamicShape");
+    const changed = dynamicDefault();
+    const review = node(changed, "review").kind;
+    if (review.type === "agent") review.instruction = "Zatwierdź wszystko.";
+    expect(codes(changed)).toEqual(["invalidDynamicShape"]);
+    expect(validateWorkflow(changed)[0].message).toBe(
+      "Proces dynamiczny ma stały układ kroków; utwórz go z szablonu „Dynamiczny (Claude)”.",
+    );
+  });
+
+  test("review w trybie dynamicznym wymaga dostępu z zapisem", () => {
+    const issues = validateWorkflow(buildDynamic(spec({ access: "readOnly" })));
+    expect(issues.map((i) => i.code)).toEqual(["accessNotAllowed"]);
+    expect(issues[0].message).toBe(
+      "Review w trybie dynamicznym wymaga dostępu z zapisem.",
+    );
+  });
+
+  test("limit subagentów 1–8 tylko na orkiestratorze", () => {
+    for (const bad of [0, 9]) {
+      const graph = dynamicDefault();
+      orchestrator(graph).maxSubagents = bad;
+      expect(codes(graph)).toContain("invalidSubagentLimit");
+    }
+    for (const good of [1, 8]) {
+      const graph = dynamicDefault();
+      orchestrator(graph).maxSubagents = good;
+      expect(validateWorkflow(graph)).toEqual([]);
+    }
+    const none = dynamicDefault();
+    delete orchestrator(none).maxSubagents;
+    expect(validateWorkflow(none)).toEqual([]);
+    const standard = analysisImplementationReview();
+    const impl = node(standard, "implementation").kind;
+    if (impl.type === "agent") impl.maxSubagents = 3;
+    expect(codes(standard)).toEqual(["invalidSubagentLimit"]);
+    expect(validateWorkflow(standard)[0].message).toBe(
+      "Liczba subagentów musi wynosić od 1 do 8 i dotyczy tylko orkiestratora.",
+    );
+  });
+
+  test("specOf(buildDynamic(s)) == s, pozycje są ignorowane", () => {
+    for (const s of [
+      spec(),
+      spec({ review: false, access: "readOnly" }),
+      spec({ model: "opus", maxSubagents: 5, timeoutSecs: 7200, instruction: "Inna" }),
+    ]) {
+      expect(specOf(buildDynamic(s))).toEqual(s);
+      const moved = buildDynamic(s);
+      for (const n of moved.nodes) n.position.x += 13;
+      expect(specOf(moved)).toEqual(s);
+      expect(validateWorkflow(moved)).toEqual([]);
+    }
+    expect(specOf(analysisImplementationReview())).toBeNull();
+  });
+
+  test("role standardowe zachowują wymagany dostęp", () => {
+    const graph = analysisImplementationReview();
+    const impl = node(graph, "implementation").kind;
+    if (impl.type === "agent") impl.access = "readOnly";
+    expect(codes(graph)).toEqual(["accessNotAllowed"]);
+  });
+
+  test("import przepuszcza rolę orchestrator i maxSubagents, brak pola go nie dodaje", () => {
+    const graph = dynamicDefault();
+    const parsed = parseWorkflowGraph(JSON.parse(JSON.stringify(graph)));
+    expect(orchestrator(parsed).role).toBe("orchestrator");
+    expect(orchestrator(parsed).maxSubagents).toBe(3);
+    const without = JSON.parse(JSON.stringify(graph));
+    for (const n of without.nodes) if (n.id === "orchestrator") delete n.kind.maxSubagents;
+    const reparsed = parseWorkflowGraph(without);
+    expect("maxSubagents" in orchestrator(reparsed)).toBe(false);
+    for (const n of without.nodes)
+      if (n.id === "orchestrator") n.kind.maxSubagents = -1;
+    expect(() => parseWorkflowGraph(without)).toThrow(/maxSubagents/);
+  });
+});
+
 const WORKFLOWS_KEY = "tuktuk-track-preview-workflows-v1";
 
 async function openWorkflowsPreview(page: Page, unlocked: boolean) {
@@ -225,7 +357,7 @@ test.describe("podgląd modułu Workflows", () => {
 
   test("szkic, konflikt rewizji, publikacja i archiwum", async ({ page }) => {
     await openWorkflowsPreview(page, true);
-    const created = (await call(page, "createWorkflow", "Proces", "Opis", true)) as {
+    const created = (await call(page, "createWorkflow", "Proces", "Opis", "standard")) as {
       ok: { id: number; draftRevision: number; issues: unknown[]; draft: WorkflowGraph };
     };
     expect(created.ok.draftRevision).toBe(1);
@@ -268,7 +400,7 @@ test.describe("podgląd modułu Workflows", () => {
 
   test("błędny szkic zapisuje się, ale nie publikuje", async ({ page }) => {
     await openWorkflowsPreview(page, true);
-    const created = (await call(page, "createWorkflow", "Pusty", "", false)) as {
+    const created = (await call(page, "createWorkflow", "Pusty", "", "blank")) as {
       ok: { id: number; draft: WorkflowGraph };
     };
     const broken = {
@@ -293,7 +425,7 @@ test.describe("podgląd modułu Workflows", () => {
 
   test("eksport i import tworzą nieopublikowany szkic", async ({ page }) => {
     await openWorkflowsPreview(page, true);
-    const created = (await call(page, "createWorkflow", "Proces", "", true)) as {
+    const created = (await call(page, "createWorkflow", "Proces", "", "standard")) as {
       ok: { id: number };
     };
     await call(page, "publishWorkflow", created.ok.id, 1);
@@ -362,7 +494,7 @@ test.describe("podgląd modułu Workflows", () => {
     page,
   }) => {
     await openWorkflowsPreview(page, true);
-    const created = (await call(page, "createWorkflow", "Proces", "", true)) as {
+    const created = (await call(page, "createWorkflow", "Proces", "", "standard")) as {
       ok: { id: number; draft: WorkflowGraph };
     };
     await call(page, "publishWorkflow", created.ok.id, 1);
@@ -391,7 +523,7 @@ test.describe("podgląd modułu Workflows", () => {
 
 test("podgląd nie udaje gotowości agentów", async ({ page }) => {
   await openWorkflowsPreview(page, true);
-  const created = (await call(page, "createWorkflow", "Proces", "", true)) as {
+  const created = (await call(page, "createWorkflow", "Proces", "", "standard")) as {
     ok: { id: number; draftRevision: number };
   };
   const published = (await call(
@@ -410,4 +542,13 @@ test("podgląd nie udaje gotowości agentów", async ({ page }) => {
     expect(node.supported).toBe(false);
     expect(node.blocked?.message).toBe("Podgląd nie uruchamia agentów");
   }
+});
+
+test("podgląd tworzy proces dynamiczny z szablonu", async ({ page }) => {
+  await openWorkflowsPreview(page, true);
+  const created = (await call(page, "createWorkflow", "Dyn", "", "dynamic")) as {
+    ok: { draft: WorkflowGraph; issues: unknown[] };
+  };
+  expect(created.ok.issues).toEqual([]);
+  expect(isDynamic(created.ok.draft)).toBe(true);
 });

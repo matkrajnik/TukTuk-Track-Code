@@ -30,6 +30,7 @@ fn agent(role: AgentRole, provider: Provider, instruction: &str) -> NodeKind {
         instruction: instruction.to_owned(),
         access: role.required_access(),
         timeout_secs: TEMPLATE_TIMEOUT_SECS,
+        max_subagents: None,
     })
 }
 
@@ -60,6 +61,11 @@ pub fn blank() -> WorkflowGraph {
         ],
         edges: vec![edge("start", Port::Out, "done")],
     }
+}
+
+/// Szablon trybu dynamicznego (E8): orkiestrator Claude z zapisem, review i poprawkami.
+pub fn dynamic_default() -> WorkflowGraph {
+    crate::dynamic::build(&crate::dynamic::DynamicSpec::default())
 }
 
 /// Claude analizuje, Codex implementuje, Claude robi review; najwyżej trzy

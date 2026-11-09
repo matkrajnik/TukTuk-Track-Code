@@ -3,27 +3,42 @@
 use serde_json::{json, Map, Value};
 
 use crate::engine::RunEvent;
+use crate::model::AgentRole;
 use crate::ports::RunnerEvent;
 
 /// Najwięcej zdarzeń runnera zapisanych dla jednego kroku; kolejne to jeden znacznik.
 pub const MAX_RUNNER_EVENTS_PER_EXECUTION: usize = 500;
+/// Orkiestrator z subagentami emituje wielokrotnie więcej zdarzeń (E8, D7).
+pub const MAX_RUNNER_EVENTS_PER_ORCHESTRATOR: usize = 3000;
 /// Największy zapisany ładunek jednego zdarzenia runnera w bajtach.
 pub const MAX_RUNNER_PAYLOAD_BYTES: usize = 8 * 1024;
 /// Po tylu zdarzeniach runnera zapisujemy partię bez czekania na tyknięcie.
 pub const RUNNER_EVENT_BATCH: usize = 32;
 
+/// Limit zapisanych zdarzeń runnera dla roli kroku.
+pub(super) fn event_budget(role: AgentRole) -> usize {
+    match role {
+        AgentRole::Orchestrator => MAX_RUNNER_EVENTS_PER_ORCHESTRATOR,
+        AgentRole::Analysis | AgentRole::Implementation | AgentRole::Fix | AgentRole::Review => {
+            MAX_RUNNER_EVENTS_PER_EXECUTION
+        }
+    }
+}
+
 /// Zbiera zdarzenia runnera w partie, z limitem liczby i rozmiaru (znacznik `truncated`).
 pub(super) struct MessageBuffer {
     execution_id: String,
     emitted: usize,
+    limit: usize,
     pub(super) pending: Vec<RunEvent>,
 }
 
 impl MessageBuffer {
-    pub(super) fn new(execution_id: &str) -> Self {
+    pub(super) fn new(execution_id: &str, limit: usize) -> Self {
         Self {
             execution_id: execution_id.to_owned(),
             emitted: 0,
+            limit,
             pending: Vec::new(),
         }
     }
@@ -39,11 +54,11 @@ impl MessageBuffer {
 
     pub(super) fn push(&mut self, event: RunnerEvent) {
         self.emitted += 1;
-        if self.emitted > MAX_RUNNER_EVENTS_PER_EXECUTION + 1 {
+        if self.emitted > self.limit + 1 {
             return;
         }
         let execution_id = self.execution_id.clone();
-        if self.emitted == MAX_RUNNER_EVENTS_PER_EXECUTION + 1 {
+        if self.emitted == self.limit + 1 {
             self.pending.push(RunEvent::Message {
                 execution_id,
                 payload: json!({"truncated": true, "reason": "limit zdarzeń kroku"}),

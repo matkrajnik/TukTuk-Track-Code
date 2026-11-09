@@ -19,6 +19,7 @@ import {
   type WorkflowSummary,
   type WorkflowGraph,
 } from "../../workflows";
+import { isDynamic } from "../../api/workflowDynamic";
 import { newRequestId, startWorkflowRun } from "../../workflowRuns";
 import { read as readSnapshot, type Task } from "../../store";
 
@@ -61,6 +62,9 @@ const agents = computed(() =>
       : [],
   ),
 );
+
+/** Tryb dynamiczny: ostrzeżenie o koszcie (D8, sam tekst, bez potwierdzenia). */
+const dynamic = computed(() => (graph.value ? isDynamic(graph.value) : false));
 
 function pickTask() {
   const task = tasks.value.find((t) => t.id === taskId.value);
@@ -196,6 +200,10 @@ async function submit() {
           Modele i uprawnienia zmienisz w definicji (edycja i publikacja).
         </p>
       </section>
+      <p v-if="dynamic" role="note" class="hint">
+        Orkiestrator uruchamia subagentów; każdy zużywa tokeny osobno, więc koszt może być
+        wielokrotnie wyższy niż w zwykłym kroku.
+      </p>
       <WorkflowReadiness
         v-if="version && graph"
         :version-id="version.id"

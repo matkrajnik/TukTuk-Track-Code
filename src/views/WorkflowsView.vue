@@ -17,9 +17,11 @@ import {
   exportWorkflow,
   importWorkflow,
   listWorkflows,
+  type TemplateKind,
   type WorkflowSummary,
 } from "../workflows";
 import { TEMPLATE_NAME } from "../api/workflowTemplates";
+import { DYNAMIC_TEMPLATE_NAME } from "../api/workflowDynamic";
 
 const props = defineProps<{ section: "overview" | "definitions" }>();
 const emit = defineEmits<{ open: [view: View]; run: [runId: number] }>();
@@ -37,7 +39,7 @@ const showArchived = ref(false);
 const editing = ref<number | null>(null);
 
 type Dialog =
-  | { kind: "new"; template: boolean }
+  | { kind: "new"; template: TemplateKind }
   | { kind: "import" }
   | { kind: "export"; name: string; text: string }
   | null;
@@ -98,9 +100,15 @@ function stateText(w: WorkflowSummary) {
     : `v${w.publishedVersion} • opublikowany`;
 }
 
-function openNew(template: boolean) {
+const templateNames: Record<TemplateKind, string> = {
+  blank: "",
+  standard: TEMPLATE_NAME,
+  dynamic: DYNAMIC_TEMPLATE_NAME,
+};
+
+function openNew(template: TemplateKind) {
   dialog.value = { kind: "new", template };
-  newName.value = template ? TEMPLATE_NAME : "";
+  newName.value = templateNames[template];
   newDescription.value = "";
   dialogError.value = "";
 }
@@ -215,10 +223,22 @@ async function closeEditor() {
   await refresh();
 }
 
+const templateHints: Record<TemplateKind, string> = {
+  blank: "Pusty proces ze Startem połączonym z Końcem.",
+  standard:
+    "Claude analizuje, Codex implementuje, Claude robi review; do trzech rund poprawek i decyzja użytkownika.",
+  dynamic:
+    "Jeden orkiestrator Claude deleguje pracę do subagentów; opcjonalnie review i poprawki, na końcu decyzja użytkownika.",
+};
+
 const dialogTitle = computed(() => {
   const current = dialog.value;
   if (current?.kind === "new")
-    return current.template ? "Nowy proces z szablonu" : "Nowy proces";
+    return current.template === "blank"
+      ? "Nowy proces"
+      : current.template === "dynamic"
+        ? "Nowy proces dynamiczny"
+        : "Nowy proces z szablonu";
   if (current?.kind === "import") return "Import procesu";
   return `Eksport: ${current?.name ?? ""}`;
 });
@@ -267,10 +287,13 @@ const dialogLabel = computed(() => {
           </div>
         </div>
         <div class="wf-toolbar">
-          <button type="button" class="primary-button" @click="openNew(true)">
+          <button type="button" class="primary-button" @click="openNew('standard')">
             Nowy z szablonu
           </button>
-          <button type="button" class="today-button" @click="openNew(false)">
+          <button type="button" class="today-button" @click="openNew('dynamic')">
+            Dynamiczny (Claude)
+          </button>
+          <button type="button" class="today-button" @click="openNew('blank')">
             Pusty proces
           </button>
           <button
@@ -303,10 +326,13 @@ const dialogLabel = computed(() => {
 
       <template v-else>
         <div class="wf-toolbar">
-          <button type="button" class="primary-button" @click="openNew(true)">
+          <button type="button" class="primary-button" @click="openNew('standard')">
             Z szablonu
           </button>
-          <button type="button" class="today-button" @click="openNew(false)">
+          <button type="button" class="today-button" @click="openNew('dynamic')">
+            Dynamiczny (Claude)
+          </button>
+          <button type="button" class="today-button" @click="openNew('blank')">
             Nowy
           </button>
           <button type="button" class="today-button" @click="openImport">
@@ -427,11 +453,7 @@ const dialogLabel = computed(() => {
               <textarea v-model="newDescription" rows="3" maxlength="2000" />
             </label>
             <p class="hint">
-              {{
-                dialog.template
-                  ? "Claude analizuje, Codex implementuje, Claude robi review; do trzech rund poprawek i decyzja użytkownika."
-                  : "Pusty proces ze Startem połączonym z Końcem."
-              }}
+              {{ templateHints[dialog.template] }}
             </p>
             <div class="modal-actions">
               <button

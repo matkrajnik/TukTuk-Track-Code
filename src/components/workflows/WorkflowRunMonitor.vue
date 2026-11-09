@@ -15,6 +15,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import ConfirmDialog from "../ConfirmDialog.vue";
 import WorkflowActivityLog from "./WorkflowActivityLog.vue";
+import WorkflowAgentTree from "./WorkflowAgentTree.vue";
 import WorkflowGraphView from "./WorkflowGraphView.vue";
 import {
   EXECUTION_STATUS_LABELS,
@@ -40,6 +41,7 @@ import {
   type DiffArtifact,
   type RunDetail,
   type StoredEvent,
+  runnerPayload,
 } from "../../workflowRuns";
 
 const props = defineProps<{ runId: number }>();
@@ -116,6 +118,30 @@ const nodeStatuses = computed(() => {
   return result;
 });
 const noProblems: ReadonlySet<string> = new Set();
+
+/**
+ * Wykonania z drzewem agentów (E8.6): kroki orkiestratora (rola z grafu przebiegu) oraz
+ * każdy krok, który zapisał linie subagentów (`parentToolUseId`), np. stare dane.
+ */
+const treeSteps = computed(() => {
+  const roles = new Map<string, boolean>();
+  for (const n of detail.value?.graph.nodes ?? [])
+    roles.set(n.id, n.kind.type === "agent" && n.kind.role === "orchestrator");
+  const withSubagents = new Set(
+    events.value
+      .filter((e) => typeof runnerPayload(e).parentToolUseId === "string")
+      .map((e) => e.executionId),
+  );
+  return (detail.value?.executions ?? [])
+    .filter((e) => roles.get(e.nodeId) || withSubagents.has(e.id))
+    .map((e) => ({
+      id: e.id,
+      status: e.status,
+      title: `Drzewo agentów: ${
+        detail.value?.graph.nodes.find((n) => n.id === e.nodeId)?.label ?? e.nodeId
+      }`,
+    }));
+});
 
 /**
  * Zakładki monitora: „Przebieg” (stan, akcje, kroki, zgoda, dziennik, oś zdarzeń)
@@ -609,6 +635,18 @@ onBeforeUnmount(() => {
           Pliku diffu zgody nie ma na dysku (np. przywrócona kopia go nie
           zawierała); historia przebiegu zostaje.
         </p>
+
+        <template v-if="treeSteps.length">
+          <h3>Drzewo agentów</h3>
+          <WorkflowAgentTree
+            v-for="step in treeSteps"
+            :key="step.id"
+            :events="events"
+            :execution-id="step.id"
+            :status="step.status"
+            :title="step.title"
+          />
+        </template>
 
         <h3>Dziennik agentów</h3>
         <WorkflowActivityLog :events="events" />

@@ -345,3 +345,106 @@ fn preflight_command_path_is_locked_before_unlocking() {
         analysis_implementation_review()
     );
 }
+
+// ---------------------------------------------------------------------------
+// Tryb dynamiczny (E8b)
+
+fn dynamic_graph(access: AccessProfile) -> WorkflowGraph {
+    use workflow_core::dynamic::{build, DynamicSpec};
+    build(&DynamicSpec {
+        access,
+        review: access == AccessProfile::WorkspaceWrite,
+        ..DynamicSpec::default()
+    })
+}
+
+#[test]
+fn dynamic_requires_claude_2_1_319() {
+    for access in [AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite] {
+        let list = preflight(
+            &dynamic_graph(access),
+            &detected(Some("2.1.318"), None),
+            None,
+        );
+        let item = node(&list, "orchestrator");
+        let blocked = item.blocked.clone().expect("blokada");
+        assert_eq!(blocked.code, FailureCode::UnsupportedVersion, "{access:?}");
+        assert_eq!(
+            blocked.message,
+            "Tryb dynamiczny wymaga Claude Code 2.1.319 lub nowszego (wykryto 2.1.318). Zaktualizuj Claude Code."
+        );
+    }
+}
+
+#[test]
+fn dynamic_is_blocked_when_subagent_inheritance_not_confirmed() {
+    for access in [AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite] {
+        let list = evaluate_with(
+            &dynamic_graph(access),
+            &detected(Some("2.1.319"), None),
+            Ok(None),
+            false,
+        );
+        let blocked = node(&list, "orchestrator")
+            .blocked
+            .clone()
+            .expect("blokada");
+        assert_eq!(blocked.code, FailureCode::PermissionViolation, "{access:?}");
+        assert!(blocked.message.contains("nie potwierdzono"), "{blocked:?}");
+    }
+}
+
+#[test]
+fn dynamic_is_ready_for_both_profiles_now_that_inheritance_is_confirmed() {
+    assert!(DYNAMIC_SUBAGENTS_CONFIRMED);
+    for access in [AccessProfile::ReadOnly, AccessProfile::WorkspaceWrite] {
+        let list = preflight(
+            &dynamic_graph(access),
+            &detected(Some("2.1.319 (Claude Code)"), None),
+            None,
+        );
+        let item = node(&list, "orchestrator");
+        assert!(item.blocked.is_none(), "{access:?}: {:?}", item.blocked);
+        assert_eq!(item.enforcement, Enforcement::CliRestricted);
+        assert!(item.supported);
+    }
+}
+
+#[test]
+fn codex_orchestrator_is_blocked() {
+    let mut graph = dynamic_graph(AccessProfile::WorkspaceWrite);
+    for n in &mut graph.nodes {
+        if let NodeKind::Agent(c) = &mut n.kind {
+            if c.role == workflow_core::model::AgentRole::Orchestrator {
+                c.provider = Provider::Codex;
+            }
+        }
+    }
+    let list = preflight(
+        &graph,
+        &detected(Some("2.1.319"), Some("0.163.0")),
+        Some(SANDBOX_OK),
+    );
+    let blocked = node(&list, "orchestrator")
+        .blocked
+        .clone()
+        .expect("blokada");
+    assert_eq!(blocked.code, FailureCode::PermissionViolation);
+    assert_eq!(blocked.message, "Tryb dynamiczny działa tylko z Claude.");
+}
+
+#[test]
+fn standard_graph_readiness_is_unchanged() {
+    let list = preflight(
+        &analysis_implementation_review(),
+        &detected(Some("2.1.318"), Some("0.163.0")),
+        Some(SANDBOX_OK),
+    );
+    assert_eq!(node(&list, "analysis").enforcement, Enforcement::CliControl);
+    assert_eq!(node(&list, "review").enforcement, Enforcement::CliControl);
+    assert_eq!(
+        node(&list, "implementation").enforcement,
+        Enforcement::CodexSandbox
+    );
+    assert!(list.iter().all(|n| n.blocked.is_none()));
+}

@@ -897,7 +897,7 @@ test.describe("wyłączenie Workflows", () => {
     await page.evaluate(
       async ([key]) => {
         const w: any = await import(/* @vite-ignore */ "/src/workflows.ts");
-        await w.createWorkflow("Zachowany", "", false);
+        await w.createWorkflow("Zachowany", "", "blank");
         await w.lockWorkflows();
         const raw = JSON.parse(localStorage.getItem(key) ?? "{}");
         (window as any).__after = {

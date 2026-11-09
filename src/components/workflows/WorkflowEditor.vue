@@ -17,6 +17,7 @@ import {
 } from "vue";
 import { ArrowLeft, Plus, Redo2, Undo2 } from "lucide-vue-next";
 import ConfirmDialog from "../ConfirmDialog.vue";
+import WorkflowDynamicForm from "./WorkflowDynamicForm.vue";
 import WorkflowGraphView from "./WorkflowGraphView.vue";
 import WorkflowNodePanel from "./WorkflowNodePanel.vue";
 import WorkflowReadiness from "./WorkflowReadiness.vue";
@@ -29,6 +30,7 @@ import {
   type WorkflowDetail,
   type WorkflowGraph,
 } from "../../workflows";
+import { isDynamic } from "../../api/workflowDynamic";
 import {
   addNode,
   addableTypes,
@@ -58,6 +60,9 @@ const conflict = ref(false);
 const status = ref("");
 const confirmLeave = ref(false);
 const addType = ref<AddableType>("agent");
+
+/** Proces z orkiestratorem edytuje się formularzem, nie canvasem. */
+const dynamic = computed(() => (draft.value ? isDynamic(draft.value.graph) : false));
 
 const snapshot = (d: Draft) => JSON.stringify(d);
 const dirty = computed(
@@ -376,7 +381,28 @@ const stepNames: Record<AddableType, string> = {
     </p>
     <p v-if="status" class="hint" role="status">{{ status }}</p>
 
-    <div v-if="draft" class="wf-editor-body">
+    <div v-if="draft && dynamic" class="wf-editor-body wf-dynamic-body">
+      <WorkflowDynamicForm
+        :graph="draft.graph"
+        :issues="issues"
+        @change="changeGraph"
+      />
+      <label class="wf-description">
+        Opis procesu
+        <textarea
+          :value="draft.description"
+          rows="3"
+          @change="
+            change({
+              ...draft,
+              description: ($event.target as HTMLTextAreaElement).value,
+            })
+          "
+        />
+      </label>
+    </div>
+
+    <div v-else-if="draft" class="wf-editor-body">
       <aside class="wf-steps" aria-label="Kroki procesu">
         <h3>Kroki</h3>
         <ol>

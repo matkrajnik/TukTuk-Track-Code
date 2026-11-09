@@ -5,3 +5,4 @@ TukTuk Track 2.5.1: poprawki Workflows po pierwszym użyciu 2.5.0.
 - Monitor przebiegu ma zakładki „Przebieg” i „Graf”; graf w osobnej zakładce wypełnia szerokość okna z powiększeniem co najmniej 100% i czytelnymi statusami kroków.
 - Nowa animacja odblokowania Workflows: świetlne smugi po krawędziach okna i podświetlony graf (Esc pomija; przy ograniczonym ruchu bez animacji).
 - Przebieg na granicy kroków po restarcie czeka jako „Wstrzymany” do ręcznego „Wznów”; „Zakończ aplikację” z traya w trakcie kroku agenta pyta o potwierdzenie.
+- Workflows: tryb dynamiczny (Claude). Nowy szablon „Dynamiczny (Claude)”: jeden orkiestrator deleguje pracę do subagentów (narzędzie Agent), opcjonalnie review i poprawki; wymaga Claude Code 2.1.319+, subagenci bez powłoki i tylko w katalogu roboczym. Monitor pokazuje drzewo orkiestrator → subagenci z licznikiem; formularz startu ostrzega o koszcie tokenów.

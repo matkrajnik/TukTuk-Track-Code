@@ -10,10 +10,11 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::dynamic;
 use crate::model::{
-    CompareOp, ConditionConfig, FieldType, Node, NodeKind, WorkflowGraph, MAX_EDGES,
-    MAX_INSTRUCTION_CHARS, MAX_NODES, MAX_REPAIR_ROUNDS, MAX_TIMEOUT_SECS, MIN_TIMEOUT_SECS,
-    SCHEMA_VERSION,
+    AccessProfile, AgentRole, CompareOp, ConditionConfig, FieldType, Node, NodeKind, Provider,
+    WorkflowGraph, MAX_EDGES, MAX_INSTRUCTION_CHARS, MAX_NODES, MAX_REPAIR_ROUNDS,
+    MAX_SUBAGENTS_HINT, MAX_TIMEOUT_SECS, MIN_SUBAGENTS_HINT, MIN_TIMEOUT_SECS, SCHEMA_VERSION,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -42,6 +43,9 @@ pub enum IssueCode {
     EmptyModel,
     InvalidTimeout,
     AccessNotAllowed,
+    InvalidDynamicShape,
+    ProviderNotAllowed,
+    InvalidSubagentLimit,
     InvalidFieldRef,
     UnknownField,
     FieldNotAvailable,
@@ -118,6 +122,7 @@ pub fn validate(graph: &WorkflowGraph) -> Vec<Issue> {
     for node in &graph.nodes {
         check_node_config(node, &graph_index, &mut issues);
     }
+    check_dynamic(graph, &mut issues);
     issues
 }
 
@@ -569,16 +574,64 @@ fn check_node_config(node: &Node, index: &Index, issues: &mut Vec<Issue>) {
                     ),
                 ));
             }
-            if agent.access != agent.role.required_access() {
+            if !agent.role.allowed_access().contains(&agent.access) {
                 issues.push(Issue::node(
                     IssueCode::AccessNotAllowed,
                     &node.id,
                     "Analiza i review działają tylko z odczytem; zapis mają implementacja i poprawki.",
                 ));
             }
+            if let Some(limit) = agent.max_subagents {
+                let in_range = (MIN_SUBAGENTS_HINT..=MAX_SUBAGENTS_HINT).contains(&limit);
+                if agent.role != AgentRole::Orchestrator || !in_range {
+                    issues.push(Issue::node(
+                        IssueCode::InvalidSubagentLimit,
+                        &node.id,
+                        "Liczba subagentów musi wynosić od 1 do 8 i dotyczy tylko orkiestratora.",
+                    ));
+                }
+            }
         }
         NodeKind::Condition(condition) => check_condition(node, condition, index, issues),
         NodeKind::Trigger | NodeKind::Approval(_) | NodeKind::End(_) => {}
+    }
+}
+
+/// Reguły trybu dynamicznego: orkiestrator tylko z Claude, graf w kanonicznym
+/// kształcie (`dynamic::build`), review tylko przy dostępie z zapisem.
+fn check_dynamic(graph: &WorkflowGraph, issues: &mut Vec<Issue>) {
+    let orchestrators: Vec<&Node> = graph
+        .nodes
+        .iter()
+        .filter(|n| matches!(&n.kind, NodeKind::Agent(a) if a.role == AgentRole::Orchestrator))
+        .collect();
+    if orchestrators.is_empty() {
+        return;
+    }
+    for node in &orchestrators {
+        if matches!(&node.kind, NodeKind::Agent(a) if a.provider != Provider::Claude) {
+            issues.push(Issue::node(
+                IssueCode::ProviderNotAllowed,
+                &node.id,
+                "Orkiestrator działa tylko z Claude.",
+            ));
+        }
+    }
+    if orchestrators.len() != 1 || !dynamic::has_canonical_shape(graph) {
+        issues.push(Issue::graph(
+            IssueCode::InvalidDynamicShape,
+            "Proces dynamiczny ma stały układ kroków; utwórz go z szablonu „Dynamiczny (Claude)”.",
+        ));
+        return;
+    }
+    if let Some(spec) = dynamic::spec_of(graph) {
+        if spec.review && spec.access == AccessProfile::ReadOnly {
+            issues.push(Issue::node(
+                IssueCode::AccessNotAllowed,
+                dynamic::ORCHESTRATOR_ID,
+                "Review w trybie dynamicznym wymaga dostępu z zapisem.",
+            ));
+        }
     }
 }
 

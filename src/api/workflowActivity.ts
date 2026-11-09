@@ -4,7 +4,7 @@
  * i treści plików) stosuje host w `runners/activity.rs`, więc tu nie ma logiki
  * przeniesionej 1:1 z Rust i nie renderujemy żadnych kluczy spoza listy.
  */
-import type { StoredEvent } from "./workflowRuns";
+import type { ExecutionStatus, StoredEvent } from "./workflowRuns";
 
 /** Najdłuższa linia logu w znakach; reszta jest ucinana z wielokropkiem. */
 export const MAX_LOG_LINE_CHARS = 2_000;
@@ -248,4 +248,119 @@ export function buildActivityLog(events: readonly StoredEvent[]): ActivityLine[]
       parent: entry.parent,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Drzewo orkiestrator → subagenci (E8.6)
+
+/** Nazwy narzędzia delegowania: `tool_use` nosi `Agent`, a stare dane i `init` mają `Task`. */
+export const SUBAGENT_TOOLS: readonly string[] = ["Agent", "Task"];
+
+/** `interrupted`: krok skończył się, zanim tor dostał własny wynik (anulowanie, limit, zabicie). */
+export type LaneState = "running" | "done" | "failed" | "interrupted";
+
+/** Stany kroku, po których żaden tor nie może już być „w toku”. */
+const FINAL_EXECUTION: Readonly<Partial<Record<ExecutionStatus, LaneState>>> = {
+  completed: "done",
+  failed: "failed",
+  rejected: "failed",
+  cancelled: "interrupted",
+  interrupted: "interrupted",
+  skipped: "interrupted",
+};
+
+/** Jeden tor drzewa: orkiestrator albo subagent. */
+export interface Lane {
+  id: string;
+  label: string;
+  /** Opis ostatniego narzędzia toru (z „— błąd”, gdy się nie udało) albo `null`. */
+  current: string | null;
+  state: LaneState;
+  lines: ActivityLine[];
+}
+
+export interface ActivityTree {
+  orchestrator: Lane;
+  subagents: Lane[];
+  /** Host zapisał znacznik limitu zdarzeń kroku: dalsze czynności nie są widoczne. */
+  truncated: boolean;
+}
+
+function lastTool(lines: readonly ActivityLine[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--)
+    if (lines[i].kind === "tool") return lines[i].text;
+  return null;
+}
+
+/**
+ * Drzewo z zapisanych zdarzeń jednego kroku (`executionId`). Subagent to start
+ * narzędzia Agent/Task bez rodzica; linie z `parentToolUseId` trafiają do jego toru,
+ * a nieznany rodzic jest spłaszczany do orkiestratora (bez wyjątku). Koniec to
+ * `toolFinished` z id subagenta: host zapisuje go z `tool_result` subagenta
+ * synchronicznego albo z `system/task_notification` subagenta w tle (sam start
+ * w tle, „Async agent launched”, nie jest końcem; `runners/mod.rs`). Gdy krok jest już w stanie końcowym (`status`),
+ * tor bez własnego wyniku jest `interrupted`, a stan orkiestratora wynika ze
+ * statusu kroku; bez statusu orkiestrator jest „w toku”. Funkcja czysta.
+ */
+export function buildActivityTree(
+  events: readonly StoredEvent[],
+  executionId: string,
+  status?: ExecutionStatus,
+): ActivityTree {
+  const finalState = status ? FINAL_EXECUTION[status] : undefined;
+  const own = events
+    .filter((e) => e.executionId === executionId)
+    .sort((a, b) => a.sequence - b.sequence);
+  const order: string[] = [];
+  const meta = new Map<string, { label: string; state: LaneState }>();
+  let truncated = false;
+  for (const e of own) {
+    const data = runnerPayload(e);
+    if (e.type === "message" && data.truncated === true && data.reason !== undefined)
+      truncated = true;
+    if (e.type === "toolStarted") {
+      const id = text(data.toolUseId);
+      const name = text(data.name);
+      if (SUBAGENT_TOOLS.includes(name) && id && !text(data.parentToolUseId) && !meta.has(id)) {
+        order.push(id);
+        const description = toolArgs(data.args)?.description;
+        meta.set(id, {
+          label: description ?? `Subagent ${order.length}`,
+          state: "running",
+        });
+      }
+    } else if (e.type === "toolFinished") {
+      const found = meta.get(text(data.toolUseId));
+      if (found) found.state = data.ok === false ? "failed" : "done";
+    }
+  }
+  const grouped = new Map<string, ActivityLine[]>();
+  const orchestratorLines: ActivityLine[] = [];
+  for (const line of buildActivityLog(own)) {
+    const parent = line.parent;
+    if (parent && meta.has(parent)) {
+      const list = grouped.get(parent) ?? [];
+      list.push(line);
+      grouped.set(parent, list);
+    } else orchestratorLines.push(line);
+  }
+  const subagents = order.map((id): Lane => {
+    const lines = grouped.get(id) ?? [];
+    const found = meta.get(id) ?? { label: id, state: "running" as LaneState };
+    const state = found.state === "running" && finalState ? "interrupted" : found.state;
+    return { id, label: found.label, current: lastTool(lines), state, lines };
+  });
+  return {
+    orchestrator: {
+      id: "orchestrator",
+      label: "Orkiestrator",
+      current: lastTool(
+        orchestratorLines.filter((l) => !l.text.startsWith("Uruchamia subagenta")),
+      ),
+      state: finalState ?? "running",
+      lines: orchestratorLines,
+    },
+    subagents,
+    truncated,
+  };
 }

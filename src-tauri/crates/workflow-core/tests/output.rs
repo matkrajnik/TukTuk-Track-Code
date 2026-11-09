@@ -156,16 +156,17 @@ fn evaluate_errors_instead_of_defaulting() {
 fn sample_for(role: AgentRole) -> Value {
     match role {
         AgentRole::Analysis => analysis(),
-        AgentRole::Implementation | AgentRole::Fix => implementation(),
+        AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => implementation(),
         AgentRole::Review => review("approved"),
     }
 }
 
-const ROLES: [AgentRole; 4] = [
+const ROLES: [AgentRole; 5] = [
     AgentRole::Analysis,
     AgentRole::Implementation,
     AgentRole::Fix,
     AgentRole::Review,
+    AgentRole::Orchestrator,
 ];
 
 #[test]
@@ -325,4 +326,20 @@ fn schema_is_strict_at_the_nested_level_too() {
     let mut finding = workflow_core::samples::review_changes();
     finding["findings"][0]["severity"] = json!(3);
     assert!(validate(&json_schema(AgentRole::Review), &finding, "$").is_err());
+}
+
+#[test]
+fn orchestrator_output_uses_implementation_schema() {
+    assert_eq!(
+        json_schema(AgentRole::Orchestrator),
+        json_schema(AgentRole::Implementation)
+    );
+    assert!(matches!(
+        parse_output(AgentRole::Orchestrator, &implementation()),
+        Ok(AgentOutput::Implementation(_))
+    ));
+    assert_eq!(
+        AgentRole::Orchestrator.output_fields(),
+        AgentRole::Implementation.output_fields()
+    );
 }

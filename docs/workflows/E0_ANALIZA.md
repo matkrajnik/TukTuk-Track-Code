@@ -147,3 +147,14 @@ przenoszenia). Kanonikalizacja przez `std::fs::canonicalize` przed porównaniem 
    `--permission-prompts none`. Starsza wersja jest blokowana w preflighcie. Read-only bez zmian.
 2. Weryfikacja konfiguracji sandboksa Codexa na tej maszynie (test ręczny w E4).
 3. Zachowanie Claude Code na Windows po `taskkill /T /F` (test procesów zastępczych w E4).
+
+### Dopisek E8b (2026-11-09): Claude Code 2.1.319 i flagi orkiestratora
+
+Rozpoznanie na prawdziwym Claude Code 2.1.319 (`E8_ROZPOZNANIE.md`): subagenci dziedziczą
+`--restricted` i `--tools` orkiestratora (zapis poza katalog roboczy odrzucony, brak powłoki, w
+read-only brak zapisu). Argumenty kroku z rolą `orchestrator`: zawsze `--restricted`, w `--tools`
+dochodzi `Agent` (`Read,Grep,Glob,Agent` albo `Read,Grep,Glob,Edit,Write,Agent`), `--permission-mode`
+`dontAsk` albo `acceptEdits` jak dla pozostałych ról, oraz `--forward-subagent-text`. Narzędzia
+`Workflow` nie dodajemy (w `-p` z `dontAsk` jest odrzucane). Role standardowe mają argumenty bez zmian.
+Preflight: Claude 2.1.319+ (`CLAUDE_DYNAMIC`), Codex jako orkiestrator zablokowany, egzekwowanie
+`cliRestricted` dla obu profili (`DYNAMIC_SUBAGENTS_CONFIRMED = true`).

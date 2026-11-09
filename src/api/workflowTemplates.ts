@@ -14,6 +14,7 @@ import {
   type WorkflowGraph,
   type WorkflowNode,
 } from "./workflows";
+import { buildDynamic, defaultDynamicSpec } from "./workflowDynamic";
 
 /** Domyślny limit kroku agenta w szablonie: 30 minut. */
 const TEMPLATE_TIMEOUT_SECS = 30 * 60;
@@ -145,4 +146,9 @@ export function analysisImplementationReview(): WorkflowGraph {
       edge("approval", "reject", "rejected"),
     ],
   };
+}
+
+/** Szablon trybu dynamicznego (`template::dynamic_default`): orkiestrator Claude z zapisem i review. */
+export function dynamicDefault(): WorkflowGraph {
+  return buildDynamic(defaultDynamicSpec());
 }

@@ -22,7 +22,13 @@ const U32_MAX = 4_294_967_295;
 
 const PORTS: readonly Port[] = ["out", "true", "false", "approve", "reject"];
 const PROVIDERS: readonly Provider[] = ["claude", "codex"];
-const ROLES: readonly AgentRole[] = ["analysis", "implementation", "fix", "review"];
+const ROLES: readonly AgentRole[] = [
+  "analysis",
+  "implementation",
+  "fix",
+  "review",
+  "orchestrator",
+];
 const ACCESS: readonly AccessProfile[] = ["readOnly", "workspaceWrite"];
 const OPS: readonly CompareOp[] = ["equals", "notEquals", "greaterThan", "lessThan"];
 const OUTCOMES: readonly EndOutcome[] = ["succeeded", "rejected", "failed"];
@@ -84,6 +90,14 @@ function optional<T>(
   return value === undefined || value === null ? null : parse(value);
 }
 
+function subagentLimit(
+  value: unknown,
+  path: string,
+): { maxSubagents?: number } {
+  const limit = optional(value, (v) => u32(v, path));
+  return limit === null ? {} : { maxSubagents: limit };
+}
+
 function parseKind(value: unknown, path: string): NodeKind {
   const kind = object(value, path);
   const type = oneOf(kind.type, NODE_TYPES, `${path}.type`);
@@ -99,6 +113,8 @@ function parseKind(value: unknown, path: string): NodeKind {
         instruction: text(kind.instruction, `${path}.instruction`),
         access: oneOf(kind.access, ACCESS, `${path}.access`),
         timeoutSecs: u32(kind.timeoutSecs, `${path}.timeoutSecs`),
+        // Jak serde `Option<u32>`: brak pola i null to None; pole nie trafia do grafu bez wartości.
+        ...subagentLimit(kind.maxSubagents, `${path}.maxSubagents`),
       };
     case "condition": {
       const field = object(kind.field, `${path}.field`);

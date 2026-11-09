@@ -14,12 +14,22 @@
 //! Read-only zostaje przy zestawie zweryfikowanym w E4 (bez `--restricted`):
 //! `--tools Read,Grep,Glob` i tak nie daje narzędzi uruchamiających kod, a zmiana
 //! zestawu wymagałaby ponownej weryfikacji na starszych wersjach (2.1.318).
+//!
+//! Orkiestrator (tryb dynamiczny, E8b; rozpoznanie na Claude Code 2.1.319, zob.
+//! docs/workflows/E8_ROZPOZNANIE.md): zawsze `--restricted` (także read-only),
+//! do `--tools` dochodzi `Agent` (subagenci dziedziczą `--restricted` i `--tools`,
+//! więc nie mają powłoki i piszą tylko w katalogu roboczym), a
+//! `--forward-subagent-text` przekazuje tekst subagentów do dziennika.
+//! Narzędzia `Workflow` nie dodajemy nigdy: w `-p` z `dontAsk` jest odrzucane.
 
 use serde_json::Value;
-use workflow_core::model::AccessProfile;
+use workflow_core::model::{AccessProfile, AgentRole};
 
 /// Pusta konfiguracja MCP: agent nie dostaje żadnych serwerów.
 pub const EMPTY_MCP: &str = r#"{"mcpServers":{}}"#;
+
+/// Narzędzie delegowania do subagentów (w `system/init` bywa raportowane jako `Task`).
+pub const SUBAGENT_TOOL: &str = "Agent";
 
 /// Argumenty bez promptu (prompt idzie przez stdin).
 pub fn args(
@@ -27,7 +37,9 @@ pub fn args(
     session_id: &str,
     model: Option<&str>,
     access: AccessProfile,
+    role: AgentRole,
 ) -> Vec<String> {
+    let orchestrator = role == AgentRole::Orchestrator;
     let mut args: Vec<String> = [
         "-p",
         "--output-format",
@@ -52,17 +64,39 @@ pub fn args(
         .iter()
         .map(|s| (*s).to_owned()),
     );
-    let profile: &[&str] = match access {
-        AccessProfile::ReadOnly => &["--tools", "Read,Grep,Glob", "--permission-mode", "dontAsk"],
-        AccessProfile::WorkspaceWrite => &[
-            "--restricted",
-            "--tools",
-            "Read,Grep,Glob,Edit,Write",
-            "--permission-mode",
-            "acceptEdits",
+    let tools = |base: &str| {
+        if orchestrator {
+            format!("{base},{SUBAGENT_TOOL}")
+        } else {
+            base.to_owned()
+        }
+    };
+    let profile: Vec<String> = match access {
+        AccessProfile::ReadOnly => {
+            let mut profile = Vec::new();
+            if orchestrator {
+                profile.push("--restricted".to_owned());
+            }
+            profile.extend([
+                "--tools".to_owned(),
+                tools("Read,Grep,Glob"),
+                "--permission-mode".to_owned(),
+                "dontAsk".to_owned(),
+            ]);
+            profile
+        }
+        AccessProfile::WorkspaceWrite => vec![
+            "--restricted".to_owned(),
+            "--tools".to_owned(),
+            tools("Read,Grep,Glob,Edit,Write"),
+            "--permission-mode".to_owned(),
+            "acceptEdits".to_owned(),
         ],
     };
-    args.extend(profile.iter().map(|s| (*s).to_owned()));
+    args.extend(profile);
+    if orchestrator {
+        args.push("--forward-subagent-text".to_owned());
+    }
     if let Some(model) = model.filter(|m| !m.trim().is_empty()) {
         args.push("--model".into());
         args.push(model.to_owned());

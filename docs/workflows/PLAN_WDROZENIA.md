@@ -450,38 +450,40 @@ format grafu zostaje w wersji 1. Edytor pokazuje dla niego formularz zamiast can
 Zabezpieczenia bez zmian: worktree, `--restricted`, wykrywanie zmian, zgoda na diff, limit
 czasu i zakończenie całego drzewa procesu, jeden aktywny przebieg.
 
-- [ ] E8.0 Rozpoznanie na prawdziwym CLI wykonane przez użytkownika i zapisane w
+- [x] E8.0 Rozpoznanie na prawdziwym CLI wykonane przez użytkownika i zapisane w
   `E8_ROZPOZNANIE.md` (kształt zdarzeń z `parent_tool_use_id`, dziedziczenie `--restricted`
-  i `--tools` przez subagentów, `Workflow` w `-p`, zakończenie drzewa procesu).
+  i `--tools` przez subagentów, `Workflow` w `-p`, zakończenie drzewa procesu). Wykonane 2026-11-09
+  (Claude Code 2.1.319), próbki JSONL w repozytorium są prawdziwe (`agent-cli/tests/parse.rs::traced_parser_ignores_new_system_lines`,
+  `runners::tests::lines_after_root_result_do_not_break_the_step`).
 - [x] E8.1 Czytelny dziennik narzędzi w monitorze dla obu trybów; dziennik czyta prawdziwy
   kształt zdarzeń (`payload.payload.text`); oś zdarzeń bez zdarzeń narzędzi
   (`workflow-activity.spec.ts`; `runners::activity::tests`; `workflow-core/tests/driver.rs::tool_payload_keeps_optional_args`).
 - [x] E8.2 Parser `parse_claude_line_traced` (rodzic, id narzędzi) i runner parujący narzędzia
   po `tool_use_id`, odporny na nieznane kształty; parser czatu bez zmian
   (`agent-cli/tests/parse.rs::traced_parser_*`, `runners::tests::*subagent*`; testy `ai_chat::` bez zmian).
-- [ ] E8.3 Domena: rola `orchestrator`, `maxSubagents`, `dynamic::{build, spec_of}`, walidacja
+- [x] E8.3 Domena: rola `orchestrator`, `maxSubagents`, `dynamic::{build, spec_of}`, walidacja
   kształtu w Rust i TS 1:1 (`workflow-core/tests/validation.rs::dynamic_*`, `orchestrator_*`,
   `graph_without_max_subagents_serializes_unchanged`; `workflow-definitions.spec.ts`).
-- [ ] E8.4 Adapter i preflight: `--tools …,Agent`, `--forward-subagent-text`, `--restricted`
+- [x] E8.4 Adapter i preflight: `--tools …,Agent`, `--forward-subagent-text`, `--restricted`
   dla orkiestratora; Claude ≥ 2.1.319; Codex jako orkiestrator zablokowany; tryb dynamiczny
-  (oba profile dostępu) zablokowany do potwierdzenia rozpoznania (stała
-  `DYNAMIC_SUBAGENTS_CONFIRMED`) (`preflight::tests::dynamic_*`, `runners::tests::orchestrator_args_*`).
-- [ ] E8.5 Edytor (formularz trybu dynamicznego), tworzenie z szablonu „Dynamiczny (Claude)”,
+  (oba profile dostępu) gotowy po potwierdzeniu rozpoznania (stała
+  `DYNAMIC_SUBAGENTS_CONFIRMED = true`, blokada przy `false`) (`preflight::tests::dynamic_*`, `runners::tests::orchestrator_args_*`).
+- [x] E8.5 Edytor (formularz trybu dynamicznego), tworzenie z szablonu „Dynamiczny (Claude)”,
   ostrzeżenie o koszcie w formularzu startu (`workflow-dynamic.spec.ts`).
-- [ ] E8.6 Monitor: drzewo orkiestrator → subagenci z bieżącą czynnością i licznikiem
+- [x] E8.6 Monitor: drzewo orkiestrator → subagenci z bieżącą czynnością i licznikiem
   (`workflow-activity.spec.ts`).
-- [ ] E8.7 Podgląd z przykładowym przebiegiem dynamicznym i fixture (preflight dynamiczny,
+- [x] E8.7 Podgląd z przykładowym przebiegiem dynamicznym i fixture (preflight dynamiczny,
   zdarzenia subagentów w prawdziwym kształcie).
-- [ ] E8.8 Dokumentacja (`INSTRUKCJA.md`, `E0_ANALIZA.md`, `E8_TEST_RECZNY.md`) i `npm run check`
-  z kodem 0.
+- [x] E8.8 Dokumentacja (`INSTRUKCJA.md`, `E0_ANALIZA.md`, `E8_TEST_RECZNY.md`) i `npm run check`
+  z kodem 0 (2026-11-09, 376 s: build, Playwright 849 testów, `cargo fmt --check`, `cargo test --locked`;
+  wpis 2026-11-09 — E8b w rozdz. 15).
 
 Odbiór: proces dynamiczny tworzy się, waliduje, publikuje i uruchamia z tymi samymi
 zabezpieczeniami co standardowy; monitor pokazuje drzewo subagentów i czytelne czynności
 na żywo i po ponownym otwarciu; stara historia przebiegów i definicji (skróty wersji)
 jest niezmieniona; czat AI bez regresji; żaden test nie łączy się z prawdziwym Claude.
-Tryb dynamiczny pozostaje zablokowany w preflighcie (oba profile dostępu), dopóki użytkownik nie
-potwierdzi w `E8_ROZPOZNANIE.md`, że subagenci dziedziczą `--restricted` i listę narzędzi
-(decyzja D2, 2026-11-06). Weryfikację na prawdziwym CLI wykonuje użytkownik (`E8_TEST_RECZNY.md`).
+Użytkownik potwierdził 2026-11-09 w `E8_ROZPOZNANIE.md`, że subagenci dziedziczą `--restricted`
+i listę narzędzi (`DYNAMIC_SUBAGENTS_CONFIRMED = true`), więc blokada D2 przestała działać. Weryfikację na prawdziwym CLI wykonuje użytkownik (`E8_TEST_RECZNY.md`).
 
 Realizacja w dwóch częściach (skrypt `workflows-stage`): **E8a** = E8.0–E8.2 (poprawka do wydania:
 naprawa dziennika, czytelne narzędzia, parser subagentów; nie zmienia UI trybu dynamicznego),
@@ -1290,3 +1292,78 @@ agentowych, grepa klucza Workflows ani clippy (poza `npm run check`); ręcznej w
 `npm run tauri dev` na prawdziwym przebiegu (lista użytkownika).
 
 Pozostałe blokery: E8.0 u użytkownika, E8b (tryb dynamiczny).
+
+### 2026-11-09 — E8b
+
+Zakres: E8.0 (domknięte) i E8.3–E8.8 z `E8_PLAN.md`: tryb dynamiczny (orkiestrator Claude z subagentami).
+Decyzje: D2 zniesione (potwierdzone dziedziczenie), `Workflow` nigdy w `--tools`, parser i runner akceptują
+`Agent` i `Task`, linie `task_*` ignorowane, D4 (`--restricted` także read-only), D6 (poprawki w roli Fix),
+D7 (3000 zdarzeń), D8 (sam tekst o koszcie), D9 (1–8, domyślnie 3, wskazówka), D10 (`--forward-subagent-text`).
+
+Zmienione pliki: Rust: `workflow-core/src/{model,dynamic (nowy),template,validation,output,ports,driver,driver/messages,lib}.rs`
+i testy `validation/output/driver`; `src/workflows/{mod,preflight}.rs`, `runners/{claude,prompt,activity,mod,tests}.rs`,
+`preflight/tests.rs`, `service/tests.rs`; `agent-cli/tests/parse.rs`; fixture `workflow_claude_dynamic_{ok,unknown,parallel}.jsonl`.
+Frontend: `src/api/{workflows,workflowDynamic (nowy),workflowValidate,workflowTemplates,workflowParse,workflowActivity}.ts`,
+`workflows.ts`, `workflowEdit.ts`, `preview/{workflows,workflowRuns}.ts`, `WorkflowDynamicForm.vue` i
+`WorkflowAgentTree.vue` (nowe), `WorkflowEditor.vue`, `WorkflowRunForm.vue`, `WorkflowRunMonitor.vue`,
+`WorkflowsView.vue`; testy `tests/workflow-dynamic.spec.ts` (nowy), `workflow-definitions`, `workflow-activity`,
+`workflow-runs`, `workflows-ui`, `fixtures/tauri.ts`. `workflow_create` przyjmuje `template: blank|standard|dynamic`
+(zamiast `fromTemplate: bool`).
+
+Decyzje wykonawcy: skrót opublikowanych wersji nie zmienia się (`maxSubagents` pomijany, gdy brak;
+`graph_without_max_subagents_serializes_unchanged` z literałem zapisanym przed zmianą modelu); kształt grafu
+dynamicznego sprawdza `has_canonical_shape` (normalizuje dostawcę orkiestratora i brak `maxSubagents`);
+`Review` przy readOnly daje `AccessNotAllowed` z komunikatem o zapisie; stan subagenta z pary tool_use/tool_result,
+a dla subagenta w tle z `system/task_notification` (zob. poprawki rundy 2); próbka `_unknown`
+pochodzi z uruchomienia bez `--json-schema`, więc test dopisuje literałem `structured_output`.
+
+Poprawki po review (runda 1): drzewo agentów dostaje status kroku orkiestratora (`buildActivityTree(…, status)`);
+po stanie końcowym kroku subagent bez własnego wyniku ma stan „przerwany” (`interrupted`), a orkiestrator stan
+wynikający ze statusu kroku, więc licznik nie pokazuje aktywnych subagentów anulowanego albo zakończonego
+przebiegu (`workflow-activity.spec.ts`: anulowany orkiestrator z 3 subagentami, zakończony krok z uciętym
+ogonem, orkiestrator w toku). Kontrakt IPC `workflow_create` (`template: TemplateKind` w Rust = klucz
+`template` w `invoke` i warianty `TemplateKind` w TS) sprawdza `tests/workflow_commands.rs`
+(`workflow_create_ipc_contract_matches_frontend`).
+
+Poprawki po review (runda 2): próbka z testu E pokazuje, że Claude Code 2.1.319 sam przenosi równoległe
+wywołania Agent w tło (`task_started.is_backgrounded=true` bez `run_in_background`; zakaz w prompcie tego nie
+zmienia), a ich `tool_result` („Async agent launched…”) przychodzi od razu, zanim subagent zacznie pracę.
+Runner (`runners/mod.rs`, `Stream::track_background`; rozpoznanie w `runners/activity.rs`) zapamiętuje taki
+start (z `task_started.is_backgrounded` albo z tekstu wyniku), nie zapisuje jego `tool_result` jako końca
+i kończy subagenta dopiero na `system/task_notification` z tym samym `tool_use_id` (`ok` tylko dla
+`status: completed`); subagent synchroniczny dalej kończy się własnym `tool_result` (powiadomienie przed nim
+jest pomijane). Subagent w tle bez powiadomienia jest „w toku” do końca kroku, potem „przerwany”. Testy:
+`runners::tests::tool_finish_is_paired_by_tool_use_id_across_interleaved_subagents` (po starcie w tle brak
+końca), `background_subagent_ends_on_task_notification_not_on_async_launch`,
+`synchronous_subagent_still_ends_on_its_tool_result`, `activity::tests::background_launch_*`,
+`task_notification_*`; `workflow-activity.spec.ts` liczy 3 aktywnych z 3 po starcie w tle. Preflight:
+nowy test Playwright blokady Codexa jako orkiestratora („Tryb dynamiczny działa tylko z Claude.”).
+
+Wyniki testów (2026-11-09, po poprawkach rundy 1, wszystkie z kodem 0): `agent-cli --test parse` 16;
+`workflow-core --features testing` (validation, output, driver, run_states, engine) 152; `tuktuk-track`
+`workflows::runners` 76, `workflows::preflight` 20, `workflows::service` 14, `workflows::store` 24,
+`workflows::runs` 32, `ai_chat` 25; `--test workflow_commands` 8; Playwright (workflow-definitions,
+workflow-dynamic, workflow-activity, workflow-runs, workflows-ui, workflow-recovery, workflow-paused) 154;
+`npm run build` OK; `npm run test:visual` 90 (bez zmian zrzutów); `cargo fmt --all -- --check` OK.
+Pełnego `npm run check` w tym kroku nie uruchamiano, dlatego E8.8 w rozdz. 10 pozostaje nieodhaczone.
+
+Wyniki testów po poprawkach rundy 2 (2026-11-09, wszystkie z kodem 0): `agent-cli --test parse` 16;
+`workflow-core --features testing` 152; `tuktuk-track` `workflows::runners` 80, `workflows::preflight` 20,
+`workflows::service` 14, `workflows::store` 24, `workflows::runs` 32, `ai_chat` 25; `--test workflow_commands` 8;
+Playwright (te same 7 plików) 155; `npm run build` OK; `npm run test:visual` 90, bez różnic zrzutów (zrzuty
+nie były aktualizowane); `cargo fmt --all -- --check` OK. Pełne `npm run check` nie było uruchamiane w kroku
+poprawek (polecenie kroku), więc E8.8 dalej czeka na nie przed commitem.
+
+Pełny `npm run check` (2026-11-09, po poprawkach rund 1 i 2): zielony, kod 0 w 376 s. `npm run build` OK,
+Playwright 849 testów (3,9 min) bez błędów, `cargo fmt --check` OK, każdy zestaw `cargo test --locked` z 0 niezaliczonych.
+Wcześniejszy przebieg nie był czysty: 3 testy `workflows::runners` przekroczyły limit czasu pod obciążeniem (osobno
+i w przebiegu `workflows::` przechodziły) oraz jednorazowy timeout Playwright; powtórzenie na nieobciążonej maszynie
+dało kod 0. Dlatego E8.8 jest odhaczone.
+
+Uwagi i ograniczenia: przeglądy agentowe (rust/vue/typescript/security-reviewer) nie zostały uruchomione w tym
+kroku (brak narzędzia subagentów); grep klucza dostępu Workflows potwierdził tylko, że ten etap nie dodał żadnego
+klucza (w testach pozostaje dotychczasowy `TEST_WORKFLOWS_KEY`, w kodzie tylko SHA-256); ostrzeżenie clippy w
+`dynamic.rs` (informacyjne) niepoprawione; `run_in_background` subagentów kończy `tool_result` od razu, a prompt
+zakazuje tła (zob. runda 2). Commit wykonuje osobny krok (`feat: Workflows E8b — …`), bez pushu; wersji nie podniesiono.
+
+Blokery: test ręczny na prawdziwym Claude Code (`E8_TEST_RECZNY.md`, po stronie użytkownika).

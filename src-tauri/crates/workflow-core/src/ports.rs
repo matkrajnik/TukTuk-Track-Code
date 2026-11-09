@@ -45,6 +45,8 @@ pub struct RunRequest {
     pub session_id: Option<String>,
     /// Opis celu przebiegu z formularza startu (do `MAX_GOAL_CHARS` znaków).
     pub goal: Option<String>,
+    /// Wskazówka liczby subagentów (tylko orkiestrator, z `AgentConfig`).
+    pub max_subagents: Option<u32>,
 }
 
 /// Limit opisu celu przebiegu (tak jak instrukcja kroku).

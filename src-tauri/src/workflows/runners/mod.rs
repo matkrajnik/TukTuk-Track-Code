@@ -13,7 +13,7 @@ pub mod guard;
 pub mod process;
 pub mod prompt;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -164,6 +164,7 @@ type OpenTool = (String, Option<String>);
 /// Stan odczytu strumienia jednego kroku.
 struct Stream {
     worktree: PathBuf,
+    role: AgentRole,
     session_id: Option<String>,
     structured: Option<Value>,
     last_text: Option<String>,
@@ -175,12 +176,16 @@ struct Stream {
     open: HashMap<String, OpenTool>,
     /// Rozpoczęte narzędzia bez id (Codex i stare strumienie): parowane stosem.
     fallback: Vec<OpenTool>,
+    /// Subagenci uruchomieni w tle: ich `tool_result` to tylko potwierdzenie startu,
+    /// a koniec przychodzi w `system/task_notification` (próbka z testu E).
+    background: HashSet<String>,
 }
 
 impl Stream {
-    fn new(worktree: PathBuf) -> Self {
+    fn new(worktree: PathBuf, role: AgentRole) -> Self {
         Self {
             worktree,
+            role,
             session_id: None,
             structured: None,
             last_text: None,
@@ -190,12 +195,17 @@ impl Stream {
             too_long: false,
             open: HashMap::new(),
             fallback: Vec::new(),
+            background: HashSet::new(),
         }
     }
 
     fn apply(&mut self, provider: Provider, line: &str, on_event: &mut dyn FnMut(RunnerEvent)) {
         if provider == Provider::Claude {
             if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
+                if self.role == AgentRole::Orchestrator {
+                    check_subagent_tool(&event, on_event);
+                }
+                self.track_background(&event, on_event);
                 // Wynik subagenta (`parent_tool_use_id` różne od null) nie kończy kroku.
                 if event["type"] == "result"
                     && event["parent_tool_use_id"].is_null()
@@ -214,6 +224,35 @@ impl Stream {
         };
         for traced in parsed {
             self.apply_item(traced, on_event);
+        }
+    }
+
+    /// Subagent w tle: zapamiętuje start w tle (zanim przyjdzie jego `tool_result`)
+    /// i kończy go dopiero na `system/task_notification` z tym samym `tool_use_id`.
+    fn track_background(&mut self, event: &Value, on_event: &mut dyn FnMut(RunnerEvent)) {
+        for id in activity::background_launches(event) {
+            let is_subagent = self
+                .open
+                .get(&id)
+                .is_some_and(|(name, _)| activity::is_subagent_tool(name));
+            if is_subagent {
+                self.background.insert(id);
+            }
+        }
+        let Some((id, ok)) = activity::task_notification(event) else {
+            return;
+        };
+        if !self.background.contains(&id) {
+            // Subagent synchroniczny kończy się własnym `tool_result`.
+            return;
+        }
+        if let Some((name, parent)) = self.open.remove(&id) {
+            on_event(RunnerEvent::ToolFinished {
+                name,
+                id: Some(id),
+                parent,
+                ok,
+            });
         }
     }
 
@@ -247,6 +286,11 @@ impl Stream {
                     args,
                 });
             }
+            // Potwierdzenie startu w tle nie kończy subagenta (koniec: `task_notification`).
+            Parsed::ToolDone { .. }
+                if tool_use_id
+                    .as_ref()
+                    .is_some_and(|id| self.background.contains(id)) => {}
             Parsed::ToolDone { error } => {
                 // Nieznane id też sięga do stosu zapasowego: start bez id i wynik
                 // z id to kształt znany ze strumieni (fixture review_ok). Gdy
@@ -269,6 +313,30 @@ impl Stream {
             // Sesja, koniec i błąd linii subagenta nie zmieniają stanu kroku.
             Parsed::Session(_) | Parsed::Done(_) | Parsed::Error(_) => {}
         }
+    }
+}
+
+/// Uwaga w dzienniku, gdy `system/init` orkiestratora nie wymienia narzędzia subagentów
+/// (`Agent` albo `Task`). Krok się nie kończy błędem: Claude może nazwać narzędzie inaczej.
+fn check_subagent_tool(event: &Value, on_event: &mut dyn FnMut(RunnerEvent)) {
+    if event["type"] != "system"
+        || event["subtype"] != "init"
+        || !event["parent_tool_use_id"].is_null()
+    {
+        return;
+    }
+    let Some(tools) = event["tools"].as_array() else {
+        return;
+    };
+    let has_tool = tools
+        .iter()
+        .filter_map(Value::as_str)
+        .any(activity::is_subagent_tool);
+    if !has_tool {
+        on_event(RunnerEvent::Message {
+            text: "Uwaga: Claude Code nie udostępnił narzędzia subagentów (Agent); orkiestrator pracuje sam.".into(),
+            parent: None,
+        });
     }
 }
 
@@ -324,8 +392,13 @@ impl CliRunner {
                 })?;
                 let session =
                     claude::new_session_id().map_err(|e| failed(FailureCode::SpawnFailed, e))?;
-                let args =
-                    claude::args(&schema, &session, request.model.as_deref(), request.access);
+                let args = claude::args(
+                    &schema,
+                    &session,
+                    request.model.as_deref(),
+                    request.access,
+                    request.role,
+                );
                 Ok(Prepared {
                     spec: Spec {
                         program,
@@ -496,9 +569,10 @@ impl CliRunner {
         proc: &dyn Proc,
         prepared: &Prepared,
     ) -> RunnerOutcome {
-        let mut stream = Stream::new(PathBuf::from(
-            request.workspace.as_deref().unwrap_or_default(),
-        ));
+        let mut stream = Stream::new(
+            PathBuf::from(request.workspace.as_deref().unwrap_or_default()),
+            request.role,
+        );
         let exit_code = loop {
             if cancel.load(Ordering::SeqCst) {
                 return match proc.kill(KILL_CONFIRM) {

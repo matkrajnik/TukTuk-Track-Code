@@ -27,8 +27,11 @@ mod messages;
 mod resume;
 
 pub use decide::{DecideError, DecideRequest, DecideResult, MAX_APPROVAL_COMMENT_CHARS};
-use messages::MessageBuffer;
-pub use messages::{MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_PAYLOAD_BYTES, RUNNER_EVENT_BATCH};
+use messages::{event_budget, MessageBuffer};
+pub use messages::{
+    MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_EVENTS_PER_ORCHESTRATOR, MAX_RUNNER_PAYLOAD_BYTES,
+    RUNNER_EVENT_BATCH,
+};
 pub use resume::ResumeError;
 
 /// Co ile sterownik sprawdza komendy i limity czasu podczas czekania na krok.
@@ -671,6 +674,7 @@ impl Worker {
             timeout,
             session_id: None,
             goal,
+            max_subagents: config.max_subagents,
         };
         let cancel = Arc::new(AtomicBool::new(false));
         self.current = Some(InFlight {
@@ -787,6 +791,7 @@ impl Worker {
         timeout: Duration,
     ) -> StepEnd {
         let (tx, rx) = mpsc::channel();
+        let event_limit = event_budget(request.role);
         let runner = Arc::clone(&self.runner);
         let thread_cancel = Arc::clone(cancel);
         let thread_tx = tx.clone();
@@ -808,7 +813,7 @@ impl Worker {
         }
         let deadline = Instant::now() + timeout;
         let mut grace_until: Option<Instant> = None;
-        let mut buffer = MessageBuffer::new(execution_id);
+        let mut buffer = MessageBuffer::new(execution_id, event_limit);
         loop {
             while let Ok(command) = self.rx.try_recv() {
                 self.handle(command);

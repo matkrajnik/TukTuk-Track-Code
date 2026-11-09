@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use workflow_core::model::{AccessProfile, NodeKind, Provider};
+use workflow_core::model::{AccessProfile, AgentRole, NodeKind, Provider};
 use workflow_core::{FailureCode, WorkflowGraph};
 
 use crate::ai::Detected;
@@ -20,6 +20,17 @@ const TESTED_CODEX: [u64; 3] = [0, 163, 0];
 /// użytkownika 2026-11-06): od niej Claude może działać w krokach z zapisem.
 /// Starsza (np. przetestowana w E0 2.1.318) obsługuje tylko kroki do odczytu.
 const CLAUDE_RESTRICTED: [u64; 3] = [2, 1, 319];
+
+/// Pierwsza wersja Claude Code dla trybu dynamicznego (orkiestrator z subagentami):
+/// `--restricted`, `--forward-subagent-text` i dziedziczenie przez subagentów.
+const CLAUDE_DYNAMIC: [u64; 3] = [2, 1, 319];
+
+/// Czy subagenci dziedziczą `--restricted` i `--tools` orkiestratora (brak powłoki,
+/// zapis tylko w katalogu roboczym). Potwierdzone 2026-11-09 na Claude Code 2.1.319
+/// (docs/workflows/E8_ROZPOZNANIE.md, test B) i decyzją użytkownika. Przy `false`
+/// tryb dynamiczny jest zablokowany dla obu profili. Fixture `tests/fixtures/tauri.ts`
+/// odpowiada temu przez `init.subagentsConfirmed`.
+pub const DYNAMIC_SUBAGENTS_CONFIRMED: bool = true;
 
 /// Dozwolone wartości `[windows] sandbox` w config.toml Codexa. Domyślnie tylko
 /// `elevated` (jednorazowa konfiguracja administratora); lista do decyzji użytkownika.
@@ -34,6 +45,15 @@ fn msg_claude_write(found: &str) -> String {
         "Krok z zapisem dla Claude wymaga Claude Code {major}.{minor}.{patch} lub nowszego (wykryto {found}). Zaktualizuj Claude Code albo użyj Codexa."
     )
 }
+/// Ten sam tekst odtwarza fixture `tests/fixtures/tauri.ts`.
+fn msg_dynamic_version(found: &str) -> String {
+    let [major, minor, patch] = CLAUDE_DYNAMIC;
+    format!(
+        "Tryb dynamiczny wymaga Claude Code {major}.{minor}.{patch} lub nowszego (wykryto {found}). Zaktualizuj Claude Code."
+    )
+}
+const MSG_DYNAMIC_CLAUDE_ONLY: &str = "Tryb dynamiczny działa tylko z Claude.";
+const MSG_DYNAMIC_UNCONFIRMED: &str = "Tryb dynamiczny jest zablokowany: nie potwierdzono, że subagenci dziedziczą ograniczenia orkiestratora (brak powłoki, zapis tylko w katalogu roboczym).";
 const MSG_CODEX_NO_SANDBOX: &str = "Codex nie ma skonfigurowanego sandboxa Windows. Ustaw [windows] sandbox = \"elevated\" w config.toml Codexa.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -121,13 +141,26 @@ fn block(code: FailureCode, message: impl Into<String>) -> Option<Blocked> {
     })
 }
 
-fn readiness(
-    node_id: &str,
+/// Parametry jednego węzła Agent dla [`readiness`].
+struct Target<'a> {
+    node_id: &'a str,
     provider: Provider,
     access: AccessProfile,
+    role: AgentRole,
+}
+
+fn readiness(
+    target: &Target,
     detected: &Detected,
     codex_config: Result<Option<&str>, &str>,
+    subagents_confirmed: bool,
 ) -> NodeReadiness {
+    let Target {
+        node_id,
+        provider,
+        access,
+        role,
+    } = *target;
     let cli = match provider {
         Provider::Claude => detected.claude.as_ref(),
         Provider::Codex => detected.codex.as_ref(),
@@ -143,6 +176,11 @@ fn readiness(
         warning: None,
         blocked: None,
     };
+    let orchestrator = role == AgentRole::Orchestrator;
+    if orchestrator && provider != Provider::Claude {
+        out.blocked = block(FailureCode::PermissionViolation, MSG_DYNAMIC_CLAUDE_ONLY);
+        return out;
+    }
     let Some(cli) = cli else {
         out.blocked = block(FailureCode::CliMissing, FailureCode::CliMissing.message());
         return out;
@@ -156,6 +194,19 @@ fn readiness(
             out.blocked = block(FailureCode::UnsupportedVersion, message);
             return out;
         }
+    }
+    if orchestrator {
+        if parse_semver(&cli.version).is_some_and(|v| v < CLAUDE_DYNAMIC) {
+            out.blocked = block(
+                FailureCode::UnsupportedVersion,
+                msg_dynamic_version(&cli.version),
+            );
+        } else if !subagents_confirmed {
+            out.blocked = block(FailureCode::PermissionViolation, MSG_DYNAMIC_UNCONFIRMED);
+        } else {
+            out.enforcement = Enforcement::CliRestricted;
+        }
+        return out;
     }
     match (provider, access) {
         (Provider::Claude, AccessProfile::WorkspaceWrite) => {
@@ -221,16 +272,30 @@ fn evaluate(
     detected: &Detected,
     codex_config: Result<Option<&str>, &str>,
 ) -> Vec<NodeReadiness> {
+    evaluate_with(graph, detected, codex_config, DYNAMIC_SUBAGENTS_CONFIRMED)
+}
+
+/// Jak `evaluate`, z jawnym potwierdzeniem dziedziczenia (testy gałęzi blokady).
+fn evaluate_with(
+    graph: &WorkflowGraph,
+    detected: &Detected,
+    codex_config: Result<Option<&str>, &str>,
+    subagents_confirmed: bool,
+) -> Vec<NodeReadiness> {
     graph
         .nodes
         .iter()
         .filter_map(|node| match &node.kind {
             NodeKind::Agent(config) => Some(readiness(
-                &node.id,
-                config.provider,
-                config.access,
+                &Target {
+                    node_id: &node.id,
+                    provider: config.provider,
+                    access: config.access,
+                    role: config.role,
+                },
                 detected,
                 codex_config,
+                subagents_confirmed,
             )),
             _ => None,
         })

@@ -16,6 +16,19 @@ pub const MAX_PROMPT_BYTES: usize = 512 * 1024;
 /// nieudane testy (`checks` nigdzie indziej nie jest interpretowane).
 pub const CLAUDE_NO_SHELL: &str = "Uwaga: w tym kroku nie masz narzędzi do uruchamiania poleceń (brak powłoki), więc nie uruchamiasz testów ani innych programów, nawet jeśli instrukcja o to prosi. Zmieniaj tylko pliki w katalogu roboczym. Pole checks zostaw puste (nie wpisuj testów, których nie uruchomiono), a na końcu summary dopisz akapit „Do uruchomienia: ” z listą testów i poleceń, które użytkownik ma uruchomić.";
 
+/// Wskazówki orkiestratora; `{n}` to liczba subagentów (wskazówka, nie limit CLI).
+pub const ORCHESTRATOR_GUIDE: &str = "Jesteś orkiestratorem. Deleguj pracę narzędziem Agent: uruchamiaj najwyżej {n} subagentów naraz. Subagenci nie mają powłoki i działają tylko w katalogu roboczym. Nie używaj run_in_background: czekaj na wyniki subagentów i zbierz je. Wynik końcowy w formacie JSON zwracasz wyłącznie ty, nie subagenci.";
+/// Dopisek dla orkiestratora bez zapisu.
+pub const ORCHESTRATOR_READ_ONLY: &str =
+    "Ten krok jest tylko do odczytu: nie zmieniaj plików ani sam, ani przez subagentów.";
+
+fn orchestrator_guide(request: &RunRequest) -> String {
+    let n = request
+        .max_subagents
+        .unwrap_or(workflow_core::model::DEFAULT_SUBAGENTS_HINT);
+    ORCHESTRATOR_GUIDE.replace("{n}", &n.to_string())
+}
+
 const DATA_BEGIN: &str = "<<<DANE_NIEZAUFANE_POCZATEK>>>";
 const DATA_END: &str = "<<<DANE_NIEZAUFANE_KONIEC>>>";
 
@@ -31,7 +44,7 @@ fn contract(role: AgentRole) -> &'static str {
         AgentRole::Analysis => {
             "Zwróć wyłącznie obiekt JSON zgodny ze schematem: summary, plan, acceptanceCriteria, risks."
         }
-        AgentRole::Implementation | AgentRole::Fix => {
+        AgentRole::Implementation | AgentRole::Fix | AgentRole::Orchestrator => {
             "Zwróć wyłącznie obiekt JSON zgodny ze schematem: summary, changedFiles, checks (name, passed, logRef)."
         }
         AgentRole::Review => {
@@ -66,6 +79,12 @@ pub fn build(request: &RunRequest, artifact_hash: Option<&str>) -> Result<String
     );
     if request.provider == Provider::Claude && request.access == AccessProfile::WorkspaceWrite {
         prompt.push_str(&format!("\n{CLAUDE_NO_SHELL}\n"));
+    }
+    if request.role == AgentRole::Orchestrator {
+        prompt.push_str(&format!("\n{}\n", orchestrator_guide(request)));
+        if request.access == AccessProfile::ReadOnly {
+            prompt.push_str(&format!("{ORCHESTRATOR_READ_ONLY}\n"));
+        }
     }
     if goal.is_some() {
         prompt.push_str(

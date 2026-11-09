@@ -220,6 +220,124 @@ fn keyed_commands_check_the_key() {
     }
 }
 
+/// Plik frontendu (`<repo>/src/...`) po LF.
+fn frontend(file: &str) -> String {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("src")
+        .join(file);
+    normalize(&fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+}
+
+/// Parametry komendy z sygnatury `fn name(...)` bez `AppHandle`/`State` (Tauri je
+/// wstrzykuje): pary `(nazwa, typ)`.
+fn command_params(source: &str, name: &str) -> Vec<(String, String)> {
+    let signature = format!("fn {name}(");
+    let start = source
+        .find(&signature)
+        .unwrap_or_else(|| panic!("brak sygnatury {name}"))
+        + signature.len();
+    let end = start
+        + source[start..]
+            .find(") ->")
+            .unwrap_or_else(|| panic!("{name}: brak końca sygnatury"));
+    source[start..end]
+        .split(',')
+        .filter_map(|p| p.trim().split_once(':'))
+        .map(|(n, t)| (n.trim().to_owned(), t.trim().to_owned()))
+        .filter(|(_, t)| !t.contains("AppHandle") && !t.contains("State<"))
+        .collect()
+}
+
+/// Klucze obiektu argumentów w `invoke("name", { a, b })` (skrócony zapis pól).
+fn invoke_keys(source: &str, name: &str) -> BTreeSet<String> {
+    let call = format!("invoke(\"{name}\", {{");
+    let start = source
+        .find(&call)
+        .unwrap_or_else(|| panic!("brak wywołania {call}"))
+        + call.len();
+    let end = start
+        + source[start..]
+            .find('}')
+            .expect("koniec obiektu argumentów");
+    source[start..end]
+        .split(',')
+        .map(|k| k.split(':').next().unwrap().trim().to_owned())
+        .filter(|k| !k.is_empty())
+        .collect()
+}
+
+#[test]
+fn command_params_skip_injected_state_and_read_types() {
+    let source =
+        "pub fn workflow_x(\n    app: tauri::AppHandle,\n    db: State<'_, Db>,\n    name: String,\n    template: TemplateKind,\n) -> R {\n}\n";
+    assert_eq!(
+        command_params(source, "workflow_x"),
+        vec![
+            ("name".to_owned(), "String".to_owned()),
+            ("template".to_owned(), "TemplateKind".to_owned())
+        ]
+    );
+    assert_eq!(
+        invoke_keys(
+            "invoke(\"workflow_x\", { name, template: t })",
+            "workflow_x"
+        ),
+        ["name", "template"].map(String::from).into()
+    );
+}
+
+/// Kontrakt IPC tworzenia procesu (E8b): podgląd i Playwright omijają `invoke`, więc
+/// zmiana nazwy argumentu po jednej stronie zepsułaby tylko aplikację desktopową.
+#[test]
+fn workflow_create_ipc_contract_matches_frontend() {
+    let rust = command_params(&src("workflows/mod.rs"), "workflow_create");
+    assert!(
+        rust.contains(&("template".to_owned(), "TemplateKind".to_owned())),
+        "workflow_create bez `template: TemplateKind`: {rust:?}"
+    );
+    // Tauri zamienia snake_case argumentów na camelCase po stronie JS; tu nazwy są
+    // jednowyrazowe, więc muszą być identyczne.
+    let rust_names: BTreeSet<String> = rust.into_iter().map(|(n, _)| n).collect();
+    let ts_keys = invoke_keys(&frontend("workflows.ts"), "workflow_create");
+    assert_eq!(rust_names, ts_keys, "argumenty workflow_create: Rust ≠ TS");
+
+    // Wartości `template` z TS muszą deserializować się do wariantów `TemplateKind`.
+    let mod_rs = src("workflows/mod.rs");
+    let enum_start = mod_rs
+        .find("pub enum TemplateKind {")
+        .expect("enum TemplateKind");
+    let enum_body = &mod_rs[enum_start..enum_start + mod_rs[enum_start..].find('}').unwrap()];
+    assert!(
+        mod_rs[..enum_start].ends_with("#[serde(rename_all = \"camelCase\")]\n"),
+        "TemplateKind: oczekiwano rename_all = camelCase"
+    );
+    let variants: BTreeSet<String> = enum_body
+        .lines()
+        .skip(1)
+        .map(|l| l.trim().trim_end_matches(','))
+        .filter(|l| !l.is_empty())
+        .map(|v| {
+            let mut c = v.chars();
+            let first = c.next().unwrap().to_ascii_lowercase();
+            format!("{first}{}", c.as_str())
+        })
+        .collect();
+    let api = frontend("api/workflows.ts");
+    let line = api
+        .lines()
+        .find(|l| l.starts_with("export type TemplateKind ="))
+        .expect("TemplateKind w src/api/workflows.ts");
+    let ts_variants: BTreeSet<String> = line
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(variants, ts_variants, "TemplateKind: Rust ≠ TS");
+    assert!(ts_variants.contains("dynamic"));
+}
+
 #[test]
 fn core_functions_behind_keyed_commands_check_the_key() {
     let sources = [src("workflows/run_commands.rs"), src("workflows/mod.rs")];

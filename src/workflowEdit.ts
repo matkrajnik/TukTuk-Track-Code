@@ -48,6 +48,7 @@ export const roleNames: Record<AgentRole, string> = {
   implementation: "Implementacja",
   fix: "Poprawki",
   review: "Review",
+  orchestrator: "Orkiestrator",
 };
 
 export const opNames: Record<CompareOp, string> = {

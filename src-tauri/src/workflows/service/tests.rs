@@ -89,6 +89,10 @@ pub(super) struct Env {
 
 impl Env {
     pub fn from_connection(unlocked: bool) -> Self {
+        Self::from_graph(unlocked, &analysis_implementation_review())
+    }
+
+    pub fn from_graph(unlocked: bool, graph: &workflow_core::WorkflowGraph) -> Self {
         let conn = Connection::open_in_memory().expect("db");
         crate::db::init(&conn).expect("init");
         conn.execute(
@@ -96,7 +100,7 @@ impl Env {
             [],
         )
         .expect("zadanie");
-        let id = store::create(&conn, "P", "", &analysis_implementation_review(), 1).expect("p");
+        let id = store::create(&conn, "P", "", graph, 1).expect("p");
         store::publish(&conn, id, 1, 2).expect("publish");
         let version_id = conn
             .query_row("SELECT id FROM workflow_versions", [], |r| r.get(0))
@@ -416,4 +420,56 @@ fn start_is_refused_when_disk_is_almost_full() {
     assert!(env.enqueued.borrow().is_empty());
     assert!(!worktrees_dir(&sb.app_data()).join("1").exists());
     assert_eq!(worktree_count(&repo), 1, "tylko repozytorium główne");
+}
+
+fn detected_claude(version: &str) -> Detected {
+    Detected {
+        claude: cli(version),
+        codex: None,
+    }
+}
+
+#[test]
+fn start_of_dynamic_on_old_claude_is_refused_by_preflight() {
+    let sb = Sandbox::new();
+    let env = Env::from_graph(true, &workflow_core::template::dynamic_default());
+    let repo = sb.sample_repo();
+    let err = env
+        .start_with(&sb, &detected_claude("2.1.318"), env.request(&repo, "r"))
+        .unwrap_err();
+    assert!(
+        err.contains("Tryb dynamiczny wymaga Claude Code 2.1.319"),
+        "{err}"
+    );
+    assert_eq!(env.count("SELECT COUNT(*) FROM workflow_runs"), 0);
+    assert!(env.enqueued.borrow().is_empty());
+    assert_eq!(worktree_count(&repo), 1);
+}
+
+#[test]
+fn start_of_dynamic_with_confirmed_inheritance_starts_once() {
+    let sb = Sandbox::new();
+    let env = Env::from_graph(true, &workflow_core::template::dynamic_default());
+    let repo = sb.sample_repo();
+    let detected = detected_claude("2.1.319 (Claude Code)");
+    let first = env
+        .start_with(&sb, &detected, env.request(&repo, "r"))
+        .expect("start");
+    let second = env
+        .start_with(&sb, &detected, env.request(&repo, "r"))
+        .expect("powtórzenie");
+    assert_eq!(first.run_id, second.run_id);
+    assert_eq!(env.count("SELECT COUNT(*) FROM workflow_runs"), 1);
+    assert_eq!(env.enqueued.borrow().len(), 1);
+}
+
+#[test]
+fn create_from_dynamic_template_gives_a_valid_dynamic_graph() {
+    let graph = crate::workflows::template_graph(crate::workflows::TemplateKind::Dynamic);
+    assert!(workflow_core::validate(&graph).is_empty());
+    assert!(workflow_core::dynamic::is_dynamic(&graph));
+    let standard = crate::workflows::template_graph(crate::workflows::TemplateKind::Standard);
+    assert!(!workflow_core::dynamic::is_dynamic(&standard));
+    let blank = crate::workflows::template_graph(crate::workflows::TemplateKind::Blank);
+    assert_eq!(blank.nodes.len(), 2);
 }

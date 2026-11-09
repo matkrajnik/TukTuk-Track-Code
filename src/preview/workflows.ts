@@ -13,6 +13,7 @@ import {
   type WorkflowIssue,
   type WorkflowSummary,
   type WorkflowVersion,
+  type TemplateKind,
 } from "../api/workflows";
 import { validateWorkflow } from "../api/workflowValidate";
 import { activeRunCount } from "./workflowRuns";
@@ -20,6 +21,7 @@ import { parseWorkflowGraph } from "../api/workflowParse";
 import {
   analysisImplementationReview,
   blankWorkflow,
+  dynamicDefault,
 } from "../api/workflowTemplates";
 
 export const previewWorkflowsKey = "tuktuk-track-preview-workflows-v1";
@@ -268,9 +270,14 @@ export async function get(id: number): Promise<WorkflowDetail> {
 export async function create(
   name: string,
   description: string,
-  fromTemplate: boolean,
+  template: TemplateKind,
 ): Promise<WorkflowDetail> {
-  const graph = fromTemplate ? analysisImplementationReview() : blankWorkflow();
+  const graph =
+    template === "dynamic"
+      ? dynamicDefault()
+      : template === "standard"
+        ? analysisImplementationReview()
+        : blankWorkflow();
   return detail(insert(unlocked(), name, description, graph));
 }
 
