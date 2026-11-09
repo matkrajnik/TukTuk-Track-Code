@@ -22,6 +22,11 @@ pub fn is_subagent_tool(name: &str) -> bool {
 }
 
 /// Początek wyniku `tool_result`, którym Claude Code potwierdza start subagenta w tle.
+///
+/// To tekst CLI bez gwarancji stabilności (sprawdzony na 2.1.319). Głównym sygnałem jest
+/// `system/task_started.is_backgrounded`, który w próbkach przychodzi przed `tool_result`;
+/// prefiks to tylko zapas na wypadek innej kolejności. Gdy zmieni się jedno i drugie,
+/// subagent skończy się na swoim `tool_result` (za wcześnie, ale bez błędu kroku).
 const ASYNC_LAUNCH_PREFIX: &str = "Async agent launched";
 
 /// Tekst wyniku narzędzia: napis albo pierwszy blok tekstowy tablicy.

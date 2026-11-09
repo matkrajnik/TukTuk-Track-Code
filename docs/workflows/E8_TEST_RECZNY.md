@@ -14,6 +14,8 @@ z jednym plikiem). Zaznacz każdy punkt i dopisz uwagi do `NEXT_SESSION.md`.
 - [ ] Kilku subagentów naraz (np. „Przeczytaj równolegle trzy pliki, każdy osobnym subagentem”):
   w trakcie ich pracy licznik pokazuje ich jako aktywnych („3 aktywnych / 3 łącznie”), a każdy
   zmienia stan na „zakończony” dopiero po swoim zakończeniu, nie zaraz po uruchomieniu w tle.
+  Jeśli możesz, zachowaj strumień (`--output-format stream-json`) z linią `system/task_notification`:
+  zastąpi literały w teście `background_subagent_ends_on_task_notification_not_on_async_launch`.
 - [ ] Drzewo odtwarza się po wyjściu z monitora i ponownym otwarciu przebiegu.
 - [ ] „Zatrzymaj” w trakcie: przebieg kończy się jako zatrzymany, w Menedżerze zadań nie zostaje
   żaden `claude.exe`.

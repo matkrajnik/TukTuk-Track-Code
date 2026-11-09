@@ -124,8 +124,8 @@ pub fn build(spec: &DynamicSpec) -> WorkflowGraph {
     );
     let mut nodes = vec![node("start", "Start", 0.0, NodeKind::Trigger), orchestrator];
     let mut edges = vec![edge("start", Port::Out, ORCHESTRATOR_ID)];
-    let approval_x;
-    if spec.review {
+
+    let approval_x = if spec.review {
         nodes.push(node(
             REVIEW_ID,
             "Review",
@@ -172,11 +172,11 @@ pub fn build(spec: &DynamicSpec) -> WorkflowGraph {
         edges.push(edge(DECISION_ID, Port::True, APPROVAL_ID));
         edges.push(edge(DECISION_ID, Port::False, FIX_ID));
         edges.push(edge(FIX_ID, Port::Out, REVIEW_ID));
-        approval_x = 880.0;
+        880.0
     } else {
         edges.push(edge(ORCHESTRATOR_ID, Port::Out, APPROVAL_ID));
-        approval_x = 440.0;
-    }
+        440.0
+    };
     let description = if spec.review {
         APPROVAL_WITH_REVIEW
     } else {

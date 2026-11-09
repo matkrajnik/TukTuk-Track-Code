@@ -105,10 +105,16 @@ fn line_parent(event: &Value) -> Option<String> {
 /// ale z rodzicem i identyfikatorami narzędzi. Filtrowanie linii subagentów
 /// należy do wywołującego.
 pub fn parse_claude_line_traced(line: &str) -> Vec<Traced> {
-    let Ok(event) = serde_json::from_str::<Value>(line.trim()) else {
-        return Vec::new();
-    };
-    let parent = line_parent(&event);
+    match serde_json::from_str::<Value>(line.trim()) {
+        Ok(event) => parse_claude_value_traced(&event),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Jak [`parse_claude_line_traced`], dla linii już sparsowanej do JSON-a
+/// (runner czyta z tej samej wartości także wynik i stan subagentów).
+pub fn parse_claude_value_traced(event: &Value) -> Vec<Traced> {
+    let parent = line_parent(event);
     let with = |tool_use_id: Option<String>, item: Parsed| Traced {
         parent: parent.clone(),
         tool_use_id,

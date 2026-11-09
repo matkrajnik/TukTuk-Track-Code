@@ -445,6 +445,30 @@ test("narzędzie Task (stara nazwa) też tworzy subagenta", async ({ page }) => 
   );
 });
 
+test("czynności zagnieżdżonego subagenta trafiają do toru jego subagenta", async ({ page }) => {
+  await openDynamicRun(page, [
+    agentStart(1, "toolu_agent1", "Zewnętrzny"),
+    // Agent wywołany przez subagenta 1 (rodzic = toolu_agent1) i jego Read.
+    tool(2, "started", "Agent", {
+      toolUseId: "toolu_nested",
+      parentToolUseId: "toolu_agent1",
+      args: { description: "Wewnętrzny", subagent_type: "general-purpose" },
+    }),
+    tool(3, "started", "Read", {
+      toolUseId: "toolu_read_nested",
+      parentToolUseId: "toolu_nested",
+      args: { file_path: "gleboki.txt" },
+    }),
+  ]);
+  const t = tree(page);
+  await expect(t).toContainText("Subagenci: 1 aktywnych / 1 łącznie");
+  await expect(t.locator("li[data-state]").filter({ hasText: "Zewnętrzny" })).toContainText(
+    "Czyta gleboki.txt",
+  );
+  // Orkiestrator nie ma własnej czynności: Read zagnieżdżonego subagenta nie trafia do niego.
+  await expect(t.locator("li[data-orchestrator-state] > .wf-tree-current")).toHaveCount(0);
+});
+
 test("podgląd pokazuje przykładowy przebieg dynamiczny z subagentami", async ({ page }) => {
   await openPreview(page);
   await page.evaluate(() => {

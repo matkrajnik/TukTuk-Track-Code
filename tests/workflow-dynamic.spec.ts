@@ -76,6 +76,22 @@ test("formularz dynamiczny zapisuje i publikuje poprawny graf", async ({ page })
   expect(stored).toContain('"role":"orchestrator"');
 });
 
+test("wyczyszczone pole liczby nie zmienia grafu procesu dynamicznego", async ({ page }) => {
+  const editor = await createDynamicInPreview(page);
+  const form = editor.getByRole("form", { name: "Proces dynamiczny" });
+  for (const label of [/Liczba subagentów/, "Limit czasu (minuty)"]) {
+    const field = form.getByLabel(label);
+    const before = await field.inputValue();
+    await field.fill("");
+    await field.blur();
+    // Pole wraca do poprzedniej wartości, a walidacja nie zgłasza problemu.
+    await expect(field).toHaveValue(before);
+  }
+  await expect(editor.getByRole("heading", { name: "Walidacja: brak problemów" })).toBeVisible();
+  // Graf się nie zmienił, więc nie ma czego zapisać (NaN dałby `maxSubagents: null`).
+  await expect(editor.getByRole("button", { name: "Zapisz" })).toBeDisabled();
+});
+
 test("review w trybie dynamicznym wymaga dostępu z zapisem", async ({ page }) => {
   const editor = await createDynamicInPreview(page);
   const form = editor.getByRole("form", { name: "Proces dynamiczny" });

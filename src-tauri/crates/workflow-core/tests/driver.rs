@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 
 use workflow_core::driver::{
     DecideError, DecideRequest, DriverConfig, ResumeError, Runtime, RuntimeHandle,
-    MAX_RUNNER_EVENTS_PER_EXECUTION, MAX_RUNNER_EVENTS_PER_ORCHESTRATOR,
+    MAX_RUNNER_BYTES_PER_EXECUTION, MAX_RUNNER_EVENTS_PER_EXECUTION,
+    MAX_RUNNER_EVENTS_PER_ORCHESTRATOR,
 };
 use workflow_core::engine::{Effect, Input, RunEvent, RunState};
 use workflow_core::model::AgentConfig;
@@ -1609,6 +1610,37 @@ fn orchestrator_step_has_a_larger_event_budget() {
         1
     );
     assert!(MAX_RUNNER_EVENTS_PER_ORCHESTRATOR > MAX_RUNNER_EVENTS_PER_EXECUTION);
+}
+
+#[test]
+fn orchestrator_events_are_capped_by_total_bytes() {
+    let env = Env::new();
+    // 1000 zdarzeń po ok. 7 KB mieści się w limicie liczby (3000), ale nie bajtów.
+    let line = "x".repeat(7_000);
+    let many: Vec<RunnerEvent> = (0..1000).map(|_| message(&line)).collect();
+    let runner = Arc::new(ScriptedRunner::new().script(
+        "orchestrator",
+        vec![Step::complete(samples::implementation()).with_events(many)],
+    ));
+    let handle = env.run(&runner, config());
+    let run = env.repo.create(&dynamic_default(), "r1");
+    handle.start_run(run);
+    wait_until("koniec kroku", || env.state(run).executions.len() >= 2);
+    settle(&handle);
+    let events = env.repo.load_events(run, 0).unwrap();
+    let messages: Vec<&StoredEvent> = events.iter().filter(|e| e.kind == "message").collect();
+    let stored: usize = messages
+        .iter()
+        .map(|e| e.payload["payload"].to_string().len())
+        .sum();
+    assert!(stored <= MAX_RUNNER_BYTES_PER_EXECUTION + 1024);
+    assert!(messages.len() < 1000);
+    let last = messages.last().unwrap();
+    assert_eq!(last.payload["payload"]["truncated"], true);
+    assert_eq!(
+        last.payload["payload"]["reason"],
+        "limit rozmiaru zdarzeń kroku"
+    );
 }
 
 #[test]

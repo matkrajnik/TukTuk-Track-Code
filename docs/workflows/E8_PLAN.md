@@ -315,3 +315,19 @@ Zrealizowano E8.3–E8.8 (szczegóły: `PLAN_WDROZENIA.md`, rozdz. 15). Zmiany w
   `tool_result` („Async agent launched”) nie kończy subagenta. Subagent synchroniczny kończy się
   parą tool_use/tool_result. `system/task_summary` po `result` nie psuje kroku.
 - D8 = sam tekst, D4, D6, D7, D9, D10 według rekomendacji; D11 poza zakresem.
+
+**Decyzja użytkownika (2026-11-09, po review E8b):** zmiana względem planu „linie `task_*`
+ignorowane, stan subagenta tylko z pary tool_use/tool_result” zaakceptowana jako **D13**:
+runner czyta `task_started.is_backgrounded` (główny sygnał) i prefiks „Async agent launched”
+(zapas zależny od wersji CLI), a koniec subagenta w tle bierze z `task_notification`. Subagent
+w tle bez powiadomienia przed końcem kroku nie dostaje sztucznego `ToolFinished`: monitor
+pokazuje go jako „przerwany” na podstawie statusu kroku (`buildActivityTree`). Koniec
+z `task_notification` sprawdzają testy z literałami, bo próbka `e.jsonl` urywa się przed nim
+(proces zabito w teście E); prawdziwą linię trzeba dopisać przy teście ręcznym
+(`E8_TEST_RECZNY.md`).
+
+Poprawki po review (2026-11-09): łączny limit bajtów zdarzeń kroku 4 MiB
+(`MAX_RUNNER_BYTES_PER_EXECUTION`, znacznik „limit rozmiaru zdarzeń kroku”), jednokrotne
+parsowanie linii Claude w runnerze, sprawdzanie `init` orkiestratora tylko do pierwszego
+`system/init`, czynności zagnieżdżonego subagenta w torze jego subagenta najwyższego poziomu,
+puste pole liczby w formularzu dynamicznym nie zmienia grafu.

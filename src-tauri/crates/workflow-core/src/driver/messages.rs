@@ -12,6 +12,9 @@ pub const MAX_RUNNER_EVENTS_PER_EXECUTION: usize = 500;
 pub const MAX_RUNNER_EVENTS_PER_ORCHESTRATOR: usize = 3000;
 /// Największy zapisany ładunek jednego zdarzenia runnera w bajtach.
 pub const MAX_RUNNER_PAYLOAD_BYTES: usize = 8 * 1024;
+/// Najwięcej bajtów ładunków zdarzeń runnera zapisanych dla jednego kroku (każda rola).
+/// Przy 3000 zdarzeń orkiestratora po 8 KiB baza rosłaby o ok. 24 MB na krok.
+pub const MAX_RUNNER_BYTES_PER_EXECUTION: usize = 4 * 1024 * 1024;
 /// Po tylu zdarzeniach runnera zapisujemy partię bez czekania na tyknięcie.
 pub const RUNNER_EVENT_BATCH: usize = 32;
 
@@ -30,6 +33,9 @@ pub(super) struct MessageBuffer {
     execution_id: String,
     emitted: usize,
     limit: usize,
+    bytes: usize,
+    /// Znacznik przycięcia już zapisany: kolejne zdarzenia są pomijane.
+    stopped: bool,
     pub(super) pending: Vec<RunEvent>,
 }
 
@@ -39,6 +45,8 @@ impl MessageBuffer {
             execution_id: execution_id.to_owned(),
             emitted: 0,
             limit,
+            bytes: 0,
+            stopped: false,
             pending: Vec::new(),
         }
     }
@@ -53,19 +61,40 @@ impl MessageBuffer {
     }
 
     pub(super) fn push(&mut self, event: RunnerEvent) {
+        if self.stopped {
+            return;
+        }
         self.emitted += 1;
-        if self.emitted > self.limit + 1 {
+        if self.emitted > self.limit {
+            self.stop("limit zdarzeń kroku");
             return;
         }
+        let event = self.build(event);
+        let size = match &event {
+            RunEvent::Message { payload, .. } | RunEvent::Tool { payload, .. } => {
+                payload.to_string().len()
+            }
+            _ => 0,
+        };
+        if self.bytes + size > MAX_RUNNER_BYTES_PER_EXECUTION {
+            self.stop("limit rozmiaru zdarzeń kroku");
+            return;
+        }
+        self.bytes += size;
+        self.pending.push(event);
+    }
+
+    fn stop(&mut self, reason: &str) {
+        self.stopped = true;
+        self.pending.push(RunEvent::Message {
+            execution_id: self.execution_id.clone(),
+            payload: json!({"truncated": true, "reason": reason}),
+        });
+    }
+
+    fn build(&self, event: RunnerEvent) -> RunEvent {
         let execution_id = self.execution_id.clone();
-        if self.emitted == self.limit + 1 {
-            self.pending.push(RunEvent::Message {
-                execution_id,
-                payload: json!({"truncated": true, "reason": "limit zdarzeń kroku"}),
-            });
-            return;
-        }
-        self.pending.push(match event {
+        match event {
             RunnerEvent::Message { text, parent } => {
                 let mut payload = Map::new();
                 payload.insert("text".into(), json!(text));
@@ -101,7 +130,7 @@ impl MessageBuffer {
                     payload: Self::payload(Value::Object(payload)),
                 }
             }
-        });
+        }
     }
 }
 

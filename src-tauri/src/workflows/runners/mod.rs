@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agent_cli::{
-    parse_claude_line_traced, parse_codex_line_raw, Failure, Parsed, ProcessEvent, SpawnError,
+    parse_claude_value_traced, parse_codex_line_raw, Failure, Parsed, ProcessEvent, SpawnError,
     Spec, Traced,
 };
 use serde_json::Value;
@@ -178,7 +178,12 @@ struct Stream {
     fallback: Vec<OpenTool>,
     /// Subagenci uruchomieni w tle: ich `tool_result` to tylko potwierdzenie startu,
     /// a koniec przychodzi w `system/task_notification` (próbka z testu E).
+    /// Gdy krok skończy się bez powiadomienia (anulowanie, timeout, zabicie), host
+    /// nie dopisuje sztucznego końca: monitor oznacza taki tor jako „przerwany”
+    /// na podstawie statusu kroku (`buildActivityTree`), a `ok=false` dałoby „błąd”.
     background: HashSet<String>,
+    /// `system/init` roota orkiestratora już sprawdzony pod kątem narzędzia subagentów.
+    init_checked: bool,
 }
 
 impl Stream {
@@ -196,27 +201,16 @@ impl Stream {
             open: HashMap::new(),
             fallback: Vec::new(),
             background: HashSet::new(),
+            init_checked: false,
         }
     }
 
     fn apply(&mut self, provider: Provider, line: &str, on_event: &mut dyn FnMut(RunnerEvent)) {
-        if provider == Provider::Claude {
-            if let Ok(event) = serde_json::from_str::<Value>(line.trim()) {
-                if self.role == AgentRole::Orchestrator {
-                    check_subagent_tool(&event, on_event);
-                }
-                self.track_background(&event, on_event);
-                // Wynik subagenta (`parent_tool_use_id` różne od null) nie kończy kroku.
-                if event["type"] == "result"
-                    && event["parent_tool_use_id"].is_null()
-                    && !event["structured_output"].is_null()
-                {
-                    self.structured = Some(event["structured_output"].clone());
-                }
-            }
-        }
         let parsed = match provider {
-            Provider::Claude => parse_claude_line_traced(line),
+            Provider::Claude => match serde_json::from_str::<Value>(line.trim()) {
+                Ok(event) => self.apply_claude(&event, on_event),
+                Err(_) => Vec::new(),
+            },
             Provider::Codex => parse_codex_line_raw(line)
                 .into_iter()
                 .map(Traced::root)
@@ -225,6 +219,26 @@ impl Stream {
         for traced in parsed {
             self.apply_item(traced, on_event);
         }
+    }
+
+    /// Linia Claude sparsowana raz: init orkiestratora, subagenci w tle, wynik roota.
+    fn apply_claude(
+        &mut self,
+        event: &Value,
+        on_event: &mut dyn FnMut(RunnerEvent),
+    ) -> Vec<Traced> {
+        if self.role == AgentRole::Orchestrator && !self.init_checked {
+            self.init_checked = check_subagent_tool(event, on_event);
+        }
+        self.track_background(event, on_event);
+        // Wynik subagenta (`parent_tool_use_id` różne od null) nie kończy kroku.
+        if event["type"] == "result"
+            && event["parent_tool_use_id"].is_null()
+            && !event["structured_output"].is_null()
+        {
+            self.structured = Some(event["structured_output"].clone());
+        }
+        parse_claude_value_traced(event)
     }
 
     /// Subagent w tle: zapamiętuje start w tle (zanim przyjdzie jego `tool_result`)
@@ -318,15 +332,16 @@ impl Stream {
 
 /// Uwaga w dzienniku, gdy `system/init` orkiestratora nie wymienia narzędzia subagentów
 /// (`Agent` albo `Task`). Krok się nie kończy błędem: Claude może nazwać narzędzie inaczej.
-fn check_subagent_tool(event: &Value, on_event: &mut dyn FnMut(RunnerEvent)) {
+/// Zwraca `true`, gdy linia była `system/init` roota (dalszych linii nie trzeba sprawdzać).
+fn check_subagent_tool(event: &Value, on_event: &mut dyn FnMut(RunnerEvent)) -> bool {
     if event["type"] != "system"
         || event["subtype"] != "init"
         || !event["parent_tool_use_id"].is_null()
     {
-        return;
+        return false;
     }
     let Some(tools) = event["tools"].as_array() else {
-        return;
+        return true;
     };
     let has_tool = tools
         .iter()
@@ -338,6 +353,7 @@ fn check_subagent_tool(event: &Value, on_event: &mut dyn FnMut(RunnerEvent)) {
             parent: None,
         });
     }
+    true
 }
 
 /// Po niepotwierdzonym `kill` ponawia kończenie drzewa, aż jego koniec zostanie

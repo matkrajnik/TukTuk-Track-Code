@@ -294,8 +294,10 @@ function lastTool(lines: readonly ActivityLine[]): string | null {
 
 /**
  * Drzewo z zapisanych zdarzeń jednego kroku (`executionId`). Subagent to start
- * narzędzia Agent/Task bez rodzica; linie z `parentToolUseId` trafiają do jego toru,
- * a nieznany rodzic jest spłaszczany do orkiestratora (bez wyjątku). Koniec to
+ * narzędzia Agent/Task bez rodzica; linie z `parentToolUseId` trafiają do jego toru.
+ * Rodzic, który sam jest narzędziem (np. Agent zagnieżdżony w subagencie), jest
+ * rozwijany w górę do najbliższego znanego subagenta; nieznany rodzic trafia do
+ * orkiestratora (bez wyjątku). Koniec to
  * `toolFinished` z id subagenta: host zapisuje go z `tool_result` subagenta
  * synchronicznego albo z `system/task_notification` subagenta w tle (sam start
  * w tle, „Async agent launched”, nie jest końcem; `runners/mod.rs`). Gdy krok jest już w stanie końcowym (`status`),
@@ -313,6 +315,8 @@ export function buildActivityTree(
     .sort((a, b) => a.sequence - b.sequence);
   const order: string[] = [];
   const meta = new Map<string, { label: string; state: LaneState }>();
+  /** Rodzic każdego rozpoczętego narzędzia z id: łańcuch do subagenta najwyższego poziomu. */
+  const parentOf = new Map<string, string>();
   let truncated = false;
   for (const e of own) {
     const data = runnerPayload(e);
@@ -321,6 +325,8 @@ export function buildActivityTree(
     if (e.type === "toolStarted") {
       const id = text(data.toolUseId);
       const name = text(data.name);
+      const parent = text(data.parentToolUseId);
+      if (id && parent) parentOf.set(id, parent);
       if (SUBAGENT_TOOLS.includes(name) && id && !text(data.parentToolUseId) && !meta.has(id)) {
         order.push(id);
         const description = toolArgs(data.args)?.description;
@@ -334,11 +340,20 @@ export function buildActivityTree(
       if (found) found.state = data.ok === false ? "failed" : "done";
     }
   }
+  const laneOf = (start: string | null | undefined): string | undefined => {
+    const seen = new Set<string>();
+    let id = start ?? undefined;
+    while (id && !meta.has(id) && !seen.has(id)) {
+      seen.add(id);
+      id = parentOf.get(id);
+    }
+    return id && meta.has(id) ? id : undefined;
+  };
   const grouped = new Map<string, ActivityLine[]>();
   const orchestratorLines: ActivityLine[] = [];
   for (const line of buildActivityLog(own)) {
-    const parent = line.parent;
-    if (parent && meta.has(parent)) {
+    const parent = laneOf(line.parent);
+    if (parent) {
       const list = grouped.get(parent) ?? [];
       list.push(line);
       grouped.set(parent, list);

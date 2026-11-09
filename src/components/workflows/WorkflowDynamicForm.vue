@@ -39,8 +39,29 @@ function setAccess(access: AccessProfile) {
   update(access === "readOnly" ? { access, review: false } : { access });
 }
 
-function number(event: Event): number {
-  return Number((event.target as HTMLInputElement).value);
+/**
+ * Liczba z pola albo `null`, gdy pole jest puste lub nie zawiera liczby. Wtedy pole
+ * wraca do bieżącej wartości, a graf się nie zmienia (NaN zapisałby się jako `null`,
+ * który Rust przyjmuje jako brak limitu, a walidator TS odrzuca).
+ */
+function number(event: Event, current: number): number | null {
+  const input = event.target as HTMLInputElement;
+  const value = Number(input.value);
+  if (input.value.trim() === "" || !Number.isFinite(value)) {
+    input.value = String(current);
+    return null;
+  }
+  return value;
+}
+
+function setMinutes(event: Event) {
+  const value = number(event, minutes.value);
+  if (value !== null) update({ timeoutSecs: value * 60 });
+}
+
+function setSubagents(event: Event) {
+  const value = number(event, spec.value.maxSubagents);
+  if (value !== null) update({ maxSubagents: value });
 }
 </script>
 
@@ -72,7 +93,7 @@ function number(event: Event): number {
         min="1"
         max="240"
         :value="minutes"
-        @change="update({ timeoutSecs: number($event) * 60 })"
+        @change="setMinutes"
       />
     </label>
     <fieldset>
@@ -103,7 +124,7 @@ function number(event: Event): number {
         :min="MIN_SUBAGENTS_HINT"
         :max="MAX_SUBAGENTS_HINT"
         :value="spec.maxSubagents"
-        @change="update({ maxSubagents: number($event) })"
+        @change="setSubagents"
       />
     </label>
     <label class="inline-check">

@@ -1367,3 +1367,23 @@ klucza (w testach pozostaje dotychczasowy `TEST_WORKFLOWS_KEY`, w kodzie tylko S
 zakazuje tła (zob. runda 2). Commit wykonuje osobny krok (`feat: Workflows E8b — …`), bez pushu; wersji nie podniesiono.
 
 Blokery: test ręczny na prawdziwym Claude Code (`E8_TEST_RECZNY.md`, po stronie użytkownika).
+
+### 2026-11-09 — E8b, poprawki po review (runda 3)
+
+Zakres: uwagi MEDIUM/LOW z ostatniej rundy review E8b, poprawione w sesji głównej.
+- Odejście od planu (linie `task_*` jako źródło końca subagenta w tle) zapisane jako decyzja D13
+  w `E8_PLAN.md`, rozdz. 10. Subagent w tle bez `task_notification` przed końcem kroku nie dostaje
+  sztucznego końca (`ok=false` dałoby w monitorze „błąd” zamiast „przerwany”); monitor wyznacza
+  „przerwany” ze statusu kroku (testy Playwright z E8b).
+- Limit bajtów: `MAX_RUNNER_BYTES_PER_EXECUTION` = 4 MiB na krok (każda rola), znacznik
+  „limit rozmiaru zdarzeń kroku” (`orchestrator_events_are_capped_by_total_bytes`).
+- Runner parsuje linię Claude raz (`agent_cli::parse_claude_value_traced`), a `system/init`
+  orkiestratora sprawdza tylko do pierwszego `init` roota.
+- Start w tle: komentarz, że główny sygnał to `task_started.is_backgrounded`, a prefiks tekstu to zapas.
+- Testy runnera na prawdziwych próbkach w roli `Orchestrator` (prawdziwy `init` z `Task` bez uwagi),
+  `with_structured_output` nie dubluje klucza w `_ok` (sprawdzany prawdziwy wynik), test zatrzymania
+  bez `sleep` (zatrzymanie po pierwszym starcie Agent).
+- Monitor: czynności zagnieżdżonego subagenta trafiają do toru subagenta najwyższego poziomu.
+- Formularz dynamiczny: puste pole liczby nie zmienia grafu (wcześniej NaN → `maxSubagents: null`,
+  co Rust przyjmował, a TS odrzucał). `shapeKey`: `model: null` = brak, jak `Option::None`.
+- Ostrzeżenie clippy w `dynamic.rs` poprawione.

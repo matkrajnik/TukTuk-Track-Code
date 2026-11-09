@@ -199,7 +199,10 @@ export function specOf(graph: WorkflowGraph): DynamicSpec | null {
   };
 }
 
-/** Stabilny JSON bez pozycji; `undefined` i brak klucza to to samo, `model` null = brak. */
+/**
+ * Stabilny JSON bez pozycji; `undefined` i brak klucza to to samo, a `model: null`
+ * też oznacza brak (jak `Option::None` po stronie Rust).
+ */
 function shapeKey(graph: WorkflowGraph): string {
   const canon = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(canon);
@@ -207,6 +210,7 @@ function shapeKey(graph: WorkflowGraph): string {
       return Object.fromEntries(
         Object.entries(value as Record<string, unknown>)
           .filter(([key, v]) => v !== undefined && key !== "position")
+          .filter(([key, v]) => !(key === "model" && v === null))
           .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
           .map(([key, v]) => [key, canon(v)]),
       );
