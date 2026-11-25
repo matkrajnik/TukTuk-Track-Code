@@ -13,6 +13,7 @@ import { dayBounds, dayKey, inDay, stamp } from "../time";
 import {
   byTotal,
   dayRows,
+  mergeByTitle,
   overtimeOf,
   rowsTotal,
   tsText,
@@ -28,6 +29,7 @@ import { useTsProjectMap } from "../composables/useTsProjectMap";
 import { tsEntries } from "../timesheet";
 import { openView } from "../navigation";
 import { dayHoursLine, dayMarkOf } from "../days";
+import { useGroupedPreference } from "../dayGroups";
 
 const props = defineProps<{
   data: Snapshot;
@@ -51,9 +53,12 @@ const tsIncludeNotes = ref(true);
 const mode = ref<"single" | "multi" | "month">("single");
 
 const todayKey = computed(() => dayKey(props.now));
-const report = computed(() =>
-  dayRows(props.data, day.value, props.now).sort(byTotal),
-);
+/** „Łącz zadania o tej samej nazwie”: lista i tekst TS po nazwie zadania. */
+const mergeTitles = useGroupedPreference("tuktuk-track-report-merge-titles");
+const report = computed(() => {
+  const rows = dayRows(props.data, day.value, props.now);
+  return (mergeTitles.value ? mergeByTitle(rows) : rows).sort(byTotal);
+});
 const reportTotal = computed(() => rowsTotal(report.value));
 /**
  * Nadgodziny dnia (B5): praca ponad normę dnia (cel dzienny; w dzień wolny
@@ -84,6 +89,7 @@ const taskTimes = computed(() => {
 const tsReport = computed(() =>
   tsText([day.value], props.data, props.now, {
     includeNotes: tsIncludeNotes.value,
+    mergeTitles: mergeTitles.value,
   }),
 );
 const reportLabel = computed(() =>
@@ -246,6 +252,10 @@ function toggle(id: number) {
       Czas przypisany do wybranego dnia. Przedziały przez północ są dzielone
       między dni.
     </p>
+    <label class="inline-check"
+      ><input v-model="mergeTitles" type="checkbox" />Łącz zadania o tej samej
+      nazwie (lista i raport TS)</label
+    >
     <section
       v-if="tsVisible"
       id="ts-report"

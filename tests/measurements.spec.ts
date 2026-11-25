@@ -236,3 +236,87 @@ test("idle banner: trim and resume cuts out the break and keeps measuring the sa
     { cmd: "idle_resolve", args: { trim: true, resume: true } },
   ]);
 });
+
+test("oś dnia: usunięcie zakończonego przedziału po potwierdzeniu, trwający bez usuwania", async ({
+  page,
+}) => {
+  const card = await open(page, [
+    ...gapDay,
+    { id: 4, taskId: 2, startedAt: at("11:40:00"), endedAt: null },
+  ]);
+  const remove = card.getByRole("button", {
+    name: "Usuń przedział 10:02:31 → 11:00:00",
+  });
+  // Ikony mają nazwy dostępne, a trwający pomiar nie ma „Usuń”.
+  await expect(
+    card.getByRole("button", { name: /^Usuń przedział/ }),
+  ).toHaveCount(3);
+
+  await remove.click();
+  const dialog = page.getByRole("dialog", { name: "Usuń przedział" });
+  await expect(dialog).toContainText("„Wdrożenie” 10:02:31 → 11:00:00");
+  await dialog.getByRole("button", { name: "Anuluj" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(Object.keys(await byId(page))).toEqual(["1", "2", "3", "4"]);
+
+  await remove.click();
+  await dialog.getByRole("button", { name: "Usuń przedział" }).click();
+  await expect(dialog).toHaveCount(0);
+  expect(Object.keys(await byId(page)).sort()).toEqual(["1", "3", "4"]);
+  await expect(card.locator(".timeline-row").filter({ hasText: "Wdrożenie" }))
+    .toHaveCount(1);
+  await expect(card.locator("h2")).toContainText("Oś dnia");
+});
+
+test("oś dnia: „Grupuj po zadaniu” sumuje przedziały zadania i pamięta wybór", async ({
+  page,
+}) => {
+  const card = await open(page, gapDay);
+  await card.getByLabel("Grupuj po zadaniu").check();
+  const groups = card.locator(".day-log-group > summary");
+  await expect(groups).toHaveCount(2);
+  // Analiza: 58:42 + 29:59,6 → 1:28:41.
+  await expect(groups.nth(0)).toContainText("2 × przedział");
+  await expect(groups.nth(0)).toContainText("Analiza");
+  await expect(groups.nth(0)).toContainText("01:28:41");
+  await expect(groups.nth(1)).toContainText("Wdrożenie");
+  await expect(groups.nth(1)).toContainText("00:57:29");
+  await expect(card.locator(".timeline-row.gap")).toHaveCount(0);
+
+  await groups.nth(0).click();
+  await expect(
+    card.getByRole("button", { name: "Usuń przedział 09:00:00 → 09:58:42" }),
+  ).toBeVisible();
+
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Plan i historia", exact: true })
+    .click();
+  await expect(card.getByLabel("Grupuj po zadaniu")).toBeChecked();
+  await expect(card.locator(".day-log-group")).toHaveCount(2);
+});
+
+test("raport dnia: zadania o tej samej nazwie łączą się w jeden wiersz i w TS", async ({
+  page,
+}) => {
+  await open(
+    page,
+    [
+      { id: 1, taskId: 1, startedAt: at("09:00:00"), endedAt: at("10:00:00") },
+      { id: 2, taskId: 3, startedAt: at("10:00:00"), endedAt: at("10:30:00") },
+      { id: 3, taskId: 2, startedAt: at("10:30:00"), endedAt: at("11:00:00") },
+    ],
+    {
+      tasks: [...tasks, { id: 3, title: "Analiza ", done: false, createdAt: 0 }],
+    },
+  );
+  await page.getByRole("button", { name: "Raport dzienny / TS" }).click();
+  await page.getByRole("button", { name: "Raport TS", exact: true }).click();
+  const ts = page.getByLabel("Treść raportu TS");
+  await expect(ts).toHaveValue(/Analiza\t1,00\nWdrożenie\t0,50\nAnaliza\t0,50/);
+  await expect(page.locator(".report-card")).toHaveCount(3);
+
+  await page.getByLabel(/Łącz zadania o tej samej nazwie/).check();
+  await expect(page.locator(".report-card")).toHaveCount(2);
+  await expect(ts).toHaveValue(/Analiza\t1,50\nWdrożenie\t0,50\nRazem\t2,00/);
+});

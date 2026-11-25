@@ -343,6 +343,25 @@ pub fn edit_session(
     snapshot(db).map_err(|e| e.to_string())
 }
 
+/// Usuwa zakończony przedział z osi dnia (pomyłkowy pomiar). Trwającego nie
+/// usuwa: najpierw Stop, żeby pomiar, tryb skupienia i przypomnienia nie
+/// straciły bieżącej sesji bez wiedzy użytkownika.
+pub fn delete_session(db: &mut Connection, id: i64) -> Result<Snapshot, String> {
+    let tx = db.transaction().map_err(|e| e.to_string())?;
+    let ended_at: Option<i64> = tx
+        .query_row("SELECT ended_at FROM sessions WHERE id=?1", [id], |r| {
+            r.get(0)
+        })
+        .map_err(|_| "Nie znaleziono przedziału.".to_owned())?;
+    if ended_at.is_none() {
+        return Err("Zatrzymaj pomiar przed usunięciem przedziału.".into());
+    }
+    tx.execute("DELETE FROM sessions WHERE id=?1", [id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+    snapshot(db).map_err(|e| e.to_string())
+}
+
 /// Poprawia początek trwającego pomiaru („zacząłem o 9:00, Start o 9:20”).
 /// Koniec zostaje pusty; kontrola nakładania jak w `edit_session`, z trwającym
 /// pomiarem sięgającym do `at`.
@@ -762,6 +781,23 @@ mod tests {
         assert!(edit_session(&mut db, 2, 3000, 6000, 5000).is_err());
         assert!(edit_session(&mut db, 2, 2000, 4000, 5000).is_err());
         edit_session(&mut db, 2, 3000, 4500, 5000).unwrap();
+    }
+    #[test]
+    fn delete_session_removes_only_a_finished_interval() {
+        let mut db = Connection::open_in_memory().unwrap();
+        init(&db).unwrap();
+        change(&mut db, "add", None, Some("A".into()), 0).unwrap();
+        change(&mut db, "start", Some(1), None, 1000).unwrap();
+        change(&mut db, "stop", None, None, 2000).unwrap();
+        change(&mut db, "start", Some(1), None, 3000).unwrap();
+        let err = delete_session(&mut db, 2)
+            .err()
+            .expect("trwający przedział");
+        assert!(err.contains("Zatrzymaj"), "{err}");
+        assert!(delete_session(&mut db, 99).is_err());
+        let s = delete_session(&mut db, 1).unwrap();
+        assert_eq!(rows(&s), vec![(2, 1, 3000, None)]);
+        assert_eq!(s.tasks.len(), 1);
     }
     fn rows(s: &Snapshot) -> Vec<(i64, i64, i64, Option<i64>)> {
         let mut rows: Vec<_> = s

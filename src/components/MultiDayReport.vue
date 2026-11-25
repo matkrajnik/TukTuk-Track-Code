@@ -16,6 +16,7 @@ import ExportButtons from "./ExportButtons.vue";
 import TsSendDialog from "./TsSendDialog.vue";
 import { useTsSend } from "../composables/useTsSend";
 import { openView } from "../navigation";
+import { useGroupedPreference } from "../dayGroups";
 
 const props = defineProps<{ data: Snapshot; now: number }>();
 const emit = defineEmits<{ open: [day: string]; updated: [data: Snapshot] }>();
@@ -43,11 +44,13 @@ const saved = restore();
 const selected = ref<string[]>(saved.days);
 const layout = ref<TsLayout>(saved.layout);
 const includeNotes = ref(true);
+/** Wiersze zadań o tej samej nazwie łączone w jeden (pod TS). */
+const mergeTitles = useGroupedPreference("tuktuk-track-report-merge-titles");
 const copyStatus = ref("");
 const area = ref<HTMLTextAreaElement | null>(null);
 const settings = useSettings();
 
-watch([selected, layout, includeNotes], () => {
+watch([selected, layout, includeNotes, mergeTitles], () => {
   copyStatus.value = "";
   try {
     localStorage.setItem(
@@ -194,6 +197,7 @@ const text = computed(() =>
   tsText(selected.value, props.data, reportNow.value, {
     layout: layout.value,
     includeNotes: includeNotes.value,
+    mergeTitles: mergeTitles.value,
   }),
 );
 const running = computed(() => {
@@ -393,6 +397,9 @@ function connectTs() {
       </div>
       <label class="inline-check"
         ><input v-model="includeNotes" type="checkbox" />Dołącz notatki</label
+      ><label class="inline-check"
+        ><input v-model="mergeTitles" type="checkbox" />Łącz zadania o tej samej
+        nazwie</label
       >
     </div>
     <p class="report-note">

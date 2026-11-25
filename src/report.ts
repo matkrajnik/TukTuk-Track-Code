@@ -8,6 +8,41 @@ export interface DayRow {
   sessions: Session[];
   /** Czas przypadający na wybrany dzień (podział przez lokalną północ). */
   total: number;
+  /**
+   * Zadania zebrane w wierszu po `mergeByTitle` (pierwsze = `task`). Brak:
+   * wiersz jednego zadania.
+   */
+  merged?: Task[];
+}
+
+/** Zadania wiersza: wszystkie złączone albo samo `task`. */
+export const rowTasks = (row: DayRow): Task[] => row.merged ?? [row.task];
+
+/**
+ * Łączy wiersze zadań o tej samej nazwie (po przycięciu spacji) w jeden: suma
+ * czasu, wszystkie przedziały (od najnowszego), pierwsze zadanie jako opis.
+ * Raport pod TS czyta się wtedy po nazwie, nie po zadaniu.
+ */
+export function mergeByTitle(rows: readonly DayRow[]): DayRow[] {
+  const byTitle = new Map<string, DayRow>();
+  for (const row of rows) {
+    const key = row.task.title.trim();
+    const found = byTitle.get(key);
+    byTitle.set(
+      key,
+      found
+        ? {
+            task: found.task,
+            total: found.total + row.total,
+            sessions: [...found.sessions, ...row.sessions].sort(
+              (a, b) => b.startedAt - a.startedAt || b.id - a.id,
+            ),
+            merged: [...rowTasks(found), row.task],
+          }
+        : row,
+    );
+  }
+  return [...byTitle.values()];
 }
 
 export const decimalHours = (milliseconds: number) =>
@@ -171,6 +206,8 @@ export interface TsOptions {
   skipEmpty?: boolean;
   /** Kolejność wierszy dnia: najwięcej czasu (domyślnie) albo snapshotu. */
   order?: "total" | "snapshot";
+  /** Łączy zadania o tej samej nazwie w jeden wiersz (`mergeByTitle`). */
+  mergeTitles?: boolean;
 }
 
 /** Dni bez powtórzeń, rosnąco. */
@@ -182,8 +219,10 @@ function rowsFor(
   now: number,
   skipEmpty: boolean,
   order: "total" | "snapshot",
+  mergeTitles: boolean,
 ) {
-  const rows = dayRows(data, day, now).filter(
+  const all = dayRows(data, day, now);
+  const rows = (mergeTitles ? mergeByTitle(all) : all).filter(
     (row) => !skipEmpty || row.total > 0,
   );
   return order === "total" ? rows.sort(byTotal) : rows;
@@ -222,15 +261,25 @@ export function tsText(
     hoursHeader = "Czas (h)",
     trim = true,
     order = "total",
+    mergeTitles = false,
   } = options;
   const skipEmpty = layout === "day" ? (options.skipEmpty ?? false) : true;
   const perDay = list.map((day) => ({
     day,
-    rows: rowsFor(data, day, now, skipEmpty, order),
+    rows: rowsFor(data, day, now, skipEmpty, order, mergeTitles),
   }));
   const total = perDay.reduce((sum, d) => sum + rowsTotal(d.rows), 0);
-  const note = (task: Task, day: string) =>
-    includeNotes ? (task.details?.notes?.[day] ?? "") : "";
+  /** Notatki dnia wszystkich zadań wiersza (złączonych po nazwie), bez powtórzeń. */
+  const note = (row: DayRow, day: string) =>
+    includeNotes
+      ? [
+          ...new Set(
+            rowTasks(row)
+              .map((t) => (t.details?.notes?.[day] ?? "").trim())
+              .filter(Boolean),
+          ),
+        ].join("; ")
+      : "";
 
   if (layout === "day") {
     const { day, rows } = perDay[0] ?? { day: "", rows: [] };
@@ -238,8 +287,8 @@ export function tsText(
       heading(list),
       `Zadanie\t${hoursHeader}`,
       ...rows.map(
-        ({ task, total }) =>
-          `${describe(task.title, [note(task, day)], trim)}\t${decimalHours(total)}`,
+        (row) =>
+          `${describe(row.task.title, [note(row, day)], trim)}\t${decimalHours(row.total)}`,
       ),
       `Razem\t${decimalHours(total)}`,
     ].join("\n");
@@ -253,8 +302,8 @@ export function tsText(
         .filter((d) => d.rows.length)
         .flatMap(({ day, rows }) => [
           ...rows.map(
-            ({ task, total }) =>
-              `${day}\t${describe(task.title, [note(task, day)], trim)}\t${decimalHours(total)}`,
+            (row) =>
+              `${day}\t${describe(row.task.title, [note(row, day)], trim)}\t${decimalHours(row.total)}`,
           ),
           `Razem ${day}\t\t${decimalHours(rowsTotal(rows))}`,
         ]),
@@ -263,20 +312,21 @@ export function tsText(
   }
 
   const tasks = new Map<
-    number,
+    number | string,
     { task: Task; total: number; notes: string[] }
   >();
   for (const { day, rows } of perDay)
     for (const row of rows) {
-      const entry = tasks.get(row.task.id) ?? {
+      const key = mergeTitles ? row.task.title.trim() : row.task.id;
+      const entry = tasks.get(key) ?? {
         task: row.task,
         total: 0,
         notes: [],
       };
       entry.total += row.total;
-      const text = note(row.task, day).trim();
+      const text = note(row, day).trim();
       if (text && !entry.notes.includes(text)) entry.notes.push(text);
-      tasks.set(row.task.id, entry);
+      tasks.set(key, entry);
     }
   return [
     heading(list),

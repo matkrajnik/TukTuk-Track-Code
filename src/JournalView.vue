@@ -1,19 +1,13 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  ArrowDownToLine,
-  ArrowUpToLine,
   CalendarArrowUp,
   CalendarPlus,
   CalendarX,
   ChevronLeft,
   ChevronRight,
-  FileText,
-  FoldVertical,
-  Pencil,
   Play,
   Plus,
-  Scissors,
   Square,
 } from "lucide-vue-next";
 import SearchSelect from "./components/SearchSelect.vue";
@@ -21,16 +15,12 @@ import {
   change,
   detailsOf,
   duration,
-  fillGap,
-  MIN_GAP_MS,
   saveDetails,
-  TRASH_IN_GAP,
-  type GapMode,
   type Snapshot,
   type Task,
   type Session,
 } from "./store";
-import { clock, dayKey, dayBounds, dayText, inDay } from "./time";
+import { dayKey, dayBounds, dayText, inDay } from "./time";
 import { plannedTasks } from "./dayplan";
 import { nextWorkDay } from "./review";
 import { corrections } from "./estimates";
@@ -42,12 +32,12 @@ import {
   useSettings,
   weekTarget,
 } from "./target";
-import ManualTime from "./ManualTime.vue";
 import TaskPlanning from "./TaskPlanning.vue";
 import DayClose from "./DayClose.vue";
 import MorningReview from "./MorningReview.vue";
 import ReorderHandle from "./components/ReorderHandle.vue";
 import DayTimeline from "./components/DayTimeline.vue";
+import DayLog from "./components/DayLog.vue";
 import WeekBoard from "./components/WeekBoard.vue";
 import WeekReview from "./components/WeekReview.vue";
 import { useReorder } from "./composables/useReorder";
@@ -188,10 +178,6 @@ async function plan(task: Task, target: string) {
   );
   selectedTask.value = 0;
 }
-/** Akcje przy „Luce w zapisie” (`fill_gap`). */
-function fill(before: Session, after: Session, mode: GapMode) {
-  return run(() => fillGap(before.id, after.id, mode));
-}
 async function run(action: () => Promise<Snapshot>) {
   if (busy.value) return;
   busy.value = true;
@@ -220,55 +206,6 @@ function shift(amount: number) {
 }
 /** „Przełóż na …”: następny dzień roboczy (jak Rano i Zamknięcie dnia). */
 const nextDay = computed(() => nextWorkDay(settings.value, day.value));
-const intervals = computed(() => {
-  const [start, end] = dayBounds(day.value);
-  return props.data.sessions
-    .filter((s) => inDay(s, day.value, props.now) > 0)
-    .map((s) => ({
-      session: s,
-      start: Math.max(start, s.startedAt),
-      end: Math.min(end, s.endedAt ?? props.now),
-    }))
-    .sort((a, b) => a.start - b.start);
-});
-const timeline = computed(() => {
-  const result: {
-    key: string;
-    start: number;
-    end: number;
-    session?: Session;
-    /** Luka: pomiary przed nią (najpóźniej kończący się) i po niej. */
-    before?: Session;
-    after?: Session;
-    /** W luce leży przedział zadania w koszu: `fill_gap` jej nie zapełni. */
-    trashed?: boolean;
-  }[] = [];
-  const trash = (props.data.trashSessions ?? []).filter(
-    (s) => s.endedAt === null || s.endedAt > s.startedAt,
-  );
-  let previous = 0;
-  let last: Session | undefined;
-  for (const interval of intervals.value) {
-    // Luki krótsze niż sekunda (np. po edycji 14:58:39 → 14:58:39) pomijamy.
-    if (previous && interval.start - previous >= MIN_GAP_MS)
-      result.push({
-        key: `gap-${interval.session.id}`,
-        start: previous,
-        end: interval.start,
-        before: last,
-        after: interval.session,
-        trashed: trash.some(
-          (s) =>
-            s.startedAt < interval.start &&
-            (s.endedAt ?? props.now) > previous,
-        ),
-      });
-    result.push({ key: `session-${interval.session.id}`, ...interval });
-    if (interval.end >= previous) last = interval.session;
-    previous = Math.max(previous, interval.end);
-  }
-  return result;
-});
 const week = computed(() => {
   const d = new Date(dayBounds(day.value)[0]);
   d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
@@ -548,96 +485,15 @@ const carry = computed(() => weekTasks.value.filter((row) => !row.task.done));
       />
     </section>
     <section class="dashboard-card dashboard-top" aria-label="Oś dnia">
-      <div class="ts-heading">
-        <h2>
-          Oś dnia ·
-          {{ duration(intervals.reduce((sum, i) => sum + i.end - i.start, 0)) }}
-        </h2>
-        <button class="today-button" @click="emit('report', day)">
-          <FileText :size="14" />Raport dzienny / TS
-        </button>
-      </div>
-      <ManualTime
-        :tasks="data.tasks"
+      <DayLog
+        :data="data"
         :day="day"
-        :sessions="data.sessions"
+        :now="now"
         @updated="emit('updated', $event)"
+        @edit="emit('edit', $event)"
+        @split="emit('split', $event)"
+        @report="emit('report', $event)"
       />
-      <p class="report-note">
-        Luki pokazujemy między zapisanymi pomiarami. Przedziały przez północ są
-        przycięte do wybranego dnia.
-      </p>
-      <p v-if="!timeline.length" class="report-note">
-        Brak zarejestrowanej pracy.
-      </p>
-      <div
-        v-for="item in timeline"
-        :key="item.key"
-        class="timeline-row"
-        :class="{ gap: !item.session }"
-      >
-        <span class="mono"
-          >{{ clock(item.start, true) }} →
-          {{ item.session?.endedAt === null ? "teraz" : clock(item.end, true) }}</span
-        ><span>{{
-          item.session
-            ? taskMap.get(item.session.taskId)?.title
-            : "Luka w zapisie"
-        }}</span
-        ><strong class="mono">{{ duration(item.end - item.start) }}</strong
-        ><span
-          v-if="item.trashed"
-          class="timeline-actions report-note"
-          >{{ TRASH_IN_GAP }}</span
-        ><span
-          v-else-if="item.before && item.after"
-          class="timeline-actions gap-actions"
-          role="group"
-          :aria-label="`Luka ${clock(item.start, true)} → ${clock(item.end, true)}`"
-          ><button
-            class="today-button"
-            :disabled="busy"
-            title="Wydłuża koniec pomiaru wyżej do końca luki"
-            @click="fill(item.before, item.after, 'previous')"
-          >
-            <ArrowUpToLine :size="14" />Dołącz do poprzedniego</button
-          ><button
-            class="today-button"
-            :disabled="busy"
-            title="Cofa początek pomiaru niżej do początku luki"
-            @click="fill(item.before, item.after, 'next')"
-          >
-            <ArrowDownToLine :size="14" />Dołącz do następnego</button
-          ><button
-            class="today-button"
-            :disabled="busy"
-            title="Oba pomiary spotykają się w środku luki"
-            @click="fill(item.before, item.after, 'split')"
-          >
-            <FoldVertical :size="14" />Podziel po pół
-          </button></span
-        ><span v-else class="timeline-actions"
-          ><button
-            v-if="item.session"
-            class="today-button"
-            :title="
-              item.session.endedAt === null
-                ? 'Popraw godzinę startu trwającego pomiaru'
-                : undefined
-            "
-            @click="emit('edit', item.session)"
-          >
-            <Pencil :size="14" />Edytuj</button
-          ><button
-            v-if="item.session"
-            class="today-button"
-            :aria-label="'Podziel przedział ' + item.session.id"
-            @click="emit('split', item.session)"
-          >
-            <Scissors :size="14" />Podziel
-          </button></span
-        >
-      </div>
       <div
         v-for="task in data.tasks.filter((t) => t.details?.notes?.[day])"
         :key="task.id"

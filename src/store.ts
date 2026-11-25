@@ -350,6 +350,11 @@ export async function editSession(
   if (desktop) return invoke("edit_session", { id, startedAt, endedAt });
   return tasksSim.editSession(id, startedAt, endedAt);
 }
+/** Usuwa zakończony przedział z osi dnia (`db::delete_session`). */
+export async function deleteSession(id: number): Promise<Snapshot> {
+  if (desktop) return invoke("delete_session", { id });
+  return tasksSim.deleteSession(id);
+}
 /** Przypisuje lukę między pomiarami (`db::fill_gap`). */
 export async function fillGap(
   beforeId: number,

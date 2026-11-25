@@ -158,6 +158,19 @@ fn edit_session(
     data_changed(&app, &window);
     Ok(result)
 }
+/// Usunięcie zakończonego przedziału z osi dnia.
+#[tauri::command]
+fn delete_session(
+    state: tauri::State<Database>,
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    id: i64,
+) -> Result<db::Snapshot, String> {
+    let mut connection = state.0.lock().map_err(|e| e.to_string())?;
+    let result = db::delete_session(&mut connection, id)?;
+    data_changed(&app, &window);
+    Ok(result)
+}
 /// Akcje przy „Luce w zapisie” (B3): dołącz do poprzedniego, do następnego
 /// albo podziel po pół.
 #[tauri::command]
@@ -669,6 +682,7 @@ fn main() {
             get_snapshot,
             mutate,
             edit_session,
+            delete_session,
             split_session,
             fill_gap,
             save_details,

@@ -335,6 +335,17 @@ export async function fillGap(
   saveSnapshot(data);
   return data;
 }
+/** Odpowiednik `db::delete_session`: usuwa zakończony przedział. */
+export async function deleteSession(id: number): Promise<Snapshot> {
+  const data = await read();
+  const session = data.sessions.find((s) => s.id === id);
+  if (!session) throw new Error("Nie znaleziono przedziału.");
+  if (session.endedAt === null)
+    throw new Error("Zatrzymaj pomiar przed usunięciem przedziału.");
+  data.sessions = data.sessions.filter((s) => s.id !== id);
+  saveSnapshot(data);
+  return data;
+}
 export async function editSession(
   id: number,
   startedAt: number,
