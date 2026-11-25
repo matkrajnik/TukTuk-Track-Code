@@ -42,6 +42,7 @@
   background: var(--surface);
 }
 .add-task {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;

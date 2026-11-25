@@ -592,16 +592,16 @@ test("correction e2e: hint in quick add and in the expanded task", async ({
 }) => {
   await openPreview(page, { data: correctionData() });
   await page
-    .getByRole("textbox", { name: "Nowe zadanie" })
+    .getByRole("combobox", { name: "Nowe zadanie" })
     .fill("Przegląd ~1h #Foundation");
   await expect(page.locator(".quick-chip-hint")).toHaveText("· zwykle ~2 h");
-  await page.getByRole("textbox", { name: "Nowe zadanie" }).fill("Przegląd ~1h");
+  await page.getByRole("combobox", { name: "Nowe zadanie" }).fill("Przegląd ~1h");
   // Bez projektu: wszystkie ukończone (5 Foundation + Dokumentacja API 4 h / 4 h).
   await expect(page.locator(".quick-chip-hint")).toHaveText(
     "· zwykle ~2 h",
   );
   // Bez szacunku w linii podpowiedzi nie ma.
-  await page.getByRole("textbox", { name: "Nowe zadanie" }).fill("Przegląd #Foundation");
+  await page.getByRole("combobox", { name: "Nowe zadanie" }).fill("Przegląd #Foundation");
   await expect(page.locator(".quick-chip-hint")).toHaveCount(0);
 
   // Rozwinięty kafelek: podpowiedź pod polem szacunku, z bieżącego szkicu.
@@ -622,7 +622,7 @@ test("correction e2e: hint in quick add and in the expanded task", async ({
 
 test("correction e2e: no hint without enough history", async ({ page }) => {
   await openPreview(page);
-  await page.getByRole("textbox", { name: "Nowe zadanie" }).fill("Przegląd ~1h");
+  await page.getByRole("combobox", { name: "Nowe zadanie" }).fill("Przegląd ~1h");
   await expect(page.locator(".quick-chip-hint")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Przedziały: Code review", exact: true })

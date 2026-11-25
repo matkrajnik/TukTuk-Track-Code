@@ -57,6 +57,8 @@ import TargetBar from "../components/TargetBar.vue";
 import { dayTarget, hhmm, useSettings } from "../target";
 import { useReorder } from "../composables/useReorder";
 import QuickChips from "../components/QuickChips.vue";
+import NewTaskSuggestions from "../components/task/NewTaskSuggestions.vue";
+import { useTaskSuggestions } from "../composables/useTaskSuggestions";
 import {
   blockingError,
   complete,
@@ -404,6 +406,39 @@ const submitDisabled = computed(
  * „Anuluj” w „Wznowić dzień?” dodało zadanie bez startu pomiaru.
  */
 const addNotice = ref("");
+/** Nieukończone zadanie o wpisanej nazwie: Enter/„Zaplanuj” kontynuują je zamiast tworzyć nowe. */
+const suggest = useTaskSuggestions(() => props.data, parsed, newTitle, newInput);
+const existing = suggest.existing;
+const suggestionList = ref<InstanceType<typeof NewTaskSuggestions> | null>(
+  null,
+);
+/**
+ * Kontynuacja istniejącego zadania zamiast nowego: start pomiaru (strażnik
+ * „Wznowić dzień?” w `change`) albo plan zadania przy „Zaplanuj”.
+ */
+async function continueTask(task: Task, start: boolean) {
+  if (!start) {
+    newTitle.value = "";
+    await openPlanning(task.id);
+    return;
+  }
+  working.value = true;
+  try {
+    const data = await change("start", task.id);
+    emit("updated", data);
+    newTitle.value = "";
+    const running = data.sessions.some(
+      (s) => s.endedAt === null && s.taskId === task.id,
+    );
+    addNotice.value = running
+      ? `Kontynuujesz istniejące zadanie „${task.title}”.`
+      : `Istniejące zadanie „${task.title}” bez startu pomiaru: dzień pozostał zakończony.`;
+  } catch (e) {
+    emit("error", String(e));
+  } finally {
+    working.value = false;
+  }
+}
 /**
  * Pierwsze zadanie z `data` spoza `before`: `quick_add` wstawia zadanie
  * przed `with_recurrence` (main.rs), więc wystąpienia cykli utworzone w tej
@@ -431,9 +466,11 @@ async function submitNew(start: boolean) {
     return;
   }
   if (submitDisabled.value) return;
-  working.value = true;
   emit("error", "");
   addNotice.value = "";
+  suggest.close();
+  if (existing.value) return continueTask(existing.value, start);
+  working.value = true;
   let planId: number | null = null;
   try {
     const allowed = start && (await startAllowed());
@@ -571,25 +608,56 @@ async function priority(task: Task, e: Event) {
     <Plus :size="18" /><input
       ref="newInput"
       v-model="newTitle"
+      role="combobox"
+      autocomplete="off"
+      aria-autocomplete="list"
+      :aria-expanded="suggest.shown.value"
+      :aria-controls="suggest.shown.value ? suggestionList?.listId : undefined"
+      :aria-activedescendant="
+        suggest.shown.value && suggest.index.value >= 0
+          ? suggestionList?.optionId(suggest.index.value)
+          : undefined
+      "
       aria-label="Nowe zadanie"
       placeholder="Nowe zadanie…"
-      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · /szablon · \ dosłownie · Enter: dodaj i rozpocznij · Shift+Enter: zaplanuj"
+      title="Składnia: WMS-123 · ~30m · @pt · do:20.10 · ! / !niski · #projekt · /szablon · \ dosłownie · Enter: dodaj i rozpocznij (albo kontynuuj zadanie o tej samej nazwie) · Shift+Enter: zaplanuj"
       maxlength="240"
       :disabled="loading"
-      @input="addNotice = ''"
+      @input="
+        addNotice = '';
+        suggest.typed();
+      "
+      @blur="suggest.close"
+      @keydown="suggest.shown.value && suggestionList?.keydown($event)"
       @keydown.tab="tab"
       aria-keyshortcuts="Enter Shift+Enter"
       @keydown.shift.enter.exact.prevent="submitNew(false)"
+    /><NewTaskSuggestions
+      v-if="suggest.shown.value"
+      ref="suggestionList"
+      v-model:active="suggest.index.value"
+      :tasks="suggest.suggestions.value"
+      :exact-id="existing?.id ?? null"
+      @pick="suggest.pick"
+      @dismiss="suggest.close"
     /><button
       class="primary-button"
-      title="Dodaje zadanie i od razu uruchamia jego pomiar; poprzedni pomiar staje (Enter w polu)"
+      :title="
+        existing
+          ? `Uruchamia pomiar istniejącego zadania „${existing.title}” zamiast tworzyć nowe (Enter w polu)`
+          : 'Dodaje zadanie i od razu uruchamia jego pomiar; poprzedni pomiar staje (Enter w polu)'
+      "
       :disabled="submitDisabled"
     >
-      <Play :size="14" />Dodaj i rozpocznij</button
+      <Play :size="14" />{{ existing ? "Kontynuuj" : "Dodaj i rozpocznij" }}</button
     ><button
       type="button"
       class="secondary-button"
-      title="Dodaje zadanie bez pomiaru i otwiera jego plan (Shift+Enter w polu)"
+      :title="
+        existing
+          ? `Otwiera plan istniejącego zadania „${existing.title}” (Shift+Enter w polu)`
+          : 'Dodaje zadanie bez pomiaru i otwiera jego plan (Shift+Enter w polu)'
+      "
       :disabled="submitDisabled"
       @click="submitNew(false)"
     >

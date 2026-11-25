@@ -200,10 +200,10 @@ test("karta „Popraw” otwiera zwykły formularz z wypełnionymi polami", asyn
   const card = panel(page).getByRole("region", { name: "Propozycja: Raport kwartalny" });
   await card.getByRole("button", { name: "Popraw propozycję: Raport kwartalny" }).click();
   await expect(card).toContainText("Otwarto do poprawy w zwykłym formularzu.");
-  await expect(page.getByRole("textbox", { name: "Nowe zadanie" })).toHaveValue(
+  await expect(page.getByRole("combobox", { name: "Nowe zadanie" })).toHaveValue(
     "Raport kwartalny ~1h30 @20.10 #WMS",
   );
-  await expect(page.getByRole("textbox", { name: "Nowe zadanie" })).toBeFocused();
+  await expect(page.getByRole("combobox", { name: "Nowe zadanie" })).toBeFocused();
   // Nic nie zapisano, a propozycja zeszła z kolejki.
   expect(await stored(page)).toEqual(before);
   expect(await queue(page)).toEqual([]);

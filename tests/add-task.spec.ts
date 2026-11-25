@@ -209,3 +209,81 @@ test("aplikacja: zadanie dodane z backendu podczas „Wznowić dzień?” nie my
     "Dodano „Pilna poprawka” bez startu pomiaru: dzień pozostał zakończony.",
   );
 });
+
+test("nazwa istniejącego zadania: lista podpowiedzi i kontynuacja zamiast nowego zadania", async ({
+  page,
+}) => {
+  await openPreview(page, running);
+  const before = (await stored(page)).tasks.length;
+
+  // Podpowiedzi: słowa w dowolnym miejscu nazwy, bez wielkości liter i ogonków.
+  await input(page).fill("etykiet");
+  const list = page.getByRole("listbox", { name: "Istniejące zadania" });
+  await expect(list.locator(".suggestion-title")).toHaveText([
+    "Wdrożenie etykiet",
+  ]);
+  await expect(input(page)).toHaveAttribute("aria-expanded", "true");
+
+  // Strzałka + Enter wpisuje nazwę; przycisk zmienia się na „Kontynuuj”.
+  await input(page).press("ArrowDown");
+  await input(page).press("Enter");
+  await expect(input(page)).toHaveValue("Wdrożenie etykiet");
+  await expect(list).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "Kontynuuj", exact: true }),
+  ).toBeVisible();
+
+  // Enter: pomiar istniejącego zadania, bez nowego zadania.
+  await input(page).press("Enter");
+  await expect(input(page)).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Stop: Wdrożenie etykiet", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".add-notice")).toHaveText(
+    "Kontynuujesz istniejące zadanie „Wdrożenie etykiet”.",
+  );
+  let data = await stored(page);
+  expect(data.tasks).toHaveLength(before);
+  expect((await openSessions(page)).map((s: any) => s.taskId)).toEqual([
+    ids.labels,
+  ]);
+
+  // Ta sama nazwa wpisana inną wielkością liter, bez wyboru z listy.
+  await input(page).fill("analiza IMPORTU");
+  await input(page).press("Escape");
+  await expect(list).toBeHidden();
+  await input(page).press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Stop: Analiza importu", exact: true }),
+  ).toBeVisible();
+  data = await stored(page);
+  expect(data.tasks).toHaveLength(before);
+
+  // Inna nazwa nadal tworzy nowe zadanie.
+  await input(page).fill("Analiza importu v2");
+  await expect(
+    page.getByRole("button", { name: "Dodaj i rozpocznij", exact: true }),
+  ).toBeVisible();
+  await input(page).press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Stop: Analiza importu v2", exact: true }),
+  ).toBeVisible();
+  expect((await stored(page)).tasks).toHaveLength(before + 1);
+});
+
+test("„Zaplanuj” przy nazwie istniejącego zadania otwiera jego plan", async ({
+  page,
+}) => {
+  await openPreview(page, running);
+  const before = (await stored(page)).tasks.length;
+  await input(page).fill("code REVIEW");
+  await input(page).press("Shift+Enter");
+  await expect(input(page)).toHaveValue("");
+  await expect(
+    card(page, "Code review").getByLabel("Planowany dzień"),
+  ).toBeFocused();
+  expect((await stored(page)).tasks).toHaveLength(before);
+  expect((await openSessions(page)).map((s: any) => s.taskId)).toEqual([
+    ids.analysis,
+  ]);
+});
