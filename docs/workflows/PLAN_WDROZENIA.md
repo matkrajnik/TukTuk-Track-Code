@@ -410,7 +410,7 @@ Odbiór: procesy zastępcze potwierdzają timeout, kill i ograniczenia; użytkow
 
 ### E5 — monitor, zadania i zgody
 
-- [ ] Dodać formularz startu z karty zadania i listy definicji.
+- [x] Dodać formularz startu z karty zadania i listy definicji (karta: „Uruchom proces…”, `TaskCard.vue`; testy `workflow-runs.spec.ts`).
 - [x] Dodać monitor grafu, historię, filtrowanie, logi i artefakty.
 - [x] Dodać diff, wyniki review oraz decyzję związaną z hashem artefaktu.
 - [x] Połączyć przebiegi z tablicą agentów, czasem i powiadomieniami.
