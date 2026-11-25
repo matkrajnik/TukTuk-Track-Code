@@ -4,6 +4,13 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.6.0
+
+Sprawdzone testami Rust i Playwright; w zainstalowanej aplikacji i na prawdziwym Claude Code nie były sprawdzane.
+
+- **Podpowiedzi istniejących zadań.** Pole „Nowe zadanie” pokazuje listę nieukończonych zadań pasujących do wpisanej nazwy (strzałki i Enter wybierają, Escape zamyka). Gdy nazwa jest taka sama jak istniejącego zadania (bez względu na wielkość liter i ogonki), przycisk zmienia się na „Kontynuuj”: Enter wznawia pomiar tego zadania, a „Zaplanuj” otwiera jego plan, zamiast tworzyć duplikat. Ukończone zadania, klucze Jiry, numery Redmine i szablony nadal tworzą nowe zadanie.
+- **Workflows: tryb dynamiczny (Claude).** Szablon „Dynamiczny (Claude)”: orkiestrator deleguje pracę do subagentów (narzędzie Agent), opcjonalnie review i poprawki; wymaga Claude Code 2.1.319+. Monitor przebiegu pokazuje dziennik narzędzi i drzewo orkiestrator → subagenci; formularz startu ostrzega o koszcie tokenów.
+
 ### Nowości 2.5.1
 
 Poprawki Workflows po pierwszym użyciu 2.5.0. Sprawdzone testami Rust i Playwright na procesach zastępczych; prawdziwe CLI i instalacja natywna czekają na użytkownika (`docs/workflows/E7_TEST_RECZNY.md`).
