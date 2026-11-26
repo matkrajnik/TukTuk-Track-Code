@@ -4,6 +4,14 @@ TukTuk Track (do wersji 1.9 Todo Track) to lokalna aplikacja desktopowa: lista z
 
 ## Funkcje
 
+### Nowości 2.6.1
+
+Sprawdzone testami Rust i Playwright oraz w podglądzie; w zainstalowanej aplikacji nie były sprawdzane.
+
+- **Usuwanie przedziałów z osi dnia.** Ikona kosza przy zakończonym przedziale usuwa go po potwierdzeniu (okno pokazuje zadanie, godziny i czas; usunięcia nie można cofnąć). Trwającego pomiaru nie da się usunąć: najpierw Stop.
+- **Czytelniejsze akcje na osi dnia.** Edytuj, Podziel i Usuń to kompaktowe ikony z opisem; czasy przedziałów stoją w jednej kolumnie.
+- **Grupowanie po nazwie zadania.** Oś dnia ma przełącznik „Grupuj po zadaniu”: jeden wiersz na zadanie z liczbą przedziałów i sumą czasu, rozwijany do przedziałów. Raport dnia i „Wybrane dni” mają „Łącz zadania o tej samej nazwie”: zadania o identycznej nazwie dają jeden wiersz na liście i w tekście TS (notatki łączone „; ”). Wybory są zapamiętywane.
+
 ### Nowości 2.6.0
 
 Sprawdzone testami Rust i Playwright; w zainstalowanej aplikacji i na prawdziwym Claude Code nie były sprawdzane.

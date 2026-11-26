@@ -1,5 +1,6 @@
-TukTuk Track 2.6.0: podpowiedzi istniejących zadań i tryb dynamiczny Workflows.
+TukTuk Track 2.6.1: usuwanie przedziałów i grupowanie po nazwie zadania.
 
-- Pole „Nowe zadanie” podpowiada istniejące, nieukończone zadania (strzałki i Enter wybierają, Escape zamyka listę). Gdy wpisana nazwa jest taka sama jak nazwa istniejącego zadania (bez względu na wielkość liter i ogonki), przycisk zmienia się na „Kontynuuj”: Enter wznawia pomiar tego zadania, a „Zaplanuj” otwiera jego plan, zamiast tworzyć nowe zadanie.
-- Workflows: tryb dynamiczny (Claude). Nowy szablon „Dynamiczny (Claude)”: jeden orkiestrator deleguje pracę do subagentów (narzędzie Agent), opcjonalnie review i poprawki; wymaga Claude Code 2.1.319+, subagenci bez powłoki i tylko w katalogu roboczym. Monitor pokazuje drzewo orkiestrator → subagenci z licznikiem; formularz startu ostrzega o koszcie tokenów.
-- Workflows: dziennik narzędzi agenta i śledzenie subagentów Claude w monitorze przebiegu.
+- Oś dnia: zakończony przedział można usunąć ikoną kosza po potwierdzeniu (bez możliwości cofnięcia); trwającego pomiaru nie da się usunąć.
+- Oś dnia: akcje przedziału (Edytuj, Podziel, Usuń) jako kompaktowe ikony, czasy w jednej kolumnie.
+- Oś dnia: „Grupuj po zadaniu” — jeden wiersz na zadanie z sumą czasu, rozwijany do przedziałów.
+- Raport dnia i „Wybrane dni”: „Łącz zadania o tej samej nazwie” — zadania o identycznej nazwie dają jeden wiersz na liście i w raporcie TS.
